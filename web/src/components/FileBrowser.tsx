@@ -48,11 +48,24 @@ export function FileBrowser({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FileEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [showChanges, setShowChanges] = useState(false);
 
   useEffect(() => {
     setSelected(null);
     setQuery("");
+    setShowChanges(false);
   }, [sessionId]);
+
+  const changeCount = gitFiles ? Object.keys(gitFiles).length : 0;
+  const changeEntries = useMemo<FileEntry[]>(
+    () =>
+      gitFiles
+        ? Object.keys(gitFiles)
+            .sort((a, b) => a.localeCompare(b))
+            .map((p) => ({ name: p.split("/").pop() || p, path: p, isDir: false, size: 0 }))
+        : [],
+    [gitFiles]
+  );
 
   // Debounced recursive search.
   useEffect(() => {
@@ -77,10 +90,25 @@ export function FileBrowser({
     <div className="flex h-full flex-col md:flex-row">
       <div className="flex max-h-64 w-full flex-col border-b md:max-h-none md:w-72 md:shrink-0 md:border-b-0 md:border-r">
         <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground">
-          <span>Files</span>
-          <button title="Refresh" onClick={() => onRefresh?.()} className="hover:text-foreground">
-            <RefreshCw className="size-3.5" />
-          </button>
+          <span>{showChanges ? "Changes" : "Files"}</span>
+          <div className="flex items-center gap-1.5">
+            {gitFiles && (
+              <button
+                title={showChanges ? "Show all files" : "Show git changes only"}
+                onClick={() => setShowChanges((v) => !v)}
+                className={cn(
+                  "flex items-center gap-1 rounded px-1 py-0.5 hover:text-foreground",
+                  showChanges ? "bg-amber-500/15 text-amber-500" : ""
+                )}
+              >
+                <GitCompare className="size-3.5" />
+                {changeCount > 0 && <span className="text-[10px] font-semibold">{changeCount}</span>}
+              </button>
+            )}
+            <button title="Refresh" onClick={() => onRefresh?.()} className="hover:text-foreground">
+              <RefreshCw className="size-3.5" />
+            </button>
+          </div>
         </div>
 
         <div className="px-2 pb-1">
@@ -107,9 +135,18 @@ export function FileBrowser({
 
         <div className="flex-1 overflow-auto px-1 pb-2">
           {query.trim() ? (
-            <SearchResults
-              results={results}
-              searching={searching}
+            <FlatFileList
+              entries={results ?? []}
+              loading={searching && results === null}
+              empty="No matches"
+              gitFiles={gitFiles}
+              selectedPath={selected?.path ?? null}
+              onSelect={setSelected}
+            />
+          ) : showChanges ? (
+            <FlatFileList
+              entries={changeEntries}
+              empty="No changes"
               gitFiles={gitFiles}
               selectedPath={selected?.path ?? null}
               onSelect={setSelected}
@@ -165,35 +202,42 @@ function dirHasChanges(gitFiles: GitFiles | undefined, dirPath: string): boolean
   return false;
 }
 
-function SearchResults({
-  results,
-  searching,
+/** Flat list of files (used for search results and the git-changes view). */
+function FlatFileList({
+  entries,
+  loading,
+  empty,
   gitFiles,
   selectedPath,
   onSelect,
 }: {
-  results: FileEntry[] | null;
-  searching: boolean;
+  entries: FileEntry[];
+  loading?: boolean;
+  empty: string;
   gitFiles?: GitFiles;
   selectedPath: string | null;
   onSelect: (f: FileEntry) => void;
 }) {
-  if (searching && results === null)
-    return <IndentedNote depth={0}><Loader2 className="size-3 animate-spin" /> Searching…</IndentedNote>;
-  if (!results || results.length === 0) return <IndentedNote depth={0}>No matches</IndentedNote>;
+  if (loading)
+    return <IndentedNote depth={0}><Loader2 className="size-3 animate-spin" /> Loading…</IndentedNote>;
+  if (entries.length === 0) return <IndentedNote depth={0}>{empty}</IndentedNote>;
 
   return (
     <>
-      {results.map((e) => (
-        <Row key={e.path} depth={0} selected={selectedPath === e.path} onClick={() => onSelect(e)}>
-          <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="flex min-w-0 flex-col">
-            <span className={cn("truncate", gitFiles?.[e.path] && STATUS_COLOR[gitFiles[e.path]])}>{e.name}</span>
-            <span className="truncate text-[10px] text-muted-foreground">{e.path}</span>
-          </span>
-          <GitMarker status={gitFiles?.[e.path]} />
-        </Row>
-      ))}
+      {entries.map((e) => {
+        const kind = fileKind(e.name);
+        const Icon = kind === "image" ? ImageIcon : FileText;
+        return (
+          <Row key={e.path} depth={0} selected={selectedPath === e.path} onClick={() => onSelect(e)}>
+            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 flex-col">
+              <span className={cn("truncate", gitFiles?.[e.path] && STATUS_COLOR[gitFiles[e.path]])}>{e.name}</span>
+              <span className="truncate text-[10px] text-muted-foreground">{e.path}</span>
+            </span>
+            <GitMarker status={gitFiles?.[e.path]} />
+          </Row>
+        );
+      })}
     </>
   );
 }
