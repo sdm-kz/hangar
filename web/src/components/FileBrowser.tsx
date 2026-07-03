@@ -1,0 +1,694 @@
+import { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { api, sessionFileUrl } from "@/lib/api";
+import type { FileEntry } from "@/types";
+import { fileExt, fileKind, formatSize } from "@/lib/fileKind";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ImageLightbox } from "./ImageLightbox";
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  Expand,
+  File as FileIcon,
+  FileText,
+  Folder,
+  FolderOpen,
+  GitCompare,
+  Image as ImageIcon,
+  Loader2,
+  Pencil,
+  RefreshCw,
+  Save,
+  Search,
+  X,
+} from "lucide-react";
+
+const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
+
+type GitFiles = Record<string, string>;
+
+/** Two-pane file explorer: searchable, auto-refreshing directory tree + preview/edit pane. */
+export function FileBrowser({
+  sessionId,
+  gitFiles,
+  onRefresh,
+  refreshToken = 0,
+}: {
+  sessionId: string;
+  gitFiles?: GitFiles;
+  onRefresh?: () => void;
+  refreshToken?: number;
+}) {
+  const [selected, setSelected] = useState<FileEntry | null>(null);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<FileEntry[] | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    setSelected(null);
+    setQuery("");
+  }, [sessionId]);
+
+  // Debounced recursive search.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(() => {
+      api
+        .searchSessionFiles(sessionId, q)
+        .then((r) => setResults(r.entries))
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query, sessionId, refreshToken]);
+
+  return (
+    <div className="flex h-full flex-col md:flex-row">
+      <div className="flex max-h-64 w-full flex-col border-b md:max-h-none md:w-72 md:shrink-0 md:border-b-0 md:border-r">
+        <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground">
+          <span>Files</span>
+          <button title="Refresh" onClick={() => onRefresh?.()} className="hover:text-foreground">
+            <RefreshCw className="size-3.5" />
+          </button>
+        </div>
+
+        <div className="px-2 pb-1">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search files…"
+              className="h-8 pl-7 pr-7 text-xs"
+              spellCheck={false}
+            />
+            {query && (
+              <button
+                onClick={() => setQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                title="Clear"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto px-1 pb-2">
+          {query.trim() ? (
+            <SearchResults
+              results={results}
+              searching={searching}
+              gitFiles={gitFiles}
+              selectedPath={selected?.path ?? null}
+              onSelect={setSelected}
+            />
+          ) : (
+            <TreeLevel
+              sessionId={sessionId}
+              path=""
+              depth={0}
+              refreshToken={refreshToken}
+              selectedPath={selected?.path ?? null}
+              gitFiles={gitFiles}
+              onSelect={setSelected}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="min-h-0 min-w-0 flex-1">
+        <FilePreview
+          sessionId={sessionId}
+          file={selected}
+          gitStatus={selected ? gitFiles?.[selected.path] : undefined}
+          refreshToken={refreshToken}
+          onSaved={onRefresh}
+        />
+      </div>
+    </div>
+  );
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  M: "text-amber-500",
+  A: "text-emerald-500",
+  U: "text-emerald-500",
+  D: "text-red-500",
+  R: "text-sky-500",
+};
+
+function GitMarker({ status }: { status?: string }) {
+  if (!status) return null;
+  return (
+    <span className={cn("ml-auto shrink-0 pl-1 text-[10px] font-bold", STATUS_COLOR[status] ?? "text-muted-foreground")}>
+      {status}
+    </span>
+  );
+}
+
+function dirHasChanges(gitFiles: GitFiles | undefined, dirPath: string): boolean {
+  if (!gitFiles) return false;
+  const prefix = dirPath + "/";
+  for (const p in gitFiles) if (p === dirPath || p.startsWith(prefix)) return true;
+  return false;
+}
+
+function SearchResults({
+  results,
+  searching,
+  gitFiles,
+  selectedPath,
+  onSelect,
+}: {
+  results: FileEntry[] | null;
+  searching: boolean;
+  gitFiles?: GitFiles;
+  selectedPath: string | null;
+  onSelect: (f: FileEntry) => void;
+}) {
+  if (searching && results === null)
+    return <IndentedNote depth={0}><Loader2 className="size-3 animate-spin" /> Searching…</IndentedNote>;
+  if (!results || results.length === 0) return <IndentedNote depth={0}>No matches</IndentedNote>;
+
+  return (
+    <>
+      {results.map((e) => (
+        <Row key={e.path} depth={0} selected={selectedPath === e.path} onClick={() => onSelect(e)}>
+          <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="flex min-w-0 flex-col">
+            <span className={cn("truncate", gitFiles?.[e.path] && STATUS_COLOR[gitFiles[e.path]])}>{e.name}</span>
+            <span className="truncate text-[10px] text-muted-foreground">{e.path}</span>
+          </span>
+          <GitMarker status={gitFiles?.[e.path]} />
+        </Row>
+      ))}
+    </>
+  );
+}
+
+function TreeLevel({
+  sessionId,
+  path,
+  depth,
+  refreshToken,
+  selectedPath,
+  gitFiles,
+  onSelect,
+}: {
+  sessionId: string;
+  path: string;
+  depth: number;
+  refreshToken: number;
+  selectedPath: string | null;
+  gitFiles?: GitFiles;
+  onSelect: (f: FileEntry) => void;
+}) {
+  const [entries, setEntries] = useState<FileEntry[] | null>(null);
+  const [error, setError] = useState(false);
+
+  // Re-fetches when refreshToken changes; TreeDir stays mounted so expansion is preserved.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listSessionFiles(sessionId, path || undefined)
+      .then((r) => !cancelled && (setEntries(r.entries), setError(false)))
+      .catch(() => !cancelled && setError(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, path, refreshToken]);
+
+  if (error) return <IndentedNote depth={depth}>Unable to read folder</IndentedNote>;
+  if (entries === null)
+    return <IndentedNote depth={depth}><Loader2 className="size-3 animate-spin" /> Loading…</IndentedNote>;
+  if (entries.length === 0) return <IndentedNote depth={depth}>Empty</IndentedNote>;
+
+  return (
+    <>
+      {entries.map((e) =>
+        e.isDir ? (
+          <TreeDir
+            key={e.path}
+            sessionId={sessionId}
+            entry={e}
+            depth={depth}
+            refreshToken={refreshToken}
+            selectedPath={selectedPath}
+            gitFiles={gitFiles}
+            onSelect={onSelect}
+          />
+        ) : (
+          <FileRow
+            key={e.path}
+            entry={e}
+            depth={depth}
+            selected={selectedPath === e.path}
+            gitStatus={gitFiles?.[e.path]}
+            onSelect={onSelect}
+          />
+        )
+      )}
+    </>
+  );
+}
+
+function TreeDir({
+  sessionId,
+  entry,
+  depth,
+  refreshToken,
+  selectedPath,
+  gitFiles,
+  onSelect,
+}: {
+  sessionId: string;
+  entry: FileEntry;
+  depth: number;
+  refreshToken: number;
+  selectedPath: string | null;
+  gitFiles?: GitFiles;
+  onSelect: (f: FileEntry) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Row depth={depth} onClick={() => setOpen((o) => !o)}>
+        {open ? (
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        {open ? (
+          <FolderOpen className="size-3.5 shrink-0 text-amber-500" />
+        ) : (
+          <Folder className="size-3.5 shrink-0 text-amber-500" />
+        )}
+        <span className="truncate">{entry.name}</span>
+        {!open && dirHasChanges(gitFiles, entry.path) && (
+          <span className="ml-auto size-1.5 shrink-0 rounded-full bg-amber-500" />
+        )}
+      </Row>
+      {open && (
+        <TreeLevel
+          sessionId={sessionId}
+          path={entry.path}
+          depth={depth + 1}
+          refreshToken={refreshToken}
+          selectedPath={selectedPath}
+          gitFiles={gitFiles}
+          onSelect={onSelect}
+        />
+      )}
+    </>
+  );
+}
+
+function FileRow({
+  entry,
+  depth,
+  selected,
+  gitStatus,
+  onSelect,
+}: {
+  entry: FileEntry;
+  depth: number;
+  selected: boolean;
+  gitStatus?: string;
+  onSelect: (f: FileEntry) => void;
+}) {
+  const kind = fileKind(entry.name);
+  const Icon = kind === "image" ? ImageIcon : kind === "text" ? FileText : FileIcon;
+  return (
+    <Row depth={depth} selected={selected} onClick={() => onSelect(entry)}>
+      <span className="size-3.5 shrink-0" />
+      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className={cn("truncate", gitStatus && STATUS_COLOR[gitStatus])}>{entry.name}</span>
+      <GitMarker status={gitStatus} />
+    </Row>
+  );
+}
+
+function Row({
+  depth,
+  selected,
+  onClick,
+  children,
+}: {
+  depth: number;
+  selected?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{ paddingLeft: depth * 12 + 8 }}
+      className={cn(
+        "flex w-full items-center gap-1.5 rounded-sm py-1 pr-2 text-left text-xs hover:bg-accent",
+        selected && "bg-accent font-medium"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function IndentedNote({ depth, children }: { depth: number; children: React.ReactNode }) {
+  return (
+    <div
+      style={{ paddingLeft: depth * 12 + 8 }}
+      className="flex items-center gap-1.5 py-1 text-xs text-muted-foreground"
+    >
+      {children}
+    </div>
+  );
+}
+
+function FilePreview({
+  sessionId,
+  file,
+  gitStatus,
+  refreshToken,
+  onSaved,
+}: {
+  sessionId: string;
+  file: FileEntry | null;
+  gitStatus?: string;
+  refreshToken: number;
+  onSaved?: () => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "error" | "toolarge">("idle");
+  const [view, setView] = useState<"preview" | "diff">("preview");
+  const [diff, setDiff] = useState<string | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [lightbox, setLightbox] = useState(false);
+  const [mdView, setMdView] = useState<"rendered" | "raw">("rendered");
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const kind = file ? fileKind(file.name) : "binary";
+  const isMarkdown = !!file && ["md", "markdown"].includes(fileExt(file.name));
+  const canEdit = kind === "text" && status === "idle" && text !== null;
+
+  useEffect(() => {
+    setText(null);
+    setStatus("idle");
+    setView("preview");
+    setDiff(null);
+    setMdView("rendered");
+    setEditing(false);
+    setSaveError(null);
+    if (!file || kind !== "text") return;
+    if (file.size > MAX_TEXT_PREVIEW) {
+      setStatus("toolarge");
+      return;
+    }
+    let cancelled = false;
+    setStatus("loading");
+    api
+      .fetchSessionFileText(sessionId, file.path)
+      .then((t) => !cancelled && (setText(t), setStatus("idle")))
+      .catch(() => !cancelled && setStatus("error"));
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, file, kind]);
+
+  // Auto-refresh: when the working dir changes, re-fetch the current file's content and
+  // invalidate the cached diff — but never clobber an in-progress edit.
+  useEffect(() => {
+    if (!file || editing) return;
+    setDiff(null); // force diff to reload lazily
+    if (fileKind(file.name) !== "text" || file.size > MAX_TEXT_PREVIEW) return;
+    let cancelled = false;
+    api
+      .fetchSessionFileText(sessionId, file.path)
+      .then((t) => !cancelled && setText(t))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshToken]);
+
+  useEffect(() => {
+    if (view !== "diff" || !file || diff !== null) return;
+    let cancelled = false;
+    setDiffLoading(true);
+    api
+      .gitDiff(sessionId, file.path)
+      .then((d) => !cancelled && setDiff(d.diff || ""))
+      .catch(() => !cancelled && setDiff(""))
+      .finally(() => !cancelled && setDiffLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [view, sessionId, file, diff]);
+
+  async function save() {
+    if (!file) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await api.writeSessionFile(sessionId, file.path, draft);
+      setText(draft);
+      setEditing(false);
+      onSaved?.(); // refresh git status (file may now be modified)
+    } catch {
+      setSaveError("Failed to save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!file) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+        Select a file to preview
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <header className="flex items-center gap-2 border-b px-4 py-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">
+            {file.name}
+            {editing && <span className="ml-1 text-amber-500">•</span>}
+          </div>
+          <div className="truncate font-mono text-[11px] text-muted-foreground">
+            {file.path} · {formatSize(file.size)}
+          </div>
+        </div>
+
+        {editing ? (
+          <>
+            {saveError && <span className="text-xs text-destructive">{saveError}</span>}
+            <Button variant="ghost" size="sm" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={save} disabled={saving}>
+              {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Save
+            </Button>
+          </>
+        ) : (
+          <>
+            {gitStatus && (
+              <div className="hidden overflow-hidden rounded-md border sm:flex">
+                <TabButton active={view === "preview"} onClick={() => setView("preview")}>
+                  Preview
+                </TabButton>
+                <TabButton active={view === "diff"} onClick={() => setView("diff")}>
+                  <GitCompare className="size-3.5" /> Diff
+                </TabButton>
+              </div>
+            )}
+
+            {isMarkdown && view === "preview" && (
+              <div className="hidden overflow-hidden rounded-md border sm:flex">
+                <TabButton active={mdView === "rendered"} onClick={() => setMdView("rendered")}>
+                  Rendered
+                </TabButton>
+                <TabButton active={mdView === "raw"} onClick={() => setMdView("raw")}>
+                  Raw
+                </TabButton>
+              </div>
+            )}
+
+            {canEdit && view === "preview" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setDraft(text ?? "");
+                  setEditing(true);
+                }}
+              >
+                <Pencil className="size-4" /> <span className="hidden sm:inline">Edit</span>
+              </Button>
+            )}
+
+            {kind === "image" && view === "preview" && (
+              <Button variant="outline" size="sm" onClick={() => setLightbox(true)}>
+                <Expand className="size-4" /> <span className="hidden sm:inline">Fullscreen</span>
+              </Button>
+            )}
+            <Button asChild variant="outline" size="sm">
+              <a href={sessionFileUrl(sessionId, file.path, true)} download={file.name}>
+                <Download className="size-4" /> <span className="hidden sm:inline">Download</span>
+              </a>
+            </Button>
+          </>
+        )}
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-auto">
+        {editing ? (
+          <Textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            spellCheck={false}
+            className="h-full w-full resize-none rounded-none border-0 font-mono text-xs leading-relaxed focus-visible:ring-0"
+          />
+        ) : view === "diff" ? (
+          diffLoading ? (
+            <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Loading diff…
+            </div>
+          ) : (
+            <DiffView diff={diff ?? ""} />
+          )
+        ) : (
+          <>
+            {kind === "image" && (
+              <div className="flex min-h-full items-center justify-center bg-[repeating-conic-gradient(theme(colors.muted)_0%_25%,transparent_0%_50%)] bg-[length:20px_20px] p-4">
+                <button onClick={() => setLightbox(true)} title="Click to zoom" className="cursor-zoom-in">
+                  <img
+                    src={sessionFileUrl(sessionId, file.path)}
+                    alt={file.name}
+                    className="max-h-full max-w-full object-contain shadow-sm"
+                  />
+                </button>
+              </div>
+            )}
+
+            {kind === "text" && status === "loading" && (
+              <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" /> Loading…
+              </div>
+            )}
+            {kind === "text" && status === "error" && (
+              <div className="p-4 text-sm text-destructive">Failed to read file.</div>
+            )}
+            {kind === "text" && status === "idle" && text !== null &&
+              (isMarkdown && mdView === "rendered" ? (
+                <div className="prose prose-sm max-w-none p-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+                </div>
+              ) : (
+                <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
+              ))}
+
+            {(kind === "binary" || status === "toolarge") && (
+              <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+                <FileIcon className="size-10 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  {status === "toolarge"
+                    ? "File is too large to preview."
+                    : "No preview available for this file type."}
+                </p>
+                <Button asChild variant="outline" size="sm">
+                  <a href={sessionFileUrl(sessionId, file.path, true)} download={file.name}>
+                    <Download className="size-4" /> Download
+                  </a>
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {lightbox && (
+        <ImageLightbox
+          src={sessionFileUrl(sessionId, file.path)}
+          name={file.name}
+          onClose={() => setLightbox(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1 px-2.5 py-1 text-xs font-medium",
+        active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DiffView({ diff }: { diff: string }) {
+  const lines = useMemo(() => diff.split("\n"), [diff]);
+  if (!diff.trim())
+    return <div className="p-4 text-sm text-muted-foreground">No differences to show.</div>;
+
+  return (
+    <div className="min-w-max py-1 font-mono text-xs leading-relaxed">
+      {lines.map((ln, i) => {
+        let cls = "";
+        if (ln.startsWith("+") && !ln.startsWith("+++"))
+          cls = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+        else if (ln.startsWith("-") && !ln.startsWith("---"))
+          cls = "bg-red-500/10 text-red-600 dark:text-red-400";
+        else if (ln.startsWith("@@")) cls = "text-sky-600 dark:text-sky-400";
+        else if (
+          ln.startsWith("diff ") ||
+          ln.startsWith("index ") ||
+          ln.startsWith("+++") ||
+          ln.startsWith("---") ||
+          ln.startsWith("new file") ||
+          ln.startsWith("deleted") ||
+          ln.startsWith("similarity") ||
+          ln.startsWith("rename ")
+        )
+          cls = "text-muted-foreground";
+        return (
+          <div key={i} className={cn("whitespace-pre px-4", cls)}>
+            {ln || " "}
+          </div>
+        );
+      })}
+    </div>
+  );
+}

@@ -1,0 +1,241 @@
+using System.Diagnostics;
+using System.Windows.Forms;
+using ClaudeWeb.Server.Auth;
+using ClaudeWeb.Server.FileSystem;
+using ClaudeWeb.Server.Logging;
+using ClaudeWeb.Server.Sessions;
+using ClaudeWeb.Server.Tray;
+using Microsoft.Extensions.Hosting.WindowsServices;
+
+namespace ClaudeWeb.Server;
+
+internal static class Program
+{
+    [STAThread]
+    private static void Main(string[] args)
+    {
+        var isService = WindowsServiceHelpers.IsWindowsService();
+        var contentRoot = ResolveContentRoot();
+        var port = GetPort(contentRoot);
+
+        // Single-instance for the interactive tray: a second launch just opens the UI and exits.
+        Mutex? mutex = null;
+        if (!isService)
+        {
+            mutex = new Mutex(true, "ClaudeWeb.SingleInstance.v1", out var isNew);
+            if (!isNew)
+            {
+                OpenBrowser($"http://localhost:{port}");
+                return;
+            }
+        }
+
+        var app = BuildApp(args, contentRoot);
+
+        if (isService)
+        {
+            app.Run(); // headless: block on the web host
+            return;
+        }
+
+        // Interactive: start the host, then run the tray message loop on this STA thread.
+        app.Start();
+        Application.SetHighDpiMode(HighDpiMode.SystemAware);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        using (var tray = new TrayApplicationContext(app, $"http://localhost:{port}"))
+            Application.Run(tray);
+
+        try { app.StopAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult(); } catch { }
+        mutex?.Dispose();
+    }
+
+    private static WebApplication BuildApp(string[] args, string contentRoot)
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+        {
+            Args = args,
+            ContentRootPath = contentRoot,
+        });
+
+        // Run as a Windows service when hosted by the SCM; a no-op when launched interactively.
+        builder.Host.UseWindowsService(o => o.ServiceName = "ClaudeWeb");
+
+        // No console in the WinExe build — keep a diagnostic trail on disk.
+        var logDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "logs");
+        builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(logDir, "claudeweb.log")));
+
+        var urls = builder.Configuration["Server:Urls"] ?? "http://0.0.0.0:5099";
+        builder.WebHost.UseUrls(urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+        var authOptions = builder.Configuration.GetSection("Auth").Get<AuthOptions>() ?? new AuthOptions();
+        var sessionOptions = builder.Configuration.GetSection("Sessions").Get<SessionManagerOptions>() ?? new SessionManagerOptions();
+
+        builder.Services.AddSingleton(authOptions);
+        builder.Services.AddSingleton<TokenStore>();
+        builder.Services.AddSingleton(sessionOptions);
+        builder.Services.AddSingleton<SessionManager>();
+        builder.Services.ConfigureHttpJsonOptions(o =>
+            o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+
+        var app = builder.Build();
+        app.UseMiddleware<TokenAuthMiddleware>();
+        MapEndpoints(app);
+        app.UseDefaultFiles();
+        app.UseStaticFiles();
+        app.MapFallbackToFile("index.html");
+        return app;
+    }
+
+    private static void MapEndpoints(WebApplication app)
+    {
+        app.MapPost("/api/auth/login", (LoginRequest body, TokenStore tokens) =>
+        {
+            var token = tokens.Login(body.Password);
+            return token is null ? Results.Unauthorized() : Results.Ok(new { token });
+        });
+
+        app.MapPost("/api/auth/logout", (HttpContext ctx, TokenStore tokens) =>
+        {
+            var header = ctx.Request.Headers.Authorization.ToString();
+            if (header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                tokens.Revoke(header["Bearer ".Length..].Trim());
+            return Results.Ok();
+        });
+
+        app.MapGet("/api/auth/config", (TokenStore tokens) =>
+            Results.Ok(new { authRequired = !tokens.AuthDisabled }));
+
+        app.MapGet("/api/sessions", (SessionManager mgr) => Results.Ok(mgr.List()));
+
+        app.MapGet("/api/sessions/{id}", (string id, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            return info is null ? Results.NotFound() : Results.Ok(info);
+        });
+
+        app.MapPost("/api/sessions", (CreateSessionRequest req, SessionManager mgr) =>
+        {
+            try
+            {
+                var info = mgr.Create(req);
+                return Results.Created($"/api/sessions/{info.Id}", info);
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        // Stop the claude process and forget the session.
+        app.MapDelete("/api/sessions/{id}", (string id, SessionManager mgr) =>
+            mgr.Remove(id, stopProcess: true) ? Results.Ok() : Results.NotFound());
+
+        // Forget the session but leave its Remote Control process running.
+        app.MapPost("/api/sessions/{id}/detach", (string id, SessionManager mgr) =>
+            mgr.Remove(id, stopProcess: false) ? Results.Ok() : Results.NotFound());
+
+        var defaultFolder = app.Configuration["FileSystem:DefaultFolder"];
+        app.MapGet("/api/fs/browse", (string? path) => Results.Ok(FileSystemBrowser.Browse(path, defaultFolder)));
+
+        // ---- Per-session file browsing (confined to the session's working directory) --------
+        app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            var listing = SessionFileBrowser.List(info.WorkingDirectory, path);
+            return listing is null ? Results.NotFound() : Results.Ok(listing);
+        });
+
+        app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            var full = SessionFileBrowser.ResolveSafe(info.WorkingDirectory, path);
+            if (full is null || !File.Exists(full)) return Results.NotFound();
+
+            var contentType = SessionFileBrowser.ContentType(full);
+            var name = Path.GetFileName(full);
+            return download == true
+                ? Results.File(full, contentType, fileDownloadName: name, enableRangeProcessing: true)
+                : Results.File(full, contentType, enableRangeProcessing: true);
+        });
+
+        app.MapGet("/api/sessions/{id}/fs/search", (string id, string q, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            return info is null
+                ? Results.NotFound()
+                : Results.Ok(new { entries = SessionFileBrowser.Search(info.WorkingDirectory, q) });
+        });
+
+        app.MapPost("/api/sessions/{id}/fs/write", (string id, FileWriteRequest body, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            return SessionFileBrowser.Write(info.WorkingDirectory, body.Path, body.Content ?? "")
+                ? Results.Ok()
+                : Results.BadRequest(new { error = "invalid path" });
+        });
+
+        // Filesystem change counter — the UI polls this to auto-refresh the tree.
+        app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
+        {
+            var v = mgr.FsVersion(id);
+            return v is null ? Results.NotFound() : Results.Ok(new { version = v });
+        });
+
+        // ---- Git status / diff for the session's working directory --------------------------
+        app.MapGet("/api/sessions/{id}/git/status", (string id, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            return info is null ? Results.NotFound() : Results.Ok(GitService.Status(info.WorkingDirectory));
+        });
+
+        app.MapGet("/api/sessions/{id}/git/diff", (string id, string path, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            if (SessionFileBrowser.ResolveSafe(info.WorkingDirectory, path) is null)
+                return Results.BadRequest(new { error = "invalid path" });
+
+            var status = GitService.Status(info.WorkingDirectory);
+            if (!status.IsRepo) return Results.Ok(new GitDiff(false, path, "", ""));
+            var code = status.Files.TryGetValue(path, out var c) ? c : "";
+            return Results.Ok(GitService.Diff(info.WorkingDirectory, path, code));
+        });
+    }
+
+    // Published/tray: exe + wwwroot together → base dir. `dotnet run`: bin has no wwwroot → project dir.
+    private static string ResolveContentRoot()
+    {
+        var baseDir = AppContext.BaseDirectory;
+        return Directory.Exists(Path.Combine(baseDir, "wwwroot"))
+            ? baseDir
+            : Directory.GetCurrentDirectory();
+    }
+
+    private static int GetPort(string contentRoot)
+    {
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .SetBasePath(contentRoot)
+                .AddJsonFile("appsettings.json", optional: true)
+                .AddEnvironmentVariables()
+                .Build();
+            var first = (config["Server:Urls"] ?? "http://0.0.0.0:5099").Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+            return new Uri(first.Replace("0.0.0.0", "localhost").Replace("+", "localhost").Replace("*", "localhost")).Port;
+        }
+        catch { return 5099; }
+    }
+
+    private static void OpenBrowser(string url)
+    {
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+    }
+}
+
+internal record LoginRequest(string? Password);
+internal record FileWriteRequest(string Path, string? Content);
