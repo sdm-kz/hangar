@@ -14,12 +14,14 @@ public sealed class ClaudeSession : IDisposable
     private Process? _process;
     private FileSystemWatcher? _watcher;
     private long _fsVersion;
+    private long _processStartTicks; // identifies the exact process, guarding against PID reuse on re-attach
 
     public string Id { get; }
     public string Name { get; }
     public string WorkingDirectory { get; }
     public bool RemoteControl { get; }
     public string? Model { get; }
+    public string? InitialPrompt { get; }
     public SessionState State { get; private set; } = SessionState.Running;
     public int ProcessId { get; private set; }
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
@@ -33,6 +35,7 @@ public sealed class ClaudeSession : IDisposable
         WorkingDirectory = req.WorkingDirectory;
         RemoteControl = req.RemoteControl;
         Model = string.IsNullOrWhiteSpace(req.Model) ? null : req.Model;
+        InitialPrompt = string.IsNullOrWhiteSpace(req.InitialPrompt) ? null : req.InitialPrompt!.Trim();
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
             : req.Name!.Trim();
@@ -40,8 +43,59 @@ public sealed class ClaudeSession : IDisposable
         _log = log;
     }
 
+    /// <summary>Rehydrate a session from disk (does not launch a process — see <see cref="TryReattach"/>).</summary>
+    private ClaudeSession(PersistedSession p, ExecutableSpec exe, ILogger log)
+    {
+        Id = p.Id;
+        WorkingDirectory = p.WorkingDirectory;
+        RemoteControl = p.RemoteControl;
+        Model = p.Model;
+        InitialPrompt = p.InitialPrompt;
+        Name = p.Name;
+        CreatedAt = p.CreatedAt;
+        ProcessId = p.ProcessId;
+        _processStartTicks = p.ProcessStartTicks;
+        _exe = exe;
+        _log = log;
+    }
+
+    public static ClaudeSession FromPersisted(PersistedSession p, ExecutableSpec exe, ILogger log) => new(p, exe, log);
+
     public SessionInfo ToInfo() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, State, ProcessId, CreatedAt);
+
+    public PersistedSession ToPersisted() => new(
+        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, ProcessId, _processStartTicks, CreatedAt);
+
+    /// <summary>
+    /// Re-attach to the persisted process if it's still the same live process. Returns false when
+    /// the process has gone (or the PID was reused by an unrelated process), meaning the session
+    /// is no longer running and should be dropped.
+    /// </summary>
+    public bool TryReattach()
+    {
+        try
+        {
+            var p = Process.GetProcessById(ProcessId);
+            if (p.HasExited) { p.Dispose(); return false; }
+            // A reused PID would have a different start time than the one we recorded at launch.
+            if (_processStartTicks != 0 && p.StartTime.ToUniversalTime().Ticks != _processStartTicks)
+            {
+                p.Dispose();
+                return false;
+            }
+            _process = p;
+            AttachExitHandler();
+            State = SessionState.Running;
+            StartWatcher();
+            _log.LogInformation("Re-attached to claude session {Id} (pid {Pid})", Id, ProcessId);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public void Start()
     {
@@ -60,12 +114,8 @@ public sealed class ClaudeSession : IDisposable
         {
             ProcessId = ConsoleLauncher.Start(_exe.FileName, launchArgs, WorkingDirectory);
             _process = Process.GetProcessById(ProcessId);
-            _process.EnableRaisingEvents = true;
-            _process.Exited += (_, _) =>
-            {
-                State = SessionState.Exited;
-                _log.LogInformation("Claude session {Id} (pid {Pid}) exited", Id, ProcessId);
-            };
+            try { _processStartTicks = _process.StartTime.ToUniversalTime().Ticks; } catch { }
+            AttachExitHandler();
             State = SessionState.Running;
             StartWatcher();
         }
@@ -95,7 +145,22 @@ public sealed class ClaudeSession : IDisposable
             args.Add("--model");
             args.Add(Model);
         }
+        // The initial prompt is a positional argument and MUST come last, after all flags.
+        // Claude submits it on startup and stays interactive (works alongside --remote-control).
+        if (InitialPrompt is not null)
+            args.Add(InitialPrompt);
         return args;
+    }
+
+    private void AttachExitHandler()
+    {
+        if (_process is null) return;
+        _process.EnableRaisingEvents = true;
+        _process.Exited += (_, _) =>
+        {
+            State = SessionState.Exited;
+            _log.LogInformation("Claude session {Id} (pid {Pid}) exited", Id, ProcessId);
+        };
     }
 
     // Watch the working directory so the browser can auto-refresh when files change.

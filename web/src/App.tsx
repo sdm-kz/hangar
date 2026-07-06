@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, getToken, setToken } from "@/lib/api";
+import { getRecentSessions, removeRecentSession, type RecentSession } from "@/lib/recentSessions";
 import type { SessionInfo } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar } from "@/components/SessionSidebar";
@@ -16,6 +17,8 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
+  const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
+  const [recents, setRecents] = useState<RecentSession[]>(() => getRecentSessions());
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("claudeweb.sidebarCollapsed") === "1"
@@ -66,10 +69,26 @@ export function App() {
 
   const active = sessions.find((s) => s.id === activeId) ?? null;
 
+  function openNew(preset: RecentSession | null = null) {
+    setNewPreset(preset);
+    setNewOpen(true);
+  }
+
+  function reuseRecent(r: RecentSession) {
+    openNew(r);
+    setSidebarOpen(false);
+  }
+
+  function removeRecent(r: RecentSession) {
+    removeRecentSession(r);
+    setRecents(getRecentSessions());
+  }
+
   function onCreated(s: SessionInfo) {
     setSessions((prev) => [...prev, s]);
     setActiveId(s.id);
     setSidebarOpen(false);
+    setRecents(getRecentSessions()); // the dialog just saved this launch as a recent preset
   }
 
   async function onClose(id: string) {
@@ -105,10 +124,13 @@ export function App() {
           sessions={sessions}
           activeId={activeId}
           onSelect={setActiveId}
-          onNew={() => setNewOpen(true)}
+          onNew={() => openNew()}
           onClose={onClose}
           onLogout={onLogout}
           onCollapse={toggleCollapsed}
+          recents={recents}
+          onReuse={reuseRecent}
+          onRemoveRecent={removeRecent}
         />
       </aside>
 
@@ -124,11 +146,14 @@ export function App() {
                 setSidebarOpen(false);
               }}
               onNew={() => {
-                setNewOpen(true);
+                openNew();
                 setSidebarOpen(false);
               }}
               onClose={onClose}
               onLogout={onLogout}
+              recents={recents}
+              onReuse={reuseRecent}
+              onRemoveRecent={removeRecent}
             />
           </aside>
         </div>
@@ -145,7 +170,7 @@ export function App() {
           />
         ) : (
           <EmptyState
-            onNew={() => setNewOpen(true)}
+            onNew={() => openNew()}
             onOpenSidebar={() => setSidebarOpen(true)}
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}
@@ -153,7 +178,15 @@ export function App() {
         )}
       </main>
 
-      <NewSessionDialog open={newOpen} onOpenChange={setNewOpen} onCreated={onCreated} />
+      <NewSessionDialog
+        open={newOpen}
+        onOpenChange={(o) => {
+          setNewOpen(o);
+          if (!o) setNewPreset(null); // clear preset so the next plain "New session" starts fresh
+        }}
+        onCreated={onCreated}
+        preset={newPreset}
+      />
     </div>
   );
 }

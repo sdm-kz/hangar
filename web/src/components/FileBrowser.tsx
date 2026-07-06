@@ -448,6 +448,7 @@ function FilePreview({
 
   const kind = file ? fileKind(file.name) : "binary";
   const isMarkdown = !!file && ["md", "markdown"].includes(fileExt(file.name));
+  const isHtml = !!file && ["html", "htm"].includes(fileExt(file.name));
   const canEdit = kind === "text" && status === "idle" && text !== null;
 
   useEffect(() => {
@@ -565,13 +566,13 @@ function FilePreview({
               </div>
             )}
 
-            {isMarkdown && view === "preview" && (
+            {(isMarkdown || isHtml) && view === "preview" && (
               <div className="hidden overflow-hidden rounded-md border sm:flex">
                 <TabButton active={mdView === "rendered"} onClick={() => setMdView("rendered")}>
-                  Rendered
+                  {isHtml ? "Preview" : "Rendered"}
                 </TabButton>
                 <TabButton active={mdView === "raw"} onClick={() => setMdView("raw")}>
-                  Raw
+                  {isHtml ? "Source" : "Raw"}
                 </TabButton>
               </div>
             )}
@@ -646,6 +647,16 @@ function FilePreview({
                 <div className="prose prose-sm max-w-none p-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
                 </div>
+              ) : isHtml && mdView === "rendered" ? (
+                // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an
+                // opaque origin, so page scripts can't reach this app's token or DOM. Relative
+                // asset URLs won't resolve (no base) — self-contained pages preview best.
+                <iframe
+                  title={`Preview of ${file.name}`}
+                  srcDoc={text}
+                  sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                  className="h-full w-full border-0 bg-white"
+                />
               ) : (
                 <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
               ))}

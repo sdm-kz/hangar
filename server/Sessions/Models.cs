@@ -13,7 +13,24 @@ public sealed record CreateSessionRequest(
     string WorkingDirectory,
     string? Name = null,
     bool RemoteControl = true,
-    string? Model = null);
+    string? Model = null,
+    string? InitialPrompt = null);
+
+/// <summary>
+/// On-disk record of a launched session, used to re-attach to still-running Remote Control
+/// processes after the app (tray/service) restarts. <see cref="ProcessStartTicks"/> pins the
+/// exact process so a reused PID isn't mistaken for the original session.
+/// </summary>
+public sealed record PersistedSession(
+    string Id,
+    string Name,
+    string WorkingDirectory,
+    bool RemoteControl,
+    string? Model,
+    string? InitialPrompt,
+    int ProcessId,
+    long ProcessStartTicks,
+    DateTimeOffset CreatedAt);
 
 /// <summary>Serializable snapshot of a session, sent to the browser.</summary>
 public sealed record SessionInfo(

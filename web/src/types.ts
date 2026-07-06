@@ -16,6 +16,7 @@ export interface CreateSessionRequest {
   name?: string | null;
   remoteControl: boolean;
   model?: string | null;
+  initialPrompt?: string | null;
 }
 
 export interface DirEntry {

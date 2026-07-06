@@ -1,9 +1,11 @@
+import { useState, type ReactNode } from "react";
 import type { SessionInfo, SessionState } from "@/types";
+import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
-import { Bot, PanelLeftClose, Plus, Radio, X, LogOut } from "lucide-react";
+import { Bot, PanelLeftClose, Plus, Radio, X, LogOut, Terminal } from "lucide-react";
 
 function stateBadge(state: SessionState) {
   switch (state) {
@@ -24,6 +26,9 @@ export function SessionSidebar({
   onClose,
   onLogout,
   onCollapse,
+  recents,
+  onReuse,
+  onRemoveRecent,
 }: {
   sessions: SessionInfo[];
   activeId: string | null;
@@ -32,7 +37,12 @@ export function SessionSidebar({
   onClose: (id: string) => void;
   onLogout: () => void;
   onCollapse?: () => void;
+  recents: RecentSession[];
+  onReuse: (r: RecentSession) => void;
+  onRemoveRecent: (r: RecentSession) => void;
 }) {
+  const [tab, setTab] = useState<"sessions" | "recent">("sessions");
+
   return (
     <div className="flex h-full flex-col bg-card">
       <div className="flex items-center gap-2 border-b px-3 py-3">
@@ -59,6 +69,19 @@ export function SessionSidebar({
         </Button>
       </div>
 
+      {/* Tab switcher: active sessions vs. reusable recent presets. */}
+      <div className="flex gap-1 px-2 pb-2">
+        <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")}>
+          Sessions{sessions.length > 0 && ` (${sessions.length})`}
+        </TabButton>
+        <TabButton active={tab === "recent"} onClick={() => setTab("recent")}>
+          Recent{recents.length > 0 && ` (${recents.length})`}
+        </TabButton>
+      </div>
+
+      {tab === "recent" ? (
+        <RecentList recents={recents} onReuse={onReuse} onRemove={onRemoveRecent} />
+      ) : (
       <div className="flex-1 overflow-auto px-2 pb-2">
         {sessions.length === 0 && (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
@@ -99,12 +122,99 @@ export function SessionSidebar({
           ))}
         </div>
       </div>
+      )}
 
       <div className="flex items-center gap-1 border-t p-2">
         <Button variant="ghost" size="sm" className="flex-1 justify-start text-muted-foreground" onClick={onLogout}>
           <LogOut className="size-4" /> Sign out
         </Button>
         <ThemeToggle />
+      </div>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+        active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function RecentList({
+  recents,
+  onReuse,
+  onRemove,
+}: {
+  recents: RecentSession[];
+  onReuse: (r: RecentSession) => void;
+  onRemove: (r: RecentSession) => void;
+}) {
+  return (
+    <div className="flex-1 overflow-auto px-2 pb-2">
+      {recents.length === 0 && (
+        <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+          No recent sessions yet. Created sessions are saved here to relaunch.
+        </p>
+      )}
+      <div className="space-y-1">
+        {recents.map((r, i) => (
+          <div
+            key={i}
+            onClick={() => onReuse(r)}
+            title="Click to adjust and create"
+            className="group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-medium">{recentLabel(r)}</span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemove(r);
+                }}
+                className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                title="Remove from recent"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {r.model ? (
+                <Badge variant="secondary" className="capitalize">{r.model}</Badge>
+              ) : (
+                <Badge variant="secondary">default</Badge>
+              )}
+              {r.remoteControl && (
+                <Radio className="size-3 text-muted-foreground" aria-label="remote control" />
+              )}
+            </div>
+            {r.command && (
+              <span className="flex items-start gap-1 truncate text-[10px] text-muted-foreground">
+                <Terminal className="mt-0.5 size-2.5 shrink-0" />
+                <span className="truncate">{r.command}</span>
+              </span>
+            )}
+            <span className="truncate font-mono text-[10px] text-muted-foreground">
+              {r.workingDirectory}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { addRecentFolder, folderName, getRecentFolders, removeRecentFolder } from "@/lib/recentFolders";
+import { addRecentSession, type RecentSession } from "@/lib/recentSessions";
 import type { SessionInfo } from "@/types";
 import {
   Dialog,
@@ -12,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FolderPicker } from "./FolderPicker";
@@ -28,23 +30,36 @@ export function NewSessionDialog({
   open,
   onOpenChange,
   onCreated,
+  preset,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (s: SessionInfo) => void;
+  /** When opened from the Recent tab, prefill the form with this preset. */
+  preset?: RecentSession | null;
 }) {
   const [dir, setDir] = useState("");
   const [name, setName] = useState("");
+  const [command, setCommand] = useState("");
   const [model, setModel] = useState("");
   const [remoteControl, setRemoteControl] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
 
-  // Refresh the recent-folders list each time the dialog opens.
+  // Refresh the recent-folders list each time the dialog opens, and prefill from a preset if given.
   useEffect(() => {
-    if (open) setRecents(getRecentFolders());
-  }, [open]);
+    if (!open) return;
+    setRecents(getRecentFolders());
+    setError(null);
+    if (preset) {
+      setDir(preset.workingDirectory);
+      setName(preset.name);
+      setCommand(preset.command);
+      setModel(preset.model);
+      setRemoteControl(preset.remoteControl);
+    }
+  }, [open, preset]);
 
   async function create() {
     if (!dir.trim()) {
@@ -59,11 +74,20 @@ export function NewSessionDialog({
         name: name.trim() || null,
         remoteControl,
         model: model || null,
+        initialPrompt: command.trim() || null,
       });
-      addRecentFolder(dir.trim()); // remember for quick selection next time
+      addRecentFolder(dir.trim()); // remember folder for quick selection next time
+      addRecentSession({
+        workingDirectory: dir.trim(),
+        name: name.trim(),
+        command: command.trim(),
+        model,
+        remoteControl,
+      });
       onCreated(s);
-      // Reset for next time.
+      // Reset the transient fields for next time.
       setName("");
+      setCommand("");
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to create session");
@@ -147,6 +171,17 @@ export function NewSessionDialog({
                 ))}
               </select>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="command">Start command (optional)</Label>
+            <Textarea
+              id="command"
+              value={command}
+              placeholder="Initial prompt sent to Claude on startup, e.g. “run the tests and fix any failures”"
+              onChange={(e) => setCommand(e.target.value)}
+              className="min-h-20"
+            />
           </div>
 
           <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
