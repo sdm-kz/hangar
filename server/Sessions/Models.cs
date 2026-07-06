@@ -14,7 +14,8 @@ public sealed record CreateSessionRequest(
     string? Name = null,
     bool RemoteControl = true,
     string? Model = null,
-    string? InitialPrompt = null);
+    string? InitialPrompt = null,
+    bool AutoAccept = false);
 
 /// <summary>
 /// On-disk record of a launched session, used to re-attach to still-running Remote Control
@@ -28,6 +29,7 @@ public sealed record PersistedSession(
     bool RemoteControl,
     string? Model,
     string? InitialPrompt,
+    bool AutoAccept,
     int ProcessId,
     long ProcessStartTicks,
     DateTimeOffset CreatedAt);
@@ -39,6 +41,7 @@ public sealed record SessionInfo(
     string WorkingDirectory,
     bool RemoteControl,
     string? Model,
+    bool AutoAccept,
     SessionState State,
     int ProcessId,
     DateTimeOffset CreatedAt);

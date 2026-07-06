@@ -22,6 +22,7 @@ public sealed class ClaudeSession : IDisposable
     public bool RemoteControl { get; }
     public string? Model { get; }
     public string? InitialPrompt { get; }
+    public bool AutoAccept { get; }
     public SessionState State { get; private set; } = SessionState.Running;
     public int ProcessId { get; private set; }
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
@@ -36,6 +37,7 @@ public sealed class ClaudeSession : IDisposable
         RemoteControl = req.RemoteControl;
         Model = string.IsNullOrWhiteSpace(req.Model) ? null : req.Model;
         InitialPrompt = string.IsNullOrWhiteSpace(req.InitialPrompt) ? null : req.InitialPrompt!.Trim();
+        AutoAccept = req.AutoAccept;
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
             : req.Name!.Trim();
@@ -51,6 +53,7 @@ public sealed class ClaudeSession : IDisposable
         RemoteControl = p.RemoteControl;
         Model = p.Model;
         InitialPrompt = p.InitialPrompt;
+        AutoAccept = p.AutoAccept;
         Name = p.Name;
         CreatedAt = p.CreatedAt;
         ProcessId = p.ProcessId;
@@ -62,10 +65,10 @@ public sealed class ClaudeSession : IDisposable
     public static ClaudeSession FromPersisted(PersistedSession p, ExecutableSpec exe, ILogger log) => new(p, exe, log);
 
     public SessionInfo ToInfo() => new(
-        Id, Name, WorkingDirectory, RemoteControl, Model, State, ProcessId, CreatedAt);
+        Id, Name, WorkingDirectory, RemoteControl, Model, AutoAccept, State, ProcessId, CreatedAt);
 
     public PersistedSession ToPersisted() => new(
-        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, ProcessId, _processStartTicks, CreatedAt);
+        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, AutoAccept, ProcessId, _processStartTicks, CreatedAt);
 
     /// <summary>
     /// Re-attach to the persisted process if it's still the same live process. Returns false when
@@ -130,8 +133,14 @@ public sealed class ClaudeSession : IDisposable
     private List<string> BuildArgs()
     {
         var args = new List<string>();
-        // Deliberately no --permission-mode: bypass mode shows a blocking startup prompt and is
-        // unsafe; permission decisions are made interactively from the Claude Code app instead.
+        // We avoid the unsafe bypassPermissions mode (blocking startup prompt); permission
+        // decisions otherwise happen interactively from the Claude Code app. Auto mode opts into
+        // acceptEdits, which auto-accepts file edits without a startup prompt (the Shift+Tab mode).
+        if (AutoAccept)
+        {
+            args.Add("--permission-mode");
+            args.Add("acceptEdits");
+        }
         if (RemoteControl)
         {
             args.Add("--remote-control");

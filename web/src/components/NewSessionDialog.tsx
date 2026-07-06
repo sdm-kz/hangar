@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FolderPicker } from "./FolderPicker";
-import { History, Loader2, Radio, X } from "lucide-react";
+import { History, Loader2, Radio, X, Zap } from "lucide-react";
 
 const MODELS = [
   { value: "", label: "Default" },
@@ -43,6 +43,7 @@ export function NewSessionDialog({
   const [command, setCommand] = useState("");
   const [model, setModel] = useState("");
   const [remoteControl, setRemoteControl] = useState(true);
+  const [autoAccept, setAutoAccept] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
@@ -58,6 +59,7 @@ export function NewSessionDialog({
       setCommand(preset.command);
       setModel(preset.model);
       setRemoteControl(preset.remoteControl);
+      setAutoAccept(preset.autoAccept);
     }
   }, [open, preset]);
 
@@ -75,6 +77,7 @@ export function NewSessionDialog({
         remoteControl,
         model: model || null,
         initialPrompt: command.trim() || null,
+        autoAccept,
       });
       addRecentFolder(dir.trim()); // remember folder for quick selection next time
       addRecentSession({
@@ -83,6 +86,7 @@ export function NewSessionDialog({
         command: command.trim(),
         model,
         remoteControl,
+        autoAccept,
       });
       onCreated(s);
       // Reset the transient fields for next time.
@@ -197,6 +201,23 @@ export function NewSessionDialog({
               <p className="text-xs text-muted-foreground">
                 Start Claude with <code className="font-mono">--remote-control</code> so this session appears in
                 the Claude Code app (claude.ai/code &amp; mobile) and you control it from there.
+              </p>
+            </div>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
+            <Checkbox
+              checked={autoAccept}
+              onCheckedChange={(v) => setAutoAccept(v === true)}
+              className="mt-0.5"
+            />
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5 text-sm font-medium">
+                <Zap className="size-3.5" /> Auto mode
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Start Claude with <code className="font-mono">--permission-mode acceptEdits</code> so it
+                auto-accepts file edits without asking (the Shift+Tab “auto-accept edits” mode).
               </p>
             </div>
           </label>

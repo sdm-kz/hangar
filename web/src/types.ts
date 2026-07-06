@@ -6,6 +6,7 @@ export interface SessionInfo {
   workingDirectory: string;
   remoteControl: boolean;
   model: string | null;
+  autoAccept: boolean;
   state: SessionState;
   processId: number;
   createdAt: string;
@@ -17,6 +18,7 @@ export interface CreateSessionRequest {
   remoteControl: boolean;
   model?: string | null;
   initialPrompt?: string | null;
+  autoAccept?: boolean;
 }
 
 export interface DirEntry {
