@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
-import { Bot, PanelLeftClose, Plus, Radio, X, LogOut, Terminal } from "lucide-react";
+import { Bot, PanelLeftClose, Plus, Radio, RotateCcw, X, LogOut, Terminal } from "lucide-react";
 
 function stateBadge(state: SessionState) {
   switch (state) {
@@ -15,6 +15,8 @@ function stateBadge(state: SessionState) {
       return <Badge variant="secondary">exited</Badge>;
     case "Failed":
       return <Badge variant="destructive">failed</Badge>;
+    case "Restorable":
+      return <Badge variant="outline">closed</Badge>;
   }
 }
 
@@ -24,6 +26,7 @@ export function SessionSidebar({
   onSelect,
   onNew,
   onClose,
+  onRestore,
   onLogout,
   onCollapse,
   recents,
@@ -35,6 +38,7 @@ export function SessionSidebar({
   onSelect: (id: string) => void;
   onNew: () => void;
   onClose: (id: string) => void;
+  onRestore: (id: string) => void;
   onLogout: () => void;
   onCollapse?: () => void;
   recents: RecentSession[];
@@ -87,13 +91,17 @@ export function SessionSidebar({
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
         )}
         <div className="space-y-1">
-          {sessions.map((s) => (
+          {sessions.map((s) => {
+            const restorable = s.state === "Restorable";
+            return (
             <div
               key={s.id}
-              onClick={() => onSelect(s.id)}
+              onClick={() => (restorable ? onRestore(s.id) : onSelect(s.id))}
+              title={restorable ? "Reopen — resumes this conversation (--continue)" : undefined}
               className={cn(
                 "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
-                activeId === s.id && "border-border bg-accent"
+                activeId === s.id && !restorable && "border-border bg-accent",
+                restorable && "opacity-80"
               )}
             >
               <div className="flex items-center justify-between gap-2">
@@ -104,7 +112,7 @@ export function SessionSidebar({
                     onClose(s.id);
                   }}
                   className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                  title="Close session"
+                  title={restorable ? "Forget" : "Close session"}
                 >
                   <X className="size-3.5" />
                 </button>
@@ -114,12 +122,18 @@ export function SessionSidebar({
                 {s.remoteControl && (
                   <Radio className="size-3 text-muted-foreground" aria-label="remote control" />
                 )}
+                {restorable && (
+                  <span className="ml-auto flex items-center gap-1 text-[10px] font-medium text-muted-foreground group-hover:text-foreground">
+                    <RotateCcw className="size-3" /> Reopen
+                  </span>
+                )}
               </div>
               <span className="truncate font-mono text-[10px] text-muted-foreground">
                 {s.workingDirectory}
               </span>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
       )}

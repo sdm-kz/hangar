@@ -1,4 +1,4 @@
-export type SessionState = "Running" | "Exited" | "Failed";
+export type SessionState = "Running" | "Exited" | "Failed" | "Restorable";
 
 export interface SessionInfo {
   id: string;

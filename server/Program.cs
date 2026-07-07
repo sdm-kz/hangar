@@ -141,7 +141,21 @@ internal static class Program
             }
         });
 
-        // Stop the claude process and forget the session.
+        // Reopen a Restorable session from a previous run (relaunch with --continue).
+        app.MapPost("/api/sessions/{id}/restore", (string id, SessionManager mgr) =>
+        {
+            try
+            {
+                var info = mgr.Restore(id);
+                return info is null ? Results.NotFound() : Results.Created($"/api/sessions/{info.Id}", info);
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        // Stop the claude process and forget the session (also forgets a Restorable entry).
         app.MapDelete("/api/sessions/{id}", (string id, SessionManager mgr) =>
             mgr.Remove(id, stopProcess: true) ? Results.Ok() : Results.NotFound());
 

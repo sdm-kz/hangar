@@ -5,7 +5,12 @@ public enum SessionState
 {
     Running,
     Exited,
-    Failed
+    Failed,
+    /// <summary>
+    /// Persisted from a previous app run: the process is gone (a ConPTY child can't outlive the
+    /// host), but its launch metadata is remembered so it can be reopened with <c>--continue</c>.
+    /// </summary>
+    Restorable
 }
 
 /// <summary>Request payload for launching a new session.</summary>
@@ -15,7 +20,9 @@ public sealed record CreateSessionRequest(
     bool RemoteControl = true,
     string? Model = null,
     string? InitialPrompt = null,
-    bool AutoAccept = false);
+    bool AutoAccept = false,
+    /// <summary>Resume the folder's most recent conversation (<c>claude --continue</c>).</summary>
+    bool Continue = false);
 
 /// <summary>
 /// On-disk record of a launched session, used to re-attach to still-running Remote Control

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, sessionFileUrl } from "@/lib/api";
 import type { FileEntry } from "@/types";
 import { fileExt, fileKind, formatSize } from "@/lib/fileKind";
+import { highlightCode } from "@/lib/highlight";
+import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +34,12 @@ const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
 
 type GitFiles = Record<string, string>;
 
+// Build a minimal FileEntry from a path (used to restore a selection from the URL,
+// where we only know the path). Size is filled in once the tree/preview loads.
+function fileEntryFromPath(path: string): FileEntry {
+  return { name: path.split("/").pop() || path, path, isDir: false, size: 0 };
+}
+
 /** Two-pane file explorer: searchable, auto-refreshing directory tree + preview/edit pane. */
 export function FileBrowser({
   sessionId,
@@ -44,16 +52,39 @@ export function FileBrowser({
   onRefresh?: () => void;
   refreshToken?: number;
 }) {
-  const [selected, setSelected] = useState<FileEntry | null>(null);
+  // Restore the previewed file from the URL when it belongs to this session.
+  const [selected, setSelected] = useState<FileEntry | null>(() => {
+    const u = readUrlState();
+    return u.session === sessionId && u.file ? fileEntryFromPath(u.file) : null;
+  });
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FileEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [showChanges, setShowChanges] = useState(false);
 
+  // Path to auto-reveal in the tree on load (the URL-restored file). Captured once so
+  // it drives only the initial expansion, not later manual navigation.
+  const [expandTo] = useState<string | null>(() => {
+    const u = readUrlState();
+    return u.session === sessionId && u.file ? u.file : null;
+  });
+
+  // Select a file and mirror it into the URL.
+  const selectFile = useCallback((f: FileEntry) => {
+    setSelected(f);
+    patchUrlState({ file: f.path });
+  }, []);
+
+  // Reset when the session actually changes — never on the initial mount (nor on
+  // StrictMode's double-invoked mount effect), so a URL-restored selection survives.
+  const prevSession = useRef(sessionId);
   useEffect(() => {
+    if (prevSession.current === sessionId) return;
+    prevSession.current = sessionId;
     setSelected(null);
     setQuery("");
     setShowChanges(false);
+    patchUrlState({ file: undefined });
   }, [sessionId]);
 
   const changeCount = gitFiles ? Object.keys(gitFiles).length : 0;
@@ -141,7 +172,7 @@ export function FileBrowser({
               empty="No matches"
               gitFiles={gitFiles}
               selectedPath={selected?.path ?? null}
-              onSelect={setSelected}
+              onSelect={selectFile}
             />
           ) : showChanges ? (
             <FlatFileList
@@ -149,7 +180,7 @@ export function FileBrowser({
               empty="No changes"
               gitFiles={gitFiles}
               selectedPath={selected?.path ?? null}
-              onSelect={setSelected}
+              onSelect={selectFile}
             />
           ) : (
             <TreeLevel
@@ -158,8 +189,9 @@ export function FileBrowser({
               depth={0}
               refreshToken={refreshToken}
               selectedPath={selected?.path ?? null}
+              expandTo={expandTo}
               gitFiles={gitFiles}
-              onSelect={setSelected}
+              onSelect={selectFile}
             />
           )}
         </div>
@@ -248,6 +280,7 @@ function TreeLevel({
   depth,
   refreshToken,
   selectedPath,
+  expandTo,
   gitFiles,
   onSelect,
 }: {
@@ -256,6 +289,7 @@ function TreeLevel({
   depth: number;
   refreshToken: number;
   selectedPath: string | null;
+  expandTo: string | null;
   gitFiles?: GitFiles;
   onSelect: (f: FileEntry) => void;
 }) {
@@ -290,6 +324,7 @@ function TreeLevel({
             depth={depth}
             refreshToken={refreshToken}
             selectedPath={selectedPath}
+            expandTo={expandTo}
             gitFiles={gitFiles}
             onSelect={onSelect}
           />
@@ -314,6 +349,7 @@ function TreeDir({
   depth,
   refreshToken,
   selectedPath,
+  expandTo,
   gitFiles,
   onSelect,
 }: {
@@ -322,10 +358,12 @@ function TreeDir({
   depth: number;
   refreshToken: number;
   selectedPath: string | null;
+  expandTo: string | null;
   gitFiles?: GitFiles;
   onSelect: (f: FileEntry) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  // Auto-open when the file to reveal lives under this folder.
+  const [open, setOpen] = useState(() => !!expandTo && expandTo.startsWith(entry.path + "/"));
   return (
     <>
       <Row depth={depth} onClick={() => setOpen((o) => !o)}>
@@ -351,6 +389,7 @@ function TreeDir({
           depth={depth + 1}
           refreshToken={refreshToken}
           selectedPath={selectedPath}
+          expandTo={expandTo}
           gitFiles={gitFiles}
           onSelect={onSelect}
         />
@@ -374,8 +413,15 @@ function FileRow({
 }) {
   const kind = fileKind(entry.name);
   const Icon = kind === "image" ? ImageIcon : kind === "text" ? FileText : FileIcon;
+  // Bring a URL-restored selection into view (fires only when a row mounts already
+  // selected — normal clicks select an already-mounted row, so they don't scroll).
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView({ block: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
-    <Row depth={depth} selected={selected} onClick={() => onSelect(entry)}>
+    <Row ref={ref} depth={depth} selected={selected} onClick={() => onSelect(entry)}>
       <span className="size-3.5 shrink-0" />
       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       <span className={cn("truncate", gitStatus && STATUS_COLOR[gitStatus])}>{entry.name}</span>
@@ -384,19 +430,13 @@ function FileRow({
   );
 }
 
-function Row({
-  depth,
-  selected,
-  onClick,
-  children,
-}: {
-  depth: number;
-  selected?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+const Row = forwardRef<
+  HTMLButtonElement,
+  { depth: number; selected?: boolean; onClick: () => void; children: React.ReactNode }
+>(function Row({ depth, selected, onClick, children }, ref) {
   return (
     <button
+      ref={ref}
       onClick={onClick}
       style={{ paddingLeft: depth * 12 + 8 }}
       className={cn(
@@ -407,7 +447,7 @@ function Row({
       {children}
     </button>
   );
-}
+});
 
 function IndentedNote({ depth, children }: { depth: number; children: React.ReactNode }) {
   return (
@@ -450,6 +490,12 @@ function FilePreview({
   const isMarkdown = !!file && ["md", "markdown"].includes(fileExt(file.name));
   const isHtml = !!file && ["html", "htm"].includes(fileExt(file.name));
   const canEdit = kind === "text" && status === "idle" && text !== null;
+
+  // Syntax-highlighted HTML for the plain-text view (null for unsupported languages).
+  const highlighted = useMemo(
+    () => (file && text !== null ? highlightCode(file.name, text) : null),
+    [file, text]
+  );
 
   useEffect(() => {
     setText(null);
@@ -657,6 +703,13 @@ function FilePreview({
                   sandbox="allow-scripts allow-forms allow-popups allow-modals"
                   className="h-full w-full border-0 bg-white"
                 />
+              ) : highlighted !== null ? (
+                <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
+                  <code
+                    className="hljs bg-transparent p-0"
+                    dangerouslySetInnerHTML={{ __html: highlighted }}
+                  />
+                </pre>
               ) : (
                 <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
               ))}

@@ -25,6 +25,9 @@ public sealed class SessionManagerOptions
 public sealed class SessionManager : IDisposable
 {
     private readonly ConcurrentDictionary<string, ClaudeSession> _sessions = new();
+    // Sessions from a previous app run whose process is gone: shown as Restorable and reopened
+    // (relaunched with --continue) on demand. Kept in the state file until restored or forgotten.
+    private readonly ConcurrentDictionary<string, PersistedSession> _restorable = new();
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<SessionManager> _log;
     private readonly ExecutableSpec _exe;
@@ -52,7 +55,10 @@ public sealed class SessionManager : IDisposable
     public IReadOnlyCollection<SessionInfo> List()
     {
         foreach (var s in _sessions.Values) s.Refresh();
-        return _sessions.Values.OrderBy(s => s.CreatedAt).Select(s => s.ToInfo()).ToArray();
+        return _sessions.Values.Select(s => s.ToInfo())
+            .Concat(_restorable.Values.Select(ClaudeSession.RestorableInfo))
+            .OrderBy(i => i.CreatedAt)
+            .ToArray();
     }
 
     public SessionInfo? Get(string id)
@@ -92,17 +98,58 @@ public sealed class SessionManager : IDisposable
         return session.ToInfo();
     }
 
-    /// <summary>Remove a session. <paramref name="stopProcess"/> also kills the claude process.</summary>
-    public bool Remove(string id, bool stopProcess)
+    /// <summary>
+    /// Reopen a Restorable session from a previous run: relaunch a fresh process in the same folder
+    /// with <c>--continue</c> so it resumes the folder's most recent conversation. Returns null if
+    /// the id isn't a known restorable entry.
+    /// </summary>
+    public SessionInfo? Restore(string id)
     {
-        if (!_sessions.TryRemove(id, out var s)) return false;
-        if (stopProcess) s.Stop();
-        s.Dispose();
-        SavePersisted();
-        return true;
+        if (!_restorable.TryRemove(id, out var p)) return null;
+        try
+        {
+            return Create(new CreateSessionRequest(
+                WorkingDirectory: p.WorkingDirectory,
+                Name: p.Name,
+                RemoteControl: p.RemoteControl,
+                Model: p.Model,
+                InitialPrompt: null, // resumed via --continue; don't re-fire the old launch prompt
+                AutoAccept: p.AutoAccept,
+                Continue: true));
+        }
+        catch
+        {
+            _restorable[id] = p; // launch failed — keep it restorable
+            SavePersisted();
+            throw;
+        }
     }
 
-    // ---- Persistence: re-attach to still-running Remote Control sessions across app restarts -----
+    /// <summary>
+    /// Remove a session. <paramref name="stopProcess"/> also kills the claude process. Also forgets
+    /// a Restorable entry from a previous run (nothing to stop in that case).
+    /// </summary>
+    public bool Remove(string id, bool stopProcess)
+    {
+        if (_sessions.TryRemove(id, out var s))
+        {
+            if (stopProcess) s.Stop();
+            s.Dispose();
+            SavePersisted();
+            return true;
+        }
+        if (_restorable.TryRemove(id, out _))
+        {
+            SavePersisted();
+            return true;
+        }
+        return false;
+    }
+
+    // ---- Persistence: remember launched sessions so they can be reopened across app restarts -----
+    // A ConPTY child dies with the host, so we can't re-attach to the live process. Instead we keep
+    // each session's launch metadata and offer it as "Restorable" — reopened with --continue, which
+    // relaunches a fresh process that resumes the folder's most recent conversation.
 
     private void LoadPersisted()
     {
@@ -119,17 +166,8 @@ public sealed class SessionManager : IDisposable
         if (saved is null || saved.Count == 0) return;
 
         foreach (var p in saved)
-        {
-            var s = ClaudeSession.FromPersisted(p, _exe, _loggerFactory.CreateLogger<ClaudeSession>());
-            if (s.TryReattach())
-                _sessions[s.Id] = s;
-            else
-                s.Dispose(); // process gone — drop it
-        }
-        _log.LogInformation("Re-attached {Live}/{Total} persisted sessions", _sessions.Count, saved.Count);
-
-        // Rewrite the file so it only holds sessions that actually came back.
-        if (_sessions.Count != saved.Count) SavePersisted();
+            _restorable[p.Id] = p;
+        _log.LogInformation("Loaded {Count} restorable session(s) from a previous run", _restorable.Count);
     }
 
     private void SavePersisted()
@@ -139,10 +177,12 @@ public sealed class SessionManager : IDisposable
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_stateFile)!);
-                var list = _sessions.Values
-                    .OrderBy(s => s.CreatedAt)
-                    .Select(s => s.ToPersisted())
-                    .ToList();
+                // Persist live sessions plus any still-unrestored entries from prior runs, so they
+                // survive further restarts. Live entries win if an id somehow appears in both.
+                var live = _sessions.Values.Select(s => s.ToPersisted());
+                var liveIds = _sessions.Keys.ToHashSet();
+                var pending = _restorable.Values.Where(p => !liveIds.Contains(p.Id));
+                var list = live.Concat(pending).OrderBy(p => p.CreatedAt).ToList();
                 File.WriteAllText(_stateFile, JsonSerializer.Serialize(list, new JsonSerializerOptions { WriteIndented = true }));
             }
             catch (Exception ex)
@@ -154,7 +194,8 @@ public sealed class SessionManager : IDisposable
 
     public void Dispose()
     {
-        // Detach only: leave launched sessions running so Remote Control survives a service restart.
+        // A ConPTY child can't outlive the host, so disposing ends each claude process. Their launch
+        // metadata is already on disk (written on create), so they come back as Restorable next start.
         foreach (var s in _sessions.Values) s.Dispose();
         _sessions.Clear();
     }

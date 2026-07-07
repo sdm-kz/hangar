@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { GitStatus, SessionInfo } from "@/types";
 import { api } from "@/lib/api";
+import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { FileBrowser } from "./FileBrowser";
 import { TerminalPane } from "./TerminalPane";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Radi
 function StateBadge({ state }: { state: SessionInfo["state"] }) {
   if (state === "Running") return <Badge variant="success">running</Badge>;
   if (state === "Exited") return <Badge variant="secondary">exited</Badge>;
+  if (state === "Restorable") return <Badge variant="outline">closed</Badge>;
   return <Badge variant="destructive">failed</Badge>;
 }
 
@@ -30,7 +32,12 @@ export function SessionView({
   const [busy, setBusy] = useState(false);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [view, setView] = useState<"terminal" | "files">("terminal");
+  const [view, setView] = useState<"terminal" | "files">(() => readUrlState().tab ?? "terminal");
+
+  // Mirror the active tab into the URL.
+  useEffect(() => {
+    patchUrlState({ tab: view });
+  }, [view]);
 
   const bump = useCallback(() => setRefreshToken((t) => t + 1), []);
   const loadGit = useCallback(() => {

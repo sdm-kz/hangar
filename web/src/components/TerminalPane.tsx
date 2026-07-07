@@ -84,5 +84,12 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
-  return <div ref={hostRef} className="h-full w-full bg-[#0a0a0a] p-2" />;
+  // Padding lives on the outer wrapper, not the host: FitAddon measures the host (the xterm's
+  // parent) and only discounts padding on the .xterm element itself, so any padding here would make
+  // it overcount rows and clip the last line. The host stays padding-free and edge-to-edge.
+  return (
+    <div className="h-full w-full bg-[#0a0a0a] p-2">
+      <div ref={hostRef} className="h-full w-full overflow-hidden" />
+    </div>
+  );
 }

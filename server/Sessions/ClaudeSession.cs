@@ -8,7 +8,8 @@ namespace ClaudeWeb.Server.Sessions;
 /// (ConPTY) owned by this app, so its terminal is streamed to an in-app xterm.js terminal over a
 /// WebSocket (see <see cref="Terminal"/>). Because the pseudoconsole master is owned by this host,
 /// the session's lifetime is tied to the host — like a VS Code integrated terminal, it does not
-/// survive an app/host restart (so <see cref="TryReattach"/> no longer re-adopts sessions).
+/// survive an app/host restart. Instead its launch metadata is persisted and offered as a
+/// <see cref="SessionState.Restorable"/> entry, reopened with <c>--continue</c> (see <c>Continue</c>).
 /// <c>--remote-control</c> still works as an optional secondary control channel while alive.
 /// </summary>
 public sealed class ClaudeSession : IDisposable
@@ -31,6 +32,7 @@ public sealed class ClaudeSession : IDisposable
     public string? Model { get; }
     public string? InitialPrompt { get; }
     public bool AutoAccept { get; }
+    public bool Continue { get; }
     public SessionState State { get; private set; } = SessionState.Running;
     public int ProcessId { get; private set; }
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
@@ -46,6 +48,7 @@ public sealed class ClaudeSession : IDisposable
         Model = string.IsNullOrWhiteSpace(req.Model) ? null : req.Model;
         InitialPrompt = string.IsNullOrWhiteSpace(req.InitialPrompt) ? null : req.InitialPrompt!.Trim();
         AutoAccept = req.AutoAccept;
+        Continue = req.Continue;
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
             : req.Name!.Trim();
@@ -53,37 +56,16 @@ public sealed class ClaudeSession : IDisposable
         _log = log;
     }
 
-    /// <summary>Rehydrate a session from disk (does not launch a process — see <see cref="TryReattach"/>).</summary>
-    private ClaudeSession(PersistedSession p, ExecutableSpec exe, ILogger log)
-    {
-        Id = p.Id;
-        WorkingDirectory = p.WorkingDirectory;
-        RemoteControl = p.RemoteControl;
-        Model = p.Model;
-        InitialPrompt = p.InitialPrompt;
-        AutoAccept = p.AutoAccept;
-        Name = p.Name;
-        CreatedAt = p.CreatedAt;
-        ProcessId = p.ProcessId;
-        _processStartTicks = p.ProcessStartTicks;
-        _exe = exe;
-        _log = log;
-    }
-
-    public static ClaudeSession FromPersisted(PersistedSession p, ExecutableSpec exe, ILogger log) => new(p, exe, log);
+    /// <summary>Render a persisted entry as a <see cref="SessionState.Restorable"/> snapshot for the UI.</summary>
+    public static SessionInfo RestorableInfo(PersistedSession p) => new(
+        p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.AutoAccept,
+        SessionState.Restorable, ProcessId: 0, p.CreatedAt);
 
     public SessionInfo ToInfo() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, AutoAccept, State, ProcessId, CreatedAt);
 
     public PersistedSession ToPersisted() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, AutoAccept, ProcessId, _processStartTicks, CreatedAt);
-
-    /// <summary>
-    /// Re-attach is not possible for a ConPTY session: the pseudoconsole master is owned by this
-    /// host, so when the host restarts the child's terminal is destroyed and the process is gone.
-    /// Always returns false, so persisted sessions are dropped on startup.
-    /// </summary>
-    public bool TryReattach() => false;
 
     public void Start()
     {
@@ -119,6 +101,10 @@ public sealed class ClaudeSession : IDisposable
     private List<string> BuildArgs()
     {
         var args = new List<string>();
+        // Reopened session: resume the folder's most recent conversation instead of starting fresh.
+        // (A ConPTY child dies with the host, so "restore" relaunches the process and continues.)
+        if (Continue)
+            args.Add("--continue");
         // We avoid the unsafe bypassPermissions mode (blocking startup prompt); permission
         // decisions otherwise happen interactively from the Claude Code app. Auto mode opts into
         // acceptEdits, which auto-accepts file edits without a startup prompt (the Shift+Tab mode).
@@ -142,7 +128,8 @@ public sealed class ClaudeSession : IDisposable
         }
         // The initial prompt is a positional argument and MUST come last, after all flags.
         // Claude submits it on startup and stays interactive (works alongside --remote-control).
-        if (InitialPrompt is not null)
+        // Skipped when continuing so we don't re-fire the original launch prompt onto the resumed run.
+        if (InitialPrompt is not null && !Continue)
             args.Add(InitialPrompt);
         return args;
     }

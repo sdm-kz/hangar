@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, getToken, setToken } from "@/lib/api";
 import { getRecentSessions, removeRecentSession, type RecentSession } from "@/lib/recentSessions";
+import { readUrlState, patchUrlState } from "@/lib/urlState";
 import type { SessionInfo } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar } from "@/components/SessionSidebar";
@@ -15,7 +16,7 @@ type AuthStatus = "loading" | "authed" | "anon";
 export function App() {
   const [auth, setAuth] = useState<AuthStatus>("loading");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
   const [recents, setRecents] = useState<RecentSession[]>(() => getRecentSessions());
@@ -52,12 +53,23 @@ export function App() {
     try {
       const list = await api.listSessions();
       setSessions(list);
-      setActiveId((cur) => cur ?? list[0]?.id ?? null);
+      // Keep a valid current selection (e.g. restored from the URL); otherwise auto-select the
+      // first live session, never a Restorable placeholder (it has no terminal yet).
+      setActiveId((cur) =>
+        cur && list.some((s) => s.id === cur)
+          ? cur
+          : list.find((s) => s.state !== "Restorable")?.id ?? null
+      );
     } catch {
       // 401 handled by api layer clearing token; flip to login.
       if (!getToken()) setAuth("anon");
     }
   }, []);
+
+  // Mirror the active session into the URL so a refresh/shared link restores it.
+  useEffect(() => {
+    patchUrlState({ session: activeId ?? undefined });
+  }, [activeId]);
 
   // Poll the session list so state badges (running/exited) stay fresh.
   useEffect(() => {
@@ -67,7 +79,8 @@ export function App() {
     return () => clearInterval(t);
   }, [auth, refresh]);
 
-  const active = sessions.find((s) => s.id === activeId) ?? null;
+  // A Restorable entry has no live terminal, so never treat it as the active view.
+  const active = sessions.find((s) => s.id === activeId && s.state !== "Restorable") ?? null;
 
   function openNew(preset: RecentSession | null = null) {
     setNewPreset(preset);
@@ -95,6 +108,15 @@ export function App() {
     await api.deleteSession(id).catch(() => {});
     setSessions((prev) => prev.filter((s) => s.id !== id));
     setActiveId((cur) => (cur === id ? null : cur));
+  }
+
+  // Reopen a Restorable session: it relaunches with --continue and returns a fresh live session.
+  async function onRestore(id: string) {
+    const created = await api.restoreSession(id).catch(() => null);
+    if (!created) return;
+    setSessions((prev) => [...prev.filter((s) => s.id !== id), created]);
+    setActiveId(created.id);
+    setSidebarOpen(false);
   }
 
   async function onLogout() {
@@ -126,6 +148,7 @@ export function App() {
           onSelect={setActiveId}
           onNew={() => openNew()}
           onClose={onClose}
+          onRestore={onRestore}
           onLogout={onLogout}
           onCollapse={toggleCollapsed}
           recents={recents}
@@ -150,6 +173,7 @@ export function App() {
                 setSidebarOpen(false);
               }}
               onClose={onClose}
+              onRestore={onRestore}
               onLogout={onLogout}
               recents={recents}
               onReuse={reuseRecent}

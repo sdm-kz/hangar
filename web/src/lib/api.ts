@@ -74,6 +74,10 @@ export const api = {
   createSession(req: CreateSessionRequest): Promise<SessionInfo> {
     return request("/api/sessions", { method: "POST", body: JSON.stringify(req) });
   },
+  // Reopens a Restorable session from a previous run (relaunches with --continue).
+  restoreSession(id: string): Promise<SessionInfo> {
+    return request(`/api/sessions/${id}/restore`, { method: "POST" });
+  },
   // Stops the claude process and forgets the session.
   deleteSession(id: string): Promise<void> {
     return request(`/api/sessions/${id}`, { method: "DELETE" });
