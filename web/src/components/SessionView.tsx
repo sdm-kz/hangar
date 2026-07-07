@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { GitStatus, SessionInfo } from "@/types";
 import { api } from "@/lib/api";
 import { FileBrowser } from "./FileBrowser";
+import { TerminalPane } from "./TerminalPane";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, GitBranch, Loader2, Menu, PanelLeftOpen, Radio, Square } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Radio, Square, TerminalSquare } from "lucide-react";
 
 function StateBadge({ state }: { state: SessionInfo["state"] }) {
   if (state === "Running") return <Badge variant="success">running</Badge>;
@@ -28,6 +30,7 @@ export function SessionView({
   const [busy, setBusy] = useState(false);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [view, setView] = useState<"terminal" | "files">("terminal");
 
   const bump = useCallback(() => setRefreshToken((t) => t + 1), []);
   const loadGit = useCallback(() => {
@@ -119,8 +122,20 @@ export function SessionView({
           </p>
         </div>
 
+        {/* Terminal is the primary surface; Files is the secondary view of the working directory. */}
+        <div className="flex items-center rounded-md border p-0.5">
+          <ViewTab active={view === "terminal"} onClick={() => setView("terminal")}>
+            <TerminalSquare className="size-4" />
+            <span className="hidden sm:inline">Terminal</span>
+          </ViewTab>
+          <ViewTab active={view === "files"} onClick={() => setView("files")}>
+            <FolderTree className="size-4" />
+            <span className="hidden sm:inline">Files</span>
+          </ViewTab>
+        </div>
+
         {session.remoteControl && session.state === "Running" && (
-          <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
+          <Button asChild variant="outline" size="sm" className="hidden lg:inline-flex">
             <a href="https://claude.ai/code" target="_blank" rel="noreferrer">
               <ExternalLink className="size-4" /> Open in app
             </a>
@@ -141,13 +156,40 @@ export function SessionView({
       )}
 
       <div className="min-h-0 flex-1">
-        <FileBrowser
-          sessionId={session.id}
-          gitFiles={git?.isRepo ? git.files : undefined}
-          onRefresh={onRefresh}
-          refreshToken={refreshToken}
-        />
+        {view === "terminal" ? (
+          <TerminalPane key={session.id} sessionId={session.id} />
+        ) : (
+          <FileBrowser
+            sessionId={session.id}
+            gitFiles={git?.isRepo ? git.files : undefined}
+            onRefresh={onRefresh}
+            refreshToken={refreshToken}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+function ViewTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors",
+        active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
+      )}
+    >
+      {children}
+    </button>
   );
 }

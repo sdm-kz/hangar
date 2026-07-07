@@ -22,7 +22,8 @@ internal static class Program
         Mutex? mutex = null;
         if (!isService)
         {
-            mutex = new Mutex(true, "ClaudeWeb.SingleInstance.v1", out var isNew);
+            // Port-specific so a debug instance on another port can coexist with the live app.
+            mutex = new Mutex(true, $"ClaudeWeb.SingleInstance.v1.{port}", out var isNew);
             if (!isNew)
             {
                 OpenBrowser($"http://localhost:{port}");
@@ -80,6 +81,7 @@ internal static class Program
             o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
         var app = builder.Build();
+        app.UseWebSockets();
         app.UseMiddleware<TokenAuthMiddleware>();
         MapEndpoints(app);
         app.UseDefaultFiles();
@@ -108,6 +110,17 @@ internal static class Program
             Results.Ok(new { authRequired = !tokens.AuthDisabled }));
 
         app.MapGet("/api/sessions", (SessionManager mgr) => Results.Ok(mgr.List()));
+
+        // Live terminal stream for a session. Under /hub so the existing TokenAuthMiddleware guards
+        // it (accepting ?access_token= for the WS handshake) and the vite dev proxy forwards the ws.
+        app.Map("/hub/sessions/{id}/terminal", async (string id, HttpContext ctx, SessionManager mgr) =>
+        {
+            if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
+            var term = mgr.GetTerminal(id);
+            if (term is null) { ctx.Response.StatusCode = StatusCodes.Status404NotFound; return; }
+            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, ctx.RequestAborted);
+        });
 
         app.MapGet("/api/sessions/{id}", (string id, SessionManager mgr) =>
         {

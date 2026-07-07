@@ -1,20 +1,28 @@
 using System.Diagnostics;
+using ClaudeWeb.Server.Sessions.Pty;
 
 namespace ClaudeWeb.Server.Sessions;
 
 /// <summary>
-/// A launched interactive <c>claude</c> session with Remote Control enabled. The web app only
-/// starts and tracks it — all interaction happens from the Claude Code app over Remote Control.
-/// The process runs in its own console (headless when the host is a Windows service).
+/// A launched interactive <c>claude</c> session. The process runs attached to a pseudoconsole
+/// (ConPTY) owned by this app, so its terminal is streamed to an in-app xterm.js terminal over a
+/// WebSocket (see <see cref="Terminal"/>). Because the pseudoconsole master is owned by this host,
+/// the session's lifetime is tied to the host — like a VS Code integrated terminal, it does not
+/// survive an app/host restart (so <see cref="TryReattach"/> no longer re-adopts sessions).
+/// <c>--remote-control</c> still works as an optional secondary control channel while alive.
 /// </summary>
 public sealed class ClaudeSession : IDisposable
 {
     private readonly ExecutableSpec _exe;
     private readonly ILogger _log;
     private Process? _process;
+    private TerminalChannel? _terminal;
     private FileSystemWatcher? _watcher;
     private long _fsVersion;
     private long _processStartTicks; // identifies the exact process, guarding against PID reuse on re-attach
+
+    /// <summary>The live terminal stream (ring buffer + fan-out), or null once the process is gone.</summary>
+    public TerminalChannel? Terminal => _terminal;
 
     public string Id { get; }
     public string Name { get; }
@@ -71,40 +79,17 @@ public sealed class ClaudeSession : IDisposable
         Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, AutoAccept, ProcessId, _processStartTicks, CreatedAt);
 
     /// <summary>
-    /// Re-attach to the persisted process if it's still the same live process. Returns false when
-    /// the process has gone (or the PID was reused by an unrelated process), meaning the session
-    /// is no longer running and should be dropped.
+    /// Re-attach is not possible for a ConPTY session: the pseudoconsole master is owned by this
+    /// host, so when the host restarts the child's terminal is destroyed and the process is gone.
+    /// Always returns false, so persisted sessions are dropped on startup.
     /// </summary>
-    public bool TryReattach()
-    {
-        try
-        {
-            var p = Process.GetProcessById(ProcessId);
-            if (p.HasExited) { p.Dispose(); return false; }
-            // A reused PID would have a different start time than the one we recorded at launch.
-            if (_processStartTicks != 0 && p.StartTime.ToUniversalTime().Ticks != _processStartTicks)
-            {
-                p.Dispose();
-                return false;
-            }
-            _process = p;
-            AttachExitHandler();
-            State = SessionState.Running;
-            StartWatcher();
-            _log.LogInformation("Re-attached to claude session {Id} (pid {Pid})", Id, ProcessId);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public bool TryReattach() => false;
 
     public void Start()
     {
-        // The pseudo-console wrapper the CLI runs in is just a real console: no stdio redirection,
-        // so the interactive TUI detects a terminal and (with --remote-control) registers for
-        // control from other Claude Code apps.
+        // The child runs attached to a pseudoconsole (ConPTY): it still sees an interactive terminal
+        // (so the TUI renders and --remote-control registers), but its VT stream is piped to us and
+        // broadcast to the in-app xterm.js terminal via TerminalChannel.
         var args = BuildArgs();
         // If claude is the npm .cmd shim we must invoke it via cmd.exe /c; prepend that prefix.
         var launchArgs = new List<string>(_exe.Prefix);
@@ -115,7 +100,8 @@ public sealed class ClaudeSession : IDisposable
 
         try
         {
-            ProcessId = ConsoleLauncher.Start(_exe.FileName, launchArgs, WorkingDirectory);
+            _terminal = TerminalChannel.Start(_exe.FileName, launchArgs, WorkingDirectory, _log);
+            ProcessId = _terminal.ProcessId;
             _process = Process.GetProcessById(ProcessId);
             try { _processStartTicks = _process.StartTime.ToUniversalTime().Ticks; } catch { }
             AttachExitHandler();
@@ -211,23 +197,22 @@ public sealed class ClaudeSession : IDisposable
 
     public void Stop()
     {
-        try
-        {
-            if (_process is { HasExited: false })
-                _process.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Error stopping session {Id}", Id);
-        }
+        // Killing the Job Object tears down the whole cmd.exe -> node tree in one shot.
+        try { _terminal?.Kill(); }
+        catch (Exception ex) { _log.LogWarning(ex, "Error stopping session {Id}", Id); }
         State = SessionState.Exited;
     }
 
-    /// <summary>Release our handle to the process WITHOUT killing it (the RC session keeps running).</summary>
+    /// <summary>
+    /// Dispose the pseudoconsole and job. Unlike the old detached-console model, this ends the child:
+    /// a ConPTY child cannot outlive the host that owns its pseudoconsole master.
+    /// </summary>
     public void Dispose()
     {
         try { _watcher?.Dispose(); } catch { }
         _watcher = null;
+        try { _terminal?.Dispose(); } catch { }
+        _terminal = null;
         try { _process?.Dispose(); } catch { }
         _process = null;
     }

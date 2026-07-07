@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "ClaudeWeb (debug 5199)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Server__Urls": "http://0.0.0.0:5199"
+      }
+    }
+  }
+}

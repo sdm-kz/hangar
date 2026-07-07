@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
+    <PackageReference Include="Porta.Pty" Version="1.0.7" />
   </ItemGroup>
 
   <!-- The built React app lives in wwwroot; the Web SDK includes and publishes it automatically. -->

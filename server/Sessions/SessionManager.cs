@@ -65,6 +65,10 @@ public sealed class SessionManager : IDisposable
     /// <summary>Filesystem change counter for a session's working directory (null if unknown).</summary>
     public long? FsVersion(string id) => _sessions.TryGetValue(id, out var s) ? s.FsVersion : null;
 
+    /// <summary>The live terminal stream for a session (null if unknown or no longer running).</summary>
+    public Pty.TerminalChannel? GetTerminal(string id) =>
+        _sessions.TryGetValue(id, out var s) ? s.Terminal : null;
+
     public SessionInfo Create(CreateSessionRequest req)
     {
         var dir = (req.WorkingDirectory ?? "").Trim();
