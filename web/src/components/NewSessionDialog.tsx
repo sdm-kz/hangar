@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import { addRecentFolder, folderName, getRecentFolders, removeRecentFolder } from "@/lib/recentFolders";
-import { addRecentSession, type RecentSession } from "@/lib/recentSessions";
+import { folderName } from "@/lib/recentFolders";
+import { type RecentSession } from "@/lib/recentSessions";
 import type { SessionInfo } from "@/types";
 import {
   Dialog,
@@ -76,7 +76,7 @@ export function NewSessionDialog({
   // Refresh the recent-folders list each time the dialog opens, and prefill from a preset if given.
   useEffect(() => {
     if (!open) return;
-    setRecents(getRecentFolders());
+    api.getRecents().then((r) => setRecents(r.folders)).catch(() => {});
     setError(null);
     if (preset) {
       setDir(preset.workingDirectory);
@@ -104,15 +104,19 @@ export function NewSessionDialog({
         initialPrompt: command.trim() || null,
         permissionMode,
       });
-      addRecentFolder(dir.trim()); // remember folder for quick selection next time
-      addRecentSession({
-        workingDirectory: dir.trim(),
-        name: name.trim(),
-        command: command.trim(),
-        model,
-        remoteControl,
-        permissionMode,
-      });
+      // Remember the folder + full launch preset server-side for quick reuse next time. Both are
+      // fire-and-forget: a failure here shouldn't block the (already created) session.
+      await api.addRecentFolder(dir.trim()).catch(() => {});
+      await api
+        .addRecentSession({
+          workingDirectory: dir.trim(),
+          name: name.trim(),
+          command: command.trim(),
+          model,
+          remoteControl,
+          permissionMode,
+        })
+        .catch(() => {});
       onCreated(s);
       // Reset the transient fields for next time.
       setName("");
@@ -160,9 +164,9 @@ export function NewSessionDialog({
                       <button
                         type="button"
                         title="Remove from recent"
-                        onClick={() => {
-                          removeRecentFolder(p);
-                          setRecents(getRecentFolders());
+                        onClick={async () => {
+                          const r = await api.removeRecentFolder(p).catch(() => null);
+                          if (r) setRecents(r.folders);
                         }}
                         className="shrink-0 text-muted-foreground opacity-60 hover:text-destructive hover:opacity-100"
                       >

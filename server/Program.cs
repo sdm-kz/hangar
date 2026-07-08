@@ -77,6 +77,7 @@ internal static class Program
         builder.Services.AddSingleton<TokenStore>();
         builder.Services.AddSingleton(sessionOptions);
         builder.Services.AddSingleton<SessionManager>();
+        builder.Services.AddSingleton<RecentsStore>();
         builder.Services.ConfigureHttpJsonOptions(o =>
             o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
@@ -162,6 +163,13 @@ internal static class Program
         // Forget the session but leave its Remote Control process running.
         app.MapPost("/api/sessions/{id}/detach", (string id, SessionManager mgr) =>
             mgr.Remove(id, stopProcess: false) ? Results.Ok() : Results.NotFound());
+
+        // ---- Recent launch presets & folders (shared across devices, persisted server-side) ---
+        app.MapGet("/api/recents", (RecentsStore store) => Results.Ok(store.Get()));
+        app.MapPost("/api/recents/sessions", (RecentSession body, RecentsStore store) => Results.Ok(store.AddSession(body)));
+        app.MapPost("/api/recents/sessions/remove", (RecentSession body, RecentsStore store) => Results.Ok(store.RemoveSession(body)));
+        app.MapPost("/api/recents/folders", (FolderRequest body, RecentsStore store) => Results.Ok(store.AddFolder(body.Path)));
+        app.MapPost("/api/recents/folders/remove", (FolderRequest body, RecentsStore store) => Results.Ok(store.RemoveFolder(body.Path)));
 
         var defaultFolder = app.Configuration["FileSystem:DefaultFolder"];
         app.MapGet("/api/fs/browse", (string? path) => Results.Ok(FileSystemBrowser.Browse(path, defaultFolder)));
@@ -266,3 +274,4 @@ internal static class Program
 
 internal record LoginRequest(string? Password);
 internal record FileWriteRequest(string Path, string? Content);
+internal record FolderRequest(string? Path);

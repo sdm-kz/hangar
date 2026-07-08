@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, getToken, setToken } from "@/lib/api";
-import { getRecentSessions, removeRecentSession, type RecentSession } from "@/lib/recentSessions";
+import { type RecentSession } from "@/lib/recentSessions";
+import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import type { SessionInfo } from "@/types";
 import { Login } from "@/components/Login";
@@ -19,7 +20,7 @@ export function App() {
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
-  const [recents, setRecents] = useState<RecentSession[]>(() => getRecentSessions());
+  const [recents, setRecents] = useState<RecentSession[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("claudeweb.sidebarCollapsed") === "1"
@@ -47,6 +48,15 @@ export function App() {
         setAuth(getToken() ? "authed" : "anon");
       }
     })();
+  }, []);
+
+  const loadRecents = useCallback(async () => {
+    try {
+      const r = await api.getRecents();
+      setRecents(r.sessions);
+    } catch {
+      /* ignore — recents are non-critical */
+    }
   }, []);
 
   const refresh = useCallback(async () => {
@@ -79,6 +89,16 @@ export function App() {
     return () => clearInterval(t);
   }, [auth, refresh]);
 
+  // Load the server-backed recents once authed, migrating any left over in this browser's
+  // localStorage from older builds first.
+  useEffect(() => {
+    if (auth !== "authed") return;
+    (async () => {
+      await migrateLegacyRecents().catch(() => {});
+      loadRecents();
+    })();
+  }, [auth, loadRecents]);
+
   // A Restorable entry has no live terminal, so never treat it as the active view.
   const active = sessions.find((s) => s.id === activeId && s.state !== "Restorable") ?? null;
 
@@ -92,16 +112,16 @@ export function App() {
     setSidebarOpen(false);
   }
 
-  function removeRecent(r: RecentSession) {
-    removeRecentSession(r);
-    setRecents(getRecentSessions());
+  async function removeRecent(r: RecentSession) {
+    const next = await api.removeRecentSession(r).catch(() => null);
+    if (next) setRecents(next.sessions);
   }
 
   function onCreated(s: SessionInfo) {
     setSessions((prev) => [...prev, s]);
     setActiveId(s.id);
     setSidebarOpen(false);
-    setRecents(getRecentSessions()); // the dialog just saved this launch as a recent preset
+    loadRecents(); // the dialog just saved this launch as a recent preset (server-side)
   }
 
   async function onClose(id: string) {

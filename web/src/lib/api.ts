@@ -6,6 +6,7 @@ import type {
   GitStatus,
   SessionInfo,
 } from "@/types";
+import type { Recents, RecentSession } from "@/lib/recentSessions";
 
 const TOKEN_KEY = "claudeweb.token";
 
@@ -89,6 +90,24 @@ export const api = {
   browse(path?: string): Promise<BrowseResult> {
     const q = path ? `?path=${encodeURIComponent(path)}` : "";
     return request(`/api/fs/browse${q}`);
+  },
+
+  // ---- Recent launch presets & folders (server-backed, shared across devices) ----
+  // Each mutation returns the full updated set so the caller can setState from the response.
+  getRecents(): Promise<Recents> {
+    return request("/api/recents");
+  },
+  addRecentSession(r: RecentSession): Promise<Recents> {
+    return request("/api/recents/sessions", { method: "POST", body: JSON.stringify(r) });
+  },
+  removeRecentSession(r: RecentSession): Promise<Recents> {
+    return request("/api/recents/sessions/remove", { method: "POST", body: JSON.stringify(r) });
+  },
+  addRecentFolder(path: string): Promise<Recents> {
+    return request("/api/recents/folders", { method: "POST", body: JSON.stringify({ path }) });
+  },
+  removeRecentFolder(path: string): Promise<Recents> {
+    return request("/api/recents/folders/remove", { method: "POST", body: JSON.stringify({ path }) });
   },
 
   // ---- Per-session files ----
