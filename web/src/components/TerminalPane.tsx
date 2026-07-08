@@ -1,8 +1,44 @@
 import { useEffect, useRef } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { getToken } from "@/lib/api";
+import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
+
+// xterm palettes that track the site theme. The dark one keeps xterm's default ANSI colors (tuned
+// for a dark background); the light one remaps the 16 ANSI colors (GitHub-Light-ish) so output
+// stays legible on white — the defaults wash out (bright white/yellow) on a light background.
+const TERM_THEMES: Record<Theme, ITheme> = {
+  dark: {
+    background: "#0a0a0a",
+    foreground: "#e4e4e7",
+    cursor: "#e4e4e7",
+    selectionBackground: "#3f3f46",
+  },
+  light: {
+    background: "#ffffff",
+    foreground: "#24292e",
+    cursor: "#24292e",
+    cursorAccent: "#ffffff",
+    selectionBackground: "#b3d7ff",
+    black: "#24292e",
+    red: "#d73a49",
+    green: "#22863a",
+    yellow: "#b08800",
+    blue: "#0366d6",
+    magenta: "#6f42c1",
+    cyan: "#1b7c83",
+    white: "#6a737d",
+    brightBlack: "#959da5",
+    brightRed: "#cb2431",
+    brightGreen: "#28a745",
+    brightYellow: "#dbab09",
+    brightBlue: "#2188ff",
+    brightMagenta: "#8a63d2",
+    brightCyan: "#3192aa",
+    brightWhite: "#24292e",
+  },
+};
 
 /**
  * Live terminal for a session: an xterm.js terminal wired to the ConPTY-backed WebSocket at
@@ -22,7 +58,11 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
         'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
       fontSize: 13,
       scrollback: 10000,
-      theme: { background: "#0a0a0a", foreground: "#e4e4e7" },
+      theme: TERM_THEMES[getTheme()],
+    });
+    // Re-theme live when the site theme is toggled.
+    const themeSub = subscribeTheme((t) => {
+      term.options.theme = TERM_THEMES[t];
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -74,6 +114,7 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
 
     return () => {
       ro.disconnect();
+      themeSub();
       dataSub.dispose();
       try {
         ws.close();
@@ -88,7 +129,7 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
   // parent) and only discounts padding on the .xterm element itself, so any padding here would make
   // it overcount rows and clip the last line. The host stays padding-free and edge-to-edge.
   return (
-    <div className="h-full w-full bg-[#0a0a0a] p-2">
+    <div className="h-full w-full bg-white p-2 dark:bg-[#0a0a0a]">
       <div ref={hostRef} className="h-full w-full overflow-hidden" />
     </div>
   );
