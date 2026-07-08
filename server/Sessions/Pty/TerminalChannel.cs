@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 
 namespace ClaudeWeb.Server.Sessions.Pty;
@@ -8,7 +10,7 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 /// of subscribers. Input from any viewer is written back to the one PTY. This gives tmux-attach
 /// semantics — a session can be viewed from several browser tabs/devices at once.
 /// </summary>
-public sealed class TerminalChannel : IDisposable
+public sealed partial class TerminalChannel : IDisposable
 {
     private const int RingCapacity = 512 * 1024; // recent VT bytes kept for reconnect replay
 
@@ -19,6 +21,17 @@ public sealed class TerminalChannel : IDisposable
     private readonly object _lock = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _completed;
+
+    // Claude prints its Remote Control deep link (…/code/session_<id>) once at startup; we sniff it
+    // out of the raw VT stream so the UI can offer an "Open in app" link straight to this session.
+    private string? _remoteUrl;
+    private string _urlScanTail = ""; // carries a partial URL across the 8 KB read boundary
+
+    /// <summary>The claude.ai deep link for this session, once it has been printed; otherwise null.</summary>
+    public string? RemoteUrl { get { lock (_lock) return _remoteUrl; } }
+
+    [GeneratedRegex(@"https://claude\.ai/code/session_[A-Za-z0-9_-]+")]
+    private static partial Regex RemoteUrlRegex();
 
     public int ProcessId => _pty.ProcessId;
     public short Cols { get; private set; } = 120;
@@ -55,6 +68,7 @@ public sealed class TerminalChannel : IDisposable
                 {
                     _ring.Append(chunk);
                     foreach (var w in _subs.Values) w.TryWrite(chunk);
+                    SniffRemoteUrl(buf, n);
                 }
             }
         }
@@ -70,6 +84,26 @@ public sealed class TerminalChannel : IDisposable
                 foreach (var w in _subs.Values) w.TryComplete();
             }
         }
+    }
+
+    // Scan freshly-read bytes for the claude.ai deep link. The URL is contiguous ASCII even when
+    // wrapped in OSC-8 hyperlink escapes, but an 8 KB read can split it, so we keep a small tail of
+    // the previous scan window and prepend it. Called under _lock; runs only until the URL is found.
+    private void SniffRemoteUrl(byte[] buf, int n)
+    {
+        if (_remoteUrl is not null) return;
+        // Latin1 maps each byte 1:1 to a char, so byte offsets and the URL's ASCII run are preserved.
+        var text = _urlScanTail + Encoding.Latin1.GetString(buf, 0, n);
+        var m = RemoteUrlRegex().Match(text);
+        if (m.Success)
+        {
+            _remoteUrl = m.Value;
+            _urlScanTail = "";
+            _log.LogInformation("Captured Remote Control URL for pid {Pid}: {Url}", _pty.ProcessId, _remoteUrl);
+            return;
+        }
+        // Retain enough of the tail to reconstruct a URL that straddles this read boundary.
+        _urlScanTail = text.Length > 256 ? text[^256..] : text;
     }
 
     /// <summary>Attach a viewer: returns the current scrollback plus a live stream of subsequent output.</summary>

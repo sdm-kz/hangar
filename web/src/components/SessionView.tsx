@@ -143,7 +143,7 @@ export function SessionView({
 
         {session.remoteControl && session.state === "Running" && (
           <Button asChild variant="outline" size="sm" className="hidden lg:inline-flex">
-            <a href="https://claude.ai/code" target="_blank" rel="noreferrer">
+            <a href={session.remoteUrl ?? "https://claude.ai/code"} target="_blank" rel="noreferrer">
               <ExternalLink className="size-4" /> Open in app
             </a>
           </Button>

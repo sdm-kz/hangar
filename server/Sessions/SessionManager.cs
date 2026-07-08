@@ -87,6 +87,11 @@ public sealed class SessionManager : IDisposable
         if (_options.AutoTrustFolders)
             ClaudeTrustStore.EnsureTrusted(fullDir, _log);
 
+        // Bypass mode launches with --dangerously-skip-permissions; pre-accept the one-time bypass
+        // warning so the headless session doesn't block on its acceptance screen.
+        if (ClaudeSession.NormalizeMode(req.PermissionMode) == "bypassPermissions")
+            ClaudeBypassStore.EnsurePromptSuppressed(_log);
+
         var session = new ClaudeSession(
             req with { WorkingDirectory = fullDir },
             _exe,
@@ -114,7 +119,7 @@ public sealed class SessionManager : IDisposable
                 RemoteControl: p.RemoteControl,
                 Model: p.Model,
                 InitialPrompt: null, // resumed via --continue; don't re-fire the old launch prompt
-                AutoAccept: p.AutoAccept,
+                PermissionMode: p.PermissionMode,
                 Continue: true));
         }
         catch

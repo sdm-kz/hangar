@@ -26,6 +26,31 @@ const MODELS = [
   { value: "haiku", label: "Haiku" },
 ];
 
+// How much the session runs unattended. Auto is the default: it auto-approves routine work but
+// still stops for genuinely destructive actions. Descriptions surface under the dropdown.
+const PERMISSION_MODES = [
+  {
+    value: "auto",
+    label: "Auto",
+    hint: "Auto-approves routine actions (edits, most commands) but still asks before genuinely destructive ones like force-push or production deploys.",
+  },
+  {
+    value: "default",
+    label: "Ask each time",
+    hint: "Claude asks permission for each action — approve them interactively from the Claude Code app.",
+  },
+  {
+    value: "acceptEdits",
+    label: "Accept edits",
+    hint: "Auto-accepts file edits without asking, but still prompts for bash commands and other actions.",
+  },
+  {
+    value: "bypassPermissions",
+    label: "Bypass all (dangerous)",
+    hint: "Runs fully unattended — bypasses ALL permission prompts (edits, bash, everything). Claude can run any command without asking.",
+  },
+];
+
 export function NewSessionDialog({
   open,
   onOpenChange,
@@ -43,7 +68,7 @@ export function NewSessionDialog({
   const [command, setCommand] = useState("");
   const [model, setModel] = useState("");
   const [remoteControl, setRemoteControl] = useState(true);
-  const [autoAccept, setAutoAccept] = useState(false);
+  const [permissionMode, setPermissionMode] = useState("auto");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
@@ -59,7 +84,7 @@ export function NewSessionDialog({
       setCommand(preset.command);
       setModel(preset.model);
       setRemoteControl(preset.remoteControl);
-      setAutoAccept(preset.autoAccept);
+      setPermissionMode(preset.permissionMode || "auto");
     }
   }, [open, preset]);
 
@@ -77,7 +102,7 @@ export function NewSessionDialog({
         remoteControl,
         model: model || null,
         initialPrompt: command.trim() || null,
-        autoAccept,
+        permissionMode,
       });
       addRecentFolder(dir.trim()); // remember folder for quick selection next time
       addRecentSession({
@@ -86,7 +111,7 @@ export function NewSessionDialog({
         command: command.trim(),
         model,
         remoteControl,
-        autoAccept,
+        permissionMode,
       });
       onCreated(s);
       // Reset the transient fields for next time.
@@ -205,22 +230,25 @@ export function NewSessionDialog({
             </div>
           </label>
 
-          <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
-            <Checkbox
-              checked={autoAccept}
-              onCheckedChange={(v) => setAutoAccept(v === true)}
-              className="mt-0.5"
-            />
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <Zap className="size-3.5" /> Auto mode
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Start Claude with <code className="font-mono">--permission-mode acceptEdits</code> so it
-                auto-accepts file edits without asking (the Shift+Tab “auto-accept edits” mode).
-              </p>
+          <div className="space-y-2 rounded-lg border p-3">
+            <div className="flex items-center gap-1.5 text-sm font-medium">
+              <Zap className="size-3.5" /> Permission mode
             </div>
-          </label>
+            <select
+              value={permissionMode}
+              onChange={(e) => setPermissionMode(e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {PERMISSION_MODES.map((m) => (
+                <option key={m.value} value={m.value} className="bg-popover text-popover-foreground">
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              {PERMISSION_MODES.find((m) => m.value === permissionMode)?.hint}
+            </p>
+          </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>

@@ -31,7 +31,8 @@ public sealed class ClaudeSession : IDisposable
     public bool RemoteControl { get; }
     public string? Model { get; }
     public string? InitialPrompt { get; }
-    public bool AutoAccept { get; }
+    /// <summary>Normalized permission mode: default | auto | acceptEdits | bypassPermissions.</summary>
+    public string PermissionMode { get; }
     public bool Continue { get; }
     public SessionState State { get; private set; } = SessionState.Running;
     public int ProcessId { get; private set; }
@@ -47,7 +48,7 @@ public sealed class ClaudeSession : IDisposable
         RemoteControl = req.RemoteControl;
         Model = string.IsNullOrWhiteSpace(req.Model) ? null : req.Model;
         InitialPrompt = string.IsNullOrWhiteSpace(req.InitialPrompt) ? null : req.InitialPrompt!.Trim();
-        AutoAccept = req.AutoAccept;
+        PermissionMode = NormalizeMode(req.PermissionMode);
         Continue = req.Continue;
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
@@ -58,14 +59,24 @@ public sealed class ClaudeSession : IDisposable
 
     /// <summary>Render a persisted entry as a <see cref="SessionState.Restorable"/> snapshot for the UI.</summary>
     public static SessionInfo RestorableInfo(PersistedSession p) => new(
-        p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.AutoAccept,
+        p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.PermissionMode,
         SessionState.Restorable, ProcessId: 0, p.CreatedAt);
 
     public SessionInfo ToInfo() => new(
-        Id, Name, WorkingDirectory, RemoteControl, Model, AutoAccept, State, ProcessId, CreatedAt);
+        Id, Name, WorkingDirectory, RemoteControl, Model, PermissionMode, State, ProcessId, CreatedAt,
+        RemoteUrl: _terminal?.RemoteUrl);
 
     public PersistedSession ToPersisted() => new(
-        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, AutoAccept, ProcessId, _processStartTicks, CreatedAt);
+        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt);
+
+    /// <summary>Coerce an incoming/persisted mode string to a known value; anything unknown → "default".</summary>
+    public static string NormalizeMode(string? mode) => mode switch
+    {
+        "auto" => "auto",
+        "acceptEdits" => "acceptEdits",
+        "bypassPermissions" => "bypassPermissions",
+        _ => "default",
+    };
 
     public void Start()
     {
@@ -105,13 +116,21 @@ public sealed class ClaudeSession : IDisposable
         // (A ConPTY child dies with the host, so "restore" relaunches the process and continues.)
         if (Continue)
             args.Add("--continue");
-        // We avoid the unsafe bypassPermissions mode (blocking startup prompt); permission
-        // decisions otherwise happen interactively from the Claude Code app. Auto mode opts into
-        // acceptEdits, which auto-accepts file edits without a startup prompt (the Shift+Tab mode).
-        if (AutoAccept)
+        // Permission mode controls how much the session runs unattended (there's no human at the
+        // pseudo-terminal to answer prompts). "default" leaves decisions to the interactive Claude
+        // Code app. "bypassPermissions" skips ALL checks via --dangerously-skip-permissions; its
+        // one-time acceptance screen would block startup, so SessionManager pre-writes
+        // skipDangerousModePermissionPrompt=true to ~/.claude/settings.json first (see ClaudeBypassStore).
+        switch (PermissionMode)
         {
-            args.Add("--permission-mode");
-            args.Add("acceptEdits");
+            case "auto":
+            case "acceptEdits":
+                args.Add("--permission-mode");
+                args.Add(PermissionMode);
+                break;
+            case "bypassPermissions":
+                args.Add("--dangerously-skip-permissions");
+                break;
         }
         if (RemoteControl)
         {

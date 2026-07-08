@@ -6,10 +6,11 @@ export interface SessionInfo {
   workingDirectory: string;
   remoteControl: boolean;
   model: string | null;
-  autoAccept: boolean;
+  permissionMode: string | null; // default | auto | acceptEdits | bypassPermissions
   state: SessionState;
   processId: number;
   createdAt: string;
+  remoteUrl: string | null; // claude.ai deep link to this session, once printed to its terminal
 }
 
 export interface CreateSessionRequest {
@@ -18,7 +19,7 @@ export interface CreateSessionRequest {
   remoteControl: boolean;
   model?: string | null;
   initialPrompt?: string | null;
-  autoAccept?: boolean;
+  permissionMode?: string | null;
 }
 
 export interface DirEntry {

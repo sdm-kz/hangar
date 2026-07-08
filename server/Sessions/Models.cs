@@ -20,7 +20,8 @@ public sealed record CreateSessionRequest(
     bool RemoteControl = true,
     string? Model = null,
     string? InitialPrompt = null,
-    bool AutoAccept = false,
+    /// <summary>Permission mode: default | auto | acceptEdits | bypassPermissions (null = default).</summary>
+    string? PermissionMode = null,
     /// <summary>Resume the folder's most recent conversation (<c>claude --continue</c>).</summary>
     bool Continue = false);
 
@@ -36,7 +37,7 @@ public sealed record PersistedSession(
     bool RemoteControl,
     string? Model,
     string? InitialPrompt,
-    bool AutoAccept,
+    string? PermissionMode,
     int ProcessId,
     long ProcessStartTicks,
     DateTimeOffset CreatedAt);
@@ -48,7 +49,10 @@ public sealed record SessionInfo(
     string WorkingDirectory,
     bool RemoteControl,
     string? Model,
-    bool AutoAccept,
+    /// <summary>Permission mode the session launched with (default | auto | acceptEdits | bypassPermissions).</summary>
+    string? PermissionMode,
     SessionState State,
     int ProcessId,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    /// <summary>claude.ai deep link to this session, sniffed from its terminal; null until printed.</summary>
+    string? RemoteUrl = null);
