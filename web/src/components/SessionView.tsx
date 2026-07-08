@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { GitStatus, SessionInfo } from "@/types";
 import { api } from "@/lib/api";
+import { useConfirm } from "@/components/ui/confirm";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { FileBrowser } from "./FileBrowser";
 import { TerminalPane } from "./TerminalPane";
@@ -29,6 +30,7 @@ export function SessionView({
   onToggleCollapsed: () => void;
   onStopped: (id: string) => void;
 }) {
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -80,6 +82,22 @@ export function SessionView({
   const changeCount = git?.isRepo ? Object.keys(git.files).length : 0;
 
   async function stop() {
+    const running = session.state === "Running";
+    const ok = await confirm({
+      title: running ? "Stop session?" : "Remove session?",
+      description: running ? (
+        <>
+          This kills the <span className="font-medium text-foreground">{session.name}</span> process.
+          {session.remoteControl && " Its Remote Control session in the Claude Code app ends too."}
+        </>
+      ) : (
+        <>
+          Remove <span className="font-medium text-foreground">{session.name}</span> from the list?
+        </>
+      ),
+      confirmLabel: running ? "Stop" : "Remove",
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await api.deleteSession(session.id);

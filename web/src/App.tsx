@@ -9,12 +9,14 @@ import { SessionSidebar } from "@/components/SessionSidebar";
 import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
 import { Bot, Loader2, Menu, PanelLeftOpen, Plus } from "lucide-react";
 
 type AuthStatus = "loading" | "authed" | "anon";
 
 export function App() {
+  const confirm = useConfirm();
   const [auth, setAuth] = useState<AuthStatus>("loading");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
@@ -125,6 +127,23 @@ export function App() {
   }
 
   async function onClose(id: string) {
+    const s = sessions.find((x) => x.id === id);
+    const running = s?.state === "Running";
+    const ok = await confirm({
+      title: running ? "Stop session?" : "Remove session?",
+      description: running ? (
+        <>
+          This kills the <span className="font-medium text-foreground">{s?.name}</span> process
+          {s?.remoteControl && " and ends its Remote Control session in the Claude Code app"}.
+        </>
+      ) : (
+        <>
+          Remove <span className="font-medium text-foreground">{s?.name}</span> from the list?
+        </>
+      ),
+      confirmLabel: running ? "Stop" : "Remove",
+    });
+    if (!ok) return;
     await api.deleteSession(id).catch(() => {});
     setSessions((prev) => prev.filter((s) => s.id !== id));
     setActiveId((cur) => (cur === id ? null : cur));
