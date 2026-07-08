@@ -148,9 +148,37 @@ The same exe detects it's running under the service manager and skips the tray, 
 | --------------------------- | ---------------------------------------------------- | -------------------- |
 | `Server:Urls`               | Kestrel bind address(es); `0.0.0.0` = LAN-reachable  | `http://0.0.0.0:5099`|
 | `Auth:Password`             | Shared login password. Empty = **no auth** (dev only)| `change-me`          |
+| `Auth:ApiKey`               | API key for `POST /api/external/sessions`. Empty = off| `""`                 |
 | `Sessions:ClaudeExecutable` | Path or command for the CLI (pin a full path here)   | `claude`             |
 | `Sessions:AutoTrustFolders` | Pre-accept Claude's workspace-trust prompt per folder| `true`               |
 | `FileSystem:DefaultFolder`  | Folder the picker opens at when creating a session   | `C:\Git`             |
+
+## Programmatic session creation (API)
+
+An external program (script, CI, automation) can launch a session without the browser login via
+`POST /api/external/sessions`, authenticated with an **API key in the `X-Api-Key` header**. Set
+`Auth:ApiKey` in `appsettings.json` to enable it (empty = the endpoint is disabled). The JSON body
+is exactly what the "New session" dialog sends:
+
+```bash
+curl -X POST http://<this-pc>:5099/api/external/sessions \
+  -H "X-Api-Key: <your-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workingDirectory": "C:\\Git\\myproject",
+    "name": "nightly-build",
+    "remoteControl": true,
+    "model": "opus",
+    "initialPrompt": "run the tests and fix any failures",
+    "permissionMode": "auto"
+  }'
+```
+
+Only `workingDirectory` is required. `model` is `opus`/`sonnet`/`haiku` (or omit for default),
+`permissionMode` is `auto`/`default`/`acceptEdits`/`bypassPermissions`. On success it returns
+`201` with the session JSON (same shape the UI uses); the session then appears in the web UI and,
+if `remoteControl` is true, in the Claude Code app. The key authorizes this endpoint only — the
+rest of `/api/*` still requires the browser bearer token.
 
 ## Security notes
 

@@ -142,6 +142,21 @@ internal static class Program
             }
         });
 
+        // External automation: create a session with an API key (X-Api-Key header). Same body as
+        // the UI's POST /api/sessions; auth is handled by TokenAuthMiddleware for /api/external/*.
+        app.MapPost("/api/external/sessions", (CreateSessionRequest req, SessionManager mgr) =>
+        {
+            try
+            {
+                var info = mgr.Create(req);
+                return Results.Created($"/api/sessions/{info.Id}", info);
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
         // Reopen a Restorable session from a previous run (relaunch with --continue).
         app.MapPost("/api/sessions/{id}/restore", (string id, SessionManager mgr) =>
         {

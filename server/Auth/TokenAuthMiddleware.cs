@@ -20,6 +20,20 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
             return;
         }
 
+        // External automation endpoints authenticate with an API key in the X-Api-Key header
+        // instead of the browser bearer token. This grants access to /api/external/* only.
+        if (path.StartsWithSegments("/api/external"))
+        {
+            if (!tokens.IsValidApiKey(ctx.Request.Headers["X-Api-Key"].ToString()))
+            {
+                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });
+                return;
+            }
+            await next(ctx);
+            return;
+        }
+
         var token = ExtractToken(ctx.Request);
         if (!tokens.IsValid(token))
         {
