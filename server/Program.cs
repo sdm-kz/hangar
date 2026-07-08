@@ -91,6 +91,9 @@ internal static class Program
         return app;
     }
 
+    private static readonly HashSet<string> AllowedImageExts =
+        new(StringComparer.OrdinalIgnoreCase) { "png", "jpg", "jpeg", "gif", "webp", "bmp" };
+
     private static void MapEndpoints(WebApplication app)
     {
         app.MapPost("/api/auth/login", (LoginRequest body, TokenStore tokens) =>
@@ -229,6 +232,30 @@ internal static class Program
                 : Results.BadRequest(new { error = "invalid path" });
         });
 
+        // Save an image (e.g. pasted into the terminal) into .claudeweb/uploads/ under the working
+        // dir, so its path can be handed to the Claude session. Body is base64 to keep JSON transport.
+        app.MapPost("/api/sessions/{id}/fs/upload-image", (string id, ImageUploadRequest body, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(body.DataBase64 ?? ""); }
+            catch { return Results.BadRequest(new { error = "invalid base64" }); }
+            if (bytes.Length == 0 || bytes.Length > 25 * 1024 * 1024)
+                return Results.BadRequest(new { error = "empty or too large" });
+
+            var ext = (body.Ext ?? "png").Trim().TrimStart('.').ToLowerInvariant();
+            if (!AllowedImageExts.Contains(ext)) ext = "png";
+            var name = $"pasted-{DateTime.Now:yyyyMMdd-HHmmss-fff}.{ext}";
+            var rel = $".claudeweb/uploads/{name}";
+
+            var full = SessionFileBrowser.WriteBytes(info.WorkingDirectory, rel, bytes);
+            return full is null
+                ? Results.BadRequest(new { error = "invalid path" })
+                : Results.Ok(new { path = rel, fullPath = full });
+        });
+
         // Filesystem change counter — the UI polls this to auto-refresh the tree.
         app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
         {
@@ -290,3 +317,4 @@ internal static class Program
 internal record LoginRequest(string? Password);
 internal record FileWriteRequest(string Path, string? Content);
 internal record FolderRequest(string? Path);
+internal record ImageUploadRequest(string? DataBase64, string? Ext);

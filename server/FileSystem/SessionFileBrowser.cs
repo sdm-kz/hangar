@@ -71,6 +71,19 @@ public static class SessionFileBrowser
         return true;
     }
 
+    /// <summary>Write bytes to a file within the root, creating parent directories as needed.
+    /// Returns the full path written, or null if the path escapes the root.</summary>
+    public static string? WriteBytes(string root, string rel, byte[] bytes)
+    {
+        var full = ResolveSafe(root, rel);
+        if (full is null) return null;
+        var dir = Path.GetDirectoryName(full);
+        if (dir is null) return null;
+        Directory.CreateDirectory(dir); // e.g. .claudeweb/uploads/ may not exist yet
+        File.WriteAllBytes(full, bytes);
+        return full;
+    }
+
     private static readonly HashSet<string> SearchSkipDirs = new(StringComparer.OrdinalIgnoreCase)
     {
         ".git", "node_modules", "bin", "obj", ".vs", ".idea", "dist", "out", ".next", "target",

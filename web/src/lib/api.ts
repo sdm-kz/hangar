@@ -132,6 +132,14 @@ export const api = {
       body: JSON.stringify({ path, content }),
     });
   },
+  // Save a pasted image under .claudeweb/uploads/ in the working dir; returns its path so we can
+  // hand it to the Claude session.
+  uploadSessionImage(id: string, dataBase64: string, ext: string): Promise<{ path: string; fullPath: string }> {
+    return request(`/api/sessions/${id}/fs/upload-image`, {
+      method: "POST",
+      body: JSON.stringify({ dataBase64, ext }),
+    });
+  },
   searchSessionFiles(id: string, q: string): Promise<FileListing> {
     return request(`/api/sessions/${id}/fs/search?q=${encodeURIComponent(q)}`);
   },

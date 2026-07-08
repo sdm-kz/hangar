@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { getToken } from "@/lib/api";
+import { api, getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
 
 // xterm palettes that track the site theme. The dark one keeps xterm's default ANSI colors (tuned
@@ -108,12 +108,41 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
         ws.send(new TextEncoder().encode(d));
     });
 
+    // Paste an image (e.g. a screenshot) into the terminal: upload it into the session's working
+    // dir, then inject its path as a bracketed paste so Claude Code picks it up (like a drag-drop).
+    // Non-image pastes fall through to xterm's normal text handling. Listens on document in the
+    // capture phase so it fires before xterm processes the paste, regardless of focus target.
+    const onPaste = async (e: ClipboardEvent) => {
+      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
+      if (!item) return;
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (!file) return;
+      const ext = file.type.split("/")[1] || "png";
+      try {
+        const dataUrl: string = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result as string);
+          r.onerror = () => rej(r.error);
+          r.readAsDataURL(file);
+        });
+        const b64 = dataUrl.split(",", 2)[1] ?? "";
+        const { fullPath } = await api.uploadSessionImage(sessionId, b64, ext);
+        if (ws.readyState === WebSocket.OPEN)
+          ws.send(new TextEncoder().encode(`\x1b[200~${fullPath}\x1b[201~`));
+      } catch {
+        term.write("\r\n\x1b[31m[image paste failed]\x1b[0m\r\n");
+      }
+    };
+    document.addEventListener("paste", onPaste, true);
+
     // Refit + notify the PTY whenever the pane resizes.
     const ro = new ResizeObserver(() => sendResize());
     ro.observe(host);
 
     return () => {
       ro.disconnect();
+      document.removeEventListener("paste", onPaste, true);
       themeSub();
       dataSub.dispose();
       try {
