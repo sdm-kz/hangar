@@ -3,6 +3,7 @@ import { api, getToken, setToken } from "@/lib/api";
 import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
+import { loadSessionOrder, saveSessionOrder, sortByOrder, move } from "@/lib/sessionOrder";
 import type { SessionInfo } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar } from "@/components/SessionSidebar";
@@ -63,7 +64,7 @@ export function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const list = await api.listSessions();
+      const list = sortByOrder(await api.listSessions(), loadSessionOrder());
       setSessions(list);
       // Keep a valid current selection (e.g. restored from the URL); otherwise auto-select the
       // first live session, never a Restorable placeholder (it has no terminal yet).
@@ -149,6 +150,27 @@ export function App() {
     setActiveId((cur) => (cur === id ? null : cur));
   }
 
+  // Drag-to-reorder the active-session list. Order is client-side (localStorage) and re-applied on
+  // every poll (see refresh), since the list itself is owned by the server.
+  const reorderSessions = useCallback(
+    (from: number, to: number) => {
+      const next = move(sessions, from, to);
+      setSessions(next);
+      saveSessionOrder(next.map((s) => s.id));
+    },
+    [sessions]
+  );
+
+  // Drag-to-reorder the recent presets. These are server-backed, so persist the new order there.
+  const reorderRecents = useCallback(
+    (from: number, to: number) => {
+      const next = move(recents, from, to);
+      setRecents(next);
+      api.reorderRecentSessions(next).catch(() => {});
+    },
+    [recents]
+  );
+
   // Reopen a Restorable session: it relaunches with --continue and returns a fresh live session.
   async function onRestore(id: string) {
     const created = await api.restoreSession(id).catch(() => null);
@@ -190,9 +212,11 @@ export function App() {
           onRestore={onRestore}
           onLogout={onLogout}
           onCollapse={toggleCollapsed}
+          onReorder={reorderSessions}
           recents={recents}
           onReuse={reuseRecent}
           onRemoveRecent={removeRecent}
+          onReorderRecent={reorderRecents}
         />
       </aside>
 
@@ -214,9 +238,11 @@ export function App() {
               onClose={onClose}
               onRestore={onRestore}
               onLogout={onLogout}
+              onReorder={reorderSessions}
               recents={recents}
               onReuse={reuseRecent}
               onRemoveRecent={removeRecent}
+              onReorderRecent={reorderRecents}
             />
           </aside>
         </div>

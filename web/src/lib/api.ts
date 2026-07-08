@@ -103,6 +103,10 @@ export const api = {
   removeRecentSession(r: RecentSession): Promise<Recents> {
     return request("/api/recents/sessions/remove", { method: "POST", body: JSON.stringify(r) });
   },
+  // Persist a user-chosen ordering of the recent presets (drag-to-reorder in the sidebar).
+  reorderRecentSessions(sessions: RecentSession[]): Promise<Recents> {
+    return request("/api/recents/sessions/reorder", { method: "POST", body: JSON.stringify(sessions) });
+  },
   addRecentFolder(path: string): Promise<Recents> {
     return request("/api/recents/folders", { method: "POST", body: JSON.stringify({ path }) });
   },

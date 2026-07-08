@@ -1,11 +1,47 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { SessionInfo, SessionState } from "@/types";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
-import { Bot, PanelLeftClose, Plus, Radio, RotateCcw, X, LogOut, Terminal } from "lucide-react";
+import { Bot, GripVertical, PanelLeftClose, Plus, Radio, RotateCcw, X, LogOut, Terminal } from "lucide-react";
+
+/**
+ * Native drag-to-reorder for a vertical list. Returns props to spread on each row; a row initiates
+ * the drag and is also a drop target. `overIndex` is the row currently hovered during a drag (for a
+ * drop indicator). onReorder(from, to) receives list indices.
+ */
+function useDragReorder(onReorder: (from: number, to: number) => void) {
+  const dragIndex = useRef<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+  return {
+    overIndex,
+    rowProps: (index: number) => ({
+      draggable: true,
+      onDragStart: (e: React.DragEvent) => {
+        dragIndex.current = index;
+        e.dataTransfer.effectAllowed = "move";
+      },
+      onDragOver: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (overIndex !== index) setOverIndex(index);
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        const from = dragIndex.current;
+        if (from !== null && from !== index) onReorder(from, index);
+        dragIndex.current = null;
+        setOverIndex(null);
+      },
+      onDragEnd: () => {
+        dragIndex.current = null;
+        setOverIndex(null);
+      },
+    }),
+  };
+}
 
 function stateBadge(state: SessionState) {
   switch (state) {
@@ -29,9 +65,11 @@ export function SessionSidebar({
   onRestore,
   onLogout,
   onCollapse,
+  onReorder,
   recents,
   onReuse,
   onRemoveRecent,
+  onReorderRecent,
 }: {
   sessions: SessionInfo[];
   activeId: string | null;
@@ -41,11 +79,14 @@ export function SessionSidebar({
   onRestore: (id: string) => void;
   onLogout: () => void;
   onCollapse?: () => void;
+  onReorder: (from: number, to: number) => void;
   recents: RecentSession[];
   onReuse: (r: RecentSession) => void;
   onRemoveRecent: (r: RecentSession) => void;
+  onReorderRecent: (from: number, to: number) => void;
 }) {
   const [tab, setTab] = useState<"sessions" | "recent">("sessions");
+  const dnd = useDragReorder(onReorder);
 
   return (
     <div className="flex h-full flex-col bg-card">
@@ -84,28 +125,33 @@ export function SessionSidebar({
       </div>
 
       {tab === "recent" ? (
-        <RecentList recents={recents} onReuse={onReuse} onRemove={onRemoveRecent} />
+        <RecentList recents={recents} onReuse={onReuse} onRemove={onRemoveRecent} onReorder={onReorderRecent} />
       ) : (
       <div className="flex-1 overflow-auto px-2 pb-2">
         {sessions.length === 0 && (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
         )}
         <div className="space-y-1">
-          {sessions.map((s) => {
+          {sessions.map((s, i) => {
             const restorable = s.state === "Restorable";
             return (
             <div
               key={s.id}
+              {...dnd.rowProps(i)}
               onClick={() => (restorable ? onRestore(s.id) : onSelect(s.id))}
               title={restorable ? "Reopen — resumes this conversation (--continue)" : undefined}
               className={cn(
                 "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
                 activeId === s.id && !restorable && "border-border bg-accent",
-                restorable && "opacity-80"
+                restorable && "opacity-80",
+                dnd.overIndex === i && "border-t-2 border-t-primary"
               )}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-medium">{s.name}</span>
+                <span className="flex min-w-0 items-center gap-1">
+                  <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground opacity-0 transition-opacity group-hover:opacity-60" />
+                  <span className="truncate font-medium">{s.name}</span>
+                </span>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -175,11 +221,14 @@ function RecentList({
   recents,
   onReuse,
   onRemove,
+  onReorder,
 }: {
   recents: RecentSession[];
   onReuse: (r: RecentSession) => void;
   onRemove: (r: RecentSession) => void;
+  onReorder: (from: number, to: number) => void;
 }) {
+  const dnd = useDragReorder(onReorder);
   return (
     <div className="flex-1 overflow-auto px-2 pb-2">
       {recents.length === 0 && (
@@ -191,12 +240,19 @@ function RecentList({
         {recents.map((r, i) => (
           <div
             key={i}
+            {...dnd.rowProps(i)}
             onClick={() => onReuse(r)}
             title="Click to adjust and create"
-            className="group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent"
+            className={cn(
+              "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
+              dnd.overIndex === i && "border-t-2 border-t-primary"
+            )}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-medium">{recentLabel(r)}</span>
+              <span className="flex min-w-0 items-center gap-1">
+                <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground opacity-0 transition-opacity group-hover:opacity-60" />
+                <span className="truncate font-medium">{recentLabel(r)}</span>
+              </span>
               <button
                 onClick={(e) => {
                   e.stopPropagation();

@@ -74,6 +74,25 @@ public sealed class RecentsStore
         }
     }
 
+    /// <summary>Reorder the presets to match the given order (by identity). Presets not named in the
+    /// order are appended in their existing order, so a stale client can't drop any.</summary>
+    public Recents ReorderSessions(IReadOnlyList<RecentSession>? ordered)
+    {
+        if (ordered is null || ordered.Count == 0) return Get();
+        lock (_lock)
+        {
+            var rank = new Dictionary<string, int>();
+            for (var i = 0; i < ordered.Count; i++)
+                rank.TryAdd(Sig(Normalize(ordered[i])), i);
+
+            _sessions = _sessions
+                .OrderBy(s => rank.TryGetValue(Sig(s), out var i) ? i : int.MaxValue)
+                .ToList();
+            Save();
+            return Snapshot();
+        }
+    }
+
     public Recents AddFolder(string? path)
     {
         var p = (path ?? "").Trim();
