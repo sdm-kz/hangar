@@ -203,10 +203,25 @@ public sealed class ClaudeSession : IDisposable
 
     public void Stop()
     {
-        // Killing the Job Object tears down the whole cmd.exe -> node tree in one shot.
+        // Tear down the whole process tree. We launch via "cmd.exe /c claude.cmd …", so the tree is
+        // cmd.exe -> claude.exe. Porta.Pty's Kill() closes the pseudoconsole, which only terminates
+        // the DIRECT child (cmd.exe) and orphans the grandchild claude.exe. Kill the tree ourselves
+        // first — while cmd.exe is still alive, so the OS can still resolve the parent->child link.
+        KillProcessTree();
         try { _terminal?.Kill(); }
         catch (Exception ex) { _log.LogWarning(ex, "Error stopping session {Id}", Id); }
         State = SessionState.Exited;
+    }
+
+    // Kill the captured root process (cmd.exe) and every descendant (claude.exe) in one shot.
+    private void KillProcessTree()
+    {
+        try
+        {
+            if (_process is { HasExited: false })
+                _process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) { _log.LogWarning(ex, "Error killing process tree for session {Id}", Id); }
     }
 
     /// <summary>
@@ -217,6 +232,8 @@ public sealed class ClaudeSession : IDisposable
     {
         try { _watcher?.Dispose(); } catch { }
         _watcher = null;
+        // Kill the tree before closing the pseudoconsole; otherwise claude.exe is orphaned (see Stop).
+        KillProcessTree();
         try { _terminal?.Dispose(); } catch { }
         _terminal = null;
         try { _process?.Dispose(); } catch { }
