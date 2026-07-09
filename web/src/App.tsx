@@ -20,6 +20,7 @@ export function App() {
   const confirm = useConfirm();
   const [auth, setAuth] = useState<AuthStatus>("loading");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
@@ -91,6 +92,27 @@ export function App() {
     const t = setInterval(refresh, 4000);
     return () => clearInterval(t);
   }, [auth, refresh]);
+
+  // Poll which sessions Claude is actively working in — separate from the list poll so the "active"
+  // dot can update quickly without re-fetching (and re-sorting) the whole list.
+  useEffect(() => {
+    if (auth !== "authed") return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const ids = await api.sessionActivity();
+        if (alive) setBusyIds(new Set(ids));
+      } catch {
+        /* ignore — the dot is non-critical */
+      }
+    };
+    tick();
+    const t = setInterval(tick, 1200);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [auth]);
 
   // Load the server-backed recents once authed, migrating any left over in this browser's
   // localStorage from older builds first.
@@ -205,6 +227,7 @@ export function App() {
       <aside className={cn("hidden w-72 shrink-0 border-r md:block", collapsed && "md:hidden")}>
         <SessionSidebar
           sessions={sessions}
+          busyIds={busyIds}
           activeId={activeId}
           onSelect={setActiveId}
           onNew={() => openNew()}
@@ -226,6 +249,7 @@ export function App() {
           <aside className="absolute left-0 top-0 h-full w-72 border-r shadow-xl">
             <SessionSidebar
               sessions={sessions}
+              busyIds={busyIds}
               activeId={activeId}
               onSelect={(id) => {
                 setActiveId(id);

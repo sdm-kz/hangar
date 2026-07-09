@@ -115,6 +115,10 @@ internal static class Program
 
         app.MapGet("/api/sessions", (SessionManager mgr) => Results.Ok(mgr.List()));
 
+        // Ids of sessions Claude is actively generating in — polled faster than the full list to drive
+        // the live "active" dot in the session sidebar.
+        app.MapGet("/api/sessions/activity", (SessionManager mgr) => Results.Ok(mgr.BusySessionIds()));
+
         // Live terminal stream for a session. Under /hub so the existing TokenAuthMiddleware guards
         // it (accepting ?access_token= for the WS handshake) and the vite dev proxy forwards the ws.
         app.Map("/hub/sessions/{id}/terminal", async (string id, HttpContext ctx, SessionManager mgr) =>

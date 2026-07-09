@@ -61,6 +61,13 @@ public sealed class SessionManager : IDisposable
             .ToArray();
     }
 
+    /// <summary>Ids of live sessions where Claude is currently generating output (for the "active" dot).</summary>
+    public IReadOnlyCollection<string> BusySessionIds() =>
+        _sessions.Values
+            .Where(s => s.State == SessionState.Running && s.Terminal?.IsBusy == true)
+            .Select(s => s.Id)
+            .ToArray();
+
     public SessionInfo? Get(string id)
     {
         if (!_sessions.TryGetValue(id, out var s)) return null;

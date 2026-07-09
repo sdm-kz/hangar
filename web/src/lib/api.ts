@@ -72,6 +72,10 @@ export const api = {
   listSessions(): Promise<SessionInfo[]> {
     return request("/api/sessions");
   },
+  // Ids of sessions Claude is actively generating in; polled frequently to drive the "active" dot.
+  sessionActivity(): Promise<string[]> {
+    return request("/api/sessions/activity");
+  },
   createSession(req: CreateSessionRequest): Promise<SessionInfo> {
     return request("/api/sessions", { method: "POST", body: JSON.stringify(req) });
   },

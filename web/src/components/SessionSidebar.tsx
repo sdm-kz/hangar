@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
-import { Bot, GripVertical, PanelLeftClose, Plus, Radio, RotateCcw, X, LogOut, Terminal } from "lucide-react";
+import { Bot, PanelLeftClose, Plus, Radio, RotateCcw, X, LogOut, Terminal } from "lucide-react";
 
 /**
  * Native drag-to-reorder for a vertical list. Returns props to spread on each row; a row initiates
@@ -58,6 +58,7 @@ function stateBadge(state: SessionState) {
 
 export function SessionSidebar({
   sessions,
+  busyIds,
   activeId,
   onSelect,
   onNew,
@@ -72,6 +73,7 @@ export function SessionSidebar({
   onReorderRecent,
 }: {
   sessions: SessionInfo[];
+  busyIds: Set<string>;
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -149,7 +151,12 @@ export function SessionSidebar({
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="flex min-w-0 items-center gap-1">
-                  <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground opacity-0 transition-opacity group-hover:opacity-60" />
+                  {busyIds.has(s.id) && !restorable && (
+                    <span
+                      className="size-2 shrink-0 rounded-full bg-emerald-500 animate-pulse"
+                      aria-label="Claude is working"
+                    />
+                  )}
                   <span className="truncate font-medium">{s.name}</span>
                 </span>
                 <button
@@ -250,7 +257,6 @@ function RecentList({
           >
             <div className="flex items-center justify-between gap-2">
               <span className="flex min-w-0 items-center gap-1">
-                <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground opacity-0 transition-opacity group-hover:opacity-60" />
                 <span className="truncate font-medium">{recentLabel(r)}</span>
               </span>
               <button

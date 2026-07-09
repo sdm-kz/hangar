@@ -22,6 +22,25 @@ public sealed partial class TerminalChannel : IDisposable
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _completed;
 
+    // Activity tracking: while Claude works its TUI spinner redraws continuously, so output keeps
+    // flowing; at an idle prompt it stops. We treat "output very recently" as busy, but suppress the
+    // signal right after input since the TUI echoes keystrokes as output (that's you typing, not Claude).
+    private const long OutputWindowMs = 1500; // output seen this recently ⇒ Claude is emitting
+    private const long InputGuardMs = 1000;   // ...unless you typed within this window (echo)
+    private long _lastOutputTick;
+    private long _lastInputTick;
+
+    /// <summary>True when Claude appears to be actively generating output (not just echoing your typing).</summary>
+    public bool IsBusy
+    {
+        get
+        {
+            var now = Environment.TickCount64;
+            return now - Volatile.Read(ref _lastOutputTick) < OutputWindowMs
+                && now - Volatile.Read(ref _lastInputTick) > InputGuardMs;
+        }
+    }
+
     // Claude prints its Remote Control deep link (…/code/session_<id>) once at startup; we sniff it
     // out of the raw VT stream so the UI can offer an "Open in app" link straight to this session.
     private string? _remoteUrl;
@@ -64,6 +83,7 @@ public sealed partial class TerminalChannel : IDisposable
                 if (n <= 0) break; // EOF: child exited / pseudoconsole closed
                 var chunk = new byte[n];
                 Array.Copy(buf, chunk, n);
+                Volatile.Write(ref _lastOutputTick, Environment.TickCount64);
                 lock (_lock)
                 {
                     _ring.Append(chunk);
@@ -128,6 +148,7 @@ public sealed partial class TerminalChannel : IDisposable
 
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
     {
+        Volatile.Write(ref _lastInputTick, Environment.TickCount64);
         await _writeLock.WaitAsync(ct);
         try
         {
