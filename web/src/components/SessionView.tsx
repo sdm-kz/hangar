@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { GitStatus, SessionInfo } from "@/types";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
@@ -8,8 +8,18 @@ import { TerminalPane } from "./TerminalPane";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Check, Copy, ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Radio, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Radio, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
+
+// Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
+const SPLIT_MIN = 280; // keep both the files panel and the terminal usable
+const SPLIT_DEFAULT = 480;
+const SPLIT_WIDTH_KEY = "claudeweb.splitFilesWidth";
+
+function readSplitWidth() {
+  const n = Number(localStorage.getItem(SPLIT_WIDTH_KEY));
+  return Number.isFinite(n) && n >= SPLIT_MIN ? n : SPLIT_DEFAULT;
+}
 
 function StateBadge({ state }: { state: SessionInfo["state"] }) {
   if (state === "Running") return <Badge variant="success">running</Badge>;
@@ -35,8 +45,40 @@ export function SessionView({
   const [busy, setBusy] = useState(false);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [view, setView] = useState<"terminal" | "files">(() => readUrlState().tab ?? "terminal");
+  const [view, setView] = useState<"terminal" | "files" | "split">(() => readUrlState().tab ?? "terminal");
   const [copiedPath, setCopiedPath] = useState(false);
+  const [splitWidth, setSplitWidth] = useState(readSplitWidth); // Files-panel width in Split view
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Drag the divider between the Files panel and the terminal (Split view, desktop); persist it.
+  const startSplitResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = readSplitWidth();
+    let width = startW;
+    const onMove = (ev: PointerEvent) => {
+      // Leave at least SPLIT_MIN for the terminal on the right.
+      const max = (contentRef.current?.clientWidth ?? Infinity) - SPLIT_MIN;
+      width = Math.min(max, Math.max(SPLIT_MIN, startW + ev.clientX - startX));
+      setSplitWidth(width);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      localStorage.setItem(SPLIT_WIDTH_KEY, String(width));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const resetSplitWidth = useCallback(() => {
+    setSplitWidth(SPLIT_DEFAULT);
+    localStorage.setItem(SPLIT_WIDTH_KEY, String(SPLIT_DEFAULT));
+  }, []);
 
   const copyPath = useCallback(async () => {
     await writeToClipboard(session.workingDirectory);
@@ -169,11 +211,16 @@ export function SessionView({
           </p>
         </div>
 
-        {/* Terminal is the primary surface; Files is the secondary view of the working directory. */}
+        {/* Terminal is the primary surface; Files is the secondary view of the working directory.
+            Split shows both side by side (desktop only). */}
         <div className="flex items-center rounded-md border p-0.5">
           <ViewTab active={view === "terminal"} onClick={() => setView("terminal")}>
             <TerminalSquare className="size-4" />
             <span className="hidden sm:inline">Terminal</span>
+          </ViewTab>
+          <ViewTab active={view === "split"} onClick={() => setView("split")} className="hidden md:flex">
+            <Columns2 className="size-4" />
+            <span className="hidden sm:inline">Split</span>
           </ViewTab>
           <ViewTab active={view === "files"} onClick={() => setView("files")}>
             <FolderTree className="size-4" />
@@ -202,17 +249,38 @@ export function SessionView({
         </div>
       )}
 
-      <div className="min-h-0 flex-1">
-        {view === "terminal" ? (
-          <TerminalPane key={session.id} sessionId={session.id} />
-        ) : (
-          <FileBrowser
-            sessionId={session.id}
-            gitFiles={git?.isRepo ? git.files : undefined}
-            onRefresh={onRefresh}
-            refreshToken={refreshToken}
+      {/* The terminal stays mounted in every view (hidden in Files) so toggling never drops its
+          connection; the Files panel is a resizable left column in Split and full-width in Files. */}
+      <div ref={contentRef} className="flex min-h-0 flex-1 flex-col md:flex-row">
+        {view !== "terminal" && (
+          <div
+            style={{ "--split-w": `${splitWidth}px` } as React.CSSProperties}
+            className={cn(
+              "flex min-h-0 min-w-0 flex-1 flex-col",
+              view === "split" && "md:w-[var(--split-w)] md:flex-none md:shrink-0"
+            )}
+          >
+            <FileBrowser
+              sessionId={session.id}
+              gitFiles={git?.isRepo ? git.files : undefined}
+              onRefresh={onRefresh}
+              refreshToken={refreshToken}
+            />
+          </div>
+        )}
+
+        {view === "split" && (
+          <div
+            onPointerDown={startSplitResize}
+            onDoubleClick={resetSplitWidth}
+            title="Drag to resize · double-click to reset"
+            className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:block"
           />
         )}
+
+        <div className={cn("min-h-0 min-w-0 flex-1", view === "files" && "hidden")}>
+          <TerminalPane key={session.id} sessionId={session.id} />
+        </div>
       </div>
     </div>
   );
@@ -221,10 +289,12 @@ export function SessionView({
 function ViewTab({
   active,
   onClick,
+  className,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  className?: string;
   children: ReactNode;
 }) {
   return (
@@ -233,7 +303,8 @@ function ViewTab({
       onClick={onClick}
       className={cn(
         "flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors",
-        active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
+        active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+        className
       )}
     >
       {children}

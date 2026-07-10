@@ -3,7 +3,7 @@
 // We use replaceState (no history spam) on the root path so a hard refresh works
 // without any server-side routing.
 
-export type TabName = "terminal" | "files";
+export type TabName = "terminal" | "files" | "split";
 
 export interface UrlState {
   session?: string;
@@ -16,7 +16,7 @@ export function readUrlState(): UrlState {
   const tab = p.get("tab");
   return {
     session: p.get("session") || undefined,
-    tab: tab === "files" || tab === "terminal" ? tab : undefined,
+    tab: tab === "files" || tab === "terminal" || tab === "split" ? tab : undefined,
     file: p.get("file") || undefined,
   };
 }

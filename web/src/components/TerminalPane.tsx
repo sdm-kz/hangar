@@ -91,6 +91,9 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
     ws.binaryType = "arraybuffer";
 
     const sendResize = () => {
+      // Skip while the pane is hidden (e.g. the Files full view keeps us mounted but
+      // display:none'd): fitting a 0-sized host would send a bogus 1x1 resize to the PTY.
+      if (host.clientWidth === 0 || host.clientHeight === 0) return;
       try {
         fit.fit();
       } catch {
