@@ -44,23 +44,67 @@ function folderLabel(dir: string): string {
 }
 
 /**
- * Group sessions by working directory, preserving the incoming (user-ordered) sequence: groups
- * appear in the order their first session appears, and each session keeps its flat-list index so
- * drag-to-reorder keeps working unchanged.
+ * Group items by working directory, preserving the incoming (user-ordered) sequence: groups appear
+ * in the order their first item appears, and each item keeps its flat-list index so drag-to-reorder
+ * keeps working unchanged.
  */
-function groupByFolder(sessions: SessionInfo[]) {
-  const groups: { dir: string; items: { s: SessionInfo; index: number }[] }[] = [];
-  const byDir = new Map<string, { dir: string; items: { s: SessionInfo; index: number }[] }>();
-  sessions.forEach((s, index) => {
-    let g = byDir.get(s.workingDirectory);
+function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
+  const groups: { dir: string; items: { item: T; index: number }[] }[] = [];
+  const byDir = new Map<string, { dir: string; items: { item: T; index: number }[] }>();
+  items.forEach((item, index) => {
+    let g = byDir.get(item.workingDirectory);
     if (!g) {
-      g = { dir: s.workingDirectory, items: [] };
-      byDir.set(s.workingDirectory, g);
+      g = { dir: item.workingDirectory, items: [] };
+      byDir.set(item.workingDirectory, g);
       groups.push(g);
     }
-    g.items.push({ s, index });
+    g.items.push({ item, index });
   });
   return groups;
+}
+
+/** Collapsible folder header shared by the grouped session and recent lists. */
+function GroupHeader({
+  dir,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  dir: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={dir}
+      className="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-muted-foreground hover:text-foreground"
+    >
+      {collapsed ? (
+        <ChevronRight className="size-3.5 shrink-0" />
+      ) : (
+        <ChevronDown className="size-3.5 shrink-0" />
+      )}
+      <FolderTree className="size-3.5 shrink-0" />
+      <span className="truncate font-mono text-[11px] font-medium">{folderLabel(dir)}</span>
+      <span className="ml-auto shrink-0 text-[10px]">{count}</span>
+    </button>
+  );
+}
+
+/** Shared collapse-set state hook for grouped lists. */
+function useCollapsedGroups() {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const toggle = (dir: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(dir)) next.delete(dir);
+      else next.add(dir);
+      return next;
+    });
+  return { collapsed, toggle };
 }
 
 /**
@@ -132,20 +176,13 @@ export function SessionSidebar({
 }) {
   const [tab, setTab] = useState<"sessions" | "recent">("sessions");
   const [grouped, setGrouped] = useState<boolean>(loadGrouped);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const { collapsed, toggle: toggleGroup } = useCollapsedGroups();
   const dnd = useDragReorder(onReorder);
 
   const toggleGrouped = () =>
     setGrouped((v) => {
       saveGrouped(!v);
       return !v;
-    });
-  const toggleGroup = (dir: string) =>
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(dir)) next.delete(dir);
-      else next.add(dir);
-      return next;
     });
 
   // A single session row. `i` is the index in the flat `sessions` list so drag-reorder is unaffected
@@ -159,20 +196,23 @@ export function SessionSidebar({
         onClick={() => (restorable ? onRestore(s.id) : onSelect(s.id))}
         title={restorable ? "Reopen — resumes this conversation (--continue)" : undefined}
         className={cn(
-          "group relative flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
+          "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
           activeId === s.id && !restorable && "border-border bg-accent",
           restorable && "opacity-80",
           dnd.overIndex === i && "border-t-2 border-t-primary"
         )}
       >
-        {busyIds.has(s.id) && !restorable && (
-          <span
-            className="absolute left-1 top-1 size-2 rounded-full bg-emerald-500 animate-pulse"
-            aria-label="Claude is working"
-          />
-        )}
         <div className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1">
+            {/* Fixed-width gutter so the title never shifts when the activity dot appears. */}
+            <span className="flex w-2.5 shrink-0 items-center justify-center">
+              {busyIds.has(s.id) && !restorable && (
+                <span
+                  className="size-2 rounded-full bg-emerald-500 animate-pulse"
+                  aria-label="Claude is working"
+                />
+              )}
+            </span>
             <span
               className={cn(
                 "truncate font-medium",
@@ -244,7 +284,8 @@ export function SessionSidebar({
         <TabButton active={tab === "recent"} onClick={() => setTab("recent")}>
           Recent{recents.length > 0 && ` (${recents.length})`}
         </TabButton>
-        {tab === "sessions" && sessions.length > 0 && (
+        {((tab === "sessions" && sessions.length > 0) ||
+          (tab === "recent" && recents.length > 0)) && (
           <Button
             variant="ghost"
             size="icon"
@@ -259,7 +300,15 @@ export function SessionSidebar({
       </div>
 
       {tab === "recent" ? (
-        <RecentList recents={recents} onReuse={onReuse} onRemove={onRemoveRecent} onReorder={onReorderRecent} />
+        <RecentList
+          recents={recents}
+          grouped={grouped}
+          collapsed={collapsed}
+          onToggleGroup={toggleGroup}
+          onReuse={onReuse}
+          onRemove={onRemoveRecent}
+          onReorder={onReorderRecent}
+        />
       ) : (
       <div className="flex-1 overflow-auto px-2 pb-2">
         {sessions.length === 0 && (
@@ -271,24 +320,15 @@ export function SessionSidebar({
               const isCollapsed = collapsed.has(g.dir);
               return (
                 <div key={g.dir}>
-                  <button
-                    type="button"
-                    onClick={() => toggleGroup(g.dir)}
-                    title={g.dir}
-                    className="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-muted-foreground hover:text-foreground"
-                  >
-                    {isCollapsed ? (
-                      <ChevronRight className="size-3.5 shrink-0" />
-                    ) : (
-                      <ChevronDown className="size-3.5 shrink-0" />
-                    )}
-                    <FolderTree className="size-3.5 shrink-0" />
-                    <span className="truncate font-mono text-[11px] font-medium">{folderLabel(g.dir)}</span>
-                    <span className="ml-auto shrink-0 text-[10px]">{g.items.length}</span>
-                  </button>
+                  <GroupHeader
+                    dir={g.dir}
+                    count={g.items.length}
+                    collapsed={isCollapsed}
+                    onToggle={() => toggleGroup(g.dir)}
+                  />
                   {!isCollapsed && (
                     <div className="mt-1 space-y-1 pl-1">
-                      {g.items.map(({ s, index }) => renderRow(s, index, false))}
+                      {g.items.map(({ item, index }) => renderRow(item, index, false))}
                     </div>
                   )}
                 </div>
@@ -336,16 +376,73 @@ function TabButton({
 
 function RecentList({
   recents,
+  grouped,
+  collapsed,
+  onToggleGroup,
   onReuse,
   onRemove,
   onReorder,
 }: {
   recents: RecentSession[];
+  grouped: boolean;
+  collapsed: Set<string>;
+  onToggleGroup: (dir: string) => void;
   onReuse: (r: RecentSession) => void;
   onRemove: (r: RecentSession) => void;
   onReorder: (from: number, to: number) => void;
 }) {
   const dnd = useDragReorder(onReorder);
+
+  // `i` is the index in the flat `recents` list so drag-reorder is unaffected by grouping;
+  // `showPath` is dropped in grouped mode where the folder is already in the header.
+  const renderRow = (r: RecentSession, i: number, showPath: boolean) => (
+    <div
+      key={i}
+      {...dnd.rowProps(i)}
+      onClick={() => onReuse(r)}
+      title="Click to adjust and create"
+      className={cn(
+        "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
+        dnd.overIndex === i && "border-t-2 border-t-primary"
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1">
+          <span className="truncate font-medium">{recentLabel(r)}</span>
+        </span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove(r);
+          }}
+          className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+          title="Remove from recent"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {r.model ? (
+          <Badge variant="secondary" className="capitalize">{r.model}</Badge>
+        ) : (
+          <Badge variant="secondary">default</Badge>
+        )}
+        {r.remoteControl && (
+          <Radio className="size-3 text-muted-foreground" aria-label="remote control" />
+        )}
+      </div>
+      {r.command && (
+        <span className="flex items-start gap-1 truncate text-[10px] text-muted-foreground">
+          <Terminal className="mt-0.5 size-2.5 shrink-0" />
+          <span className="truncate">{r.command}</span>
+        </span>
+      )}
+      {showPath && (
+        <span className="truncate font-mono text-[10px] text-muted-foreground">{r.workingDirectory}</span>
+      )}
+    </div>
+  );
+
   return (
     <div className="flex-1 overflow-auto px-2 pb-2">
       {recents.length === 0 && (
@@ -353,55 +450,30 @@ function RecentList({
           No recent sessions yet. Created sessions are saved here to relaunch.
         </p>
       )}
-      <div className="space-y-1">
-        {recents.map((r, i) => (
-          <div
-            key={i}
-            {...dnd.rowProps(i)}
-            onClick={() => onReuse(r)}
-            title="Click to adjust and create"
-            className={cn(
-              "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
-              dnd.overIndex === i && "border-t-2 border-t-primary"
-            )}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="flex min-w-0 items-center gap-1">
-                <span className="truncate font-medium">{recentLabel(r)}</span>
-              </span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemove(r);
-                }}
-                className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                title="Remove from recent"
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {r.model ? (
-                <Badge variant="secondary" className="capitalize">{r.model}</Badge>
-              ) : (
-                <Badge variant="secondary">default</Badge>
-              )}
-              {r.remoteControl && (
-                <Radio className="size-3 text-muted-foreground" aria-label="remote control" />
-              )}
-            </div>
-            {r.command && (
-              <span className="flex items-start gap-1 truncate text-[10px] text-muted-foreground">
-                <Terminal className="mt-0.5 size-2.5 shrink-0" />
-                <span className="truncate">{r.command}</span>
-              </span>
-            )}
-            <span className="truncate font-mono text-[10px] text-muted-foreground">
-              {r.workingDirectory}
-            </span>
-          </div>
-        ))}
-      </div>
+      {grouped ? (
+        <div className="space-y-2">
+          {groupByFolder(recents).map((g) => {
+            const isCollapsed = collapsed.has(g.dir);
+            return (
+              <div key={g.dir}>
+                <GroupHeader
+                  dir={g.dir}
+                  count={g.items.length}
+                  collapsed={isCollapsed}
+                  onToggle={() => onToggleGroup(g.dir)}
+                />
+                {!isCollapsed && (
+                  <div className="mt-1 space-y-1 pl-1">
+                    {g.items.map(({ item, index }) => renderRow(item, index, false))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="space-y-1">{recents.map((r, i) => renderRow(r, i, true))}</div>
+      )}
     </div>
   );
 }
