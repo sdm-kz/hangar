@@ -32,6 +32,17 @@ import {
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
 
+// Desktop width of the file-tree pane. Persisted per-browser and drag-resizable (like the sidebar).
+const TREE_MIN = 180;
+const TREE_MAX = 640;
+const TREE_DEFAULT = 288; // matches the old md:w-72
+const TREE_WIDTH_KEY = "claudeweb.filesTreeWidth";
+
+function readTreeWidth() {
+  const n = Number(localStorage.getItem(TREE_WIDTH_KEY));
+  return Number.isFinite(n) && n > 0 ? Math.min(TREE_MAX, Math.max(TREE_MIN, n)) : TREE_DEFAULT;
+}
+
 type GitFiles = Record<string, string>;
 
 // Build a minimal FileEntry from a path (used to restore a selection from the URL,
@@ -61,6 +72,35 @@ export function FileBrowser({
   const [results, setResults] = useState<FileEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [showChanges, setShowChanges] = useState(false);
+  const [treeWidth, setTreeWidth] = useState(readTreeWidth); // desktop tree-pane width (px)
+
+  // Drag the divider between the tree and the preview to resize the tree; persist the result.
+  const startResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = readTreeWidth();
+    let width = startW;
+    const onMove = (ev: PointerEvent) => {
+      width = Math.min(TREE_MAX, Math.max(TREE_MIN, startW + ev.clientX - startX));
+      setTreeWidth(width);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      localStorage.setItem(TREE_WIDTH_KEY, String(width));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const resetTreeWidth = useCallback(() => {
+    setTreeWidth(TREE_DEFAULT);
+    localStorage.setItem(TREE_WIDTH_KEY, String(TREE_DEFAULT));
+  }, []);
 
   // Path to auto-reveal in the tree on load (the URL-restored file). Captured once so
   // it drives only the initial expansion, not later manual navigation.
@@ -119,7 +159,10 @@ export function FileBrowser({
 
   return (
     <div className="flex h-full flex-col md:flex-row">
-      <div className="flex max-h-64 w-full flex-col border-b md:max-h-none md:w-72 md:shrink-0 md:border-b-0 md:border-r">
+      <div
+        style={{ "--tree-w": `${treeWidth}px` } as React.CSSProperties}
+        className="flex max-h-64 w-full flex-col border-b md:max-h-none md:w-[var(--tree-w)] md:shrink-0 md:border-b-0"
+      >
         <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground">
           <span>{showChanges ? "Changes" : "Files"}</span>
           <div className="flex items-center gap-1.5">
@@ -196,6 +239,14 @@ export function FileBrowser({
           )}
         </div>
       </div>
+
+      {/* Draggable divider between the tree and preview (desktop only). */}
+      <div
+        onPointerDown={startResize}
+        onDoubleClick={resetTreeWidth}
+        title="Drag to resize · double-click to reset"
+        className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:block"
+      />
 
       <div className="min-h-0 min-w-0 flex-1">
         <FilePreview
