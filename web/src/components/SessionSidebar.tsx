@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import type { SessionInfo, SessionState } from "@/types";
+import type { SessionInfo } from "@/types";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,19 +41,6 @@ function useDragReorder(onReorder: (from: number, to: number) => void) {
       },
     }),
   };
-}
-
-function stateBadge(state: SessionState) {
-  switch (state) {
-    case "Running":
-      return <Badge variant="success">running</Badge>;
-    case "Exited":
-      return <Badge variant="secondary">exited</Badge>;
-    case "Failed":
-      return <Badge variant="destructive">failed</Badge>;
-    case "Restorable":
-      return <Badge variant="outline">closed</Badge>;
-  }
 }
 
 export function SessionSidebar({
@@ -143,45 +130,51 @@ export function SessionSidebar({
               onClick={() => (restorable ? onRestore(s.id) : onSelect(s.id))}
               title={restorable ? "Reopen — resumes this conversation (--continue)" : undefined}
               className={cn(
-                "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
+                "group relative flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
                 activeId === s.id && !restorable && "border-border bg-accent",
                 restorable && "opacity-80",
                 dnd.overIndex === i && "border-t-2 border-t-primary"
               )}
             >
+              {busyIds.has(s.id) && !restorable && (
+                <span
+                  className="absolute left-1 top-1 size-2 rounded-full bg-emerald-500 animate-pulse"
+                  aria-label="Claude is working"
+                />
+              )}
               <div className="flex items-center justify-between gap-2">
                 <span className="flex min-w-0 items-center gap-1">
-                  {busyIds.has(s.id) && !restorable && (
-                    <span
-                      className="size-2 shrink-0 rounded-full bg-emerald-500 animate-pulse"
-                      aria-label="Claude is working"
-                    />
-                  )}
-                  <span className="truncate font-medium">{s.name}</span>
-                </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onClose(s.id);
-                  }}
-                  className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                  title={restorable ? "Forget" : "Close session"}
-                >
-                  <X className="size-3.5" />
-                </button>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {stateBadge(s.state)}
-                {s.remoteControl && (
-                  <Radio className="size-3 text-muted-foreground" aria-label="remote control" />
-                )}
-                {restorable && (
-                  <span className="ml-auto flex items-center gap-1 text-[10px] font-medium text-muted-foreground group-hover:text-foreground">
-                    <RotateCcw className="size-3" /> Reopen
+                  <span
+                    className={cn(
+                      "truncate font-medium",
+                      s.state !== "Running" && "text-muted-foreground"
+                    )}
+                  >
+                    {s.name}
                   </span>
-                )}
+                  {s.remoteControl && (
+                    <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
+                  )}
+                </span>
+                <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                  {restorable && (
+                    <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground group-hover:text-foreground">
+                      <RotateCcw className="size-3" /> Reopen
+                    </span>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onClose(s.id);
+                    }}
+                    className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                    title={restorable ? "Forget" : "Close session"}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </span>
               </div>
-              <span className="truncate font-mono text-[10px] text-muted-foreground">
+              <span className="truncate font-mono text-xs text-muted-foreground">
                 {s.workingDirectory}
               </span>
             </div>
