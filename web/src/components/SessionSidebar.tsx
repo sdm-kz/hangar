@@ -5,7 +5,63 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
-import { Bot, PanelLeftClose, Plus, Radio, RotateCcw, X, LogOut, Terminal } from "lucide-react";
+import {
+  Bot,
+  PanelLeftClose,
+  Plus,
+  Radio,
+  RotateCcw,
+  X,
+  LogOut,
+  Terminal,
+  FolderTree,
+  List,
+  ChevronRight,
+  ChevronDown,
+} from "lucide-react";
+
+// Grouped-vs-flat is a per-browser view preference, kept client-side like the session order.
+const GROUPED_KEY = "claudeweb.sessionsGrouped";
+function loadGrouped(): boolean {
+  try {
+    return localStorage.getItem(GROUPED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function saveGrouped(v: boolean) {
+  try {
+    localStorage.setItem(GROUPED_KEY, v ? "1" : "0");
+  } catch {
+    /* storage disabled — preference is best-effort */
+  }
+}
+
+/** Last path segment of a working directory, for a compact group header. */
+function folderLabel(dir: string): string {
+  const parts = dir.split(/[/\\]+/).filter(Boolean);
+  return parts[parts.length - 1] ?? dir;
+}
+
+/**
+ * Group sessions by working directory, preserving the incoming (user-ordered) sequence: groups
+ * appear in the order their first session appears, and each session keeps its flat-list index so
+ * drag-to-reorder keeps working unchanged.
+ */
+function groupByFolder(sessions: SessionInfo[]) {
+  const groups: { dir: string; items: { s: SessionInfo; index: number }[] }[] = [];
+  const byDir = new Map<string, { dir: string; items: { s: SessionInfo; index: number }[] }>();
+  sessions.forEach((s, index) => {
+    let g = byDir.get(s.workingDirectory);
+    if (!g) {
+      g = { dir: s.workingDirectory, items: [] };
+      byDir.set(s.workingDirectory, g);
+      groups.push(g);
+    }
+    g.items.push({ s, index });
+  });
+  return groups;
+}
 
 /**
  * Native drag-to-reorder for a vertical list. Returns props to spread on each row; a row initiates
@@ -75,7 +131,84 @@ export function SessionSidebar({
   onReorderRecent: (from: number, to: number) => void;
 }) {
   const [tab, setTab] = useState<"sessions" | "recent">("sessions");
+  const [grouped, setGrouped] = useState<boolean>(loadGrouped);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const dnd = useDragReorder(onReorder);
+
+  const toggleGrouped = () =>
+    setGrouped((v) => {
+      saveGrouped(!v);
+      return !v;
+    });
+  const toggleGroup = (dir: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(dir)) next.delete(dir);
+      else next.add(dir);
+      return next;
+    });
+
+  // A single session row. `i` is the index in the flat `sessions` list so drag-reorder is unaffected
+  // by grouping; `showPath` is dropped in grouped mode where the folder is already in the header.
+  const renderRow = (s: SessionInfo, i: number, showPath: boolean) => {
+    const restorable = s.state === "Restorable";
+    return (
+      <div
+        key={s.id}
+        {...dnd.rowProps(i)}
+        onClick={() => (restorable ? onRestore(s.id) : onSelect(s.id))}
+        title={restorable ? "Reopen — resumes this conversation (--continue)" : undefined}
+        className={cn(
+          "group relative flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
+          activeId === s.id && !restorable && "border-border bg-accent",
+          restorable && "opacity-80",
+          dnd.overIndex === i && "border-t-2 border-t-primary"
+        )}
+      >
+        {busyIds.has(s.id) && !restorable && (
+          <span
+            className="absolute left-1 top-1 size-2 rounded-full bg-emerald-500 animate-pulse"
+            aria-label="Claude is working"
+          />
+        )}
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-1">
+            <span
+              className={cn(
+                "truncate font-medium",
+                s.state !== "Running" && "text-muted-foreground"
+              )}
+            >
+              {s.name}
+            </span>
+            {s.remoteControl && (
+              <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
+            )}
+          </span>
+          <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {restorable && (
+              <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground group-hover:text-foreground">
+                <RotateCcw className="size-3" /> Reopen
+              </span>
+            )}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose(s.id);
+              }}
+              className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+              title={restorable ? "Forget" : "Close session"}
+            >
+              <X className="size-3.5" />
+            </button>
+          </span>
+        </div>
+        {showPath && (
+          <span className="truncate font-mono text-xs text-muted-foreground">{s.workingDirectory}</span>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex h-full flex-col bg-card">
@@ -104,13 +237,25 @@ export function SessionSidebar({
       </div>
 
       {/* Tab switcher: active sessions vs. reusable recent presets. */}
-      <div className="flex gap-1 px-2 pb-2">
+      <div className="flex items-center gap-1 px-2 pb-2">
         <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")}>
           Sessions{sessions.length > 0 && ` (${sessions.length})`}
         </TabButton>
         <TabButton active={tab === "recent"} onClick={() => setTab("recent")}>
           Recent{recents.length > 0 && ` (${recents.length})`}
         </TabButton>
+        {tab === "sessions" && sessions.length > 0 && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-muted-foreground"
+            title={grouped ? "Show as a flat list" : "Group by folder"}
+            aria-pressed={grouped}
+            onClick={toggleGrouped}
+          >
+            {grouped ? <List className="size-4" /> : <FolderTree className="size-4" />}
+          </Button>
+        )}
       </div>
 
       {tab === "recent" ? (
@@ -120,67 +265,39 @@ export function SessionSidebar({
         {sessions.length === 0 && (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
         )}
-        <div className="space-y-1">
-          {sessions.map((s, i) => {
-            const restorable = s.state === "Restorable";
-            return (
-            <div
-              key={s.id}
-              {...dnd.rowProps(i)}
-              onClick={() => (restorable ? onRestore(s.id) : onSelect(s.id))}
-              title={restorable ? "Reopen — resumes this conversation (--continue)" : undefined}
-              className={cn(
-                "group relative flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
-                activeId === s.id && !restorable && "border-border bg-accent",
-                restorable && "opacity-80",
-                dnd.overIndex === i && "border-t-2 border-t-primary"
-              )}
-            >
-              {busyIds.has(s.id) && !restorable && (
-                <span
-                  className="absolute left-1 top-1 size-2 rounded-full bg-emerald-500 animate-pulse"
-                  aria-label="Claude is working"
-                />
-              )}
-              <div className="flex items-center justify-between gap-2">
-                <span className="flex min-w-0 items-center gap-1">
-                  <span
-                    className={cn(
-                      "truncate font-medium",
-                      s.state !== "Running" && "text-muted-foreground"
-                    )}
-                  >
-                    {s.name}
-                  </span>
-                  {s.remoteControl && (
-                    <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
-                  )}
-                </span>
-                <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                  {restorable && (
-                    <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground group-hover:text-foreground">
-                      <RotateCcw className="size-3" /> Reopen
-                    </span>
-                  )}
+        {grouped ? (
+          <div className="space-y-2">
+            {groupByFolder(sessions).map((g) => {
+              const isCollapsed = collapsed.has(g.dir);
+              return (
+                <div key={g.dir}>
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onClose(s.id);
-                    }}
-                    className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                    title={restorable ? "Forget" : "Close session"}
+                    type="button"
+                    onClick={() => toggleGroup(g.dir)}
+                    title={g.dir}
+                    className="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-muted-foreground hover:text-foreground"
                   >
-                    <X className="size-3.5" />
+                    {isCollapsed ? (
+                      <ChevronRight className="size-3.5 shrink-0" />
+                    ) : (
+                      <ChevronDown className="size-3.5 shrink-0" />
+                    )}
+                    <FolderTree className="size-3.5 shrink-0" />
+                    <span className="truncate font-mono text-[11px] font-medium">{folderLabel(g.dir)}</span>
+                    <span className="ml-auto shrink-0 text-[10px]">{g.items.length}</span>
                   </button>
-                </span>
-              </div>
-              <span className="truncate font-mono text-xs text-muted-foreground">
-                {s.workingDirectory}
-              </span>
-            </div>
-            );
-          })}
-        </div>
+                  {!isCollapsed && (
+                    <div className="mt-1 space-y-1 pl-1">
+                      {g.items.map(({ s, index }) => renderRow(s, index, false))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-1">{sessions.map((s, i) => renderRow(s, i, true))}</div>
+        )}
       </div>
       )}
 
