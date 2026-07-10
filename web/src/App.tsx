@@ -16,6 +16,18 @@ import { Bot, Loader2, Menu, PanelLeftOpen, Plus } from "lucide-react";
 
 type AuthStatus = "loading" | "authed" | "anon";
 
+// Desktop sidebar width bounds (px). Default matches the old fixed w-72 (18rem).
+const SIDEBAR_MIN = 220;
+const SIDEBAR_MAX = 560;
+const SIDEBAR_DEFAULT = 288;
+
+function readSidebarWidth() {
+  const n = Number(localStorage.getItem("claudeweb.sidebarWidth"));
+  return Number.isFinite(n) && n > 0
+    ? Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, n))
+    : SIDEBAR_DEFAULT;
+}
+
 export function App() {
   const confirm = useConfirm();
   const [auth, setAuth] = useState<AuthStatus>("loading");
@@ -29,6 +41,30 @@ export function App() {
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("claudeweb.sidebarCollapsed") === "1"
   ); // desktop sidebar collapsed
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth); // desktop sidebar width (px)
+
+  // Drag the right edge of the desktop sidebar to resize it; persist the result.
+  const startResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = readSidebarWidth();
+    let width = startW;
+    const onMove = (ev: PointerEvent) => {
+      width = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, startW + ev.clientX - startX));
+      setSidebarWidth(width);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      localStorage.setItem("claudeweb.sidebarWidth", String(width));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
 
   const toggleCollapsed = () =>
     setCollapsed((c) => {
@@ -223,8 +259,11 @@ export function App() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Sidebar: static column on desktop (collapsible), slide-over drawer on mobile. */}
-      <aside className={cn("hidden w-72 shrink-0 border-r md:block", collapsed && "md:hidden")}>
+      {/* Sidebar: static column on desktop (collapsible + resizable), slide-over drawer on mobile. */}
+      <aside
+        className={cn("relative hidden shrink-0 border-r md:block", collapsed && "md:hidden")}
+        style={{ width: sidebarWidth }}
+      >
         <SessionSidebar
           sessions={sessions}
           busyIds={busyIds}
@@ -240,6 +279,16 @@ export function App() {
           onReuse={reuseRecent}
           onRemoveRecent={removeRecent}
           onReorderRecent={reorderRecents}
+        />
+        {/* Drag handle straddling the right border. */}
+        <div
+          onPointerDown={startResize}
+          onDoubleClick={() => {
+            setSidebarWidth(SIDEBAR_DEFAULT);
+            localStorage.setItem("claudeweb.sidebarWidth", String(SIDEBAR_DEFAULT));
+          }}
+          title="Drag to resize · double-click to reset"
+          className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-primary/20 active:bg-primary/30"
         />
       </aside>
 
