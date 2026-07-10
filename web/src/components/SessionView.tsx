@@ -117,7 +117,7 @@ export function SessionView({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-2 border-b px-3 py-2">
+      <header className="flex h-14 items-center gap-2 border-b px-3">
         <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleSidebar}>
           <Menu className="size-5" />
         </Button>

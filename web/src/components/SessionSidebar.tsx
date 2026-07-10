@@ -252,7 +252,7 @@ export function SessionSidebar({
 
   return (
     <div className="flex h-full flex-col bg-card">
-      <div className="flex items-center gap-2 border-b px-3 py-3">
+      <div className="flex h-14 items-center gap-2 border-b px-3">
         <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <Bot className="size-4" />
         </div>
