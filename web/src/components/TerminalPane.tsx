@@ -5,37 +5,7 @@ import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard"
 import "@xterm/xterm/css/xterm.css";
 import { api, getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
-
-// Copy text that a TUI (Claude Code) requests via an OSC 52 escape sequence to the real browser
-// clipboard. Prefer the async Clipboard API, but fall back to a hidden-textarea execCommand copy
-// when it's unavailable — e.g. the app served over plain http on a LAN IP, where the page isn't a
-// secure context and navigator.clipboard doesn't exist. Without this, xterm drops OSC 52 and the
-// copy silently no-ops even though the program reports success.
-async function writeToClipboard(text: string): Promise<void> {
-  try {
-    if (window.isSecureContext && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-  } catch {
-    /* clipboard API blocked (lost focus / permission) — fall back to execCommand below */
-  }
-  const prev = document.activeElement as HTMLElement | null;
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.setAttribute("readonly", "");
-  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
-  document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  try {
-    document.execCommand("copy");
-  } catch {
-    /* nothing else to try */
-  }
-  document.body.removeChild(ta);
-  prev?.focus?.();
-}
+import { writeToClipboard } from "@/lib/clipboard";
 
 // Reading the clipboard (OSC 52 "?" report) is a paste-injection risk, so we never expose it —
 // only writes are honored.

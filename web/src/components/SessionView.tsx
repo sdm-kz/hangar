@@ -8,7 +8,8 @@ import { TerminalPane } from "./TerminalPane";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Radio, Square, TerminalSquare } from "lucide-react";
+import { Check, Copy, ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Radio, Square, TerminalSquare } from "lucide-react";
+import { writeToClipboard } from "@/lib/clipboard";
 
 function StateBadge({ state }: { state: SessionInfo["state"] }) {
   if (state === "Running") return <Badge variant="success">running</Badge>;
@@ -35,6 +36,13 @@ export function SessionView({
   const [git, setGit] = useState<GitStatus | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [view, setView] = useState<"terminal" | "files">(() => readUrlState().tab ?? "terminal");
+  const [copiedPath, setCopiedPath] = useState(false);
+
+  const copyPath = useCallback(async () => {
+    await writeToClipboard(session.workingDirectory);
+    setCopiedPath(true);
+    setTimeout(() => setCopiedPath(false), 1500);
+  }, [session.workingDirectory]);
 
   // Mirror the active tab into the URL.
   useEffect(() => {
@@ -141,9 +149,23 @@ export function SessionView({
               </Badge>
             )}
           </div>
-          <p className="truncate font-mono text-[11px] text-muted-foreground">
-            {session.workingDirectory}
-            {session.model ? ` · ${session.model}` : ""} · pid {session.processId}
+          <p className="flex items-center font-mono text-[11px] text-muted-foreground">
+            <button
+              type="button"
+              onClick={copyPath}
+              title="Copy working directory"
+              className="group/path flex min-w-0 items-center gap-1 hover:text-foreground"
+            >
+              <span className="truncate">{session.workingDirectory}</span>
+              {copiedPath ? (
+                <Check className="size-3 shrink-0 text-emerald-500" />
+              ) : (
+                <Copy className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100" />
+              )}
+            </button>
+            <span className="shrink-0 whitespace-pre">
+              {session.model ? ` · ${session.model}` : ""} · pid {session.processId}
+            </span>
           </p>
         </div>
 
