@@ -22,6 +22,8 @@ public sealed class FileLoggerProvider : ILoggerProvider
     public ILogger CreateLogger(string categoryName) =>
         _loggers.GetOrAdd(categoryName, name => new FileLogger(this, name));
 
+    private const long MaxBytes = 10 * 1024 * 1024; // roll at 10 MB, keeping one previous generation
+
     internal void Write(string category, LogLevel level, string message, Exception? ex)
     {
         var sb = new StringBuilder()
@@ -33,8 +35,28 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
         lock (_gate)
         {
-            try { File.AppendAllText(_path, sb.ToString()); } catch { /* best effort */ }
+            try
+            {
+                Roll();
+                File.AppendAllText(_path, sb.ToString());
+            }
+            catch { /* best effort */ }
         }
+    }
+
+    // Keep the log bounded: once it passes MaxBytes, move it aside to "<name>.1" (overwriting the
+    // prior roll) and start fresh. Best-effort — a failure here must not stop logging.
+    private void Roll()
+    {
+        try
+        {
+            var info = new FileInfo(_path);
+            if (!info.Exists || info.Length < MaxBytes) return;
+            var prev = _path + ".1";
+            File.Delete(prev);
+            File.Move(_path, prev);
+        }
+        catch { /* keep appending to the current file if rolling fails */ }
     }
 
     public void Dispose() { }

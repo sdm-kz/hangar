@@ -23,7 +23,9 @@ public static class TerminalSocket
             if (sub.Replay.Length > 0)
                 await ws.SendAsync(sub.Replay, WebSocketMessageType.Binary, true, cts.Token);
 
-            // WRITE loop: live PTY output → WS.
+            // WRITE loop: live PTY output → WS. Swallow every fault (a dropped socket throws various
+            // WebSocket/IO exceptions) — this task is awaited below, and a client disconnect must tear
+            // down only this viewer, never surface as an unhandled fault.
             var writeLoop = Task.Run(async () =>
             {
                 try
@@ -31,7 +33,7 @@ public static class TerminalSocket
                     await foreach (var chunk in sub.Reader.ReadAllAsync(cts.Token))
                         await ws.SendAsync(chunk, WebSocketMessageType.Binary, true, cts.Token);
                 }
-                catch (OperationCanceledException) { }
+                catch { /* cancelled or socket gone — the read loop below handles teardown */ }
             }, cts.Token);
 
             // READ loop: WS → PTY (input + control).

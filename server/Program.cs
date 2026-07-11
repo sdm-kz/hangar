@@ -5,6 +5,7 @@ using ClaudeWeb.Server.FileSystem;
 using ClaudeWeb.Server.Logging;
 using ClaudeWeb.Server.Sessions;
 using ClaudeWeb.Server.Tray;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
 namespace ClaudeWeb.Server;
@@ -14,6 +15,10 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Install the runtime-wide crash handlers before anything else runs, so any fault during
+        // startup (or later, on a background thread) is written to crash.log instead of vanishing.
+        CrashHandler.Install(LogDirectory());
+
         var isService = WindowsServiceHelpers.IsWindowsService();
         var contentRoot = ResolveContentRoot();
         var port = GetPort(contentRoot);
@@ -41,9 +46,15 @@ internal static class Program
 
         // Interactive: start the host, then run the tray message loop on this STA thread.
         app.Start();
+        var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+        CrashHandler.AttachLogger(app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Crash"));
+        log.LogInformation("ClaudeWeb started on port {Port}. Logs: {LogDir} (crash log: {CrashLog}).",
+            port, LogDirectory(), CrashHandler.CrashLogPath);
         Application.SetHighDpiMode(HighDpiMode.SystemAware);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        // Route UI-thread exceptions to the crash log and keep the tray alive rather than terminating.
+        CrashHandler.InstallWinForms();
         using (var tray = new TrayApplicationContext(app, $"http://localhost:{port}"))
             Application.Run(tray);
 
@@ -62,9 +73,14 @@ internal static class Program
         // Run as a Windows service when hosted by the SCM; a no-op when launched interactively.
         builder.Host.UseWindowsService(o => o.ServiceName = "ClaudeWeb");
 
+        // A faulting hosted service (e.g. the watchdog) must NOT tear the whole host down — the
+        // default is StopHost, which would take the app with it. Isolate it so one loop dying can't
+        // exit the process; the fault is logged instead (and the crash handlers capture the detail).
+        builder.Services.Configure<HostOptions>(o =>
+            o.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore);
+
         // No console in the WinExe build — keep a diagnostic trail on disk.
-        var logDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "logs");
+        var logDir = LogDirectory();
         builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(logDir, "claudeweb.log")));
 
         var urls = builder.Configuration["Server:Urls"] ?? "http://0.0.0.0:5099";

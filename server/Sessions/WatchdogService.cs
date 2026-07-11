@@ -115,12 +115,19 @@ public sealed class WatchdogService : BackgroundService
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(Math.Max(250, _options.PollIntervalMs)));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            foreach (var s in _mgr.LiveSessions())
+            // Wrap the whole sweep: a failure here must never end ExecuteAsync (which, even with the
+            // host's StopHost behaviour disabled, would silently stop the watchdog for the app's life).
+            try
             {
-                try { await CheckAsync(s, stoppingToken); }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { _log.LogDebug(ex, "Watchdog check failed for session {Id}", s.Id); }
+                foreach (var s in _mgr.LiveSessions())
+                {
+                    try { await CheckAsync(s, stoppingToken); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex) { _log.LogDebug(ex, "Watchdog check failed for session {Id}", s.Id); }
+                }
             }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { _log.LogWarning(ex, "Watchdog sweep failed; continuing on next tick."); }
         }
     }
 

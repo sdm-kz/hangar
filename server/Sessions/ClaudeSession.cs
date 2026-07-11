@@ -169,10 +169,16 @@ public sealed class ClaudeSession : IDisposable
     {
         if (_process is null) return;
         _process.EnableRaisingEvents = true;
+        // Raised on a threadpool thread — any escape here would reach AppDomain.UnhandledException and
+        // terminate the whole app, so keep it defensive.
         _process.Exited += (_, _) =>
         {
-            State = SessionState.Exited;
-            _log.LogInformation("Claude session {Id} (pid {Pid}) exited", Id, ProcessId);
+            try
+            {
+                State = SessionState.Exited;
+                _log.LogInformation("Claude session {Id} (pid {Pid}) exited", Id, ProcessId);
+            }
+            catch { /* never let a session's exit notification crash the host */ }
         };
     }
 
