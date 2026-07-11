@@ -306,7 +306,44 @@ internal static class Program
             var code = status.Files.TryGetValue(path, out var c) ? c : "";
             return Results.Ok(GitService.Diff(info.WorkingDirectory, path, code));
         });
+
+        // Commit history (newest first, paged via skip/count).
+        app.MapGet("/api/sessions/{id}/git/log", (string id, SessionManager mgr, int? skip, int? count) =>
+        {
+            var info = mgr.Get(id);
+            return info is null
+                ? Results.NotFound()
+                : Results.Ok(GitService.Log(info.WorkingDirectory, Math.Max(0, skip ?? 0), Math.Clamp(count ?? 50, 1, 200)));
+        });
+
+        // Files changed by a single commit.
+        app.MapGet("/api/sessions/{id}/git/commit", (string id, string hash, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            if (!IsCommitHash(hash)) return Results.BadRequest(new { error = "invalid hash" });
+            return Results.Ok(GitService.CommitInfo(info.WorkingDirectory, hash));
+        });
+
+        // Diff for one file within a commit.
+        app.MapGet("/api/sessions/{id}/git/commit-diff", (string id, string hash, string path, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            if (!IsCommitHash(hash)) return Results.BadRequest(new { error = "invalid hash" });
+            if (SessionFileBrowser.ResolveSafe(info.WorkingDirectory, path) is null)
+                return Results.BadRequest(new { error = "invalid path" });
+            return Results.Ok(GitService.CommitDiff(info.WorkingDirectory, hash, path));
+        });
     }
+
+    // A git object name is hex (full or abbreviated SHA). Reject anything else before handing it to git.
+    private static bool IsCommitHash(string? hash) =>
+        !string.IsNullOrEmpty(hash) && hash.Length is >= 4 and <= 64 && hash.All(Uri.IsHexDigit);
+
+    // Shared on-disk diagnostics location: %LocalAppData%\ClaudeWeb\logs (claudeweb.log + crash.log).
+    private static string LogDirectory() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "logs");
 
     // Published/tray: exe + wwwroot together → base dir. `dotnet run`: bin has no wwwroot → project dir.
     private static string ResolveContentRoot()

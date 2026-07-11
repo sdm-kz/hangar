@@ -13,6 +13,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { ImageLightbox } from "./ImageLightbox";
 import { OfficeViewer } from "./OfficeViewer";
 import {
+  GitHistory,
+  CommitFilePreview,
+  CommitDetailPreview,
+  type CommitSelection,
+} from "./GitHistory";
+import {
   ChevronDown,
   ChevronRight,
   Download,
@@ -74,6 +80,8 @@ export function FileBrowser({
   const [results, setResults] = useState<FileEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [showChanges, setShowChanges] = useState(false);
+  // A file picked out of a commit in the History panel — previewed in place of a working-tree file.
+  const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
   const [treeWidth, setTreeWidth] = useState(readTreeWidth); // desktop tree-pane width (px)
 
   // Drag the divider between the tree and the preview to resize the tree; persist the result.
@@ -111,8 +119,9 @@ export function FileBrowser({
     return u.session === sessionId && u.file ? u.file : null;
   });
 
-  // Select a file and mirror it into the URL.
+  // Select a working-tree file and mirror it into the URL (clears any commit preview).
   const selectFile = useCallback((f: FileEntry) => {
+    setCommitSel(null);
     setSelected(f);
     patchUrlState({ file: f.path });
   }, []);
@@ -124,6 +133,7 @@ export function FileBrowser({
     if (prevSession.current === sessionId) return;
     prevSession.current = sessionId;
     setSelected(null);
+    setCommitSel(null);
     setQuery("");
     setShowChanges(false);
     patchUrlState({ file: undefined });
@@ -171,7 +181,12 @@ export function FileBrowser({
             {gitFiles && (
               <button
                 title={showChanges ? "Show all files" : "Show git changes only"}
-                onClick={() => setShowChanges((v) => !v)}
+                onClick={() =>
+                  setShowChanges((v) => {
+                    if (v) setCommitSel(null); // leaving changes mode drops the commit preview
+                    return !v;
+                  })
+                }
                 className={cn(
                   "flex items-center gap-1 rounded px-1 py-0.5 hover:text-foreground",
                   showChanges ? "bg-amber-500/15 text-amber-500" : ""
@@ -240,6 +255,16 @@ export function FileBrowser({
             />
           )}
         </div>
+
+        {/* Commit history, collapsible, shown only in the changes view. */}
+        {gitFiles && showChanges && (
+          <GitHistory
+            sessionId={sessionId}
+            refreshToken={refreshToken}
+            selected={commitSel}
+            onSelect={setCommitSel}
+          />
+        )}
       </div>
 
       {/* Draggable divider between the tree and preview (desktop only). */}
@@ -251,19 +276,37 @@ export function FileBrowser({
       />
 
       <div className="min-h-0 min-w-0 flex-1">
-        <FilePreview
-          sessionId={sessionId}
-          file={selected}
-          gitStatus={selected ? gitFiles?.[selected.path] : undefined}
-          refreshToken={refreshToken}
-          onSaved={onRefresh}
-        />
+        {commitSel ? (
+          commitSel.path ? (
+            <CommitFilePreview
+              sessionId={sessionId}
+              selection={{ ...commitSel, path: commitSel.path }}
+              onBack={() => setCommitSel((s) => (s ? { ...s, path: undefined, status: undefined } : null))}
+              onClose={() => setCommitSel(null)}
+            />
+          ) : (
+            <CommitDetailPreview
+              sessionId={sessionId}
+              selection={commitSel}
+              onSelectFile={setCommitSel}
+              onClose={() => setCommitSel(null)}
+            />
+          )
+        ) : (
+          <FilePreview
+            sessionId={sessionId}
+            file={selected}
+            gitStatus={selected ? gitFiles?.[selected.path] : undefined}
+            refreshToken={refreshToken}
+            onSaved={onRefresh}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-const STATUS_COLOR: Record<string, string> = {
+export const STATUS_COLOR: Record<string, string> = {
   M: "text-amber-500",
   A: "text-emerald-500",
   U: "text-emerald-500",
@@ -825,7 +868,7 @@ function TabButton({
   );
 }
 
-function DiffView({ diff }: { diff: string }) {
+export function DiffView({ diff }: { diff: string }) {
   const lines = useMemo(() => diff.split("\n"), [diff]);
   if (!diff.trim())
     return <div className="p-4 text-sm text-muted-foreground">No differences to show.</div>;

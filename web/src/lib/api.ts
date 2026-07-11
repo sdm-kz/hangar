@@ -2,7 +2,9 @@ import type {
   BrowseResult,
   CreateSessionRequest,
   FileListing,
+  GitCommitDetail,
   GitDiff,
+  GitLog,
   GitStatus,
   SessionInfo,
 } from "@/types";
@@ -144,6 +146,17 @@ export const api = {
   },
   gitDiff(id: string, path: string): Promise<GitDiff> {
     return request(`/api/sessions/${id}/git/diff?path=${encodeURIComponent(path)}`);
+  },
+  gitLog(id: string, skip = 0, count = 50): Promise<GitLog> {
+    return request(`/api/sessions/${id}/git/log?skip=${skip}&count=${count}`);
+  },
+  gitCommit(id: string, hash: string): Promise<GitCommitDetail> {
+    return request(`/api/sessions/${id}/git/commit?hash=${encodeURIComponent(hash)}`);
+  },
+  gitCommitDiff(id: string, hash: string, path: string): Promise<GitDiff> {
+    return request(
+      `/api/sessions/${id}/git/commit-diff?hash=${encodeURIComponent(hash)}&path=${encodeURIComponent(path)}`
+    );
   },
   writeSessionFile(id: string, path: string, content: string): Promise<void> {
     return request(`/api/sessions/${id}/fs/write`, {

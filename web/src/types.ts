@@ -54,6 +54,40 @@ export interface GitDiff {
   diff: string;
 }
 
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  date: string; // YYYY-MM-DD
+  relativeDate: string; // e.g. "3 days ago"
+  refs: string; // decorations pointing here, e.g. "HEAD -> main, origin/main, tag: v1" (usually empty)
+}
+
+export interface GitLog {
+  isRepo: boolean;
+  commits: GitCommit[];
+  hasMore: boolean;
+}
+
+export interface GitCommitFile {
+  path: string;
+  status: string; // status letter (M/A/D/R)
+}
+
+export interface GitCommitDetail {
+  isRepo: boolean;
+  hash: string;
+  shortHash: string;
+  subject: string;
+  body: string; // full commit message body (may be empty / multiline)
+  author: string;
+  authorEmail: string;
+  date: string; // YYYY-MM-DD
+  relativeDate: string;
+  files: GitCommitFile[];
+}
+
 export interface BrowseResult {
   current: string | null;
   parent: string | null;
