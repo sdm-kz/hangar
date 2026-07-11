@@ -31,6 +31,8 @@ import {
   GitCompare,
   Image as ImageIcon,
   Loader2,
+  Maximize2,
+  Minimize2,
   Pencil,
   RefreshCw,
   Save,
@@ -675,6 +677,7 @@ function FilePreview({
   const [diffLoading, setDiffLoading] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   const [mdView, setMdView] = useState<"rendered" | "raw">("rendered");
+  const [fullscreen, setFullscreen] = useState(false); // full-page popup preview
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -700,6 +703,7 @@ function FilePreview({
     setMdView("rendered");
     setEditing(false);
     setSaveError(null);
+    setFullscreen(false);
     if (!file || kind !== "text") return;
     if (file.size > MAX_TEXT_PREVIEW) {
       setStatus("toolarge");
@@ -747,6 +751,14 @@ function FilePreview({
     };
   }, [view, sessionId, file, diff]);
 
+  // Esc leaves the full-page popup (but not while editing — Esc there could drop unsaved text).
+  useEffect(() => {
+    if (!fullscreen || editing) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFullscreen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen, editing]);
+
   async function save() {
     if (!file) return;
     setSaving(true);
@@ -772,7 +784,12 @@ function FilePreview({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className={cn(
+        "flex flex-col",
+        fullscreen ? "fixed inset-0 z-50 bg-background" : "h-full"
+      )}
+    >
       <header className="flex items-center gap-2 border-b px-4 py-2">
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">
@@ -834,6 +851,19 @@ function FilePreview({
             {kind === "image" && view === "preview" && (
               <Button variant="outline" size="sm" onClick={() => setLightbox(true)}>
                 <Expand className="size-4" /> <span className="hidden sm:inline">Fullscreen</span>
+              </Button>
+            )}
+
+            {/* Non-image previews open in a full-page popup instead of the image lightbox. */}
+            {kind !== "image" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFullscreen((f) => !f)}
+                title={fullscreen ? "Exit full screen (Esc)" : "Full screen"}
+              >
+                {fullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                <span className="hidden sm:inline">{fullscreen ? "Exit" : "Fullscreen"}</span>
               </Button>
             )}
             <Button asChild variant="outline" size="sm">
