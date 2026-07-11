@@ -44,6 +44,15 @@ function folderLabel(dir: string): string {
 }
 
 /**
+ * Grouping key for a working directory. Windows paths are case-insensitive and mix separators, so the
+ * same folder can arrive as both `C:\a\b` and `c:/a/b` (e.g. a `--continue` relaunch) — normalize
+ * case, separators and any trailing slash so those collapse into one group instead of duplicating it.
+ */
+function dirKey(dir: string): string {
+  return dir.replace(/[/\\]+/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/**
  * Group items by working directory, preserving the incoming (user-ordered) sequence: groups appear
  * in the order their first item appears, and each item keeps its flat-list index so drag-to-reorder
  * keeps working unchanged.
@@ -52,10 +61,12 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
   const groups: { dir: string; items: { item: T; index: number }[] }[] = [];
   const byDir = new Map<string, { dir: string; items: { item: T; index: number }[] }>();
   items.forEach((item, index) => {
-    let g = byDir.get(item.workingDirectory);
+    const key = dirKey(item.workingDirectory);
+    let g = byDir.get(key);
     if (!g) {
+      // Keep the first-seen original path for the header, so its casing stays readable.
       g = { dir: item.workingDirectory, items: [] };
-      byDir.set(item.workingDirectory, g);
+      byDir.set(key, g);
       groups.push(g);
     }
     g.items.push({ item, index });
