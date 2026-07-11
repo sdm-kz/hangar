@@ -6,6 +6,7 @@ import type { FileEntry } from "@/types";
 import { fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
+import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,10 +72,12 @@ export function FileBrowser({
   onRefresh?: () => void;
   refreshToken?: number;
 }) {
-  // Restore the previewed file from the URL when it belongs to this session.
+  // Restore the previewed file: a URL deep-link for this session wins, otherwise the file this
+  // session was last viewing (persisted per-session in the browser).
   const [selected, setSelected] = useState<FileEntry | null>(() => {
     const u = readUrlState();
-    return u.session === sessionId && u.file ? fileEntryFromPath(u.file) : null;
+    const path = u.session === sessionId && u.file ? u.file : loadSessionUi(sessionId).file;
+    return path ? fileEntryFromPath(path) : null;
   });
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FileEntry[] | null>(null);
@@ -112,31 +115,39 @@ export function FileBrowser({
     localStorage.setItem(TREE_WIDTH_KEY, String(TREE_DEFAULT));
   }, []);
 
-  // Path to auto-reveal in the tree on load (the URL-restored file). Captured once so
-  // it drives only the initial expansion, not later manual navigation.
-  const [expandTo] = useState<string | null>(() => {
+  // Path to auto-reveal in the tree: the restored file (from URL or per-session storage). Updated on
+  // session switch so the newly-restored file expands into view; manual navigation doesn't touch it.
+  const [expandTo, setExpandTo] = useState<string | null>(() => {
     const u = readUrlState();
-    return u.session === sessionId && u.file ? u.file : null;
+    return u.session === sessionId && u.file ? u.file : loadSessionUi(sessionId).file ?? null;
   });
 
-  // Select a working-tree file and mirror it into the URL (clears any commit preview).
-  const selectFile = useCallback((f: FileEntry) => {
-    setCommitSel(null);
-    setSelected(f);
-    patchUrlState({ file: f.path });
-  }, []);
+  // Select a working-tree file: mirror it into the URL, remember it for this session, and clear any
+  // commit preview.
+  const selectFile = useCallback(
+    (f: FileEntry) => {
+      setCommitSel(null);
+      setSelected(f);
+      patchUrlState({ file: f.path });
+      saveSessionUi(sessionId, { file: f.path });
+    },
+    [sessionId]
+  );
 
-  // Reset when the session actually changes — never on the initial mount (nor on
-  // StrictMode's double-invoked mount effect), so a URL-restored selection survives.
+  // When the session actually changes, restore that session's last-previewed file (or clear if it
+  // had none). Skips the initial mount (and StrictMode's double-invoked mount effect), so the
+  // URL-restored selection survives.
   const prevSession = useRef(sessionId);
   useEffect(() => {
     if (prevSession.current === sessionId) return;
     prevSession.current = sessionId;
-    setSelected(null);
+    const storedFile = loadSessionUi(sessionId).file ?? null;
+    setSelected(storedFile ? fileEntryFromPath(storedFile) : null);
+    setExpandTo(storedFile);
     setCommitSel(null);
     setQuery("");
     setShowChanges(false);
-    patchUrlState({ file: undefined });
+    patchUrlState({ file: storedFile ?? undefined });
   }, [sessionId]);
 
   const changeCount = gitFiles ? Object.keys(gitFiles).length : 0;

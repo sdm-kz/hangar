@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import type { GitStatus, SessionInfo } from "@/types";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
-import { readUrlState, patchUrlState } from "@/lib/urlState";
+import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
+import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
 import { FileBrowser } from "./FileBrowser";
 import { TerminalPane } from "./TerminalPane";
 import { Button } from "@/components/ui/button";
@@ -45,7 +46,13 @@ export function SessionView({
   const [busy, setBusy] = useState(false);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [view, setView] = useState<"terminal" | "files" | "split">(() => readUrlState().tab ?? "terminal");
+  // View mode is remembered per session (in the browser). On first mount honor a deep-linked ?tab=
+  // when it targets this session, otherwise fall back to this session's saved mode.
+  const [view, setView] = useState<TabName>(() => {
+    const url = readUrlState();
+    if (url.session === session.id && url.tab) return url.tab;
+    return loadSessionUi(session.id).view ?? url.tab ?? "terminal";
+  });
   const [copiedPath, setCopiedPath] = useState(false);
   const [splitWidth, setSplitWidth] = useState(readSplitWidth); // Files-panel width in Split view
   // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
@@ -106,10 +113,35 @@ export function SessionView({
     setTimeout(() => setCopiedPath(false), 1500);
   }, [session.workingDirectory]);
 
-  // Mirror the active tab into the URL.
+  // Mirror the active tab into the URL (deep-linking / refresh restore).
   useEffect(() => {
     patchUrlState({ tab: view });
   }, [view]);
+
+  // Switch a tab and remember it for this session, so returning to the session restores the mode.
+  const changeView = useCallback(
+    (next: TabName) => {
+      setView(next);
+      saveSessionUi(session.id, { view: next });
+    },
+    [session.id]
+  );
+
+  // Seed the store with the initial mode (once), so returning to this session restores it even when
+  // the initial mode came from a deep link rather than a tab click.
+  useEffect(() => {
+    saveSessionUi(session.id, { view });
+    // Mount-only: session switches are handled by the restore effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // On switching to another session, restore that session's last-used view mode.
+  const prevViewSession = useRef(session.id);
+  useEffect(() => {
+    if (prevViewSession.current === session.id) return;
+    prevViewSession.current = session.id;
+    setView(loadSessionUi(session.id).view ?? "terminal");
+  }, [session.id]);
 
   const bump = useCallback(() => setRefreshToken((t) => t + 1), []);
   const loadGit = useCallback(() => {
@@ -244,15 +276,15 @@ export function SessionView({
         {/* Terminal is the primary surface; Files is the secondary view of the working directory.
             Split shows both side by side (desktop only). */}
         <div className="flex items-center rounded-md border p-0.5">
-          <ViewTab active={view === "terminal"} onClick={() => setView("terminal")}>
+          <ViewTab active={view === "terminal"} onClick={() => changeView("terminal")}>
             <TerminalSquare className="size-4" />
             <span className="hidden sm:inline">Terminal</span>
           </ViewTab>
-          <ViewTab active={view === "split"} onClick={() => setView("split")} className="hidden md:flex">
+          <ViewTab active={view === "split"} onClick={() => changeView("split")} className="hidden md:flex">
             <Columns2 className="size-4" />
             <span className="hidden sm:inline">Split</span>
           </ViewTab>
-          <ViewTab active={view === "files"} onClick={() => setView("files")}>
+          <ViewTab active={view === "files"} onClick={() => changeView("files")}>
             <FolderTree className="size-4" />
             <span className="hidden sm:inline">Files</span>
           </ViewTab>
