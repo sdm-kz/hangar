@@ -35,6 +35,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Upload,
   X,
 } from "lucide-react";
 
@@ -86,6 +87,29 @@ export function FileBrowser({
   // A file picked out of a commit in the History panel — previewed in place of a working-tree file.
   const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
   const [treeWidth, setTreeWidth] = useState(readTreeWidth); // desktop tree-pane width (px)
+
+  // Folder that Upload targets in the tree ("" = repo root). Clicking a folder selects it.
+  const [uploadDir, setUploadDir] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      setUploading(true);
+      setUploadError(null);
+      try {
+        await api.uploadSessionFiles(sessionId, uploadDir, Array.from(files));
+        onRefresh?.();
+      } catch {
+        setUploadError("Upload failed");
+      } finally {
+        setUploading(false);
+      }
+    },
+    [sessionId, uploadDir, onRefresh]
+  );
 
   // Drag the divider between the tree and the preview to resize the tree; persist the result.
   const startResize = useCallback((e: React.PointerEvent) => {
@@ -147,6 +171,8 @@ export function FileBrowser({
     setCommitSel(null);
     setQuery("");
     setShowChanges(false);
+    setUploadDir("");
+    setUploadError(null);
     patchUrlState({ file: storedFile ?? undefined });
   }, [sessionId]);
 
@@ -207,11 +233,51 @@ export function FileBrowser({
                 {changeCount > 0 && <span className="text-[10px] font-semibold">{changeCount}</span>}
               </button>
             )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                uploadFiles(e.target.files);
+                e.target.value = ""; // allow re-selecting the same file later
+              }}
+            />
+            <button
+              title={uploadError ?? `Upload file(s) to ${uploadDir || "root"}`}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className={cn(
+                "hover:text-foreground disabled:opacity-50",
+                uploadError && "text-destructive"
+              )}
+            >
+              {uploading ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Upload className="size-3.5" />
+              )}
+            </button>
             <button title="Refresh" onClick={() => onRefresh?.()} className="hover:text-foreground">
               <RefreshCw className="size-3.5" />
             </button>
           </div>
         </div>
+        {!showChanges && !query.trim() && (
+          <div className="flex items-center gap-1 px-3 pb-1 text-[10px] text-muted-foreground">
+            <span className="shrink-0">Upload target:</span>
+            <span className="truncate font-medium text-foreground">{uploadDir || "root"}</span>
+            {uploadDir && (
+              <button
+                onClick={() => setUploadDir("")}
+                title="Reset to root"
+                className="shrink-0 hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="px-2 pb-1">
           <div className="relative">
@@ -263,6 +329,8 @@ export function FileBrowser({
               expandTo={expandTo}
               gitFiles={gitFiles}
               onSelect={selectFile}
+              uploadDir={uploadDir}
+              onSelectDir={setUploadDir}
             />
           )}
         </div>
@@ -390,6 +458,8 @@ function TreeLevel({
   expandTo,
   gitFiles,
   onSelect,
+  uploadDir,
+  onSelectDir,
 }: {
   sessionId: string;
   path: string;
@@ -399,6 +469,8 @@ function TreeLevel({
   expandTo: string | null;
   gitFiles?: GitFiles;
   onSelect: (f: FileEntry) => void;
+  uploadDir: string;
+  onSelectDir: (path: string) => void;
 }) {
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [error, setError] = useState(false);
@@ -434,6 +506,8 @@ function TreeLevel({
             expandTo={expandTo}
             gitFiles={gitFiles}
             onSelect={onSelect}
+            uploadDir={uploadDir}
+            onSelectDir={onSelectDir}
           />
         ) : (
           <FileRow
@@ -459,6 +533,8 @@ function TreeDir({
   expandTo,
   gitFiles,
   onSelect,
+  uploadDir,
+  onSelectDir,
 }: {
   sessionId: string;
   entry: FileEntry;
@@ -468,12 +544,22 @@ function TreeDir({
   expandTo: string | null;
   gitFiles?: GitFiles;
   onSelect: (f: FileEntry) => void;
+  uploadDir: string;
+  onSelectDir: (path: string) => void;
 }) {
   // Auto-open when the file to reveal lives under this folder.
   const [open, setOpen] = useState(() => !!expandTo && expandTo.startsWith(entry.path + "/"));
   return (
     <>
-      <Row depth={depth} onClick={() => setOpen((o) => !o)}>
+      {/* Clicking a folder toggles it open and makes it the upload target. */}
+      <Row
+        depth={depth}
+        selected={uploadDir === entry.path}
+        onClick={() => {
+          setOpen((o) => !o);
+          onSelectDir(entry.path);
+        }}
+      >
         {open ? (
           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
         ) : (
@@ -499,6 +585,8 @@ function TreeDir({
           expandTo={expandTo}
           gitFiles={gitFiles}
           onSelect={onSelect}
+          uploadDir={uploadDir}
+          onSelectDir={onSelectDir}
         />
       )}
     </>

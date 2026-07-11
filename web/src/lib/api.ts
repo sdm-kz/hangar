@@ -172,6 +172,27 @@ export const api = {
       body: JSON.stringify({ dataBase64, ext }),
     });
   },
+  // Upload arbitrary files into a folder under the working dir ("" = root). Sent as multipart so
+  // the browser sets the boundary; returns the paths written (de-duplicated server-side).
+  async uploadSessionFiles(id: string, folder: string, files: File[]): Promise<{ paths: string[] }> {
+    const form = new FormData();
+    form.append("path", folder);
+    for (const f of files) form.append("files", f);
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    const res = await fetch(`/api/sessions/${id}/fs/upload`, { method: "POST", body: form, headers });
+    if (res.status === 401) {
+      setToken(null);
+      throw new ApiError(401, "unauthorized");
+    }
+    if (!res.ok) {
+      let msg = res.statusText;
+      try { msg = (await res.json()).error ?? msg; } catch { /* ignore */ }
+      throw new ApiError(res.status, msg);
+    }
+    return res.json();
+  },
   searchSessionFiles(id: string, q: string): Promise<FileListing> {
     return request(`/api/sessions/${id}/fs/search?q=${encodeURIComponent(q)}`);
   },

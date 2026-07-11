@@ -84,6 +84,40 @@ public static class SessionFileBrowser
         return full;
     }
 
+    /// <summary>Save an uploaded file's stream into <paramref name="relFolder"/> under the root,
+    /// using a clobber-free name derived from <paramref name="fileName"/> (any directory parts are
+    /// stripped). Returns the written path relative to the root, or null if the folder escapes the
+    /// root or does not exist.</summary>
+    public static async Task<string?> SaveUpload(string root, string? relFolder, string fileName, Stream content)
+    {
+        var folderFull = ResolveSafe(root, relFolder);
+        if (folderFull is null || !Directory.Exists(folderFull)) return null;
+
+        var safeName = Path.GetFileName(fileName); // discard any path components in the client name
+        if (string.IsNullOrWhiteSpace(safeName)) return null;
+
+        var target = UniquePath(folderFull, safeName);
+        await using var fs = File.Create(target);
+        await content.CopyToAsync(fs);
+        return RelOf(root, target);
+    }
+
+    /// <summary>A path in <paramref name="dir"/> for <paramref name="name"/> that doesn't collide
+    /// with an existing file/dir — appends " (1)", " (2)", … before the extension as needed.</summary>
+    private static string UniquePath(string dir, string name)
+    {
+        var target = Path.Combine(dir, name);
+        if (!File.Exists(target) && !Directory.Exists(target)) return target;
+
+        var stem = Path.GetFileNameWithoutExtension(name);
+        var ext = Path.GetExtension(name);
+        for (var i = 1; ; i++)
+        {
+            target = Path.Combine(dir, $"{stem} ({i}){ext}");
+            if (!File.Exists(target) && !Directory.Exists(target)) return target;
+        }
+    }
+
     private static readonly HashSet<string> SearchSkipDirs = new(StringComparer.OrdinalIgnoreCase)
     {
         ".git", "node_modules", "bin", "obj", ".vs", ".idea", "dist", "out", ".next", "target",

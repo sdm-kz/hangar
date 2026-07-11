@@ -296,6 +296,29 @@ internal static class Program
                 : Results.Ok(new { path = rel, fullPath = full });
         });
 
+        // Upload one or more arbitrary files into a folder under the working dir (multipart form:
+        // a "path" field for the target folder — empty means the root — and one or more "files").
+        app.MapPost("/api/sessions/{id}/fs/upload", async (string id, HttpRequest req, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            if (!req.HasFormContentType) return Results.BadRequest(new { error = "expected multipart form" });
+
+            var form = await req.ReadFormAsync();
+            var folder = form["path"].ToString();
+            if (form.Files.Count == 0) return Results.BadRequest(new { error = "no files" });
+
+            var paths = new List<string>();
+            foreach (var file in form.Files)
+            {
+                await using var stream = file.OpenReadStream();
+                var rel = await SessionFileBrowser.SaveUpload(info.WorkingDirectory, folder, file.FileName, stream);
+                if (rel is null) return Results.BadRequest(new { error = "invalid folder" });
+                paths.Add(rel);
+            }
+            return Results.Ok(new { paths });
+        });
+
         // Filesystem change counter — the UI polls this to auto-refresh the tree.
         app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
         {
