@@ -38,6 +38,16 @@ public sealed class ClaudeSession : IDisposable
     public int ProcessId { get; private set; }
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
 
+    // ---- Watchdog (auto-recover from a hung API/streaming error) -------------------------------
+    /// <summary>Whether the hang watchdog may auto-continue this session (user-toggleable).</summary>
+    public bool WatchdogEnabled { get; set; } = true;
+    /// <summary>Current watchdog view of the session: "healthy" | "recovering" | "attention".</summary>
+    public string WatchdogStatus { get; internal set; } = "healthy";
+    /// <summary>Auto-continues fired since the session last looked healthy (reset on recovery).</summary>
+    internal int WatchdogConsecutive;
+    /// <summary>TickCount64 of the last auto-continue, for the per-session cooldown.</summary>
+    internal long WatchdogLastContinueTick;
+
     /// <summary>Bumped whenever the working directory changes; the UI polls it to auto-refresh.</summary>
     public long FsVersion => Interlocked.Read(ref _fsVersion);
 
@@ -64,7 +74,9 @@ public sealed class ClaudeSession : IDisposable
 
     public SessionInfo ToInfo() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, PermissionMode, State, ProcessId, CreatedAt,
-        RemoteUrl: _terminal?.RemoteUrl);
+        RemoteUrl: _terminal?.RemoteUrl,
+        WatchdogEnabled: WatchdogEnabled,
+        WatchdogStatus: WatchdogStatus);
 
     public PersistedSession ToPersisted() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt);

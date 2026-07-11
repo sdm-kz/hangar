@@ -11,6 +11,8 @@ export interface SessionInfo {
   processId: number;
   createdAt: string;
   remoteUrl: string | null; // claude.ai deep link to this session, once printed to its terminal
+  watchdogEnabled: boolean; // whether the hang watchdog may auto-continue this session
+  watchdogStatus: "healthy" | "recovering" | "attention"; // watchdog's view of the session
 }
 
 export interface CreateSessionRequest {

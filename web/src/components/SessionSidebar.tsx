@@ -204,14 +204,26 @@ export function SessionSidebar({
       >
         <div className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1">
-            {/* Fixed-width gutter so the title never shifts when the activity dot appears. */}
+            {/* Fixed-width gutter so the title never shifts when the activity dot appears. Busy
+                (emerald) wins; otherwise the watchdog surfaces recovering (amber) / attention (red). */}
             <span className="flex w-2.5 shrink-0 items-center justify-center">
-              {busyIds.has(s.id) && !restorable && (
-                <span
-                  className="size-2 rounded-full bg-emerald-500 animate-pulse"
-                  aria-label="Claude is working"
-                />
-              )}
+              {!restorable &&
+                (busyIds.has(s.id) ? (
+                  <span
+                    className="size-2 rounded-full bg-emerald-500 animate-pulse"
+                    aria-label="Claude is working"
+                  />
+                ) : s.watchdogStatus === "attention" ? (
+                  <span
+                    className="size-2 rounded-full bg-red-500"
+                    aria-label="Session needs attention"
+                  />
+                ) : s.watchdogStatus === "recovering" ? (
+                  <span
+                    className="size-2 rounded-full bg-amber-500 animate-pulse"
+                    aria-label="Watchdog is auto-recovering this session"
+                  />
+                ) : null)}
             </span>
             <span
               className={cn(

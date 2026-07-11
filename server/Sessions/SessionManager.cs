@@ -82,6 +82,34 @@ public sealed class SessionManager : IDisposable
     public Pty.TerminalChannel? GetTerminal(string id) =>
         _sessions.TryGetValue(id, out var s) ? s.Terminal : null;
 
+    /// <summary>Live sessions, for the watchdog to sweep.</summary>
+    internal IEnumerable<ClaudeSession> LiveSessions() => _sessions.Values;
+
+    /// <summary>Toggle the watchdog for one session; disabling also clears any pending state.</summary>
+    public bool SetWatchdogEnabled(string id, bool enabled)
+    {
+        if (!_sessions.TryGetValue(id, out var s)) return false;
+        s.WatchdogEnabled = enabled;
+        if (!enabled)
+        {
+            s.WatchdogStatus = "healthy";
+            s.WatchdogConsecutive = 0;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Reset a session's watchdog state (e.g. after a manual "Continue"): clears the give-up flag and
+    /// the consecutive-attempt counter so auto-recovery can resume from a clean slate.
+    /// </summary>
+    public void ResetWatchdog(string id)
+    {
+        if (!_sessions.TryGetValue(id, out var s)) return;
+        s.WatchdogStatus = "healthy";
+        s.WatchdogConsecutive = 0;
+        s.WatchdogLastContinueTick = 0;
+    }
+
     public SessionInfo Create(CreateSessionRequest req)
     {
         var dir = (req.WorkingDirectory ?? "").Trim();

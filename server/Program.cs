@@ -72,11 +72,14 @@ internal static class Program
 
         var authOptions = builder.Configuration.GetSection("Auth").Get<AuthOptions>() ?? new AuthOptions();
         var sessionOptions = builder.Configuration.GetSection("Sessions").Get<SessionManagerOptions>() ?? new SessionManagerOptions();
+        var watchdogOptions = builder.Configuration.GetSection("Watchdog").Get<WatchdogOptions>() ?? new WatchdogOptions();
 
         builder.Services.AddSingleton(authOptions);
         builder.Services.AddSingleton<TokenStore>();
         builder.Services.AddSingleton(sessionOptions);
         builder.Services.AddSingleton<SessionManager>();
+        builder.Services.AddSingleton(watchdogOptions);
+        builder.Services.AddHostedService<WatchdogService>();
         builder.Services.AddSingleton<RecentsStore>();
         builder.Services.ConfigureHttpJsonOptions(o =>
             o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
@@ -185,6 +188,22 @@ internal static class Program
         // Forget the session but leave its Remote Control process running.
         app.MapPost("/api/sessions/{id}/detach", (string id, SessionManager mgr) =>
             mgr.Remove(id, stopProcess: false) ? Results.Ok() : Results.NotFound());
+
+        // Enable/disable the hang watchdog for a session.
+        app.MapPost("/api/sessions/{id}/watchdog", (string id, WatchdogRequest body, SessionManager mgr) =>
+            mgr.SetWatchdogEnabled(id, body.Enabled) ? Results.Ok() : Results.NotFound());
+
+        // Manually send the recovery sequence ("continue") to a session and clear its watchdog state.
+        app.MapPost("/api/sessions/{id}/continue", async (string id, SessionManager mgr, WatchdogOptions wd) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null || info.State != SessionState.Running) return Results.NotFound();
+            var term = mgr.GetTerminal(id);
+            if (term is null) return Results.NotFound();
+            await term.WriteAsync(System.Text.Encoding.UTF8.GetBytes(wd.SendSequence), CancellationToken.None);
+            mgr.ResetWatchdog(id);
+            return Results.Ok();
+        });
 
         // ---- Recent launch presets & folders (shared across devices, persisted server-side) ---
         app.MapGet("/api/recents", (RecentsStore store) => Results.Ok(store.Get()));
@@ -320,6 +339,7 @@ internal static class Program
 }
 
 internal record LoginRequest(string? Password);
+internal record WatchdogRequest(bool Enabled);
 internal record FileWriteRequest(string Path, string? Content);
 internal record FolderRequest(string? Path);
 internal record ImageUploadRequest(string? DataBase64, string? Ext);

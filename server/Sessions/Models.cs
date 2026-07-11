@@ -55,4 +55,8 @@ public sealed record SessionInfo(
     int ProcessId,
     DateTimeOffset CreatedAt,
     /// <summary>claude.ai deep link to this session, sniffed from its terminal; null until printed.</summary>
-    string? RemoteUrl = null);
+    string? RemoteUrl = null,
+    /// <summary>Whether the hang watchdog may auto-continue this session.</summary>
+    bool WatchdogEnabled = true,
+    /// <summary>Watchdog view of the session: "healthy" | "recovering" | "attention".</summary>
+    string WatchdogStatus = "healthy");

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, getToken, setToken } from "@/lib/api";
 import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
@@ -149,6 +149,39 @@ export function App() {
       clearInterval(t);
     };
   }, [auth]);
+
+  // Raise a browser (OS) notification when a session newly flips to "attention" (the watchdog gave
+  // up auto-recovering it). Compare against the previous poll so we only notify on the transition,
+  // and seed on first run so pre-existing attention states don't alert on page load.
+  const wdStatusRef = useRef<Map<string, string> | null>(null);
+  useEffect(() => {
+    if (auth !== "authed") return;
+    const prev = wdStatusRef.current;
+    const next = new Map(sessions.map((s) => [s.id, s.watchdogStatus]));
+    wdStatusRef.current = next;
+    if (prev === null) return; // first run: seed only, don't fire for already-stuck sessions
+
+    const newlyStuck = sessions.filter(
+      (s) => s.watchdogStatus === "attention" && prev.get(s.id) !== "attention"
+    );
+    if (newlyStuck.length === 0 || !("Notification" in window)) return;
+
+    const fire = () => {
+      for (const s of newlyStuck) {
+        try {
+          new Notification("Claude session needs attention", {
+            body: `${s.name} stopped recovering after repeated API errors.`,
+            tag: `watchdog-${s.id}`,
+          });
+        } catch {
+          /* ignore — notifications are best-effort */
+        }
+      }
+    };
+    if (Notification.permission === "granted") fire();
+    else if (Notification.permission !== "denied")
+      Notification.requestPermission().then((p) => p === "granted" && fire());
+  }, [sessions, auth]);
 
   // Load the server-backed recents once authed, migrating any left over in this browser's
   // localStorage from older builds first.

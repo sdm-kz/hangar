@@ -13,10 +13,14 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 public sealed partial class TerminalChannel : IDisposable
 {
     private const int RingCapacity = 512 * 1024; // recent VT bytes kept for reconnect replay
+    private const int RecentCapacity = 32 * 1024; // small tail scanned for on-screen text (watchdog)
 
     private readonly PtySession _pty;
     private readonly ILogger _log;
     private readonly RingBuffer _ring = new(RingCapacity);
+    // A short tail of the most recent raw VT bytes, ANSI-stripped on demand so the watchdog can scan
+    // roughly the current screen for an error banner without re-processing the whole 512 KB ring.
+    private readonly RingBuffer _recentRaw = new(RecentCapacity);
     private readonly Dictionary<Guid, ChannelWriter<byte[]>> _subs = new();
     private readonly object _lock = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -38,6 +42,21 @@ public sealed partial class TerminalChannel : IDisposable
             var now = Environment.TickCount64;
             return now - Volatile.Read(ref _lastOutputTick) < OutputWindowMs
                 && now - Volatile.Read(ref _lastInputTick) > InputGuardMs;
+        }
+    }
+
+    /// <summary>
+    /// The most recent on-screen text with ANSI escapes stripped (roughly the current screen).
+    /// Used by the watchdog to spot an error banner. Latin1 maps each VT byte 1:1 to a char, so the
+    /// visible ASCII survives; computed on demand since only the watchdog poll needs it.
+    /// </summary>
+    public string RecentText
+    {
+        get
+        {
+            byte[] snap;
+            lock (_lock) snap = _recentRaw.Snapshot();
+            return Vt.Strip(Encoding.Latin1.GetString(snap));
         }
     }
 
@@ -87,6 +106,7 @@ public sealed partial class TerminalChannel : IDisposable
                 lock (_lock)
                 {
                     _ring.Append(chunk);
+                    _recentRaw.Append(chunk);
                     foreach (var w in _subs.Values) w.TryWrite(chunk);
                     SniffRemoteUrl(buf, n);
                 }

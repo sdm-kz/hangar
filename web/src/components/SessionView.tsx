@@ -8,7 +8,7 @@ import { TerminalPane } from "./TerminalPane";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Check, Columns2, Copy, ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Radio, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
@@ -48,7 +48,27 @@ export function SessionView({
   const [view, setView] = useState<"terminal" | "files" | "split">(() => readUrlState().tab ?? "terminal");
   const [copiedPath, setCopiedPath] = useState(false);
   const [splitWidth, setSplitWidth] = useState(readSplitWidth); // Files-panel width in Split view
+  // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
+  const [wdEnabled, setWdEnabled] = useState(session.watchdogEnabled);
   const contentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
+
+  const toggleWatchdog = useCallback(() => {
+    setWdEnabled((prev) => {
+      const next = !prev;
+      // Ask for notification permission here — a real click — so the first "needs attention" alert
+      // isn't lost to browsers that ignore permission prompts not triggered by a user gesture.
+      if (next && "Notification" in window && Notification.permission === "default")
+        Notification.requestPermission().catch(() => {});
+      api.setWatchdog(session.id, next).catch(() => setWdEnabled(prev)); // revert on failure
+      return next;
+    });
+  }, [session.id]);
+
+  const sendContinue = useCallback(() => {
+    api.continueSession(session.id).catch(() => {});
+  }, [session.id]);
 
   // Drag the divider between the Files panel and the terminal (Split view, desktop); persist it.
   const startSplitResize = useCallback((e: React.PointerEvent) => {
@@ -178,6 +198,16 @@ export function SessionView({
           <div className="flex items-center gap-2">
             <h2 className="truncate font-semibold">{session.name}</h2>
             <StateBadge state={session.state} />
+            {session.state === "Running" && session.watchdogStatus === "recovering" && (
+              <Badge variant="warning" title="Watchdog detected an error and is auto-continuing">
+                Auto-recovering
+              </Badge>
+            )}
+            {session.state === "Running" && session.watchdogStatus === "attention" && (
+              <Badge variant="destructive" title="Watchdog gave up after repeated errors — needs you">
+                Needs attention
+              </Badge>
+            )}
             {session.remoteControl && (
               <Badge variant="outline" className="hidden gap-1 sm:inline-flex">
                 <Radio className="size-3" /> RC
@@ -228,6 +258,36 @@ export function SessionView({
           </ViewTab>
         </div>
 
+        {session.state === "Running" && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleWatchdog}
+              title={
+                wdEnabled
+                  ? "Hang watchdog on — auto-sends “continue” on API errors. Click to disable."
+                  : "Hang watchdog off. Click to enable auto-recovery."
+              }
+              aria-pressed={wdEnabled}
+            >
+              {wdEnabled ? (
+                <ShieldCheck className="size-4" />
+              ) : (
+                <ShieldOff className="size-4 text-muted-foreground" />
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={sendContinue}
+              title="Send “continue” to this session now"
+            >
+              <Play className="size-4" />
+              <span className="hidden sm:inline">Continue</span>
+            </Button>
+          </>
+        )}
         {session.remoteControl && session.state === "Running" && (
           <Button asChild variant="outline" size="sm" className="hidden lg:inline-flex">
             <a href={session.remoteUrl ?? "https://claude.ai/code"} target="_blank" rel="noreferrer">
