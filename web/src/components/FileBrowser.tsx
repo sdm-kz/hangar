@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ImageLightbox } from "./ImageLightbox";
+import { OfficeViewer } from "./OfficeViewer";
 import {
   ChevronDown,
   ChevronRight,
@@ -31,6 +32,7 @@ import {
 } from "lucide-react";
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
+const MAX_OFFICE_PREVIEW = 25_000_000; // 25 MB — parsing docx/xlsx is heavier; cap before rendering
 
 // Desktop width of the file-tree pane. Persisted per-browser and drag-resizable (like the sidebar).
 const TREE_MIN = 180;
@@ -463,7 +465,7 @@ function FileRow({
   onSelect: (f: FileEntry) => void;
 }) {
   const kind = fileKind(entry.name);
-  const Icon = kind === "image" ? ImageIcon : kind === "text" ? FileText : FileIcon;
+  const Icon = kind === "image" ? ImageIcon : kind === "binary" ? FileIcon : FileText;
   // Bring a URL-restored selection into view (fires only when a row mounts already
   // selected — normal clicks select an already-mounted row, so they don't scroll).
   const ref = useRef<HTMLButtonElement>(null);
@@ -765,11 +767,17 @@ function FilePreview({
                 <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
               ))}
 
-            {(kind === "binary" || status === "toolarge") && (
+            {kind === "office" && file.size <= MAX_OFFICE_PREVIEW && (
+              <OfficeViewer sessionId={sessionId} file={file} />
+            )}
+
+            {(kind === "binary" ||
+              status === "toolarge" ||
+              (kind === "office" && file.size > MAX_OFFICE_PREVIEW)) && (
               <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
                 <FileIcon className="size-10 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  {status === "toolarge"
+                  {status === "toolarge" || kind === "office"
                     ? "File is too large to preview."
                     : "No preview available for this file type."}
                 </p>

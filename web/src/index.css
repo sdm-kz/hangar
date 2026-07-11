@@ -163,6 +163,25 @@
   color: #7ee787;
 }
 
+/* Read-only Excel preview (SheetJS sheet_to_html emits a bare <table>). */
+.xlsx-host table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.xlsx-host td,
+.xlsx-host th {
+  border: 1px solid var(--color-border);
+  padding: 2px 8px;
+  white-space: nowrap;
+  min-width: 3rem;
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.xlsx-host tr:nth-child(even) {
+  background-color: color-mix(in oklch, var(--color-muted) 45%, transparent);
+}
+
 @layer base {
   * {
     border-color: var(--color-border);

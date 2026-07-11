@@ -1,6 +1,9 @@
-export type FileKind = "image" | "text" | "binary";
+export type FileKind = "image" | "text" | "office" | "binary";
 
 const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"]);
+
+// Office documents we render inline (read-only) via docx-preview / SheetJS.
+const OFFICE = new Set(["docx", "xlsx"]);
 
 // Known binary formats we never try to preview as text (they'd render as gibberish).
 const BINARY = new Set([
@@ -9,8 +12,8 @@ const BINARY = new Set([
   "wasm", "node", "pyc", "pyo", "msi", "apk", "app", "dmg", "iso",
   // archives
   "zip", "tar", "gz", "tgz", "bz2", "xz", "rar", "7z", "jar", "war", "nupkg", "cab",
-  // office / documents
-  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf",
+  // office / documents (docx + xlsx are handled by the "office" kind and preview inline)
+  "pdf", "doc", "xls", "ppt", "pptx", "odt", "ods", "odp", "rtf",
   // media
   "mp3", "wav", "flac", "ogg", "m4a", "aac", "mp4", "avi", "mov", "mkv", "webm", "wmv", "flv",
   // fonts
@@ -30,8 +33,15 @@ export function fileExt(name: string): string {
 export function fileKind(name: string): FileKind {
   const ext = fileExt(name);
   if (ext && IMAGE.has(ext)) return "image";
+  if (ext && OFFICE.has(ext)) return "office";
   if (ext && BINARY.has(ext)) return "binary";
   return "text";
+}
+
+// Which inline Office renderer a file needs, or null if it isn't an Office document.
+export function officeKind(name: string): "docx" | "xlsx" | null {
+  const ext = fileExt(name);
+  return ext === "docx" || ext === "xlsx" ? ext : null;
 }
 
 export function formatSize(bytes: number): string {
