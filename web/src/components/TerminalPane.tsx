@@ -99,8 +99,30 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
       } catch {
         return;
       }
+      // Repaint xterm's own cells in case the renderer left them stale after being hidden.
+      term.refresh(0, term.rows - 1);
       if (ws.readyState === WebSocket.OPEN)
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    };
+
+    // Force Claude Code to repaint its full TUI by nudging the PTY size (cols-1, then back). The
+    // server shares one ConPTY across viewers and ignores a same-size resize, so a fresh xterm
+    // reattaching at the current size (e.g. after a session switch) gets only the replayed
+    // scrollback and no SIGWINCH — leaving Claude's input box unpainted until you manually resize.
+    // A one-column nudge guarantees a resize signal, which makes Ink redraw the whole frame. We
+    // nudge columns rather than rows so the redraw doesn't shift rows vertically (a row nudge bumps
+    // the input box up a line and back — a visible top/bottom jump).
+    const nudgeRepaint = () => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      if (host.clientWidth === 0 || host.clientHeight === 0) return;
+      const cols = term.cols;
+      const rows = term.rows;
+      if (cols <= 1) return;
+      ws.send(JSON.stringify({ type: "resize", cols: cols - 1, rows }));
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN)
+          ws.send(JSON.stringify({ type: "resize", cols, rows }));
+      }, 60);
     };
 
     ws.onopen = () => {
@@ -109,7 +131,10 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
       sendResize();
       requestAnimationFrame(sendResize);
       setTimeout(sendResize, 150);
-      setTimeout(sendResize, 400);
+      setTimeout(() => {
+        sendResize();
+        nudgeRepaint(); // once the size has settled, force a fresh full-screen repaint from Claude
+      }, 400);
     };
     ws.onmessage = (e) => {
       if (typeof e.data === "string") term.write(e.data);
@@ -154,8 +179,23 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
     const ro = new ResizeObserver(() => sendResize());
     ro.observe(host);
 
+    // Backgrounding the tab throttles rAF/timers and pauses xterm's renderer; the ResizeObserver
+    // stays silent because the size never changed, so nothing refits on return. Refit across a
+    // couple frames whenever we become visible again (also covers OS-level tab/app switches).
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      // The socket stayed open across the tab switch, so xterm's buffer is intact — just refit and
+      // repaint the existing cells. No size nudge here: forcing Claude to reflow would jump the
+      // scroll position. The nudge only belongs on a fresh reattach (see ws.onopen).
+      sendResize();
+      requestAnimationFrame(sendResize);
+      setTimeout(sendResize, 150);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       ro.disconnect();
+      document.removeEventListener("visibilitychange", onVisible);
       document.removeEventListener("paste", onPaste, true);
       themeSub();
       dataSub.dispose();
