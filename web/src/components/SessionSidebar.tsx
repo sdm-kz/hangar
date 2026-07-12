@@ -18,6 +18,8 @@ import {
   List,
   ChevronRight,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
 } from "lucide-react";
 
 // Grouped-vs-flat is a per-browser view preference, kept client-side like the session order.
@@ -117,7 +119,10 @@ function useCollapsedGroups() {
       else next.add(dir);
       return next;
     });
-  return { collapsed, toggle };
+  // Collapse every given folder, or clear the set to expand all.
+  const setAll = (dirs: string[], allCollapsed: boolean) =>
+    setCollapsed(allCollapsed ? new Set(dirs) : new Set());
+  return { collapsed, toggle, setAll };
 }
 
 /**
@@ -187,7 +192,13 @@ export function SessionSidebar({
 }) {
   const [tab, setTab] = useState<"sessions" | "recent">("sessions");
   const [grouped, setGrouped] = useState<boolean>(loadGrouped);
-  const { collapsed, toggle: toggleGroup } = useCollapsedGroups();
+  const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
+
+  // Dirs of the groups currently shown, and whether every one is collapsed — drives the
+  // collapse/expand-all toggle so it flips to "expand" once nothing is left open.
+  const visibleDirs = groupByFolder(tab === "sessions" ? sessions : recents).map((g) => g.dir);
+  const allCollapsed = visibleDirs.length > 0 && visibleDirs.every((d) => collapsed.has(d));
+  const toggleAllGroups = () => setAllGroups(visibleDirs, !allCollapsed);
 
   const toggleGrouped = () =>
     setGrouped((v) => {
@@ -315,6 +326,21 @@ export function SessionSidebar({
             onClick={toggleGrouped}
           >
             {grouped ? <List className="size-4" /> : <FolderTree className="size-4" />}
+          </Button>
+        )}
+        {grouped && visibleDirs.length > 0 && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-muted-foreground"
+            title={allCollapsed ? "Expand all folders" : "Collapse all folders"}
+            onClick={toggleAllGroups}
+          >
+            {allCollapsed ? (
+              <ChevronsUpDown className="size-4" />
+            ) : (
+              <ChevronsDownUp className="size-4" />
+            )}
           </Button>
         )}
       </div>

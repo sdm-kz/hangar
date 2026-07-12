@@ -224,21 +224,20 @@ export function App() {
   async function onClose(id: string) {
     const s = sessions.find((x) => x.id === id);
     const running = s?.state === "Running";
-    const ok = await confirm({
-      title: running ? "Stop session?" : "Remove session?",
-      description: running ? (
-        <>
-          This kills the <span className="font-medium text-foreground">{s?.name}</span> process
-          {s?.remoteControl && " and ends its Remote Control session in the Claude Code app"}.
-        </>
-      ) : (
-        <>
-          Remove <span className="font-medium text-foreground">{s?.name}</span> from the list?
-        </>
-      ),
-      confirmLabel: running ? "Stop" : "Remove",
-    });
-    if (!ok) return;
+    // Only confirm when stopping a running session; closing an inactive one is cheap to undo.
+    if (running) {
+      const ok = await confirm({
+        title: "Stop session?",
+        description: (
+          <>
+            This kills the <span className="font-medium text-foreground">{s?.name}</span> process
+            {s?.remoteControl && " and ends its Remote Control session in the Claude Code app"}.
+          </>
+        ),
+        confirmLabel: "Stop",
+      });
+      if (!ok) return;
+    }
     await api.deleteSession(id).catch(() => {});
     setSessions((prev) => prev.filter((s) => s.id !== id));
     setActiveId((cur) => (cur === id ? null : cur));
