@@ -43,7 +43,7 @@ import {
 } from "lucide-react";
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
-const MAX_OFFICE_PREVIEW = 25_000_000; // 25 MB — parsing docx/xlsx is heavier; cap before rendering
+const MAX_OFFICE_PREVIEW = 15_000_000; // 15 MB — parsing docx/xlsx is heavier; cap before rendering
 
 // Desktop width of the file-tree pane. Persisted per-browser and drag-resizable (like the sidebar).
 const TREE_MIN = 180;

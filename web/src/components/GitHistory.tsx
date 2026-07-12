@@ -179,12 +179,23 @@ export function GitHistory({
               {commits.map((c, i) => (
                 <CommitRow
                   key={c.hash}
+                  sessionId={sessionId}
                   commit={c}
                   first={i === 0}
                   last={i === commits.length - 1 && !hasMore}
                   active={selected?.hash === c.hash && !selected.path}
-                  onClick={() =>
+                  selectedFilePath={selected?.hash === c.hash ? selected.path ?? null : null}
+                  onSelectCommit={() =>
                     onSelect({ hash: c.hash, shortHash: c.shortHash, subject: c.subject })
+                  }
+                  onSelectFile={(f) =>
+                    onSelect({
+                      hash: c.hash,
+                      shortHash: c.shortHash,
+                      subject: c.subject,
+                      path: f.path,
+                      status: f.status,
+                    })
                   }
                 />
               ))}
@@ -253,28 +264,49 @@ function RefBadges({ refs }: { refs: string }) {
 }
 
 function CommitRow({
+  sessionId,
   commit,
   first,
   last,
   active,
-  onClick,
+  selectedFilePath,
+  onSelectCommit,
+  onSelectFile,
 }: {
+  sessionId: string;
   commit: GitCommit;
   first: boolean;
   last: boolean;
   active: boolean;
-  onClick: () => void;
+  // Path of this commit's file currently previewed (highlights the file row), or null.
+  selectedFilePath: string | null;
+  onSelectCommit: () => void;
+  onSelectFile: (f: GitCommitFile) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [files, setFiles] = useState<GitCommitFile[] | null>(null);
+  const [error, setError] = useState(false);
+
+  // Lazily fetch the commit's changed files the first time it's expanded.
+  useEffect(() => {
+    if (!expanded || files !== null) return;
+    let cancelled = false;
+    api
+      .gitCommit(sessionId, commit.hash)
+      .then((d) => !cancelled && setFiles(d.files))
+      .catch(() => !cancelled && setError(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, files, sessionId, commit.hash]);
+
+  // Fill the graph node when this commit is the one being previewed (as a whole or via a file).
+  const nodeActive = active || selectedFilePath !== null;
+
   return (
-    <button
-      onClick={onClick}
-      title={`${commit.shortHash} · ${commit.date}`}
-      className={cn(
-        "flex w-full items-stretch gap-2 py-1 pr-2 text-left text-xs hover:bg-accent",
-        active && "bg-accent"
-      )}
-    >
-      {/* Single-lane graph rail: a continuous line with a node dot per commit. */}
+    <div className="flex items-stretch gap-2 pr-2 text-xs">
+      {/* Single-lane graph rail: a continuous line with a node dot per commit. Spans the full
+          row height so the line stays connected even when the file list is expanded. */}
       <span className="relative w-5 shrink-0">
         <span
           className={cn(
@@ -286,23 +318,68 @@ function CommitRow({
         <span
           className={cn(
             "absolute left-1/2 top-[7px] size-2 -translate-x-1/2 rounded-full border-2 bg-background",
-            active ? "border-primary bg-primary" : "border-primary"
+            nodeActive ? "border-primary bg-primary" : "border-primary"
           )}
         />
       </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex min-w-0 items-center gap-1">
-          <RefBadges refs={commit.refs} />
-          <span className={cn("truncate text-foreground", active && "font-medium")}>{commit.subject}</span>
-        </span>
-        <span className="truncate text-[10px] text-muted-foreground">
-          {commit.author} · {commit.relativeDate}
-        </span>
-      </span>
-      <span className="shrink-0 self-center font-mono text-[10px] text-muted-foreground">
-        {commit.shortHash}
-      </span>
-    </button>
+
+      <div className="min-w-0 flex-1">
+        <div className={cn("flex items-center gap-1 rounded-sm hover:bg-accent", active && "bg-accent")}>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            title={expanded ? "Hide changed files" : "Show changed files"}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+          >
+            {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          </button>
+          <button
+            onClick={onSelectCommit}
+            title={`${commit.shortHash} · ${commit.date}`}
+            className="flex min-w-0 flex-1 items-center gap-2 py-1 text-left"
+          >
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="flex min-w-0 items-center gap-1">
+                <RefBadges refs={commit.refs} />
+                <span className={cn("truncate text-foreground", active && "font-medium")}>
+                  {commit.subject}
+                </span>
+              </span>
+              <span className="truncate text-[10px] text-muted-foreground">
+                {commit.author} · {commit.relativeDate}
+              </span>
+            </span>
+            <span className="shrink-0 self-center font-mono text-[10px] text-muted-foreground">
+              {commit.shortHash}
+            </span>
+          </button>
+        </div>
+
+        {expanded && (
+          <div className="pb-1">
+            {files === null ? (
+              error ? (
+                <Note pl={2}>Unable to read files</Note>
+              ) : (
+                <Note pl={2}>
+                  <Loader2 className="size-3 animate-spin" /> Loading files…
+                </Note>
+              )
+            ) : files.length === 0 ? (
+              <Note pl={2}>No files</Note>
+            ) : (
+              files.map((f) => (
+                <CommitFileRow
+                  key={f.path}
+                  file={f}
+                  selected={selectedFilePath === f.path}
+                  onClick={() => onSelectFile(f)}
+                />
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
