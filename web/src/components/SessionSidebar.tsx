@@ -196,7 +196,10 @@ export function SessionSidebar({
 
   // Dirs of the groups currently shown, and whether every one is collapsed — drives the
   // collapse/expand-all toggle so it flips to "expand" once nothing is left open.
-  const visibleDirs = groupByFolder(tab === "sessions" ? sessions : recents).map((g) => g.dir);
+  const visibleDirs = (tab === "sessions"
+    ? groupByFolder(sessions)
+    : groupByFolder(recents)
+  ).map((g) => g.dir);
   const allCollapsed = visibleDirs.length > 0 && visibleDirs.every((d) => collapsed.has(d));
   const toggleAllGroups = () => setAllGroups(visibleDirs, !allCollapsed);
 
