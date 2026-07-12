@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
+import { sessionUrl } from "@/lib/urlState";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
@@ -213,10 +214,20 @@ export function SessionSidebar({
   // dropped in grouped mode where the folder is already in the header.
   const renderRow = (s: SessionInfo, showPath: boolean) => {
     const restorable = s.state === "Restorable";
+    // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
+    const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     return (
       <div
         key={s.id}
-        onClick={restorable ? undefined : () => onSelect(s.id)}
+        onClick={
+          restorable
+            ? undefined
+            : (e) => (e.ctrlKey || e.metaKey ? openInNewTab() : onSelect(s.id))
+        }
+        // Middle-click opens the session in a new tab; suppress the OS autoscroll it would otherwise start.
+        onMouseDown={restorable ? undefined : (e) => e.button === 1 && e.preventDefault()}
+        onAuxClick={restorable ? undefined : (e) => e.button === 1 && openInNewTab()}
+        title={restorable ? undefined : "Middle-click or Ctrl/⌘-click to open in a new tab"}
         className={cn(
           "group flex flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
           restorable ? "opacity-80" : "cursor-pointer",

@@ -11,6 +11,18 @@ export interface UrlState {
   file?: string;
 }
 
+/**
+ * Deep-link URL for a session, used to open it in a new browser tab. Keeps the current
+ * layout params (e.g. `tab`) but drops `file`, which belongs to the previously-open session.
+ */
+export function sessionUrl(id: string): string {
+  const p = new URLSearchParams(window.location.search);
+  p.set("session", id);
+  p.delete("file");
+  const qs = p.toString();
+  return qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+}
+
 export function readUrlState(): UrlState {
   const p = new URLSearchParams(window.location.search);
   const tab = p.get("tab");
