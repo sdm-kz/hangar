@@ -193,6 +193,13 @@ export const api = {
     }
     return res.json();
   },
+  // Create a folder (may be nested, e.g. "a/b/c") under the working dir; returns its rel path.
+  createSessionFolder(id: string, path: string): Promise<{ path: string }> {
+    return request(`/api/sessions/${id}/fs/mkdir`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  },
   searchSessionFiles(id: string, q: string): Promise<FileListing> {
     return request(`/api/sessions/${id}/fs/search?q=${encodeURIComponent(q)}`);
   },

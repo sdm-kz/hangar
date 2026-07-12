@@ -28,6 +28,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  FolderPlus,
   GitCompare,
   Image as ImageIcon,
   Loader2,
@@ -113,6 +114,32 @@ export function FileBrowser({
     [sessionId, uploadDir, onRefresh]
   );
 
+  // New-folder inline creator. The name may be nested ("a/b/c" or "a\b\c") and is created under
+  // the current upload target; on success that new folder becomes the target.
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolder, setNewFolder] = useState("");
+  const [folderBusy, setFolderBusy] = useState(false);
+  const [folderError, setFolderError] = useState<string | null>(null);
+
+  const createFolder = useCallback(async () => {
+    const name = newFolder.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    if (!name) return;
+    const rel = uploadDir ? `${uploadDir}/${name}` : name;
+    setFolderBusy(true);
+    setFolderError(null);
+    try {
+      const r = await api.createSessionFolder(sessionId, rel);
+      setUploadDir(r.path); // target the folder we just made
+      setCreatingFolder(false);
+      setNewFolder("");
+      onRefresh?.();
+    } catch {
+      setFolderError("Couldn't create folder");
+    } finally {
+      setFolderBusy(false);
+    }
+  }, [newFolder, uploadDir, sessionId, onRefresh]);
+
   // Drag the divider between the tree and the preview to resize the tree; persist the result.
   const startResize = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
@@ -175,6 +202,9 @@ export function FileBrowser({
     setShowChanges(false);
     setUploadDir("");
     setUploadError(null);
+    setCreatingFolder(false);
+    setNewFolder("");
+    setFolderError(null);
     patchUrlState({ file: storedFile ?? undefined });
   }, [sessionId]);
 
@@ -235,6 +265,19 @@ export function FileBrowser({
                 {changeCount > 0 && <span className="text-[10px] font-semibold">{changeCount}</span>}
               </button>
             )}
+            <button
+              title={`New folder in ${uploadDir || "root"}`}
+              onClick={() => {
+                setFolderError(null);
+                setCreatingFolder((v) => !v);
+              }}
+              className={cn(
+                "hover:text-foreground",
+                creatingFolder && "text-foreground"
+              )}
+            >
+              <FolderPlus className="size-3.5" />
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -278,6 +321,30 @@ export function FileBrowser({
                 <X className="size-3" />
               </button>
             )}
+          </div>
+        )}
+
+        {creatingFolder && (
+          <div className="px-2 pb-1">
+            <div className="flex items-center gap-1">
+              <Input
+                autoFocus
+                value={newFolder}
+                onChange={(e) => setNewFolder(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") createFolder();
+                  else if (e.key === "Escape") setCreatingFolder(false);
+                }}
+                placeholder={`New folder in ${uploadDir || "root"}… (a/b/c)`}
+                className="h-8 flex-1 text-xs"
+                spellCheck={false}
+                disabled={folderBusy}
+              />
+              <Button size="sm" className="h-8 px-2" onClick={createFolder} disabled={folderBusy || !newFolder.trim()}>
+                {folderBusy ? <Loader2 className="size-3.5 animate-spin" /> : "Create"}
+              </Button>
+            </div>
+            {folderError && <p className="px-1 pt-1 text-[10px] text-destructive">{folderError}</p>}
           </div>
         )}
 

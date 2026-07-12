@@ -319,6 +319,17 @@ internal static class Program
             return Results.Ok(new { paths });
         });
 
+        // Create a folder (possibly nested, e.g. "a/b/c") under the working dir.
+        app.MapPost("/api/sessions/{id}/fs/mkdir", (string id, FolderCreateRequest body, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            var rel = SessionFileBrowser.CreateDir(info.WorkingDirectory, body.Path ?? "");
+            return rel is null
+                ? Results.BadRequest(new { error = "invalid path" })
+                : Results.Ok(new { path = rel });
+        });
+
         // Filesystem change counter — the UI polls this to auto-refresh the tree.
         app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
         {
@@ -418,4 +429,5 @@ internal record LoginRequest(string? Password);
 internal record WatchdogRequest(bool Enabled);
 internal record FileWriteRequest(string Path, string? Content);
 internal record FolderRequest(string? Path);
+internal record FolderCreateRequest(string? Path);
 internal record ImageUploadRequest(string? DataBase64, string? Ext);

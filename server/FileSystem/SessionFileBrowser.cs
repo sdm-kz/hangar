@@ -84,6 +84,19 @@ public static class SessionFileBrowser
         return full;
     }
 
+    /// <summary>Create a directory (and any missing parents) at <paramref name="rel"/> under the
+    /// root. <paramref name="rel"/> may be several segments deep (e.g. "a/b/c"). Returns the created
+    /// path relative to the root, or null if it's empty, resolves to the root itself, or escapes it.</summary>
+    public static string? CreateDir(string root, string rel)
+    {
+        if (string.IsNullOrWhiteSpace(rel)) return null;
+        var full = ResolveSafe(root, rel);
+        if (full is null) return null;
+        if (full.Equals(Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase)) return null; // no-op
+        Directory.CreateDirectory(full);
+        return RelOf(root, full);
+    }
+
     /// <summary>Save an uploaded file's stream into <paramref name="relFolder"/> under the root,
     /// using a clobber-free name derived from <paramref name="fileName"/> (any directory parts are
     /// stripped). Returns the written path relative to the root, or null if the folder escapes the
