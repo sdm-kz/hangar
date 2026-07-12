@@ -324,11 +324,11 @@ function CommitRow({
       </span>
 
       <div className="min-w-0 flex-1">
-        <div className={cn("flex items-center gap-1 rounded-sm hover:bg-accent", active && "bg-accent")}>
+        <div className={cn("flex items-start gap-1 rounded-sm hover:bg-accent", active && "bg-accent")}>
           <button
             onClick={() => setExpanded((v) => !v)}
             title={expanded ? "Hide changed files" : "Show changed files"}
-            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+            className="shrink-0 rounded px-0.5 py-1 text-muted-foreground hover:text-foreground"
           >
             {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
           </button>
