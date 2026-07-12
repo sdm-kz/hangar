@@ -53,9 +53,8 @@ function dirKey(dir: string): string {
 }
 
 /**
- * Group items by working directory, preserving the incoming (user-ordered) sequence: groups appear
- * in the order their first item appears, and each item keeps its flat-list index so drag-to-reorder
- * keeps working unchanged.
+ * Group items by working directory. Groups are sorted by their folder label (the header text),
+ * case-insensitively; each item keeps its flat-list index so drag-to-reorder keeps working unchanged.
  */
 function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
   const groups: { dir: string; items: { item: T; index: number }[] }[] = [];
@@ -71,6 +70,9 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
     }
     g.items.push({ item, index });
   });
+  groups.sort((a, b) =>
+    folderLabel(a.dir).localeCompare(folderLabel(b.dir), undefined, { sensitivity: "base" })
+  );
   return groups;
 }
 
