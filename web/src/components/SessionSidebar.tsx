@@ -216,12 +216,11 @@ export function SessionSidebar({
     return (
       <div
         key={s.id}
-        onClick={() => (restorable ? onRestore(s.id) : onSelect(s.id))}
-        title={restorable ? "Reopen — resumes this conversation (--continue)" : undefined}
+        onClick={restorable ? undefined : () => onSelect(s.id)}
         className={cn(
-          "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
-          activeId === s.id && !restorable && "border-border bg-accent",
-          restorable && "opacity-80"
+          "group flex flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
+          restorable ? "opacity-80" : "cursor-pointer",
+          activeId === s.id && !restorable && "border-border bg-accent"
         )}
       >
         <div className="flex items-center justify-between gap-2">
@@ -261,9 +260,16 @@ export function SessionSidebar({
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {restorable && (
-              <span className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground group-hover:text-foreground">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRestore(s.id);
+                }}
+                title="Reopen — resumes this conversation (--continue)"
+                className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+              >
                 <RotateCcw className="size-3" /> Reopen
-              </span>
+              </button>
             )}
             <button
               onClick={(e) => {

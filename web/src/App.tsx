@@ -255,6 +255,18 @@ export function App() {
 
   // Reopen a Restorable session: it relaunches with --continue and returns a fresh live session.
   async function onRestore(id: string) {
+    const s = sessions.find((x) => x.id === id);
+    const ok = await confirm({
+      title: "Reopen session?",
+      description: (
+        <>
+          Relaunch <span className="font-medium text-foreground">{s?.name}</span> and resume its
+          conversation (<span className="font-mono">--continue</span>).
+        </>
+      ),
+      confirmLabel: "Reopen",
+    });
+    if (!ok) return;
     const created = await api.restoreSession(id).catch(() => null);
     if (!created) return;
     setSessions((prev) => [...prev.filter((s) => s.id !== id), created]);
