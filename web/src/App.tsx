@@ -3,7 +3,7 @@ import { api, getToken, setToken } from "@/lib/api";
 import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
-import { loadSessionOrder, saveSessionOrder, sortByOrder, move } from "@/lib/sessionOrder";
+import { move } from "@/lib/sessionOrder";
 import type { SessionInfo } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar } from "@/components/SessionSidebar";
@@ -101,7 +101,10 @@ export function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const list = sortByOrder(await api.listSessions(), loadSessionOrder());
+      // Newest sessions first (top), oldest last — by creation time.
+      const list = [...(await api.listSessions())].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
       setSessions(list);
       // Keep a valid current selection (e.g. restored from the URL); otherwise auto-select the
       // first live session, never a Restorable placeholder (it has no terminal yet).
@@ -241,17 +244,6 @@ export function App() {
     setActiveId((cur) => (cur === id ? null : cur));
   }
 
-  // Drag-to-reorder the active-session list. Order is client-side (localStorage) and re-applied on
-  // every poll (see refresh), since the list itself is owned by the server.
-  const reorderSessions = useCallback(
-    (from: number, to: number) => {
-      const next = move(sessions, from, to);
-      setSessions(next);
-      saveSessionOrder(next.map((s) => s.id));
-    },
-    [sessions]
-  );
-
   // Drag-to-reorder the recent presets. These are server-backed, so persist the new order there.
   const reorderRecents = useCallback(
     (from: number, to: number) => {
@@ -307,7 +299,6 @@ export function App() {
           onRestore={onRestore}
           onLogout={onLogout}
           onCollapse={toggleCollapsed}
-          onReorder={reorderSessions}
           recents={recents}
           onReuse={reuseRecent}
           onRemoveRecent={removeRecent}
@@ -344,7 +335,6 @@ export function App() {
               onClose={onClose}
               onRestore={onRestore}
               onLogout={onLogout}
-              onReorder={reorderSessions}
               recents={recents}
               onReuse={reuseRecent}
               onRemoveRecent={removeRecent}

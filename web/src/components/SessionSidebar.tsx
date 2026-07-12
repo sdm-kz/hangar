@@ -166,7 +166,6 @@ export function SessionSidebar({
   onRestore,
   onLogout,
   onCollapse,
-  onReorder,
   recents,
   onReuse,
   onRemoveRecent,
@@ -181,7 +180,6 @@ export function SessionSidebar({
   onRestore: (id: string) => void;
   onLogout: () => void;
   onCollapse?: () => void;
-  onReorder: (from: number, to: number) => void;
   recents: RecentSession[];
   onReuse: (r: RecentSession) => void;
   onRemoveRecent: (r: RecentSession) => void;
@@ -190,7 +188,6 @@ export function SessionSidebar({
   const [tab, setTab] = useState<"sessions" | "recent">("sessions");
   const [grouped, setGrouped] = useState<boolean>(loadGrouped);
   const { collapsed, toggle: toggleGroup } = useCollapsedGroups();
-  const dnd = useDragReorder(onReorder);
 
   const toggleGrouped = () =>
     setGrouped((v) => {
@@ -198,21 +195,19 @@ export function SessionSidebar({
       return !v;
     });
 
-  // A single session row. `i` is the index in the flat `sessions` list so drag-reorder is unaffected
-  // by grouping; `showPath` is dropped in grouped mode where the folder is already in the header.
-  const renderRow = (s: SessionInfo, i: number, showPath: boolean) => {
+  // A single session row. Sessions are ordered newest-first (by creation time); `showPath` is
+  // dropped in grouped mode where the folder is already in the header.
+  const renderRow = (s: SessionInfo, showPath: boolean) => {
     const restorable = s.state === "Restorable";
     return (
       <div
         key={s.id}
-        {...dnd.rowProps(i)}
         onClick={() => (restorable ? onRestore(s.id) : onSelect(s.id))}
         title={restorable ? "Reopen — resumes this conversation (--continue)" : undefined}
         className={cn(
           "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
           activeId === s.id && !restorable && "border-border bg-accent",
-          restorable && "opacity-80",
-          dnd.overIndex === i && "border-t-2 border-t-primary"
+          restorable && "opacity-80"
         )}
       >
         <div className="flex items-center justify-between gap-2">
@@ -353,7 +348,7 @@ export function SessionSidebar({
                   />
                   {!isCollapsed && (
                     <div className="mt-1 space-y-1 pl-1">
-                      {g.items.map(({ item, index }) => renderRow(item, index, false))}
+                      {g.items.map(({ item }) => renderRow(item, false))}
                     </div>
                   )}
                 </div>
@@ -361,7 +356,7 @@ export function SessionSidebar({
             })}
           </div>
         ) : (
-          <div className="space-y-1">{sessions.map((s, i) => renderRow(s, i, true))}</div>
+          <div className="space-y-1">{sessions.map((s) => renderRow(s, true))}</div>
         )}
       </div>
       )}
