@@ -41,6 +41,21 @@ export interface FileListing {
   entries: FileEntry[];
 }
 
+// General server-filesystem entries (absolute paths) for the sidebar Files panel.
+export interface FsNode {
+  name: string;
+  path: string; // absolute path on the server machine
+  isDir: boolean;
+  size: number;
+}
+
+export interface FsListing {
+  current: string | null; // the directory that was listed
+  parent: string | null;
+  drives: DirEntry[]; // drive roots, so the tree can start at the top
+  entries: FsNode[];
+}
+
 export interface GitStatus {
   isRepo: boolean;
   branch: string | null;

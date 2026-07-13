@@ -251,6 +251,63 @@ internal static class Program
         var defaultFolder = app.Configuration["FileSystem:DefaultFolder"];
         app.MapGet("/api/fs/browse", (string? path) => Results.Ok(FileSystemBrowser.Browse(path, defaultFolder)));
 
+        // ---- General server-filesystem browsing for the sidebar Files panel (absolute paths, not
+        //      confined to a session). Same token auth as everything under /api. -------------------
+        app.MapGet("/api/fs/list", (string? path) => Results.Ok(ServerFileBrowser.Browse(path, defaultFolder)));
+
+        app.MapGet("/api/fs/file", (string path, bool? download) =>
+        {
+            var full = Path.GetFullPath(path);
+            if (!File.Exists(full)) return Results.NotFound();
+            var contentType = SessionFileBrowser.ContentType(full);
+            var name = Path.GetFileName(full);
+            return download == true
+                ? Results.File(full, contentType, fileDownloadName: name, enableRangeProcessing: true)
+                : Results.File(full, contentType, enableRangeProcessing: true);
+        });
+
+        app.MapPost("/api/fs/write", (FsWriteRequest body) =>
+            ServerFileBrowser.WriteText(body.Path, body.Content ?? "")
+                ? Results.Ok()
+                : Results.BadRequest(new { error = "could not write file" }));
+
+        app.MapPost("/api/fs/mkdir", (FsPathRequest body) =>
+        {
+            var full = ServerFileBrowser.Mkdir(body.Path);
+            return full is null ? Results.BadRequest(new { error = "could not create folder" }) : Results.Ok(new { path = full });
+        });
+
+        app.MapPost("/api/fs/new-file", (FsPathRequest body) =>
+        {
+            var full = ServerFileBrowser.NewFile(body.Path);
+            return full is null ? Results.BadRequest(new { error = "could not create file" }) : Results.Ok(new { path = full });
+        });
+
+        app.MapPost("/api/fs/rename", (FsRenameRequest body) =>
+        {
+            var full = ServerFileBrowser.Rename(body.Path, body.NewName);
+            return full is null ? Results.BadRequest(new { error = "could not rename" }) : Results.Ok(new { path = full });
+        });
+
+        app.MapPost("/api/fs/upload", async (HttpRequest req) =>
+        {
+            if (!req.HasFormContentType) return Results.BadRequest(new { error = "expected multipart form" });
+            var form = await req.ReadFormAsync();
+            var folder = form["path"].ToString();
+            if (string.IsNullOrWhiteSpace(folder)) return Results.BadRequest(new { error = "no target folder" });
+            if (form.Files.Count == 0) return Results.BadRequest(new { error = "no files" });
+
+            var paths = new List<string>();
+            foreach (var file in form.Files)
+            {
+                await using var stream = file.OpenReadStream();
+                var full = await ServerFileBrowser.SaveUpload(folder, file.FileName, stream);
+                if (full is null) return Results.BadRequest(new { error = "invalid folder" });
+                paths.Add(full);
+            }
+            return Results.Ok(new { paths });
+        });
+
         // ---- Per-session file browsing (confined to the session's working directory) --------
         app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, SessionManager mgr) =>
         {
@@ -461,4 +518,7 @@ internal record RenameRequest(string Name);
 internal record FileWriteRequest(string Path, string? Content);
 internal record FolderRequest(string? Path);
 internal record FolderCreateRequest(string? Path);
+internal record FsWriteRequest(string Path, string? Content);
+internal record FsPathRequest(string Path);
+internal record FsRenameRequest(string Path, string NewName);
 internal record ImageUploadRequest(string? DataBase64, string? Ext);

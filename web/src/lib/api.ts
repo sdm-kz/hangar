@@ -2,6 +2,7 @@ import type {
   BrowseResult,
   CreateSessionRequest,
   FileListing,
+  FsListing,
   GitCommitDetail,
   GitDiff,
   GitFileContent,
@@ -112,6 +113,48 @@ export const api = {
   browse(path?: string): Promise<BrowseResult> {
     const q = path ? `?path=${encodeURIComponent(path)}` : "";
     return request(`/api/fs/browse${q}`);
+  },
+
+  // ---- General server-filesystem browsing (absolute paths) for the sidebar Files panel ----
+  fsList(path?: string): Promise<FsListing> {
+    const q = path ? `?path=${encodeURIComponent(path)}` : "";
+    return request(`/api/fs/list${q}`);
+  },
+  async fetchServerFileText(path: string): Promise<string> {
+    const res = await fetch(serverFileUrl(path));
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    return res.text();
+  },
+  fsWrite(path: string, content: string): Promise<void> {
+    return request("/api/fs/write", { method: "POST", body: JSON.stringify({ path, content }) });
+  },
+  fsMkdir(path: string): Promise<{ path: string }> {
+    return request("/api/fs/mkdir", { method: "POST", body: JSON.stringify({ path }) });
+  },
+  fsNewFile(path: string): Promise<{ path: string }> {
+    return request("/api/fs/new-file", { method: "POST", body: JSON.stringify({ path }) });
+  },
+  fsRename(path: string, newName: string): Promise<{ path: string }> {
+    return request("/api/fs/rename", { method: "POST", body: JSON.stringify({ path, newName }) });
+  },
+  async fsUpload(folder: string, files: File[]): Promise<{ paths: string[] }> {
+    const form = new FormData();
+    form.append("path", folder);
+    for (const f of files) form.append("files", f);
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    const res = await fetch("/api/fs/upload", { method: "POST", body: form, headers });
+    if (res.status === 401) {
+      setToken(null);
+      throw new ApiError(401, "unauthorized");
+    }
+    if (!res.ok) {
+      let msg = res.statusText;
+      try { msg = (await res.json()).error ?? msg; } catch { /* ignore */ }
+      throw new ApiError(res.status, msg);
+    }
+    return res.json();
   },
 
   // ---- Recent launch presets & folders (server-backed, shared across devices) ----
@@ -230,6 +273,15 @@ export function sessionsStreamUrl(): string {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const q = token ? `?access_token=${encodeURIComponent(token)}` : "";
   return `${proto}://${location.host}/hub/events${q}`;
+}
+
+/** URL for a general server file's raw bytes (absolute path); token in the query so it works in <img>/<a>. */
+export function serverFileUrl(path: string, download = false): string {
+  const token = getToken() ?? "";
+  const params = new URLSearchParams({ path });
+  if (download) params.set("download", "true");
+  if (token) params.set("access_token", token);
+  return `/api/fs/file?${params.toString()}`;
 }
 
 /** URL for a session file's raw bytes; token is passed in the query so it works in <img>/<a>. */

@@ -7,6 +7,9 @@ import { move } from "@/lib/sessionOrder";
 import type { SessionInfo } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar } from "@/components/SessionSidebar";
+import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
+import { FilesSidebar } from "@/components/FilesSidebar";
+import { ServerFileViewer } from "@/components/ServerFileViewer";
 import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
 import { Button } from "@/components/ui/button";
@@ -34,6 +37,8 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
   const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("sessions");
+  const [openFile, setOpenFile] = useState<string | null>(null); // server file open in the main area
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
@@ -277,6 +282,18 @@ export function App() {
     setSidebarOpen(false);
   }
 
+  // Open a server file (from the Files tab) in the main content area; close the mobile drawer.
+  const openServerFile = useCallback((path: string) => {
+    setOpenFile(path);
+    setSidebarOpen(false);
+  }, []);
+
+  // Selecting a session takes over the main area, so drop any open server file.
+  const selectSession = useCallback((id: string) => {
+    setActiveId(id);
+    setOpenFile(null);
+  }, []);
+
   async function removeRecent(r: RecentSession) {
     const next = await api.removeRecentSession(r).catch(() => null);
     if (next) setRecents(next.sessions);
@@ -387,22 +404,29 @@ export function App() {
         className={cn("relative hidden shrink-0 border-r md:block", collapsed && "md:hidden")}
         style={{ width: sidebarWidth }}
       >
-        <SessionSidebar
-          sessions={sessions}
-          busyIds={busyIds}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onNew={() => openNew()}
-          onClose={onClose}
-          onRestore={onRestore}
-          onRename={onRename}
-          onRemoveSessions={onRemoveSessions}
-          onLogout={onLogout}
-          onCollapse={toggleCollapsed}
-          recents={recents}
-          onReuse={reuseRecent}
-          onRemoveRecent={removeRecent}
-          onReorderRecent={reorderRecents}
+        <AppSidebar
+          tab={sidebarTab}
+          onTabChange={setSidebarTab}
+          sessions={
+            <SessionSidebar
+              sessions={sessions}
+              busyIds={busyIds}
+              activeId={activeId}
+              onSelect={selectSession}
+              onNew={() => openNew()}
+              onClose={onClose}
+              onRestore={onRestore}
+              onRename={onRename}
+              onRemoveSessions={onRemoveSessions}
+              onLogout={onLogout}
+              onCollapse={toggleCollapsed}
+              recents={recents}
+              onReuse={reuseRecent}
+              onRemoveRecent={removeRecent}
+              onReorderRecent={reorderRecents}
+            />
+          }
+          files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} />}
         />
         {/* Drag handle straddling the right border. */}
         <div
@@ -420,34 +444,49 @@ export function App() {
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
           <aside className="absolute left-0 top-0 h-full w-72 border-r shadow-xl">
-            <SessionSidebar
-              sessions={sessions}
-              busyIds={busyIds}
-              activeId={activeId}
-              onSelect={(id) => {
-                setActiveId(id);
-                setSidebarOpen(false);
-              }}
-              onNew={() => {
-                openNew();
-                setSidebarOpen(false);
-              }}
-              onClose={onClose}
-              onRestore={onRestore}
-              onRename={onRename}
-              onRemoveSessions={onRemoveSessions}
-              onLogout={onLogout}
-              recents={recents}
-              onReuse={reuseRecent}
-              onRemoveRecent={removeRecent}
-              onReorderRecent={reorderRecents}
+            <AppSidebar
+              tab={sidebarTab}
+              onTabChange={setSidebarTab}
+              sessions={
+                <SessionSidebar
+                  sessions={sessions}
+                  busyIds={busyIds}
+                  activeId={activeId}
+                  onSelect={(id) => {
+                    selectSession(id);
+                    setSidebarOpen(false);
+                  }}
+                  onNew={() => {
+                    openNew();
+                    setSidebarOpen(false);
+                  }}
+                  onClose={onClose}
+                  onRestore={onRestore}
+                  onRename={onRename}
+                  onRemoveSessions={onRemoveSessions}
+                  onLogout={onLogout}
+                  recents={recents}
+                  onReuse={reuseRecent}
+                  onRemoveRecent={removeRecent}
+                  onReorderRecent={reorderRecents}
+                />
+              }
+              files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} />}
             />
           </aside>
         </div>
       )}
 
       <main className="min-w-0 flex-1">
-        {active ? (
+        {openFile ? (
+          <ServerFileViewer
+            path={openFile}
+            onClose={() => setOpenFile(null)}
+            onToggleSidebar={() => setSidebarOpen(true)}
+            collapsed={collapsed}
+            onToggleCollapsed={toggleCollapsed}
+          />
+        ) : active ? (
           <SessionView
             session={active}
             onToggleSidebar={() => setSidebarOpen(true)}
