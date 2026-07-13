@@ -54,8 +54,19 @@ const TERM_THEMES: Record<Theme, ITheme> = {
  * /hub/sessions/{id}/terminal. Output frames arrive as binary VT bytes; keystrokes and resizes
  * are sent back (binary input, JSON control). Mount one per session (key by session id).
  */
-export function TerminalPane({ sessionId }: { sessionId: string }) {
+export function TerminalPane({
+  sessionId,
+  onRenameDetected,
+}: {
+  sessionId: string;
+  // Fired when Claude's "Session renamed to:" confirmation appears in this terminal, so the app can
+  // refresh the session list immediately instead of waiting for the next poll.
+  onRenameDetected?: () => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
+  // Kept in a ref so the socket handler always sees the latest callback without re-opening the socket.
+  const onRenameRef = useRef(onRenameDetected);
+  onRenameRef.current = onRenameDetected;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -136,9 +147,19 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
         nudgeRepaint(); // once the size has settled, force a fresh full-screen repaint from Claude
       }, 400);
     };
+    const decoder = new TextDecoder();
     ws.onmessage = (e) => {
-      if (typeof e.data === "string") term.write(e.data);
-      else term.write(new Uint8Array(e.data));
+      let text: string;
+      if (typeof e.data === "string") {
+        term.write(e.data);
+        text = e.data;
+      } else {
+        const bytes = new Uint8Array(e.data);
+        term.write(bytes);
+        text = decoder.decode(bytes, { stream: true });
+      }
+      // Claude prints this after a /rename; nudge the app to re-pull the (now-renamed) session list.
+      if (text.includes("Session renamed to:")) onRenameRef.current?.();
     };
     ws.onclose = () => term.write("\r\n\x1b[90m[terminal disconnected]\x1b[0m\r\n");
 

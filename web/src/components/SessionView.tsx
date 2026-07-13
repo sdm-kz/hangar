@@ -38,6 +38,7 @@ export function SessionView({
   onToggleCollapsed,
   onStopped,
   onRename,
+  onSessionsRefresh,
 }: {
   session: SessionInfo;
   onToggleSidebar: () => void;
@@ -45,6 +46,8 @@ export function SessionView({
   onToggleCollapsed: () => void;
   onStopped: (id: string) => void;
   onRename: (id: string, name: string) => void;
+  // Nudge the app to re-pull the session list (e.g. after a /rename detected in the terminal).
+  onSessionsRefresh?: () => void;
 }) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -411,7 +414,11 @@ export function SessionView({
         )}
 
         <div className={cn("min-h-0 min-w-0 flex-1", view === "files" && "hidden")}>
-          <TerminalPane key={session.id} sessionId={session.id} />
+          <TerminalPane
+            key={session.id}
+            sessionId={session.id}
+            onRenameDetected={onSessionsRefresh}
+          />
         </div>
       </div>
     </div>

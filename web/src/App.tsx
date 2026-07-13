@@ -119,6 +119,13 @@ export function App() {
     }
   }, []);
 
+  // Re-pull the list now and once more shortly after — used when the terminal shows a rename, to
+  // cover the brief window where the client sees the confirmation just before the server applies it.
+  const refreshSoon = useCallback(() => {
+    refresh();
+    setTimeout(refresh, 600);
+  }, [refresh]);
+
   // Mirror the active session into the URL so a refresh/shared link restores it.
   useEffect(() => {
     patchUrlState({ session: activeId ?? undefined });
@@ -130,6 +137,22 @@ export function App() {
     refresh();
     const t = setInterval(refresh, 4000);
     return () => clearInterval(t);
+  }, [auth, refresh]);
+
+  // Browsers throttle/pause setInterval in a backgrounded tab, so the poll above stalls while you're
+  // away (e.g. renaming in the terminal from another window). Refetch immediately on return so the
+  // list is current without needing a full page reload.
+  useEffect(() => {
+    if (auth !== "authed") return;
+    const onWake = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    return () => {
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+    };
   }, [auth, refresh]);
 
   // Poll which sessions Claude is actively working in — separate from the list poll so the "active"
@@ -387,6 +410,7 @@ export function App() {
             onToggleCollapsed={toggleCollapsed}
             onStopped={(id) => setSessions((prev) => prev.filter((s) => s.id !== id))}
             onRename={onRename}
+            onSessionsRefresh={refreshSoon}
           />
         ) : (
           <EmptyState
