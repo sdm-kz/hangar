@@ -90,6 +90,10 @@ export const api = {
   deleteSession(id: string): Promise<void> {
     return request(`/api/sessions/${id}`, { method: "DELETE" });
   },
+  // Rename a session; the server also injects `/rename <name>` into a live terminal so Claude follows.
+  renameSession(id: string, name: string): Promise<void> {
+    return request(`/api/sessions/${id}/name`, { method: "POST", body: JSON.stringify({ name }) });
+  },
   // Forgets the session but leaves its Remote Control process running.
   detachSession(id: string): Promise<void> {
     return request(`/api/sessions/${id}/detach`, { method: "POST" });

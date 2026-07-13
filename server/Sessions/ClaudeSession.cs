@@ -26,7 +26,7 @@ public sealed class ClaudeSession : IDisposable
     public TerminalChannel? Terminal => _terminal;
 
     public string Id { get; }
-    public string Name { get; }
+    public string Name { get; private set; }
     public string WorkingDirectory { get; }
     public bool RemoteControl { get; }
     public string? Model { get; }
@@ -50,6 +50,30 @@ public sealed class ClaudeSession : IDisposable
 
     /// <summary>Bumped whenever the working directory changes; the UI polls it to auto-refresh.</summary>
     public long FsVersion => Interlocked.Read(ref _fsVersion);
+
+    /// <summary>Raised after <see cref="Rename"/> changes the name, so the manager can re-persist.</summary>
+    public event Action<ClaudeSession>? NameChanged;
+
+    /// <summary>
+    /// Change the session's display name (from a UI rename or a <c>/rename</c> typed in the terminal).
+    /// Strips control characters and caps length. Returns false when the name is empty or unchanged.
+    /// </summary>
+    public bool Rename(string? newName)
+    {
+        var clean = SanitizeName(newName);
+        if (clean.Length == 0 || clean == Name) return false;
+        Name = clean;
+        NameChanged?.Invoke(this);
+        return true;
+    }
+
+    /// <summary>Trim, drop control chars (so it's safe to echo/inject as a terminal command), cap length.</summary>
+    public static string SanitizeName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "";
+        var clean = new string(name.Where(c => !char.IsControl(c)).ToArray()).Trim();
+        return clean.Length > 100 ? clean[..100] : clean;
+    }
 
     public ClaudeSession(CreateSessionRequest req, ExecutableSpec exe, ILogger log)
     {
@@ -106,6 +130,13 @@ public sealed class ClaudeSession : IDisposable
         try
         {
             _terminal = TerminalChannel.Start(_exe.FileName, launchArgs, WorkingDirectory, _log);
+            // Mirror a `/rename <name>` typed at the Claude prompt into our own name. Claude handles
+            // the command natively; we just observe it in the input stream and follow along.
+            _terminal.RenameCommandDetected += name =>
+            {
+                if (Rename(name))
+                    _log.LogInformation("Session {Id} renamed to '{Name}' via terminal /rename", Id, Name);
+            };
             ProcessId = _terminal.ProcessId;
             _process = Process.GetProcessById(ProcessId);
             try { _processStartTicks = _process.StartTime.ToUniversalTime().Ticks; } catch { }

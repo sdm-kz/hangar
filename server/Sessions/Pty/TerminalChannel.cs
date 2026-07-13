@@ -71,6 +71,66 @@ public sealed partial class TerminalChannel : IDisposable
     [GeneratedRegex(@"https://claude\.ai/code/session_[A-Za-z0-9_-]+")]
     private static partial Regex RemoteUrlRegex();
 
+    // ---- /rename sniffing: watch the input stream for a completed "/rename <name>" line ----------
+    // We reconstruct the current input line from keystrokes so a rename typed at the Claude prompt
+    // can be mirrored into our session name. Claude still receives and handles the command itself.
+    private readonly object _inputLock = new();
+    private readonly StringBuilder _inputLine = new();
+    private bool _inputLineDirty; // set when we can't track the line precisely (cursor moves, etc.)
+
+    /// <summary>Raised when a full <c>/rename &lt;name&gt;</c> line is submitted in the terminal.</summary>
+    public event Action<string>? RenameCommandDetected;
+
+    [GeneratedRegex(@"^/rename\s+(.+)$")]
+    private static partial Regex RenameRegex();
+
+    // Feed raw input bytes through the line tracker; returns a detected rename target, or null.
+    private string? TrackInput(ReadOnlySpan<byte> data)
+    {
+        // Client keystrokes are UTF-8; each keypress arrives as its own frame, so multi-byte chars
+        // decode whole here. Names are typed printable text, so this stays accurate for the /rename case.
+        var text = Encoding.UTF8.GetString(data);
+        string? detected = null;
+        lock (_inputLock)
+        {
+            foreach (var ch in text)
+            {
+                switch (ch)
+                {
+                    case '\r':
+                    case '\n':
+                        if (!_inputLineDirty)
+                        {
+                            var m = RenameRegex().Match(_inputLine.ToString().Trim());
+                            if (m.Success && m.Groups[1].Value.Trim().Length > 0)
+                                detected = m.Groups[1].Value.Trim();
+                        }
+                        _inputLine.Clear();
+                        _inputLineDirty = false;
+                        break;
+                    case '': // DEL / backspace
+                    case '\b':
+                        if (_inputLine.Length > 0) _inputLine.Length--;
+                        break;
+                    case '': // Ctrl-U (kill line) and Ctrl-C both reset the prompt's input
+                    case '':
+                        _inputLine.Clear();
+                        _inputLineDirty = false;
+                        break;
+                    case '': // ESC: arrow/history/cursor edits we can't follow — stop trusting the line
+                        _inputLineDirty = true;
+                        break;
+                    default:
+                        if (ch >= ' ') _inputLine.Append(ch);
+                        else _inputLineDirty = true;
+                        break;
+                }
+                if (_inputLine.Length > 512) { _inputLine.Clear(); _inputLineDirty = true; } // runaway guard
+            }
+        }
+        return detected;
+    }
+
     public int ProcessId => _pty.ProcessId;
     public short Cols { get; private set; } = 120;
     public short Rows { get; private set; } = 30;
@@ -169,6 +229,9 @@ public sealed partial class TerminalChannel : IDisposable
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
     {
         Volatile.Write(ref _lastInputTick, Environment.TickCount64);
+        // Observe the input for a `/rename` line before it's written (fire the event outside the lock).
+        var rename = TrackInput(data.Span);
+        if (rename is not null) RenameCommandDetected?.Invoke(rename);
         await _writeLock.WaitAsync(ct);
         try
         {
@@ -178,6 +241,10 @@ public sealed partial class TerminalChannel : IDisposable
         catch (Exception ex) { _log.LogDebug(ex, "PTY write failed for pid {Pid}", _pty.ProcessId); }
         finally { _writeLock.Release(); }
     }
+
+    /// <summary>Type text into the terminal as if the user entered it (used to inject a rename command).</summary>
+    public void InjectInput(string text) =>
+        _ = WriteAsync(Encoding.UTF8.GetBytes(text), CancellationToken.None);
 
     public void Resize(short cols, short rows)
     {

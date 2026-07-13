@@ -6,10 +6,11 @@ import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
 import { FileBrowser } from "./FileBrowser";
 import { TerminalPane } from "./TerminalPane";
+import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Check, Columns2, Copy, ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
@@ -36,15 +37,18 @@ export function SessionView({
   collapsed,
   onToggleCollapsed,
   onStopped,
+  onRename,
 }: {
   session: SessionInfo;
   onToggleSidebar: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   onStopped: (id: string) => void;
+  onRename: (id: string, name: string) => void;
 }) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   // View mode is remembered per session (in the browser). On first mount honor a deep-linked ?tab=
@@ -229,7 +233,34 @@ export function SessionView({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-            <h2 className="min-w-0 truncate font-semibold">{session.name}</h2>
+            {renaming ? (
+              <RenameField
+                value={session.name}
+                onSubmit={(name) => {
+                  onRename(session.id, name);
+                  setRenaming(false);
+                }}
+                onCancel={() => setRenaming(false)}
+                className="max-w-[16rem] font-semibold"
+              />
+            ) : (
+              <h2
+                className="min-w-0 cursor-text truncate font-semibold"
+                title="Double-click to rename"
+                onDoubleClick={() => setRenaming(true)}
+              >
+                {session.name}
+              </h2>
+            )}
+            {!renaming && (
+              <button
+                onClick={() => setRenaming(true)}
+                title="Rename session"
+                className="shrink-0 text-muted-foreground hover:text-foreground"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            )}
             <StateBadge state={session.state} />
             {session.state === "Running" && session.watchdogStatus === "recovering" && (
               <Badge variant="warning" title="Watchdog detected an error and is auto-continuing">

@@ -85,6 +85,36 @@ public sealed class SessionManager : IDisposable
     /// <summary>Live sessions, for the watchdog to sweep.</summary>
     internal IEnumerable<ClaudeSession> LiveSessions() => _sessions.Values;
 
+    /// <summary>
+    /// Rename a session from the UI. For a live session this updates the display name and injects a
+    /// <c>/rename &lt;name&gt;</c> into its terminal so Claude renames its own session too; for a
+    /// Restorable entry it just updates the persisted name. Returns false if the id is unknown or the
+    /// name is empty. (A <c>/rename</c> typed in the terminal is handled directly on the session and
+    /// doesn't come through here, so there's no echo loop.)
+    /// </summary>
+    public bool Rename(string id, string newName)
+    {
+        var clean = ClaudeSession.SanitizeName(newName);
+        if (clean.Length == 0) return false;
+
+        if (_sessions.TryGetValue(id, out var s))
+        {
+            if (s.Rename(clean)) // raises NameChanged -> SavePersisted
+                s.Terminal?.InjectInput($"/rename {clean}\r");
+            return true;
+        }
+        if (_restorable.TryGetValue(id, out var p))
+        {
+            if (p.Name != clean)
+            {
+                _restorable[id] = p with { Name = clean };
+                SavePersisted();
+            }
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>Toggle the watchdog for one session; disabling also clears any pending state.</summary>
     public bool SetWatchdogEnabled(string id, bool enabled)
     {
@@ -132,6 +162,8 @@ public sealed class SessionManager : IDisposable
             _exe,
             _loggerFactory.CreateLogger<ClaudeSession>());
 
+        // Re-persist whenever the name changes (a UI rename or a `/rename` typed in the terminal).
+        session.NameChanged += _ => SavePersisted();
         _sessions[session.Id] = session;
         session.Start();
         SavePersisted();

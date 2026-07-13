@@ -274,6 +274,15 @@ export function App() {
     setSidebarOpen(false);
   }
 
+  // Rename a session from the sidebar or the details header. Optimistically update the name, then
+  // persist; the server also injects `/rename` into the live terminal so Claude renames itself too.
+  async function onRename(id: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name: trimmed } : s)));
+    await api.renameSession(id, trimmed).catch(() => {});
+  }
+
   async function onLogout() {
     await api.logout();
     setAuth("anon");
@@ -308,6 +317,7 @@ export function App() {
           onNew={() => openNew()}
           onClose={onClose}
           onRestore={onRestore}
+          onRename={onRename}
           onLogout={onLogout}
           onCollapse={toggleCollapsed}
           recents={recents}
@@ -345,6 +355,7 @@ export function App() {
               }}
               onClose={onClose}
               onRestore={onRestore}
+              onRename={onRename}
               onLogout={onLogout}
               recents={recents}
               onReuse={reuseRecent}
@@ -363,6 +374,7 @@ export function App() {
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}
             onStopped={(id) => setSessions((prev) => prev.filter((s) => s.id !== id))}
+            onRename={onRename}
           />
         ) : (
           <EmptyState

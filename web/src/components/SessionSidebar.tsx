@@ -2,6 +2,7 @@ import { useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
+import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
@@ -14,6 +15,7 @@ import {
   RotateCcw,
   X,
   LogOut,
+  Pencil,
   Terminal,
   FolderTree,
   List,
@@ -170,6 +172,7 @@ export function SessionSidebar({
   onNew,
   onClose,
   onRestore,
+  onRename,
   onLogout,
   onCollapse,
   recents,
@@ -184,6 +187,7 @@ export function SessionSidebar({
   onNew: () => void;
   onClose: (id: string) => void;
   onRestore: (id: string) => void;
+  onRename: (id: string, name: string) => void;
   onLogout: () => void;
   onCollapse?: () => void;
   recents: RecentSession[];
@@ -193,6 +197,7 @@ export function SessionSidebar({
 }) {
   const [tab, setTab] = useState<"sessions" | "recent">("sessions");
   const [grouped, setGrouped] = useState<boolean>(loadGrouped);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
 
   // Dirs of the groups currently shown, and whether every one is collapsed — drives the
@@ -257,19 +262,48 @@ export function SessionSidebar({
                   />
                 ) : null)}
             </span>
-            <span
-              className={cn(
-                "truncate font-medium",
-                s.state !== "Running" && "text-muted-foreground"
-              )}
-            >
-              {s.name}
-            </span>
-            {s.remoteControl && (
+            {editingId === s.id ? (
+              <RenameField
+                value={s.name}
+                onSubmit={(name) => {
+                  onRename(s.id, name);
+                  setEditingId(null);
+                }}
+                onCancel={() => setEditingId(null)}
+                className="font-medium"
+              />
+            ) : (
+              <span
+                className={cn(
+                  "truncate font-medium",
+                  s.state !== "Running" && "text-muted-foreground"
+                )}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setEditingId(s.id);
+                }}
+                title="Double-click to rename"
+              >
+                {s.name}
+              </span>
+            )}
+            {s.remoteControl && editingId !== s.id && (
               <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
             )}
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {editingId !== s.id && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setEditingId(s.id);
+                }}
+                title="Rename session"
+                className="opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            )}
             {restorable && (
               <button
                 onClick={(e) => {

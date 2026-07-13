@@ -205,6 +205,10 @@ internal static class Program
         app.MapPost("/api/sessions/{id}/detach", (string id, SessionManager mgr) =>
             mgr.Remove(id, stopProcess: false) ? Results.Ok() : Results.NotFound());
 
+        // Rename a session; also injects `/rename <name>` into a live session's terminal so Claude follows.
+        app.MapPost("/api/sessions/{id}/name", (string id, RenameRequest body, SessionManager mgr) =>
+            mgr.Rename(id, body.Name) ? Results.NoContent() : Results.NotFound());
+
         // Enable/disable the hang watchdog for a session.
         app.MapPost("/api/sessions/{id}/watchdog", (string id, WatchdogRequest body, SessionManager mgr) =>
             mgr.SetWatchdogEnabled(id, body.Enabled) ? Results.Ok() : Results.NotFound());
@@ -438,6 +442,7 @@ internal static class Program
 
 internal record LoginRequest(string? Password);
 internal record WatchdogRequest(bool Enabled);
+internal record RenameRequest(string Name);
 internal record FileWriteRequest(string Path, string? Content);
 internal record FolderRequest(string? Path);
 internal record FolderCreateRequest(string? Path);
