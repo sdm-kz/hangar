@@ -227,8 +227,8 @@ export function SessionView({
           </Button>
         )}
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="truncate font-semibold">{session.name}</h2>
+          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+            <h2 className="min-w-0 truncate font-semibold">{session.name}</h2>
             <StateBadge state={session.state} />
             {session.state === "Running" && session.watchdogStatus === "recovering" && (
               <Badge variant="warning" title="Watchdog detected an error and is auto-continuing">
@@ -246,10 +246,10 @@ export function SessionView({
               </Badge>
             )}
             {git?.isRepo && git.branch && (
-              <Badge variant="outline" className="gap-1" title="Current git branch">
-                <GitBranch className="size-3" />
-                <span className="max-w-[10rem] truncate">{git.branch}</span>
-                {changeCount > 0 && <span className="text-amber-500">·{changeCount}</span>}
+              <Badge variant="outline" className="min-w-0 shrink gap-1" title="Current git branch">
+                <GitBranch className="size-3 shrink-0" />
+                <span className="max-w-[6rem] truncate sm:max-w-[10rem]">{git.branch}</span>
+                {changeCount > 0 && <span className="shrink-0 text-amber-500">·{changeCount}</span>}
               </Badge>
             )}
           </div>
