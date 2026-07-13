@@ -23,7 +23,8 @@ function readSplitWidth() {
 }
 
 function StateBadge({ state }: { state: SessionInfo["state"] }) {
-  if (state === "Running") return <Badge variant="success">running</Badge>;
+  // "running" is the normal case — don't badge it; only surface states that need attention.
+  if (state === "Running") return null;
   if (state === "Exited") return <Badge variant="secondary">exited</Badge>;
   if (state === "Restorable") return <Badge variant="outline">closed</Badge>;
   return <Badge variant="destructive">failed</Badge>;
