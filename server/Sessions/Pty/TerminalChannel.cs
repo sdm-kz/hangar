@@ -80,8 +80,16 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised when Claude confirms a <c>/rename</c> in the terminal, with the new name.</summary>
     public event Action<string>? RenameCommandDetected;
 
-    [GeneratedRegex(@"Session renamed to:\s*([^\r\n]+?)\s*[\r\n]")]
+    // Capture is length-bounded: Claude's TUI renders the confirmation and its live status/spinner
+    // region with cursor moves (not newlines), so after ANSI stripping the name can abut the spinner
+    // text ("…Warping…"). The bound plus the charset check below stop that garbage being taken as a name.
+    [GeneratedRegex(@"Session renamed to:\s*([^\r\n]{1,64}?)\s*[\r\n]")]
     private static partial Regex RenameConfirmRegex();
+
+    // A plausible session name — plain printable ASCII. Rejects captures that ran into TUI status text
+    // (spinner glyphs, ellipses, box-drawing) which arrive as non-ASCII once decoded Latin1.
+    [GeneratedRegex(@"^[A-Za-z0-9._\-/ ]+$")]
+    private static partial Regex ValidNameRegex();
 
     // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
     // Called under _lock. The name must be newline-terminated so a confirmation split across two
@@ -94,7 +102,8 @@ public sealed partial class TerminalChannel : IDisposable
         foreach (Match m in RenameConfirmRegex().Matches(text))
         {
             var candidate = m.Groups[1].Value.Trim();
-            if (candidate.Length > 0) name = candidate; // last complete confirmation in this window wins
+            // Only accept a clean name; a capture that swallowed spinner/status text is discarded.
+            if (candidate.Length > 0 && ValidNameRegex().IsMatch(candidate)) name = candidate;
         }
         _renameScanTail = text.Length > 256 ? text[^256..] : text;
         if (name is not null && name != _lastRenameSeen)
