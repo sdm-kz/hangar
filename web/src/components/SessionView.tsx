@@ -38,7 +38,7 @@ export function SessionView({
   onToggleCollapsed,
   onStopped,
   onRename,
-  onSessionsRefresh,
+  onTerminalRename,
 }: {
   session: SessionInfo;
   onToggleSidebar: () => void;
@@ -46,8 +46,8 @@ export function SessionView({
   onToggleCollapsed: () => void;
   onStopped: (id: string) => void;
   onRename: (id: string, name: string) => void;
-  // Nudge the app to re-pull the session list (e.g. after a /rename detected in the terminal).
-  onSessionsRefresh?: () => void;
+  // Apply a rename detected in this session's terminal (Claude's /rename confirmation).
+  onTerminalRename?: (id: string, name: string) => void;
 }) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -417,7 +417,7 @@ export function SessionView({
           <TerminalPane
             key={session.id}
             sessionId={session.id}
-            onRenameDetected={onSessionsRefresh}
+            onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
           />
         </div>
       </div>

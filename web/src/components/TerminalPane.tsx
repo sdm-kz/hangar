@@ -49,6 +49,25 @@ const TERM_THEMES: Record<Theme, ITheme> = {
   },
 };
 
+// Minimal ANSI strip (CSI/OSC/other escapes), with CR collapsed to LF — mirrors the server's Vt.Strip
+// so we can pull a clean session name out of the terminal stream.
+function stripAnsi(s: string): string {
+  return s
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b[@-Z\\-_]/g, "")
+    .replace(/\r/g, "\n");
+}
+
+// Claude's confirmation line, e.g. "Session renamed to: my-name". The name is captured as a slug
+// token that stops at the first non-name char (space, newline, box-drawing/spinner glyph). We do NOT
+// require a trailing newline: the TUI leaves the newest confirmation without one (it's the last line,
+// drawn with cursor moves), so requiring a newline would always lag one rename behind.
+const RENAME_CONFIRM = /Session renamed to:\s*([A-Za-z0-9._\/-]{1,64})[^A-Za-z0-9._\/-]/g;
+
 /**
  * Live terminal for a session: an xterm.js terminal wired to the ConPTY-backed WebSocket at
  * /hub/sessions/{id}/terminal. Output frames arrive as binary VT bytes; keystrokes and resizes
@@ -59,14 +78,17 @@ export function TerminalPane({
   onRenameDetected,
 }: {
   sessionId: string;
-  // Fired when Claude's "Session renamed to:" confirmation appears in this terminal, so the app can
-  // refresh the session list immediately instead of waiting for the next poll.
-  onRenameDetected?: () => void;
+  // Fired with the new name when Claude's "Session renamed to:" confirmation appears in this
+  // terminal, so the app can update the session name immediately instead of waiting for a poll.
+  onRenameDetected?: (name: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   // Kept in a ref so the socket handler always sees the latest callback without re-opening the socket.
   const onRenameRef = useRef(onRenameDetected);
   onRenameRef.current = onRenameDetected;
+  // Rolling tail of recent output (ANSI-stripped) so a confirmation split across frames still matches.
+  const renameBufRef = useRef("");
+  const lastNameRef = useRef<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -158,8 +180,21 @@ export function TerminalPane({
         term.write(bytes);
         text = decoder.decode(bytes, { stream: true });
       }
-      // Claude prints this after a /rename; nudge the app to re-pull the (now-renamed) session list.
-      if (text.includes("Session renamed to:")) onRenameRef.current?.();
+      // Watch for Claude's "Session renamed to: <name>" confirmation and apply the new name directly.
+      // Accumulate every frame (the confirmation's phrase and name can arrive in separate frames), and
+      // require a following boundary char so the newest name — which the TUI ends with a box-drawing
+      // char, not a newline — is captured cleanly instead of lagging a rename behind.
+      renameBufRef.current = (renameBufRef.current + stripAnsi(text)).slice(-2048);
+      if (renameBufRef.current.includes("Session renamed to:")) {
+        let name: string | null = null;
+        for (const m of renameBufRef.current.matchAll(RENAME_CONFIRM)) {
+          name = m[1]; // last (most recent) confirmation in the buffer wins
+        }
+        if (name && name !== lastNameRef.current) {
+          lastNameRef.current = name;
+          onRenameRef.current?.(name);
+        }
+      }
     };
     ws.onclose = () => term.write("\r\n\x1b[90m[terminal disconnected]\x1b[0m\r\n");
 

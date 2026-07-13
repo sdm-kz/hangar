@@ -80,16 +80,12 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised when Claude confirms a <c>/rename</c> in the terminal, with the new name.</summary>
     public event Action<string>? RenameCommandDetected;
 
-    // Capture is length-bounded: Claude's TUI renders the confirmation and its live status/spinner
-    // region with cursor moves (not newlines), so after ANSI stripping the name can abut the spinner
-    // text ("…Warping…"). The bound plus the charset check below stop that garbage being taken as a name.
-    [GeneratedRegex(@"Session renamed to:\s*([^\r\n]{1,64}?)\s*[\r\n]")]
+    // Name is captured as a slug token that stops at the first non-name char (space, newline,
+    // box-drawing/spinner glyph). We do NOT require a trailing newline: the TUI leaves the newest
+    // confirmation without one (last line, drawn with cursor moves), so requiring one lags a rename
+    // behind. The charset also excludes the status/spinner text that can abut the name.
+    [GeneratedRegex(@"Session renamed to:\s*([A-Za-z0-9._/-]{1,64})[^A-Za-z0-9._/-]")]
     private static partial Regex RenameConfirmRegex();
-
-    // A plausible session name — plain printable ASCII. Rejects captures that ran into TUI status text
-    // (spinner glyphs, ellipses, box-drawing) which arrive as non-ASCII once decoded Latin1.
-    [GeneratedRegex(@"^[A-Za-z0-9._\-/ ]+$")]
-    private static partial Regex ValidNameRegex();
 
     // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
     // Called under _lock. The name must be newline-terminated so a confirmation split across two
@@ -100,11 +96,7 @@ public sealed partial class TerminalChannel : IDisposable
         var text = Vt.Strip(_renameScanTail + Encoding.Latin1.GetString(buf, 0, n));
         string? name = null;
         foreach (Match m in RenameConfirmRegex().Matches(text))
-        {
-            var candidate = m.Groups[1].Value.Trim();
-            // Only accept a clean name; a capture that swallowed spinner/status text is discarded.
-            if (candidate.Length > 0 && ValidNameRegex().IsMatch(candidate)) name = candidate;
-        }
+            name = m.Groups[1].Value; // last (most recent) confirmation wins
         _renameScanTail = text.Length > 256 ? text[^256..] : text;
         if (name is not null && name != _lastRenameSeen)
         {

@@ -119,12 +119,11 @@ export function App() {
     }
   }, []);
 
-  // Re-pull the list now and once more shortly after — used when the terminal shows a rename, to
-  // cover the brief window where the client sees the confirmation just before the server applies it.
-  const refreshSoon = useCallback(() => {
-    refresh();
-    setTimeout(refresh, 600);
-  }, [refresh]);
+  // A /rename detected in a session's terminal: apply the new name to that session directly (same
+  // path as a UI rename, so it repaints immediately) rather than waiting on a refetch/poll.
+  const onTerminalRename = useCallback((id: string, name: string) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
+  }, []);
 
   // Mirror the active session into the URL so a refresh/shared link restores it.
   useEffect(() => {
@@ -410,7 +409,7 @@ export function App() {
             onToggleCollapsed={toggleCollapsed}
             onStopped={(id) => setSessions((prev) => prev.filter((s) => s.id !== id))}
             onRename={onRename}
-            onSessionsRefresh={refreshSoon}
+            onTerminalRename={onTerminalRename}
           />
         ) : (
           <EmptyState
