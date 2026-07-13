@@ -71,64 +71,38 @@ public sealed partial class TerminalChannel : IDisposable
     [GeneratedRegex(@"https://claude\.ai/code/session_[A-Za-z0-9_-]+")]
     private static partial Regex RemoteUrlRegex();
 
-    // ---- /rename sniffing: watch the input stream for a completed "/rename <name>" line ----------
-    // We reconstruct the current input line from keystrokes so a rename typed at the Claude prompt
-    // can be mirrored into our session name. Claude still receives and handles the command itself.
-    private readonly object _inputLock = new();
-    private readonly StringBuilder _inputLine = new();
-    private bool _inputLineDirty; // set when we can't track the line precisely (cursor moves, etc.)
+    // ---- /rename sniffing: watch the OUTPUT for Claude's "Session renamed to: <name>" confirmation.
+    // Reconstructing the typed line from raw keystrokes is unreliable (the TUI's enhanced input can
+    // send keys as escape sequences), so we key off the confirmation line Claude prints instead.
+    private string _renameScanTail = "";  // carries a partial confirmation across the read boundary
+    private string? _lastRenameSeen;      // dedupe: don't re-fire when the TUI repaints the same line
 
-    /// <summary>Raised when a full <c>/rename &lt;name&gt;</c> line is submitted in the terminal.</summary>
+    /// <summary>Raised when Claude confirms a <c>/rename</c> in the terminal, with the new name.</summary>
     public event Action<string>? RenameCommandDetected;
 
-    [GeneratedRegex(@"^/rename\s+(.+)$")]
-    private static partial Regex RenameRegex();
+    [GeneratedRegex(@"Session renamed to:\s*([^\r\n]+?)\s*[\r\n]")]
+    private static partial Regex RenameConfirmRegex();
 
-    // Feed raw input bytes through the line tracker; returns a detected rename target, or null.
-    private string? TrackInput(ReadOnlySpan<byte> data)
+    // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
+    // Called under _lock. The name must be newline-terminated so a confirmation split across two
+    // reads isn't captured half-formed; the unterminated tail is retained for the next read.
+    private string? SniffRename(byte[] buf, int n)
     {
-        // Client keystrokes are UTF-8; each keypress arrives as its own frame, so multi-byte chars
-        // decode whole here. Names are typed printable text, so this stays accurate for the /rename case.
-        var text = Encoding.UTF8.GetString(data);
-        string? detected = null;
-        lock (_inputLock)
+        // Strip ANSI so styling around the line doesn't break the match (Latin1 keeps ASCII 1:1).
+        var text = Vt.Strip(_renameScanTail + Encoding.Latin1.GetString(buf, 0, n));
+        string? name = null;
+        foreach (Match m in RenameConfirmRegex().Matches(text))
         {
-            foreach (var ch in text)
-            {
-                switch (ch)
-                {
-                    case '\r':
-                    case '\n':
-                        if (!_inputLineDirty)
-                        {
-                            var m = RenameRegex().Match(_inputLine.ToString().Trim());
-                            if (m.Success && m.Groups[1].Value.Trim().Length > 0)
-                                detected = m.Groups[1].Value.Trim();
-                        }
-                        _inputLine.Clear();
-                        _inputLineDirty = false;
-                        break;
-                    case '': // DEL / backspace
-                    case '\b':
-                        if (_inputLine.Length > 0) _inputLine.Length--;
-                        break;
-                    case '': // Ctrl-U (kill line) and Ctrl-C both reset the prompt's input
-                    case '':
-                        _inputLine.Clear();
-                        _inputLineDirty = false;
-                        break;
-                    case '': // ESC: arrow/history/cursor edits we can't follow — stop trusting the line
-                        _inputLineDirty = true;
-                        break;
-                    default:
-                        if (ch >= ' ') _inputLine.Append(ch);
-                        else _inputLineDirty = true;
-                        break;
-                }
-                if (_inputLine.Length > 512) { _inputLine.Clear(); _inputLineDirty = true; } // runaway guard
-            }
+            var candidate = m.Groups[1].Value.Trim();
+            if (candidate.Length > 0) name = candidate; // last complete confirmation in this window wins
         }
-        return detected;
+        _renameScanTail = text.Length > 256 ? text[^256..] : text;
+        if (name is not null && name != _lastRenameSeen)
+        {
+            _lastRenameSeen = name;
+            return name;
+        }
+        return null;
     }
 
     public int ProcessId => _pty.ProcessId;
@@ -163,13 +137,17 @@ public sealed partial class TerminalChannel : IDisposable
                 var chunk = new byte[n];
                 Array.Copy(buf, chunk, n);
                 Volatile.Write(ref _lastOutputTick, Environment.TickCount64);
+                string? rename;
                 lock (_lock)
                 {
                     _ring.Append(chunk);
                     _recentRaw.Append(chunk);
                     foreach (var w in _subs.Values) w.TryWrite(chunk);
                     SniffRemoteUrl(buf, n);
+                    rename = SniffRename(buf, n);
                 }
+                // Fire outside the lock so a handler (which renames the session) can't deadlock us.
+                if (rename is not null) RenameCommandDetected?.Invoke(rename);
             }
         }
         catch (Exception ex)
@@ -229,9 +207,6 @@ public sealed partial class TerminalChannel : IDisposable
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
     {
         Volatile.Write(ref _lastInputTick, Environment.TickCount64);
-        // Observe the input for a `/rename` line before it's written (fire the event outside the lock).
-        var rename = TrackInput(data.Span);
-        if (rename is not null) RenameCommandDetected?.Invoke(rename);
         await _writeLock.WaitAsync(ct);
         try
         {
