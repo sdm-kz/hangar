@@ -4,6 +4,7 @@ import type {
   FileListing,
   GitCommitDetail,
   GitDiff,
+  GitFileContent,
   GitLog,
   GitStatus,
   SessionInfo,
@@ -156,6 +157,12 @@ export const api = {
   gitCommitDiff(id: string, hash: string, path: string): Promise<GitDiff> {
     return request(
       `/api/sessions/${id}/git/commit-diff?hash=${encodeURIComponent(hash)}&path=${encodeURIComponent(path)}`
+    );
+  },
+  // Full content of a file as of a commit (for the "full" view in the commit preview).
+  gitCommitFile(id: string, hash: string, path: string): Promise<GitFileContent> {
+    return request(
+      `/api/sessions/${id}/git/commit-file?hash=${encodeURIComponent(hash)}&path=${encodeURIComponent(path)}`
     );
   },
   writeSessionFile(id: string, path: string, content: string): Promise<void> {

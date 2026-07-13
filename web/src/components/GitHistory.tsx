@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import type { GitCommit, GitCommitDetail, GitCommitFile } from "@/types";
+import type { GitCommit, GitCommitDetail, GitCommitFile, GitFileContent } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 import { DiffView, STATUS_COLOR } from "./FileBrowser";
@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronRight,
+  FileSymlink,
   FileText,
   GitCommitHorizontal,
   History,
@@ -545,33 +546,54 @@ export function CommitDetailPreview({
   );
 }
 
-/** Right-pane preview of a single file's diff within a chosen commit. */
+/** Right-pane preview of a single file within a chosen commit — its diff or full content. */
 export function CommitFilePreview({
   sessionId,
   selection,
   onBack,
   onClose,
+  onOpenInTree,
 }: {
   sessionId: string;
   selection: CommitSelection & { path: string };
   onBack: () => void;
   onClose: () => void;
+  // Reveal this file in the working-tree Files pane (null when it no longer exists there).
+  onOpenInTree?: (path: string) => void;
 }) {
+  const [view, setView] = useState<"diff" | "full">("diff");
   const [diff, setDiff] = useState<string | null>(null);
+  const [full, setFull] = useState<GitFileContent | null>(null);
   const [loading, setLoading] = useState(true);
   const name = useMemo(() => selection.path.split("/").pop() || selection.path, [selection.path]);
   const reqRef = useRef(0);
 
+  // Reset to the diff view whenever the selected file/commit changes.
+  useEffect(() => {
+    setView("diff");
+    setFull(null);
+  }, [sessionId, selection.hash, selection.path]);
+
+  // Lazily fetch whichever view is active; each fetch is guarded so a stale response can't win.
   useEffect(() => {
     const req = ++reqRef.current;
     setLoading(true);
-    setDiff(null);
-    api
-      .gitCommitDiff(sessionId, selection.hash, selection.path)
-      .then((d) => reqRef.current === req && setDiff(d.diff || ""))
-      .catch(() => reqRef.current === req && setDiff(""))
-      .finally(() => reqRef.current === req && setLoading(false));
-  }, [sessionId, selection.hash, selection.path]);
+    if (view === "diff") {
+      if (diff !== null) { setLoading(false); return; }
+      api
+        .gitCommitDiff(sessionId, selection.hash, selection.path)
+        .then((d) => reqRef.current === req && setDiff(d.diff || ""))
+        .catch(() => reqRef.current === req && setDiff(""))
+        .finally(() => reqRef.current === req && setLoading(false));
+    } else {
+      if (full !== null) { setLoading(false); return; }
+      api
+        .gitCommitFile(sessionId, selection.hash, selection.path)
+        .then((f) => reqRef.current === req && setFull(f))
+        .catch(() => reqRef.current === req && setFull({ isRepo: true, path: selection.path, exists: false, content: "" }))
+        .finally(() => reqRef.current === req && setLoading(false));
+    }
+  }, [view, diff, full, sessionId, selection.hash, selection.path]);
 
   return (
     <div className="flex h-full flex-col">
@@ -589,6 +611,15 @@ export function CommitFilePreview({
             <span className="text-foreground">{selection.shortHash}</span> · {selection.subject}
           </div>
         </div>
+        {onOpenInTree && (
+          <button
+            onClick={() => onOpenInTree(selection.path)}
+            title="Open this file in the Files pane"
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <FileSymlink className="size-4" />
+          </button>
+        )}
         <button
           onClick={onClose}
           title="Close commit preview"
@@ -598,15 +629,52 @@ export function CommitFilePreview({
         </button>
       </header>
 
+      {/* Diff vs. full-file-at-this-commit toggle. */}
+      <div className="flex items-center gap-1 border-b px-3 py-1.5">
+        <ViewTab active={view === "diff"} onClick={() => setView("diff")}>Diff</ViewTab>
+        <ViewTab active={view === "full"} onClick={() => setView("full")}>Full file</ViewTab>
+      </div>
+
       <div className="min-h-0 flex-1 overflow-auto">
         {loading ? (
           <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Loading diff…
+            <Loader2 className="size-4 animate-spin" /> Loading {view === "diff" ? "diff" : "file"}…
           </div>
-        ) : (
+        ) : view === "diff" ? (
           <DiffView diff={diff ?? ""} />
+        ) : full?.exists ? (
+          <pre className="whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed">
+            {full.content}
+          </pre>
+        ) : (
+          <div className="p-4 text-sm text-muted-foreground">
+            This file does not exist at this commit.
+          </div>
         )}
       </div>
     </div>
+  );
+}
+
+function ViewTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded px-2 py-0.5 text-xs font-medium transition-colors",
+        active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
+      )}
+    >
+      {children}
+    </button>
   );
 }

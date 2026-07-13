@@ -7,6 +7,8 @@ public sealed record GitStatus(bool IsRepo, string? Branch, Dictionary<string, s
 
 public sealed record GitDiff(bool IsRepo, string Path, string Status, string Diff);
 
+public sealed record GitFileContent(bool IsRepo, string Path, bool Exists, string Content);
+
 public sealed record GitCommit(string Hash, string ShortHash, string Subject, string Author, string Date, string RelativeDate, string Refs);
 
 public sealed record GitLog(bool IsRepo, IReadOnlyList<GitCommit> Commits, bool HasMore);
@@ -137,6 +139,18 @@ public static class GitService
         // --format= drops the commit header, leaving just the file's diff.
         var diff = Run(workingDir, out _, "show", "--no-color", "--format=", "-M", hash, "--", relPath);
         return new GitDiff(true, relPath, "", diff);
+    }
+
+    /// <summary>Full file content as of a commit (git show &lt;hash&gt;:&lt;path&gt;). Exists=false when the
+    /// path isn't present at that commit (e.g. a file deleted by the commit).</summary>
+    public static GitFileContent CommitFile(string workingDir, string hash, string relPath)
+    {
+        if (!IsRepo(workingDir)) return new GitFileContent(false, relPath, false, "");
+        var spec = $"{hash}:{relPath.Replace('\\', '/')}";
+        var content = Run(workingDir, out var exit, "show", spec);
+        return exit == 0
+            ? new GitFileContent(true, relPath, true, content)
+            : new GitFileContent(true, relPath, false, "");
     }
 
     private static string MapNameStatus(string code)

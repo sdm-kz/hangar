@@ -385,6 +385,17 @@ internal static class Program
                 return Results.BadRequest(new { error = "invalid path" });
             return Results.Ok(GitService.CommitDiff(info.WorkingDirectory, hash, path));
         });
+
+        // Full content of one file as of a commit (for the "full" view in the commit preview).
+        app.MapGet("/api/sessions/{id}/git/commit-file", (string id, string hash, string path, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            if (!IsCommitHash(hash)) return Results.BadRequest(new { error = "invalid hash" });
+            if (SessionFileBrowser.ResolveSafe(info.WorkingDirectory, path) is null)
+                return Results.BadRequest(new { error = "invalid path" });
+            return Results.Ok(GitService.CommitFile(info.WorkingDirectory, hash, path));
+        });
     }
 
     // A git object name is hex (full or abbreviated SHA). Reject anything else before handing it to git.

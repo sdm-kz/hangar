@@ -54,6 +54,13 @@ export interface GitDiff {
   diff: string;
 }
 
+export interface GitFileContent {
+  isRepo: boolean;
+  path: string;
+  exists: boolean;
+  content: string;
+}
+
 export interface GitCommit {
   hash: string;
   shortHash: string;

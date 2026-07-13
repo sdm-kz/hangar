@@ -187,6 +187,21 @@ export function FileBrowser({
     [sessionId]
   );
 
+  // Reveal a file in the working-tree Files pane (from a commit preview): leave the changes/commit
+  // view, select it, and expand the tree down to it.
+  const revealFile = useCallback(
+    (path: string) => {
+      setCommitSel(null);
+      setShowChanges(false);
+      setQuery("");
+      setSelected(fileEntryFromPath(path));
+      setExpandTo(path);
+      patchUrlState({ file: path });
+      saveSessionUi(sessionId, { file: path });
+    },
+    [sessionId]
+  );
+
   // When the session actually changes, restore that session's last-previewed file (or clear if it
   // had none). Skips the initial mount (and StrictMode's double-invoked mount effect), so the
   // URL-restored selection survives.
@@ -431,6 +446,7 @@ export function FileBrowser({
               selection={{ ...commitSel, path: commitSel.path }}
               onBack={() => setCommitSel((s) => (s ? { ...s, path: undefined, status: undefined } : null))}
               onClose={() => setCommitSel(null)}
+              onOpenInTree={revealFile}
             />
           ) : (
             <CommitDetailPreview
