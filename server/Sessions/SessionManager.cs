@@ -35,6 +35,16 @@ public sealed class SessionManager : IDisposable
     private readonly string _stateFile;
     private readonly object _saveLock = new();
 
+    /// <summary>
+    /// Raised whenever the session set or a session's metadata changes (create, rename, remove,
+    /// restore, watchdog toggle). Lets a live view (<see cref="SessionHub"/>) push an update
+    /// immediately instead of waiting for its next tick. Poll-only transitions (Claude going
+    /// busy/idle, a process exiting) are picked up by the hub's periodic recompute, not this event.
+    /// </summary>
+    public event Action? Changed;
+
+    private void RaiseChanged() => Changed?.Invoke();
+
     public SessionManager(SessionManagerOptions options, ILoggerFactory loggerFactory)
     {
         _options = options;
@@ -109,6 +119,7 @@ public sealed class SessionManager : IDisposable
             {
                 _restorable[id] = p with { Name = clean };
                 SavePersisted();
+                RaiseChanged();
             }
             return true;
         }
@@ -125,6 +136,7 @@ public sealed class SessionManager : IDisposable
             s.WatchdogStatus = "healthy";
             s.WatchdogConsecutive = 0;
         }
+        RaiseChanged();
         return true;
     }
 
@@ -138,6 +150,7 @@ public sealed class SessionManager : IDisposable
         s.WatchdogStatus = "healthy";
         s.WatchdogConsecutive = 0;
         s.WatchdogLastContinueTick = 0;
+        RaiseChanged();
     }
 
     public SessionInfo Create(CreateSessionRequest req)
@@ -162,11 +175,12 @@ public sealed class SessionManager : IDisposable
             _exe,
             _loggerFactory.CreateLogger<ClaudeSession>());
 
-        // Re-persist whenever the name changes (a UI rename or a `/rename` typed in the terminal).
-        session.NameChanged += _ => SavePersisted();
+        // Re-persist and push whenever the name changes (a UI rename or a `/rename` typed in the terminal).
+        session.NameChanged += _ => { SavePersisted(); RaiseChanged(); };
         _sessions[session.Id] = session;
         session.Start();
         SavePersisted();
+        RaiseChanged();
         return session.ToInfo();
     }
 
@@ -208,11 +222,13 @@ public sealed class SessionManager : IDisposable
             if (stopProcess) s.Stop();
             s.Dispose();
             SavePersisted();
+            RaiseChanged();
             return true;
         }
         if (_restorable.TryRemove(id, out _))
         {
             SavePersisted();
+            RaiseChanged();
             return true;
         }
         return false;

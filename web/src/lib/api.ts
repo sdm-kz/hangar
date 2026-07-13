@@ -220,6 +220,18 @@ export const api = {
   },
 };
 
+/**
+ * WebSocket URL for the live session-list stream (`/hub/events`). Pushes `{ sessions, busy }`
+ * whenever the server state changes, replacing the list + activity polls. The token rides in the
+ * query string because a WS handshake can't set an Authorization header.
+ */
+export function sessionsStreamUrl(): string {
+  const token = getToken() ?? "";
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const q = token ? `?access_token=${encodeURIComponent(token)}` : "";
+  return `${proto}://${location.host}/hub/events${q}`;
+}
+
 /** URL for a session file's raw bytes; token is passed in the query so it works in <img>/<a>. */
 export function sessionFileUrl(id: string, path: string, download = false): string {
   const token = getToken() ?? "";

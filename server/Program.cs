@@ -94,6 +94,10 @@ internal static class Program
         builder.Services.AddSingleton<TokenStore>();
         builder.Services.AddSingleton(sessionOptions);
         builder.Services.AddSingleton<SessionManager>();
+        // The session-list push hub is one instance shared as both a singleton (so the endpoint can
+        // reach it) and a hosted service (so its broadcast loop runs for the app's lifetime).
+        builder.Services.AddSingleton<SessionHub>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<SessionHub>());
         builder.Services.AddSingleton(watchdogOptions);
         builder.Services.AddHostedService<WatchdogService>();
         builder.Services.AddSingleton<RecentsStore>();
@@ -135,8 +139,19 @@ internal static class Program
         app.MapGet("/api/sessions", (SessionManager mgr) => Results.Ok(mgr.List()));
 
         // Ids of sessions Claude is actively generating in — polled faster than the full list to drive
-        // the live "active" dot in the session sidebar.
+        // the live "active" dot in the session sidebar. Kept as a fallback for when the push hub
+        // (/hub/events) isn't connected.
         app.MapGet("/api/sessions/activity", (SessionManager mgr) => Results.Ok(mgr.BusySessionIds()));
+
+        // Live session-list stream: pushes { sessions, busy } whenever it changes, so the UI reflects
+        // new/renamed/exited sessions and busy/idle transitions without polling. Under /hub so the
+        // existing TokenAuthMiddleware guards it (via ?access_token=) and the vite dev proxy forwards it.
+        app.Map("/hub/events", async (HttpContext ctx, SessionHub hub) =>
+        {
+            if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
+            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            await hub.ServeAsync(ws, ctx.RequestAborted);
+        });
 
         // Live terminal stream for a session. Under /hub so the existing TokenAuthMiddleware guards
         // it (accepting ?access_token= for the WS handshake) and the vite dev proxy forwards the ws.

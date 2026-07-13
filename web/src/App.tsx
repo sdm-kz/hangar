@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, getToken, setToken } from "@/lib/api";
+import { api, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
 import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
@@ -33,6 +33,7 @@ export function App() {
   const [auth, setAuth] = useState<AuthStatus>("loading");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
+  const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
@@ -99,25 +100,31 @@ export function App() {
     }
   }, []);
 
+  // Apply a fresh session list (from a poll or a stream push): sort newest-first and keep the
+  // selection valid. Shared by refresh() and the live stream so both paths behave identically.
+  const applySessions = useCallback((incoming: SessionInfo[]) => {
+    // Newest sessions first (top), oldest last — by creation time.
+    const list = [...incoming].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    setSessions(list);
+    // Keep a valid current selection (e.g. restored from the URL); otherwise auto-select the
+    // first live session, never a Restorable placeholder (it has no terminal yet).
+    setActiveId((cur) =>
+      cur && list.some((s) => s.id === cur)
+        ? cur
+        : list.find((s) => s.state !== "Restorable")?.id ?? null
+    );
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
-      // Newest sessions first (top), oldest last — by creation time.
-      const list = [...(await api.listSessions())].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      setSessions(list);
-      // Keep a valid current selection (e.g. restored from the URL); otherwise auto-select the
-      // first live session, never a Restorable placeholder (it has no terminal yet).
-      setActiveId((cur) =>
-        cur && list.some((s) => s.id === cur)
-          ? cur
-          : list.find((s) => s.state !== "Restorable")?.id ?? null
-      );
+      applySessions(await api.listSessions());
     } catch {
       // 401 handled by api layer clearing token; flip to login.
       if (!getToken()) setAuth("anon");
     }
-  }, []);
+  }, [applySessions]);
 
   // A /rename detected in a session's terminal: apply the new name to that session directly (same
   // path as a UI rename, so it repaints immediately) rather than waiting on a refetch/poll.
@@ -130,13 +137,51 @@ export function App() {
     patchUrlState({ session: activeId ?? undefined });
   }, [activeId]);
 
-  // Poll the session list so state badges (running/exited) stay fresh.
+  // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
+  // (new/renamed/exited sessions, Claude going active/idle, watchdog status), so the UI stays current
+  // without polling. If the socket drops, the interval polls below take over until it reconnects.
+  useEffect(() => {
+    if (auth !== "authed") return;
+    let ws: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let closed = false; // set on unmount so a pending reconnect doesn't fire
+
+    const connect = () => {
+      ws = new WebSocket(sessionsStreamUrl());
+      ws.onopen = () => setStreamUp(true);
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data) as { sessions: SessionInfo[]; busy: string[] };
+          applySessions(msg.sessions);
+          setBusyIds(new Set(msg.busy));
+        } catch {
+          /* ignore a malformed frame */
+        }
+      };
+      ws.onclose = () => {
+        setStreamUp(false);
+        if (!closed) retry = setTimeout(connect, 2000);
+      };
+      ws.onerror = () => ws?.close();
+    };
+    connect();
+
+    return () => {
+      closed = true;
+      if (retry) clearTimeout(retry);
+      ws?.close();
+    };
+  }, [auth, applySessions]);
+
+  // Poll the session list so state badges (running/exited) stay fresh — only while the stream is
+  // down. We always do one immediate fetch for a fast first paint, even before the stream connects.
   useEffect(() => {
     if (auth !== "authed") return;
     refresh();
+    if (streamUp) return; // the stream keeps the list fresh; poll only as a fallback
     const t = setInterval(refresh, 4000);
     return () => clearInterval(t);
-  }, [auth, refresh]);
+  }, [auth, refresh, streamUp]);
 
   // Browsers throttle/pause setInterval in a backgrounded tab, so the poll above stalls while you're
   // away (e.g. renaming in the terminal from another window). Refetch immediately on return so the
@@ -154,10 +199,11 @@ export function App() {
     };
   }, [auth, refresh]);
 
-  // Poll which sessions Claude is actively working in — separate from the list poll so the "active"
-  // dot can update quickly without re-fetching (and re-sorting) the whole list.
+  // Poll which sessions Claude is actively working in — only while the stream is down (the stream's
+  // snapshot carries the busy set). Separate from the list poll so the "active" dot can update
+  // quickly without re-fetching (and re-sorting) the whole list.
   useEffect(() => {
-    if (auth !== "authed") return;
+    if (auth !== "authed" || streamUp) return;
     let alive = true;
     const tick = async () => {
       try {
@@ -173,7 +219,7 @@ export function App() {
       alive = false;
       clearInterval(t);
     };
-  }, [auth]);
+  }, [auth, streamUp]);
 
   // Raise a browser (OS) notification when a session newly flips to "attention" (the watchdog gave
   // up auto-recovering it). Compare against the previous poll so we only notify on the transition,
