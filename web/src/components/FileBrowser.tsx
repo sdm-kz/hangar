@@ -442,6 +442,7 @@ export function FileBrowser({
         {commitSel ? (
           commitSel.path ? (
             <CommitFilePreview
+              key={`${commitSel.hash}:${commitSel.path}`}
               sessionId={sessionId}
               selection={{ ...commitSel, path: commitSel.path }}
               onBack={() => setCommitSel((s) => (s ? { ...s, path: undefined, status: undefined } : null))}

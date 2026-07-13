@@ -564,36 +564,38 @@ export function CommitFilePreview({
   const [view, setView] = useState<"diff" | "full">("diff");
   const [diff, setDiff] = useState<string | null>(null);
   const [full, setFull] = useState<GitFileContent | null>(null);
-  const [loading, setLoading] = useState(true);
   const name = useMemo(() => selection.path.split("/").pop() || selection.path, [selection.path]);
   const reqRef = useRef(0);
 
-  // Reset to the diff view whenever the selected file/commit changes.
+  // Reset both caches and the view whenever the selected file/commit changes, so switching files
+  // never shows the previously-loaded file's diff. (The parent also keys us by hash+path.)
   useEffect(() => {
     setView("diff");
+    setDiff(null);
     setFull(null);
   }, [sessionId, selection.hash, selection.path]);
 
-  // Lazily fetch whichever view is active; each fetch is guarded so a stale response can't win.
+  // Lazily fetch whichever view is active; skip if already cached for this file. Each fetch is
+  // guarded by a request id so a stale response can't overwrite a newer one.
   useEffect(() => {
+    if (view === "diff" ? diff !== null : full !== null) return;
     const req = ++reqRef.current;
-    setLoading(true);
     if (view === "diff") {
-      if (diff !== null) { setLoading(false); return; }
       api
         .gitCommitDiff(sessionId, selection.hash, selection.path)
         .then((d) => reqRef.current === req && setDiff(d.diff || ""))
-        .catch(() => reqRef.current === req && setDiff(""))
-        .finally(() => reqRef.current === req && setLoading(false));
+        .catch(() => reqRef.current === req && setDiff(""));
     } else {
-      if (full !== null) { setLoading(false); return; }
       api
         .gitCommitFile(sessionId, selection.hash, selection.path)
         .then((f) => reqRef.current === req && setFull(f))
-        .catch(() => reqRef.current === req && setFull({ isRepo: true, path: selection.path, exists: false, content: "" }))
-        .finally(() => reqRef.current === req && setLoading(false));
+        .catch(() => reqRef.current === req && setFull({ isRepo: true, path: selection.path, exists: false, content: "" }));
     }
   }, [view, diff, full, sessionId, selection.hash, selection.path]);
+
+  // Loading is simply "the active view's data isn't in yet" — derived, so a file switch that nulls
+  // the cache immediately shows the loader instead of the old content.
+  const loading = view === "diff" ? diff === null : full === null;
 
   return (
     <div className="flex h-full flex-col">
