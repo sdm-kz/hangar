@@ -74,17 +74,19 @@ if (-not (Test-Path $targetSettings)) {
   Write-Host "    Preserved existing appsettings.json" -ForegroundColor Green
 }
 
-# --- 4) Restart the way it was running -------------------------------------------------------
-if (-not $NoRestart -and $restart -ne "none") {
-  if ($restart -eq "service") {
+# --- 4) Launch the app so it's running after every deploy (unless -NoRestart) ----------------
+# Prefer the service when one is installed (whether or not it was running before); otherwise the
+# tray exe. This also covers a deploy that started with the app stopped — it still comes back up.
+if (-not $NoRestart) {
+  if ($restart -eq "service" -or $svc) {
     Write-Host "==> Starting ClaudeWeb service" -ForegroundColor Cyan
     Start-Service -Name "ClaudeWeb"
   } else {
-    Write-Host "==> Relaunching ClaudeWeb.exe (system tray)" -ForegroundColor Cyan
+    Write-Host "==> Launching ClaudeWeb.exe (system tray)" -ForegroundColor Cyan
     Start-Process (Join-Path $Target "ClaudeWeb.exe")
   }
-} elseif ($restart -eq "none") {
-  Write-Host "    (App was not running; start it with: $Target\ClaudeWeb.exe)" -ForegroundColor DarkGray
+} else {
+  Write-Host "    (-NoRestart) App left stopped. Start it with: $Target\ClaudeWeb.exe" -ForegroundColor DarkGray
 }
 
 # Surface the URL from the (preserved) settings for convenience.
