@@ -216,7 +216,10 @@ export function SessionView({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-14 items-center gap-2 border-b px-3">
+      <header className="flex flex-col gap-2 border-b px-3 py-2 md:h-14 md:flex-row md:items-center md:gap-2 md:py-0">
+        {/* Title group: full-width first row on mobile so the name + folder read clearly; on desktop
+            it's the flex-1 left side of a single row. */}
+        <div className="flex min-w-0 items-center gap-2 md:flex-1">
         <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleSidebar}>
           <Menu className="size-5" />
         </Button>
@@ -304,7 +307,11 @@ export function SessionView({
             </span>
           </p>
         </div>
+        </div>
 
+        {/* Controls row: view switcher + session actions. Sits below the title on mobile, right side
+            of the header on desktop. */}
+        <div className="flex items-center gap-2">
         {/* Terminal is the primary surface; Files is the secondary view of the working directory.
             Split shows both side by side (desktop only). */}
         <div className="flex items-center rounded-md border p-0.5">
@@ -363,6 +370,7 @@ export function SessionView({
           {busy ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
           <span className="hidden sm:inline">{session.state === "Running" ? "Stop" : "Remove"}</span>
         </Button>
+        </div>
       </header>
 
       {session.remoteControl && session.state === "Running" && (
