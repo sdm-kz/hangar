@@ -274,6 +274,16 @@ export function App() {
     setSidebarOpen(false);
   }
 
+  // Bulk-remove sessions (from a folder group's remove popup). The popup is the confirmation, so we
+  // just delete each and prune local state. deleteSession stops running processes and forgets the rest.
+  async function onRemoveSessions(ids: string[]) {
+    if (ids.length === 0) return;
+    const set = new Set(ids);
+    await Promise.all(ids.map((id) => api.deleteSession(id).catch(() => {})));
+    setSessions((prev) => prev.filter((s) => !set.has(s.id)));
+    setActiveId((cur) => (cur && set.has(cur) ? null : cur));
+  }
+
   // Rename a session from the sidebar or the details header. Optimistically update the name, then
   // persist; the server also injects `/rename` into the live terminal so Claude renames itself too.
   async function onRename(id: string, name: string) {
@@ -318,6 +328,7 @@ export function App() {
           onClose={onClose}
           onRestore={onRestore}
           onRename={onRename}
+          onRemoveSessions={onRemoveSessions}
           onLogout={onLogout}
           onCollapse={toggleCollapsed}
           recents={recents}
@@ -356,6 +367,7 @@ export function App() {
               onClose={onClose}
               onRestore={onRestore}
               onRename={onRename}
+              onRemoveSessions={onRemoveSessions}
               onLogout={onLogout}
               recents={recents}
               onReuse={reuseRecent}

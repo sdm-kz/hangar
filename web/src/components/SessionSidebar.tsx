@@ -3,6 +3,15 @@ import type { SessionInfo } from "@/types";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
@@ -17,6 +26,7 @@ import {
   LogOut,
   Pencil,
   Terminal,
+  Trash2,
   FolderTree,
   List,
   ChevronRight,
@@ -87,28 +97,43 @@ function GroupHeader({
   count,
   collapsed,
   onToggle,
+  onRemove,
 }: {
   dir: string;
   count: number;
   collapsed: boolean;
   onToggle: () => void;
+  // When provided (sessions view only), shows a trash button to bulk-remove the folder's sessions.
+  onRemove?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      title={dir}
-      className="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-muted-foreground hover:text-foreground"
-    >
-      {collapsed ? (
-        <ChevronRight className="size-3.5 shrink-0" />
-      ) : (
-        <ChevronDown className="size-3.5 shrink-0" />
+    <div className="group/gh flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+      <button
+        type="button"
+        onClick={onToggle}
+        title={dir}
+        className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-foreground"
+      >
+        {collapsed ? (
+          <ChevronRight className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronDown className="size-3.5 shrink-0" />
+        )}
+        <FolderTree className="size-3.5 shrink-0" />
+        <span className="truncate font-mono text-[11px] font-medium">{folderLabel(dir)}</span>
+      </button>
+      <span className="shrink-0 text-[10px]">{count}</span>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          title="Remove sessions in this folder…"
+          className="shrink-0 opacity-0 transition-opacity hover:text-destructive group-hover/gh:opacity-100"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
       )}
-      <FolderTree className="size-3.5 shrink-0" />
-      <span className="truncate font-mono text-[11px] font-medium">{folderLabel(dir)}</span>
-      <span className="ml-auto shrink-0 text-[10px]">{count}</span>
-    </button>
+    </div>
   );
 }
 
@@ -173,6 +198,7 @@ export function SessionSidebar({
   onClose,
   onRestore,
   onRename,
+  onRemoveSessions,
   onLogout,
   onCollapse,
   recents,
@@ -188,6 +214,7 @@ export function SessionSidebar({
   onClose: (id: string) => void;
   onRestore: (id: string) => void;
   onRename: (id: string, name: string) => void;
+  onRemoveSessions: (ids: string[]) => void;
   onLogout: () => void;
   onCollapse?: () => void;
   recents: RecentSession[];
@@ -198,6 +225,8 @@ export function SessionSidebar({
   const [tab, setTab] = useState<"sessions" | "recent">("sessions");
   const [grouped, setGrouped] = useState<boolean>(loadGrouped);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Folder whose bulk-remove popup is open (its normalized dirKey), or null.
+  const [removeDir, setRemoveDir] = useState<string | null>(null);
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
 
   // Dirs of the groups currently shown, and whether every one is collapsed — drives the
@@ -425,6 +454,7 @@ export function SessionSidebar({
                     count={g.items.length}
                     collapsed={isCollapsed}
                     onToggle={() => toggleGroup(g.dir)}
+                    onRemove={() => setRemoveDir(dirKey(g.dir))}
                   />
                   {!isCollapsed && (
                     <div className="mt-1 space-y-1 pl-1">
@@ -447,7 +477,95 @@ export function SessionSidebar({
         </Button>
         <ThemeToggle />
       </div>
+
+      {removeDir && (
+        <FolderRemoveDialog
+          dir={removeDir}
+          sessions={sessions.filter((s) => dirKey(s.workingDirectory) === removeDir)}
+          onRemove={(ids) => {
+            onRemoveSessions(ids);
+            setRemoveDir(null);
+          }}
+          onClose={() => setRemoveDir(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Confirmation popup for bulk-removing a folder's sessions. Lets the user choose whether to remove
+ * active (running) and/or inactive (closed/exited/failed) sessions in that folder before removing.
+ */
+function FolderRemoveDialog({
+  dir,
+  sessions,
+  onRemove,
+  onClose,
+}: {
+  dir: string;
+  sessions: SessionInfo[];
+  onRemove: (ids: string[]) => void;
+  onClose: () => void;
+}) {
+  const active = sessions.filter((s) => s.state === "Running");
+  const inactive = sessions.filter((s) => s.state !== "Running");
+  // Default to removing only inactive sessions — killing running ones should be a deliberate opt-in.
+  const [rmActive, setRmActive] = useState(active.length > 0 && inactive.length === 0);
+  const [rmInactive, setRmInactive] = useState(inactive.length > 0);
+
+  const ids = [
+    ...(rmActive ? active : []),
+    ...(rmInactive ? inactive : []),
+  ].map((s) => s.id);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Remove sessions</DialogTitle>
+          <DialogDescription>
+            In <span className="font-mono text-foreground">{folderLabel(dir)}</span>. Choose which to
+            remove — this stops running processes and forgets the rest.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-3">
+          <label className={cn("flex items-center gap-2 text-sm", active.length === 0 && "opacity-50")}>
+            <Checkbox
+              checked={rmActive}
+              onCheckedChange={(v) => setRmActive(v === true)}
+              disabled={active.length === 0}
+            />
+            <span>Active (running)</span>
+            <span className="ml-auto text-xs text-muted-foreground">{active.length}</span>
+          </label>
+          <label className={cn("flex items-center gap-2 text-sm", inactive.length === 0 && "opacity-50")}>
+            <Checkbox
+              checked={rmInactive}
+              onCheckedChange={(v) => setRmInactive(v === true)}
+              disabled={inactive.length === 0}
+            />
+            <span>Inactive (closed / exited)</span>
+            <span className="ml-auto text-xs text-muted-foreground">{inactive.length}</span>
+          </label>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={ids.length === 0}
+            onClick={() => onRemove(ids)}
+          >
+            Remove {ids.length > 0 ? ids.length : ""}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
