@@ -231,6 +231,40 @@ export function TerminalPane({
     };
     document.addEventListener("paste", onPaste, true);
 
+    // Touch scrolling: xterm's built-in viewport touch handler only fires for touches that land on
+    // the thin scrollbar viewport, but on mobile a drag lands on the screen overlay and never reaches
+    // it — so scrollback is unreachable. Translate a one-finger vertical drag into scrollback movement
+    // ourselves. A tap (no meaningful move) falls through untouched, so tap-to-focus still works.
+    let lastTouchY: number | null = null;
+    let scrollAccum = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        lastTouchY = e.touches[0].clientY;
+        scrollAccum = 0;
+      } else {
+        lastTouchY = null; // pinch/multi-touch: let the browser handle it
+      }
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1 || lastTouchY === null) return;
+      const y = e.touches[0].clientY;
+      scrollAccum += lastTouchY - y; // dragging up (finger up) scrolls content up = toward newer
+      lastTouchY = y;
+      const rowHeight = term.rows > 0 ? host.clientHeight / term.rows : 18;
+      const lines = Math.trunc(scrollAccum / rowHeight);
+      if (lines !== 0) {
+        term.scrollLines(lines);
+        scrollAccum -= lines * rowHeight;
+        e.preventDefault(); // we own this gesture; don't let the page pan underneath
+      }
+    };
+    const onTouchEnd = () => {
+      lastTouchY = null;
+    };
+    host.addEventListener("touchstart", onTouchStart, { passive: true });
+    host.addEventListener("touchmove", onTouchMove, { passive: false });
+    host.addEventListener("touchend", onTouchEnd, { passive: true });
+
     // Refit + notify the PTY whenever the pane resizes.
     const ro = new ResizeObserver(() => sendResize());
     ro.observe(host);
@@ -251,6 +285,9 @@ export function TerminalPane({
 
     return () => {
       ro.disconnect();
+      host.removeEventListener("touchstart", onTouchStart);
+      host.removeEventListener("touchmove", onTouchMove);
+      host.removeEventListener("touchend", onTouchEnd);
       document.removeEventListener("visibilitychange", onVisible);
       document.removeEventListener("paste", onPaste, true);
       themeSub();
