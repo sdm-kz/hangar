@@ -276,7 +276,7 @@ export function SessionSidebar({
         )}
       >
         <div className="flex items-center justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1">
+          <span className="flex min-w-0 flex-1 items-center gap-1">
             {/* Fixed-width gutter so the title never shifts when the activity dot appears. Busy
                 (emerald) wins; then waiting-on-you (amber, solid); otherwise the watchdog surfaces
                 recovering (amber pulse) / attention (red). */}
@@ -341,7 +341,7 @@ export function SessionSidebar({
                   setEditingId(s.id);
                 }}
                 title="Rename session"
-                className="opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                className="hidden hover:text-foreground group-hover:inline-flex"
               >
                 <Pencil className="size-3.5" />
               </button>
@@ -353,7 +353,7 @@ export function SessionSidebar({
                   onClone(s);
                 }}
                 title="Clone — new session with the same settings"
-                className="opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                className="hidden hover:text-foreground group-hover:inline-flex"
               >
                 <Copy className="size-3.5" />
               </button>
@@ -375,7 +375,7 @@ export function SessionSidebar({
                 e.stopPropagation();
                 onClose(s.id);
               }}
-              className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+              className="hidden hover:text-destructive group-hover:inline-flex"
               title={restorable ? "Forget" : "Close session"}
             >
               <X className="size-3.5" />
