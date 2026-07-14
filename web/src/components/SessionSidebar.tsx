@@ -18,6 +18,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
 import {
   Bot,
+  Copy,
   PanelLeftClose,
   Plus,
   Radio,
@@ -197,6 +198,7 @@ export function SessionSidebar({
   onSelect,
   onNew,
   onClose,
+  onClone,
   onRestore,
   onRename,
   onRemoveSessions,
@@ -214,6 +216,7 @@ export function SessionSidebar({
   onSelect: (id: string) => void;
   onNew: () => void;
   onClose: (id: string) => void;
+  onClone: (s: SessionInfo) => void;
   onRestore: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onRemoveSessions: (ids: string[]) => void;
@@ -341,6 +344,18 @@ export function SessionSidebar({
                 className="opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
               >
                 <Pencil className="size-3.5" />
+              </button>
+            )}
+            {editingId !== s.id && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClone(s);
+                }}
+                title="Clone — new session with the same settings"
+                className="opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+              >
+                <Copy className="size-3.5" />
               </button>
             )}
             {restorable && (

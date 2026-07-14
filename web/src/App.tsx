@@ -332,6 +332,21 @@ export function App() {
     setSidebarOpen(false);
   }, []);
 
+  // Clone a session: open the create dialog prefilled with its settings (the one-time initial prompt
+  // can't be recovered, so it starts empty) for the user to adjust before launching.
+  const cloneSession = useCallback((s: SessionInfo) => {
+    setNewPreset({
+      workingDirectory: s.workingDirectory,
+      name: s.name,
+      command: "",
+      model: s.model ?? "",
+      remoteControl: s.remoteControl,
+      permissionMode: s.permissionMode || "auto",
+    });
+    setNewOpen(true);
+    setSidebarOpen(false);
+  }, []);
+
   // Start a new session in a folder picked from the Files tab: open the create dialog prefilled with
   // that working directory (defaults for everything else).
   const newSessionInFolder = useCallback((path: string) => {
@@ -479,6 +494,7 @@ export function App() {
               onSelect={selectSession}
               onNew={() => openNew()}
               onClose={onClose}
+              onClone={cloneSession}
               onRestore={onRestore}
               onRename={onRename}
               onRemoveSessions={onRemoveSessions}
@@ -526,6 +542,7 @@ export function App() {
                     setSidebarOpen(false);
                   }}
                   onClose={onClose}
+                  onClone={cloneSession}
                   onRestore={onRestore}
                   onRename={onRename}
                   onRemoveSessions={onRemoveSessions}
