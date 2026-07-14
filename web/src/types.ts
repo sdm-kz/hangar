@@ -92,6 +92,18 @@ export interface GitLog {
   hasMore: boolean;
 }
 
+export interface GitRef {
+  name: string;
+  isCurrent: boolean;
+  worktreePath: string | null; // set only when checked out in a different worktree
+}
+
+export interface GitRefs {
+  isRepo: boolean;
+  current: string | null;
+  branches: GitRef[];
+}
+
 export interface GitCommitFile {
   path: string;
   status: string; // status letter (M/A/D/R)

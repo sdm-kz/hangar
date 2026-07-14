@@ -434,12 +434,19 @@ internal static class Program
         });
 
         // Commit history (newest first, paged via skip/count).
-        app.MapGet("/api/sessions/{id}/git/log", (string id, SessionManager mgr, int? skip, int? count) =>
+        app.MapGet("/api/sessions/{id}/git/log", (string id, SessionManager mgr, int? skip, int? count, string? @ref, bool? all) =>
         {
             var info = mgr.Get(id);
             return info is null
                 ? Results.NotFound()
-                : Results.Ok(GitService.Log(info.WorkingDirectory, Math.Max(0, skip ?? 0), Math.Clamp(count ?? 50, 1, 200)));
+                : Results.Ok(GitService.Log(info.WorkingDirectory, Math.Max(0, skip ?? 0), Math.Clamp(count ?? 50, 1, 200), @ref, all == true));
+        });
+
+        // Local branches (with any other-worktree locations) for the history branch picker.
+        app.MapGet("/api/sessions/{id}/git/branches", (string id, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            return info is null ? Results.NotFound() : Results.Ok(GitService.Branches(info.WorkingDirectory));
         });
 
         // Files changed by a single commit.

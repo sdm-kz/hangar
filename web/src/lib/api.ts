@@ -7,6 +7,7 @@ import type {
   GitDiff,
   GitFileContent,
   GitLog,
+  GitRefs,
   GitStatus,
   SessionInfo,
 } from "@/types";
@@ -195,8 +196,16 @@ export const api = {
   gitDiff(id: string, path: string): Promise<GitDiff> {
     return request(`/api/sessions/${id}/git/diff?path=${encodeURIComponent(path)}`);
   },
-  gitLog(id: string, skip = 0, count = 50): Promise<GitLog> {
-    return request(`/api/sessions/${id}/git/log?skip=${skip}&count=${count}`);
+  // Commit history. scope: undefined/"HEAD" = the folder's current branch, "*" = all branches
+  // (--all), or a branch name to view that specific branch (possibly living in another worktree).
+  gitLog(id: string, skip = 0, count = 50, scope?: string): Promise<GitLog> {
+    const q = new URLSearchParams({ skip: String(skip), count: String(count) });
+    if (scope === "*") q.set("all", "true");
+    else if (scope && scope !== "HEAD") q.set("ref", scope);
+    return request(`/api/sessions/${id}/git/log?${q.toString()}`);
+  },
+  gitBranches(id: string): Promise<GitRefs> {
+    return request(`/api/sessions/${id}/git/branches`);
   },
   gitCommit(id: string, hash: string): Promise<GitCommitDetail> {
     return request(`/api/sessions/${id}/git/commit?hash=${encodeURIComponent(hash)}`);

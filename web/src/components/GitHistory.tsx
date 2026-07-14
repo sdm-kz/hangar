@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import type { GitCommit, GitCommitDetail, GitCommitFile, GitFileContent } from "@/types";
+import type { GitCommit, GitCommitDetail, GitCommitFile, GitFileContent, GitRefs } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 import { DiffView, STATUS_COLOR } from "./FileBrowser";
@@ -36,6 +36,12 @@ const H_MAX = 900;
 const H_DEFAULT = 260;
 const HEIGHT_KEY = "claudeweb.gitHistoryHeight";
 
+// Last path segment of a worktree's folder, for a compact "@folder" hint in the branch picker.
+function worktreeLabel(path: string): string {
+  const parts = path.split(/[/\\]+/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
 function readHeight() {
   const n = Number(localStorage.getItem(HEIGHT_KEY));
   return Number.isFinite(n) && n > 0 ? Math.min(H_MAX, Math.max(H_MIN, n)) : H_DEFAULT;
@@ -62,11 +68,31 @@ export function GitHistory({
   const [error, setError] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [height, setHeight] = useState(readHeight); // body height (px), drag-resizable
+  // Which branch(es) to show: "HEAD" = the folder's current branch, "*" = all branches, or a branch
+  // name (possibly checked out in another worktree). Branches are loaded lazily for the picker.
+  const [scope, setScope] = useState("HEAD");
+  const [refs, setRefs] = useState<GitRefs | null>(null);
 
   // Newest commit currently shown; lets the auto-refresh below skip re-rendering when nothing changed.
   const headRef = useRef<string | null>(null);
-  const resetKey = `${open}|${sessionId}`;
+  const resetKey = `${open}|${sessionId}|${scope}`;
   const prevReset = useRef("");
+
+  // A different session may be a different repo, so a branch picked here won't exist there — reset to
+  // the current branch when the session changes.
+  useEffect(() => {
+    setScope("HEAD");
+  }, [sessionId]);
+
+  // Load the branch list (with other-worktree hints) for the picker while the panel is open.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.gitBranches(sessionId).then((r) => !cancelled && setRefs(r)).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sessionId, refreshToken]);
 
   // Drag the top edge to resize the panel; dragging up grows it. Persist on release.
   const startResize = useCallback((e: React.PointerEvent) => {
@@ -117,7 +143,7 @@ export function GitHistory({
       headRef.current = null;
     }
     api
-      .gitLog(sessionId, 0, PAGE)
+      .gitLog(sessionId, 0, PAGE, scope)
       .then((r) => {
         if (cancelled) return;
         const newHead = r.commits[0]?.hash ?? null;
@@ -131,19 +157,19 @@ export function GitHistory({
     return () => {
       cancelled = true;
     };
-  }, [open, sessionId, refreshToken, resetKey]);
+  }, [open, sessionId, refreshToken, resetKey, scope]);
 
   const loadMore = useCallback(() => {
     setLoadingMore(true);
     api
-      .gitLog(sessionId, commits?.length ?? 0, PAGE)
+      .gitLog(sessionId, commits?.length ?? 0, PAGE, scope)
       .then((r) => {
         setCommits((prev) => [...(prev ?? []), ...r.commits]);
         setHasMore(r.hasMore);
       })
       .catch(() => setError(true))
       .finally(() => setLoadingMore(false));
-  }, [sessionId, commits]);
+  }, [sessionId, commits, scope]);
 
   return (
     <div className="flex shrink-0 flex-col border-t">
@@ -156,14 +182,42 @@ export function GitHistory({
           className="h-1.5 shrink-0 cursor-row-resize bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30"
         />
       )}
-      <button
-        onClick={toggleOpen}
-        className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-      >
-        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        <History className="size-3.5" />
-        <span>History</span>
-      </button>
+      <div className="flex items-center justify-between gap-2 pr-2">
+        <button
+          onClick={toggleOpen}
+          className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          <History className="size-3.5" />
+          <span>History</span>
+        </button>
+
+        {/* Branch / worktree picker: view the current branch, all branches, or one specific branch. */}
+        {open && (
+          <select
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            title="Choose which branch(es) to show in the history"
+            className="max-w-[55%] truncate rounded border bg-background px-1.5 py-1 text-xs text-muted-foreground outline-none focus:ring-1 focus:ring-primary"
+          >
+            <option value="HEAD">
+              Current branch{refs?.current ? ` (${refs.current})` : ""}
+            </option>
+            <option value="*">All branches</option>
+            {refs && refs.branches.length > 0 && (
+              <optgroup label="Branches">
+                {refs.branches.map((b) => (
+                  <option key={b.name} value={b.name}>
+                    {b.name}
+                    {b.isCurrent ? " ✓" : ""}
+                    {b.worktreePath ? ` — @${worktreeLabel(b.worktreePath)}` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        )}
+      </div>
 
       {open && (
         <div style={{ height, maxHeight: "75vh" }} className="min-h-0 shrink-0 overflow-auto pb-2">

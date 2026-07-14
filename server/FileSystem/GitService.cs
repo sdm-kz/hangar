@@ -13,6 +13,12 @@ public sealed record GitCommit(string Hash, string ShortHash, string Subject, st
 
 public sealed record GitLog(bool IsRepo, IReadOnlyList<GitCommit> Commits, bool HasMore);
 
+/// <summary>A local branch. <see cref="WorktreePath"/> is set only when the branch is checked out in
+/// a <em>different</em> worktree than the session's folder (so the UI can flag it).</summary>
+public sealed record GitRef(string Name, bool IsCurrent, string? WorktreePath);
+
+public sealed record GitRefs(bool IsRepo, string? Current, IReadOnlyList<GitRef> Branches);
+
 public sealed record GitCommitFile(string Path, string Status);
 
 public sealed record GitCommitDetail(
@@ -74,16 +80,35 @@ public static class GitService
         return new GitDiff(true, relPath, status, diff);
     }
 
-    /// <summary>Commit history, newest first. Requests one extra commit to detect whether more remain.</summary>
-    public static GitLog Log(string workingDir, int skip, int count)
+    /// <summary>
+    /// Commit history, newest first (requests one extra commit to detect whether more remain).
+    /// By default it follows the folder's current HEAD; pass
+    /// <paramref name="all"/> to include commits from every branch/worktree (<c>--all</c>), or
+    /// <paramref name="refName"/> to view one specific branch. The repo (<c>.git</c>) is shared across
+    /// worktrees, so <c>--all</c>/a branch ref surfaces history checked out in other worktrees too.
+    /// </summary>
+    public static GitLog Log(string workingDir, int skip, int count, string? refName = null, bool all = false)
     {
         if (!IsRepo(workingDir)) return new GitLog(false, Array.Empty<GitCommit>(), false);
 
         // \x1f (unit separator) between fields, one commit per line (%s is a single line).
         // %D lists ref names (branches/tags) pointing at the commit — empty for most.
         const string fmt = "%H\x1f%h\x1f%s\x1f%an\x1f%ad\x1f%ar\x1f%D";
-        var raw = Run(workingDir, out _, "log", "--no-color", $"--format={fmt}",
-            "--date=short", $"--skip={skip}", $"-n{count + 1}");
+        var args = new List<string>
+        {
+            "log", "--no-color", $"--format={fmt}", "--date=short", $"--skip={skip}", $"-n{count + 1}",
+        };
+        if (all)
+        {
+            // Interleave branches by date so an all-branches view reads chronologically.
+            args.Add("--all");
+            args.Add("--date-order");
+        }
+        else if (IsSafeRef(refName) && refName != "HEAD")
+        {
+            args.Add(refName!); // view a specific branch instead of the checked-out HEAD
+        }
+        var raw = Run(workingDir, out _, args.ToArray());
 
         var commits = new List<GitCommit>();
         foreach (var line in raw.Split('\n'))
@@ -174,6 +199,66 @@ public static class GitService
         if (xy.Contains('A')) return "A";
         if (xy.Contains('M')) return "M";
         return xy.Trim();
+    }
+
+    /// <summary>
+    /// Local branches of the session's repo, flagging which is currently checked out here and which
+    /// are checked out in other worktrees (from <c>git worktree list</c>). Feeds the history branch
+    /// picker so you can view a branch that lives in a different worktree.
+    /// </summary>
+    public static GitRefs Branches(string workingDir)
+    {
+        if (!IsRepo(workingDir)) return new GitRefs(false, null, Array.Empty<GitRef>());
+
+        var current = Run(workingDir, out _, "rev-parse", "--abbrev-ref", "HEAD").Trim();
+
+        // Map each checked-out branch to its worktree path, so the picker can show where it lives.
+        var worktreeOf = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? wtPath = null;
+        foreach (var line in Run(workingDir, out _, "worktree", "list", "--porcelain").Split('\n'))
+        {
+            var l = line.TrimEnd('\r');
+            if (l.StartsWith("worktree ", StringComparison.Ordinal))
+                wtPath = l["worktree ".Length..].Trim();
+            else if (l.StartsWith("branch ", StringComparison.Ordinal) && wtPath is not null)
+            {
+                var refName = l["branch ".Length..].Trim();
+                var name = refName.StartsWith("refs/heads/", StringComparison.Ordinal)
+                    ? refName["refs/heads/".Length..]
+                    : refName;
+                worktreeOf[name] = wtPath;
+            }
+        }
+
+        var branches = new List<GitRef>();
+        foreach (var line in Run(workingDir, out _, "for-each-ref", "--format=%(refname:short)", "refs/heads").Split('\n'))
+        {
+            var name = line.TrimEnd('\r').Trim();
+            if (name.Length == 0) continue;
+            // Only surface a worktree path when the branch lives in a DIFFERENT worktree than this
+            // folder — the current folder's own branch doesn't need a "checked out elsewhere" hint.
+            string? otherWorktree = worktreeOf.TryGetValue(name, out var p) && !SamePath(p, workingDir) ? p : null;
+            branches.Add(new GitRef(name, name == current, otherWorktree));
+        }
+        return new GitRefs(true, current, branches);
+    }
+
+    // A branch/ref token safe to hand to git as a revision: rules out option-injection ("-x") and
+    // anything outside ordinary ref characters. Invalid input falls back to HEAD upstream.
+    private static bool IsSafeRef(string? r) =>
+        !string.IsNullOrEmpty(r) && r.Length <= 200 && r[0] != '-'
+        && r.All(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '/' or '-');
+
+    private static bool SamePath(string a, string b)
+    {
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(a).TrimEnd('/', '\\'),
+                Path.GetFullPath(b).TrimEnd('/', '\\'),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        }
+        catch { return false; }
     }
 
     private static string Run(string cwd, out int exitCode, params string[] args)
