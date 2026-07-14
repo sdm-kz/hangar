@@ -38,7 +38,9 @@ export function App() {
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
   const [waitingIds, setWaitingIds] = useState<Set<string>>(() => new Set()); // waiting on a prompt
   const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("sessions");
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() =>
+    readUrlState().panel === "files" ? "files" : "sessions"
+  );
   const [openFile, setOpenFile] = useState<string | null>(null); // server file open in the main area
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
@@ -142,6 +144,11 @@ export function App() {
   useEffect(() => {
     patchUrlState({ session: activeId ?? undefined });
   }, [activeId]);
+
+  // Mirror the sidebar tab so a refresh (or a new-tab deep link) restores the Files view.
+  useEffect(() => {
+    patchUrlState({ panel: sidebarTab === "files" ? "files" : undefined });
+  }, [sidebarTab]);
 
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
   // (new/renamed/exited sessions, Claude going active/idle, watchdog status), so the UI stays current
@@ -325,6 +332,21 @@ export function App() {
     setSidebarOpen(false);
   }, []);
 
+  // Start a new session in a folder picked from the Files tab: open the create dialog prefilled with
+  // that working directory (defaults for everything else).
+  const newSessionInFolder = useCallback((path: string) => {
+    setNewPreset({
+      workingDirectory: path,
+      name: "",
+      command: "",
+      model: "",
+      remoteControl: true,
+      permissionMode: "auto",
+    });
+    setNewOpen(true);
+    setSidebarOpen(false);
+  }, []);
+
   // Selecting a session takes over the main area, so drop any open server file.
   const selectSession = useCallback((id: string) => {
     setActiveId(id);
@@ -464,7 +486,7 @@ export function App() {
               onReorderRecent={reorderRecents}
             />
           }
-          files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} />}
+          files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} onNewSession={newSessionInFolder} />}
         />
         {/* Drag handle straddling the right border. */}
         <div
@@ -510,7 +532,7 @@ export function App() {
                   onReorderRecent={reorderRecents}
                 />
               }
-              files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} />}
+              files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} onNewSession={newSessionInFolder} />}
             />
           </aside>
         </div>

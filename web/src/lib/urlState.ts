@@ -5,10 +5,22 @@
 
 export type TabName = "terminal" | "files" | "split";
 
+// Which sidebar tab is showing: the session list (default) or the server Files tree.
+export type PanelName = "sessions" | "files";
+
 export interface UrlState {
   session?: string;
   tab?: TabName;
   file?: string;
+  panel?: PanelName;
+}
+
+/**
+ * Deep-link URL for the Files sidebar tab, used to open it in a new browser tab. Only carries
+ * `panel=files`; session/tab/file belong to the session view and aren't relevant to the Files tree.
+ */
+export function filesUrl(): string {
+  return `${window.location.pathname}?panel=files`;
 }
 
 /**
@@ -26,10 +38,12 @@ export function sessionUrl(id: string): string {
 export function readUrlState(): UrlState {
   const p = new URLSearchParams(window.location.search);
   const tab = p.get("tab");
+  const panel = p.get("panel");
   return {
     session: p.get("session") || undefined,
     tab: tab === "files" || tab === "terminal" || tab === "split" ? tab : undefined,
     file: p.get("file") || undefined,
+    panel: panel === "files" || panel === "sessions" ? panel : undefined,
   };
 }
 
@@ -46,6 +60,7 @@ export function patchUrlState(patch: UrlState): void {
   if ("session" in patch) apply("session", patch.session);
   if ("tab" in patch) apply("tab", patch.tab);
   if ("file" in patch) apply("file", patch.file);
+  if ("panel" in patch) apply("panel", patch.panel);
   const qs = p.toString();
   window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
 }

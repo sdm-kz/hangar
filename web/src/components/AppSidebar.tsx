@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { filesUrl } from "@/lib/urlState";
 import { FolderTree, MessagesSquare } from "lucide-react";
 
 export type SidebarTab = "sessions" | "files";
@@ -26,7 +27,14 @@ export function AppSidebar({
           <MessagesSquare className="size-4" />
           Sessions
         </TabButton>
-        <TabButton active={tab === "files"} onClick={() => onTabChange("files")}>
+        <TabButton
+          active={tab === "files"}
+          onClick={() => onTabChange("files")}
+          // Middle-click opens the Files tab in a new browser tab (like a session row).
+          onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+          onAuxClick={(e) => e.button === 1 && window.open(filesUrl(), "_blank", "noopener")}
+          title="Middle-click to open in a new tab"
+        >
           <FolderTree className="size-4" />
           Files
         </TabButton>
@@ -40,14 +48,16 @@ function TabButton({
   active,
   onClick,
   children,
+  ...rest
 }: {
   active: boolean;
   onClick: () => void;
   children: ReactNode;
-}) {
+} & ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       onClick={onClick}
+      {...rest}
       className={cn(
         "flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2 text-sm font-medium transition-colors",
         active

@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import {
+  Bot,
   ChevronDown,
   ChevronRight,
   File as FileIcon,
@@ -59,9 +60,11 @@ function FileGlyph({ name }: { name: string }) {
 export function FilesSidebar({
   openPath,
   onOpenFile,
+  onNewSession,
 }: {
   openPath: string | null; // the file currently open in the main area, for highlight
   onOpenFile: (path: string) => void;
+  onNewSession: (path: string) => void; // start a session in a folder (hover action on dir rows)
 }) {
   const [drives, setDrives] = useState<DirEntry[]>([]);
   const [children, setChildren] = useState<Map<string, FsNode[]>>(new Map());
@@ -262,6 +265,7 @@ export function FilesSidebar({
             renaming={renaming}
             onToggle={toggle}
             onOpenFile={onOpenFile}
+            onNewSession={onNewSession}
             onStartRename={setRenaming}
             onRename={doRename}
             onCancelRename={() => setRenaming(null)}
@@ -287,6 +291,7 @@ function TreeNode({
   renaming,
   onToggle,
   onOpenFile,
+  onNewSession,
   onStartRename,
   onRename,
   onCancelRename,
@@ -304,6 +309,7 @@ function TreeNode({
   renaming: string | null;
   onToggle: (path: string) => void;
   onOpenFile: (path: string) => void;
+  onNewSession: (path: string) => void;
   onStartRename: (path: string) => void;
   onRename: (path: string, name: string) => void;
   onCancelRename: () => void;
@@ -346,6 +352,19 @@ function TreeNode({
         )}
 
         {isBusy && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
+        {/* Start a Claude session in this folder — hover action on any directory row. */}
+        {isDir && renaming !== path && (
+          <button
+            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+            title="New session in this folder"
+            onClick={(e) => {
+              e.stopPropagation();
+              onNewSession(path);
+            }}
+          >
+            <Bot className="size-3.5" />
+          </button>
+        )}
         {/* Drives can't be renamed; everything else can, via a hover pencil. */}
         {!isDrive && renaming !== path && (
           <button
@@ -383,6 +402,7 @@ function TreeNode({
                 renaming={renaming}
                 onToggle={onToggle}
                 onOpenFile={onOpenFile}
+                onNewSession={onNewSession}
                 onStartRename={onStartRename}
                 onRename={onRename}
                 onCancelRename={onCancelRename}
