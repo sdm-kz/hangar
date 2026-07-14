@@ -250,7 +250,8 @@ export function TerminalPane({
       const y = e.touches[0].clientY;
       scrollAccum += lastTouchY - y; // dragging up (finger up) scrolls content up = toward newer
       lastTouchY = y;
-      const rowHeight = term.rows > 0 ? host.clientHeight / term.rows : 18;
+      // Guard both terms: a zero-height host (hidden pane) would otherwise divide to Infinity lines.
+      const rowHeight = host.clientHeight > 0 && term.rows > 0 ? host.clientHeight / term.rows : 18;
       const lines = Math.trunc(scrollAccum / rowHeight);
       if (lines !== 0) {
         term.scrollLines(lines);
