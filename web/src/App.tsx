@@ -36,6 +36,7 @@ export function App() {
   const [auth, setAuth] = useState<AuthStatus>("loading");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
+  const [waitingIds, setWaitingIds] = useState<Set<string>>(() => new Set()); // waiting on a prompt
   const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("sessions");
   const [openFile, setOpenFile] = useState<string | null>(null); // server file open in the main area
@@ -156,9 +157,14 @@ export function App() {
       ws.onopen = () => setStreamUp(true);
       ws.onmessage = (e) => {
         try {
-          const msg = JSON.parse(e.data) as { sessions: SessionInfo[]; busy: string[] };
+          const msg = JSON.parse(e.data) as {
+            sessions: SessionInfo[];
+            busy: string[];
+            waiting?: string[];
+          };
           applySessions(msg.sessions);
           setBusyIds(new Set(msg.busy));
+          setWaitingIds(new Set(msg.waiting ?? []));
         } catch {
           /* ignore a malformed frame */
         }
@@ -258,6 +264,37 @@ export function App() {
     else if (Notification.permission !== "denied")
       Notification.requestPermission().then((p) => p === "granted" && fire());
   }, [sessions, auth]);
+
+  // Notify when a session newly starts waiting on a prompt (idle -> waiting), mirroring the watchdog
+  // "attention" alert. Compare against the previous set so we only fire on the transition, and seed
+  // on first run so a session already waiting at page load doesn't alert.
+  const prevWaitingRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (auth !== "authed") return;
+    const prev = prevWaitingRef.current;
+    prevWaitingRef.current = new Set(waitingIds);
+    if (prev === null) return; // first run: seed only
+
+    const newly = [...waitingIds].filter((id) => !prev.has(id));
+    if (newly.length === 0 || !("Notification" in window)) return;
+
+    const fire = () => {
+      for (const id of newly) {
+        const s = sessions.find((x) => x.id === id);
+        try {
+          new Notification("Claude needs your input", {
+            body: `${s?.name ?? "A session"} is waiting on a prompt.`,
+            tag: `waiting-${id}`,
+          });
+        } catch {
+          /* ignore — notifications are best-effort */
+        }
+      }
+    };
+    if (Notification.permission === "granted") fire();
+    else if (Notification.permission !== "denied")
+      Notification.requestPermission().then((p) => p === "granted" && fire());
+  }, [waitingIds, sessions, auth]);
 
   // Load the server-backed recents once authed, migrating any left over in this browser's
   // localStorage from older builds first.
@@ -411,6 +448,7 @@ export function App() {
             <SessionSidebar
               sessions={sessions}
               busyIds={busyIds}
+              waitingIds={waitingIds}
               activeId={activeId}
               onSelect={selectSession}
               onNew={() => openNew()}
@@ -451,6 +489,7 @@ export function App() {
                 <SessionSidebar
                   sessions={sessions}
                   busyIds={busyIds}
+                  waitingIds={waitingIds}
                   activeId={activeId}
                   onSelect={(id) => {
                     selectSession(id);

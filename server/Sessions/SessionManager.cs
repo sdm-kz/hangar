@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace ClaudeWeb.Server.Sessions;
 
@@ -34,6 +35,10 @@ public sealed class SessionManager : IDisposable
     private readonly SessionManagerOptions _options;
     private readonly string _stateFile;
     private readonly object _saveLock = new();
+    // Same prompt patterns the watchdog uses to avoid auto-answering a dialog — reused here to
+    // surface "Claude is waiting for you" as a first-class signal (a permission/selection prompt on
+    // screen while Claude isn't emitting).
+    private readonly Regex[] _inputPrompts;
 
     /// <summary>
     /// Raised whenever the session set or a session's metadata changes (create, rename, remove,
@@ -45,13 +50,14 @@ public sealed class SessionManager : IDisposable
 
     private void RaiseChanged() => Changed?.Invoke();
 
-    public SessionManager(SessionManagerOptions options, ILoggerFactory loggerFactory)
+    public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, ILoggerFactory loggerFactory)
     {
         _options = options;
         _loggerFactory = loggerFactory;
         _log = loggerFactory.CreateLogger<SessionManager>();
         _exe = ClaudeExecutableResolver.Resolve(options.ClaudeExecutable);
         _log.LogInformation("Resolved claude executable: {File} {Prefix}", _exe.FileName, string.Join(' ', _exe.Prefix));
+        _inputPrompts = CompilePatterns(watchdog.PromptGuardPatterns);
 
         _stateFile = string.IsNullOrWhiteSpace(options.StateFile)
             ? Path.Combine(
@@ -77,6 +83,49 @@ public sealed class SessionManager : IDisposable
             .Where(s => s.State == SessionState.Running && s.Terminal?.IsBusy == true)
             .Select(s => s.Id)
             .ToArray();
+
+    /// <summary>
+    /// Ids of live sessions that appear to be waiting on the user — a permission/confirmation dialog
+    /// or numbered selection menu is on screen and Claude isn't emitting. Best-effort (keys off the
+    /// same on-screen prompt patterns as the watchdog guard); reliable for dialogs, not for
+    /// open-ended free-text questions that just idle at the normal input box.
+    /// </summary>
+    public IReadOnlyCollection<string> AwaitingInputIds() =>
+        _sessions.Values
+            .Where(s => s.State == SessionState.Running
+                     && s.Terminal is { IsBusy: false } t
+                     && IsAwaitingInput(t))
+            .Select(s => s.Id)
+            .ToArray();
+
+    private bool IsAwaitingInput(Pty.TerminalChannel term)
+    {
+        // Scan roughly the current screen (≥ two screenfuls), not the whole scrollback, so a prompt
+        // from an earlier turn can't linger as a false positive — mirrors the watchdog's Tail().
+        var text = Tail(term.RecentText, Math.Max(50, term.Rows * 2));
+        return _inputPrompts.Any(r => r.IsMatch(text));
+    }
+
+    /// <summary>Return the last <paramref name="maxLines"/> lines of <paramref name="text"/> (whole string if fewer).</summary>
+    private static string Tail(string text, int maxLines)
+    {
+        int newlines = 0;
+        for (int i = text.Length - 1; i >= 0; i--)
+            if (text[i] == '\n' && ++newlines == maxLines)
+                return text[(i + 1)..];
+        return text;
+    }
+
+    private Regex[] CompilePatterns(IEnumerable<string> patterns)
+    {
+        var list = new List<Regex>();
+        foreach (var p in patterns)
+        {
+            try { list.Add(new Regex(p, RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant)); }
+            catch (Exception ex) { _log.LogWarning(ex, "Ignoring invalid input-prompt pattern: {Pattern}", p); }
+        }
+        return list.ToArray();
+    }
 
     public SessionInfo? Get(string id)
     {

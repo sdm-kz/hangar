@@ -83,7 +83,9 @@ public sealed class SessionHub : BackgroundService
     }
 
     private string Serialize() =>
-        JsonSerializer.Serialize(new { sessions = _mgr.List(), busy = _mgr.BusySessionIds() }, JsonOpts);
+        JsonSerializer.Serialize(
+            new { sessions = _mgr.List(), busy = _mgr.BusySessionIds(), waiting = _mgr.AwaitingInputIds() },
+            JsonOpts);
 
     /// <summary>Register a browser socket: seed it with the current snapshot, then pump updates until it closes.</summary>
     public async Task ServeAsync(WebSocket ws, CancellationToken hostCt)

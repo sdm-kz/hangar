@@ -192,6 +192,7 @@ function useDragReorder(onReorder: (from: number, to: number) => void) {
 export function SessionSidebar({
   sessions,
   busyIds,
+  waitingIds,
   activeId,
   onSelect,
   onNew,
@@ -208,6 +209,7 @@ export function SessionSidebar({
 }: {
   sessions: SessionInfo[];
   busyIds: Set<string>;
+  waitingIds: Set<string>; // sessions where Claude is waiting on a prompt/dialog
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -265,19 +267,27 @@ export function SessionSidebar({
         className={cn(
           "group flex flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
           restorable ? "opacity-80" : "cursor-pointer",
-          activeId === s.id && !restorable && "border-border bg-accent"
+          activeId === s.id && !restorable && "border-border bg-accent",
+          // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
+          !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
         )}
       >
         <div className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 items-center gap-1">
             {/* Fixed-width gutter so the title never shifts when the activity dot appears. Busy
-                (emerald) wins; otherwise the watchdog surfaces recovering (amber) / attention (red). */}
+                (emerald) wins; then waiting-on-you (amber, solid); otherwise the watchdog surfaces
+                recovering (amber pulse) / attention (red). */}
             <span className="flex w-2.5 shrink-0 items-center justify-center">
               {!restorable &&
                 (busyIds.has(s.id) ? (
                   <span
                     className="size-2 rounded-full bg-emerald-500 animate-pulse"
                     aria-label="Claude is working"
+                  />
+                ) : waitingIds.has(s.id) ? (
+                  <span
+                    className="size-2 rounded-full bg-amber-400 animate-pulse ring-2 ring-amber-400/40"
+                    aria-label="Claude is waiting for your input"
                   />
                 ) : s.watchdogStatus === "attention" ? (
                   <span
