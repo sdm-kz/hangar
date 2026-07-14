@@ -62,11 +62,12 @@ function stripAnsi(s: string): string {
     .replace(/\r/g, "\n");
 }
 
-// Claude's confirmation line, e.g. "Session renamed to: my-name". The name is captured as a slug
-// token that stops at the first non-name char (space, newline, box-drawing/spinner glyph). We do NOT
-// require a trailing newline: the TUI leaves the newest confirmation without one (it's the last line,
-// drawn with cursor moves), so requiring a newline would always lag one rename behind.
-const RENAME_CONFIRM = /Session renamed to:\s*([A-Za-z0-9._\/-]{1,64})[^A-Za-z0-9._\/-]/g;
+// Claude's confirmation line, e.g. "Session renamed to: AB-103 Fix Login Page". Names can
+// contain spaces, so we capture a run of printable ASCII (not a single slug token). The lazy match
+// plus the required following boundary — a newline or any non-ASCII char (box-drawing/spinner glyph)
+// — stops at the panel edge rather than the first inner space, and won't grab a half-drawn name
+// mid-redraw (no boundary yet). Trailing padding spaces are trimmed at the capture site.
+const RENAME_CONFIRM = /Session renamed to:\s*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e])/g;
 
 /**
  * Live terminal for a session: an xterm.js terminal wired to the ConPTY-backed WebSocket at
@@ -188,7 +189,7 @@ export function TerminalPane({
       if (renameBufRef.current.includes("Session renamed to:")) {
         let name: string | null = null;
         for (const m of renameBufRef.current.matchAll(RENAME_CONFIRM)) {
-          name = m[1]; // last (most recent) confirmation in the buffer wins
+          name = m[1].trimEnd(); // last (most recent) confirmation wins; drop panel pad spaces
         }
         if (name && name !== lastNameRef.current) {
           lastNameRef.current = name;

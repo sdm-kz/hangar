@@ -80,11 +80,13 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised when Claude confirms a <c>/rename</c> in the terminal, with the new name.</summary>
     public event Action<string>? RenameCommandDetected;
 
-    // Name is captured as a slug token that stops at the first non-name char (space, newline,
-    // box-drawing/spinner glyph). We do NOT require a trailing newline: the TUI leaves the newest
-    // confirmation without one (last line, drawn with cursor moves), so requiring one lags a rename
-    // behind. The charset also excludes the status/spinner text that can abut the name.
-    [GeneratedRegex(@"Session renamed to:\s*([A-Za-z0-9._/-]{1,64})[^A-Za-z0-9._/-]")]
+    // Names can contain spaces ("AB-103 Fix Login Page"), so we capture a run of printable
+    // ASCII rather than a single slug token. The lazy quantifier plus the required following boundary
+    // — any non-ASCII byte or control char (newline, box-drawing/spinner glyph; under Latin1 those
+    // decode to bytes outside 0x20-0x7e) — stops the capture at the panel edge, not the first inner
+    // space, and never grabs a half-drawn name mid-redraw (there'd be no boundary yet). Trailing
+    // padding spaces are trimmed by the caller.
+    [GeneratedRegex(@"Session renamed to:\s*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e])")]
     private static partial Regex RenameConfirmRegex();
 
     // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
@@ -96,9 +98,9 @@ public sealed partial class TerminalChannel : IDisposable
         var text = Vt.Strip(_renameScanTail + Encoding.Latin1.GetString(buf, 0, n));
         string? name = null;
         foreach (Match m in RenameConfirmRegex().Matches(text))
-            name = m.Groups[1].Value; // last (most recent) confirmation wins
+            name = m.Groups[1].Value.TrimEnd(); // last (most recent) confirmation wins; drop pad spaces
         _renameScanTail = text.Length > 256 ? text[^256..] : text;
-        if (name is not null && name != _lastRenameSeen)
+        if (!string.IsNullOrEmpty(name) && name != _lastRenameSeen)
         {
             _lastRenameSeen = name;
             return name;
