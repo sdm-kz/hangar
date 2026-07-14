@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { api, getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
@@ -111,6 +112,15 @@ export function TerminalPane({
     term.loadAddon(fit);
     // Honor OSC 52 clipboard writes (how Claude Code copies), routing them to the browser clipboard.
     term.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
+    // Detect URLs and open them in a new tab. On desktop require Ctrl/Cmd-click so plain clicks stay
+    // free for selection and the TUI; on touch (no modifier keys) a plain tap opens.
+    const isTouch = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        if (isTouch || event.ctrlKey || event.metaKey)
+          window.open(uri, "_blank", "noopener,noreferrer");
+      })
+    );
     term.open(host);
     try {
       fit.fit();
