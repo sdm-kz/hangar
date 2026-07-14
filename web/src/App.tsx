@@ -359,7 +359,9 @@ export function App() {
   }
 
   function onCreated(s: SessionInfo) {
-    setSessions((prev) => [...prev, s]);
+    // Idempotent add: the live stream may already have pushed this new session before the create
+    // response returns, so drop any existing copy of its id before appending to avoid a duplicate row.
+    setSessions((prev) => [...prev.filter((x) => x.id !== s.id), s]);
     setActiveId(s.id);
     setSidebarOpen(false);
     loadRecents(); // the dialog just saved this launch as a recent preset (server-side)
@@ -413,7 +415,9 @@ export function App() {
     if (!ok) return;
     const created = await api.restoreSession(id).catch(() => null);
     if (!created) return;
-    setSessions((prev) => [...prev.filter((s) => s.id !== id), created]);
+    // Drop the old Restorable entry AND any copy of the new session the live stream may have already
+    // pushed (the push can beat this response), so the reopened session appears exactly once.
+    setSessions((prev) => [...prev.filter((s) => s.id !== id && s.id !== created.id), created]);
     setActiveId(created.id);
     setSidebarOpen(false);
   }
