@@ -258,10 +258,17 @@ export function App() {
     const fire = () => {
       for (const s of newlyStuck) {
         try {
-          new Notification("Claude session needs attention", {
-            body: `${s.name} stopped recovering after repeated API errors.`,
+          const n = new Notification(`${s.name} — needs attention`, {
+            body: "Claude stopped recovering after repeated API errors.",
             tag: `watchdog-${s.id}`,
           });
+          // Click the notification to jump to that session.
+          n.onclick = () => {
+            window.focus();
+            setActiveId(s.id);
+            setOpenFile(null);
+            n.close();
+          };
         } catch {
           /* ignore — notifications are best-effort */
         }
@@ -289,10 +296,17 @@ export function App() {
       for (const id of newly) {
         const s = sessions.find((x) => x.id === id);
         try {
-          new Notification("Claude needs your input", {
-            body: `${s?.name ?? "A session"} is waiting on a prompt.`,
+          const n = new Notification(`${s?.name ?? "Session"} — Claude needs your input`, {
+            body: "Waiting on a prompt.",
             tag: `waiting-${id}`,
           });
+          // Click the notification to jump to that session.
+          n.onclick = () => {
+            window.focus();
+            setActiveId(id);
+            setOpenFile(null);
+            n.close();
+          };
         } catch {
           /* ignore — notifications are best-effort */
         }
@@ -492,6 +506,7 @@ export function App() {
         <AppSidebar
           tab={sidebarTab}
           onTabChange={setSidebarTab}
+          onCollapse={toggleCollapsed}
           sessions={
             <SessionSidebar
               sessions={sessions}
@@ -506,7 +521,6 @@ export function App() {
               onRename={onRename}
               onRemoveSessions={onRemoveSessions}
               onLogout={onLogout}
-              onCollapse={toggleCollapsed}
               recents={recents}
               onReuse={reuseRecent}
               onRemoveRecent={removeRecent}

@@ -30,6 +30,19 @@ function readSplitWidth() {
   return Number.isFinite(n) && n >= SPLIT_MIN ? n : SPLIT_DEFAULT;
 }
 
+// Compact process uptime, e.g. "45s", "5m 12s", "2h 8m", "1d 3h".
+function formatUptime(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
 // Convert an absolute path (from a terminal file-link) into one relative to the session's working
 // directory, using forward slashes (the shape FileBrowser uses). Returns null if it's outside the
 // working directory — the per-session browser can only show files under it.
@@ -83,12 +96,20 @@ export function SessionView({
   const [splitWidth, setSplitWidth] = useState(readSplitWidth); // Files-panel width in Split view
   // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
   const [wdEnabled, setWdEnabled] = useState(session.watchdogEnabled);
+  const [nowTick, setNowTick] = useState(() => Date.now()); // ticks so the header uptime stays live
   const contentRef = useRef<HTMLDivElement>(null);
   const fileBrowserRef = useRef<FileBrowserHandle>(null);
   // Candidates when a bare filename clicked in the terminal matched more than one file.
   const [filePicker, setFilePicker] = useState<{ name: string; matches: string[] } | null>(null);
 
   useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
+
+  // Keep the header uptime ticking while the process runs.
+  useEffect(() => {
+    if (session.state !== "Running") return;
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [session.state]);
 
   const toggleWatchdog = useCallback(() => {
     setWdEnabled((prev) => {
@@ -304,7 +325,7 @@ export function SessionView({
           </Button>
         )}
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+          <div className="group flex min-w-0 items-center gap-2 overflow-hidden">
             {renaming ? (
               <RenameField
                 value={session.name}
@@ -328,7 +349,7 @@ export function SessionView({
               <button
                 onClick={() => setRenaming(true)}
                 title="Rename session"
-                className="shrink-0 text-muted-foreground hover:text-foreground"
+                className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
               >
                 <Pencil className="size-3.5" />
               </button>
@@ -345,7 +366,11 @@ export function SessionView({
               </Badge>
             )}
             {session.remoteControl && (
-              <Badge variant="outline" className="hidden gap-1 sm:inline-flex">
+              <Badge
+                variant="outline"
+                className="hidden gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-500 sm:inline-flex"
+                title="Registered for Remote Control — drive it from the Claude Code app"
+              >
                 <Radio className="size-3" /> RC
               </Badge>
             )}
@@ -373,6 +398,8 @@ export function SessionView({
             </button>
             <span className="shrink-0 whitespace-pre">
               {session.model ? ` · ${session.model}` : ""} · pid {session.processId}
+              {session.state === "Running" &&
+                ` · up ${formatUptime(nowTick - new Date(session.createdAt).getTime())}`}
             </span>
           </p>
         </div>
@@ -412,7 +439,7 @@ export function SessionView({
               aria-pressed={wdEnabled}
             >
               {wdEnabled ? (
-                <ShieldCheck className="size-4" />
+                <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-500" />
               ) : (
                 <ShieldOff className="size-4 text-muted-foreground" />
               )}
@@ -441,14 +468,6 @@ export function SessionView({
         </Button>
         </div>
       </header>
-
-      {session.remoteControl && session.state === "Running" && (
-        <div className="flex items-center gap-1.5 border-b bg-emerald-500/5 px-4 py-1.5 text-xs text-muted-foreground">
-          <Radio className="size-3 text-emerald-500" />
-          Registered for Remote Control — drive{" "}
-          <span className="font-medium text-foreground">{session.name}</span> from the Claude Code app.
-        </div>
-      )}
 
       {/* The terminal stays mounted in every view (hidden in Files) so toggling never drops its
           connection; the Files panel is a resizable left column in Split and full-width in Files. */}

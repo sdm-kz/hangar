@@ -17,9 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
 import {
-  Bot,
   Copy,
-  PanelLeftClose,
   Plus,
   Radio,
   RotateCcw,
@@ -203,7 +201,6 @@ export function SessionSidebar({
   onRename,
   onRemoveSessions,
   onLogout,
-  onCollapse,
   recents,
   onReuse,
   onRemoveRecent,
@@ -221,7 +218,6 @@ export function SessionSidebar({
   onRename: (id: string, name: string) => void;
   onRemoveSessions: (ids: string[]) => void;
   onLogout: () => void;
-  onCollapse?: () => void;
   recents: RecentSession[];
   onReuse: (r: RecentSession) => void;
   onRemoveRecent: (r: RecentSession) => void;
@@ -391,24 +387,6 @@ export function SessionSidebar({
 
   return (
     <div className="flex h-full flex-col bg-card">
-      <div className="flex h-14 items-center gap-2 border-b px-3">
-        <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Bot className="size-4" />
-        </div>
-        <span className="font-semibold">Claude Web</span>
-        {onCollapse && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="ml-auto hidden size-7 text-muted-foreground md:inline-flex"
-            title="Hide sidebar"
-            onClick={onCollapse}
-          >
-            <PanelLeftClose className="size-4" />
-          </Button>
-        )}
-      </div>
-
       <div className="p-2">
         <Button onClick={onNew} className="w-full justify-start" size="sm">
           <Plus className="size-4" /> New session
