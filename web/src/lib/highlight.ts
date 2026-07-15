@@ -13,6 +13,7 @@ import scss from "highlight.js/lib/languages/scss";
 import less from "highlight.js/lib/languages/less";
 import bash from "highlight.js/lib/languages/bash";
 import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
 import { fileExt } from "./fileKind";
 
 hljs.registerLanguage("typescript", typescript);
@@ -27,6 +28,7 @@ hljs.registerLanguage("scss", scss);
 hljs.registerLanguage("less", less);
 hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("yaml", yaml);
 
 // Map file extensions to registered highlight.js language names.
 const EXT_LANG: Record<string, string> = {
@@ -61,6 +63,8 @@ const EXT_LANG: Record<string, string> = {
   nuspec: "xml",
   html: "xml",
   htm: "xml",
+  yaml: "yaml",
+  yml: "yaml",
 };
 
 /** Returns the highlight.js language for a filename, or null if unsupported. */
