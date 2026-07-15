@@ -67,9 +67,10 @@ function stripAnsi(s: string): string {
 // "Session renamed to: <name>". We require that pairing so the detector only fires on a genuine rename
 // (typed or app-injected) and never when the phrase merely appears in assistant prose (which used to
 // mis-rename the session to a sentence fragment). Names can contain spaces, so the confirmation name is
-// captured as a run of printable ASCII (lazy, up to the next non-ASCII/newline boundary); trailing
-// padding spaces are trimmed at the capture site.
-const RENAME_CONFIRM = /\/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|$)/g;
+// captured as a run of printable ASCII (lazy). The capture also stops at a 2+ space run or the input
+// prompt ">", which the TUI positions on the next line via cursor moves — stripping ANSI drops that
+// positioning, so the prompt can end up adjacent to the name (e.g. "main>"). Trailing spaces trimmed.
+const RENAME_CONFIRM = /\/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)/g;
 
 // File-link matcher for the terminal. Two forms:
 //  1) a PATH with a separator (optional drive `C:\`, one or more `segment/`, then `name.ext`, any

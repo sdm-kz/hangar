@@ -85,9 +85,11 @@ public sealed partial class TerminalChannel : IDisposable
     // typed by the user or injected by the app) and what prose never has — so the detector no longer
     // fires just because the phrase appears in assistant text (which mis-renamed sessions to sentence
     // fragments), yet still catches every real rename regardless of the exact marker glyph. Names can
-    // contain spaces, so the confirmation name is captured as a run of printable ASCII (lazy, up to the
-    // next non-ASCII/newline boundary); trailing padding spaces are trimmed by the caller.
-    [GeneratedRegex(@"/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|$)")]
+    // contain spaces, so the confirmation name is captured as a run of printable ASCII (lazy). The
+    // capture also stops at a 2+ space run or the input prompt ">", which the TUI positions on the next
+    // line via cursor moves — once ANSI is stripped that positioning is lost, so the prompt can abut the
+    // name (e.g. "main>"). Trailing padding spaces are trimmed by the caller.
+    [GeneratedRegex(@"/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)")]
     private static partial Regex RenameConfirmRegex();
 
     // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
