@@ -402,7 +402,7 @@ export function TerminalPane({
   // it overcount rows and clip the last line. The host stays padding-free and edge-to-edge.
   return (
     <div className="h-full w-full bg-white p-2 dark:bg-[#0a0a0a]">
-      <div ref={hostRef} className="h-full w-full overflow-hidden" />
+      <div ref={hostRef} className="h-full w-full overscroll-contain overflow-hidden" />
     </div>
   );
 }

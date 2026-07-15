@@ -13,6 +13,14 @@ import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
 import { OfficeViewer } from "./OfficeViewer";
 import {
@@ -22,8 +30,10 @@ import {
   type CommitSelection,
 } from "./GitHistory";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   Download,
   Expand,
   File as FileIcon,
@@ -45,6 +55,7 @@ import {
   Video,
   X,
 } from "lucide-react";
+import { writeToClipboard } from "@/lib/clipboard";
 
 // Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
 interface RowActions {
@@ -78,9 +89,32 @@ function fileEntryFromPath(path: string): FileEntry {
   return { name: path.split("/").pop() || path, path, isDir: false, size: 0 };
 }
 
+// Reconstruct the open file tabs for a session: a URL deep-link for this session wins as the active
+// tab, otherwise the per-session storage. `files` holds every open tab; the active one is always
+// present (older stored state only had a single `file`). `preview` marks the transient tab that
+// single-click reuses (only kept if it's actually one of the open tabs).
+function restoreTabs(
+  sessionId: string,
+  useUrl: boolean
+): { tabs: FileEntry[]; active: string | null; preview: string | null } {
+  const u = useUrl ? readUrlState() : {};
+  const ui = loadSessionUi(sessionId);
+  const active = (useUrl && u.session === sessionId && u.file ? u.file : ui.file) || null;
+  const paths = ui.files && ui.files.length ? [...ui.files] : active ? [active] : [];
+  if (active && !paths.includes(active)) paths.unshift(active);
+  const preview = ui.preview && paths.includes(ui.preview) ? ui.preview : null;
+  return { tabs: paths.map(fileEntryFromPath), active, preview };
+}
+
 /** Imperative handle: lets a parent (SessionView) open a file in this browser from elsewhere. */
 export interface FileBrowserHandle {
   revealFile: (path: string) => void;
+}
+
+/** How the active preview reports unsaved edits back up so closing a tab can guard them. */
+interface PreviewGuard {
+  dirty: boolean;
+  save: () => Promise<boolean>;
 }
 
 /** Two-pane file explorer: searchable, auto-refreshing directory tree + preview/edit pane. */
@@ -93,17 +127,36 @@ export const FileBrowser = forwardRef<
     refreshToken?: number;
   }
 >(function FileBrowser({ sessionId, gitFiles, onRefresh, refreshToken = 0 }, ref) {
-  // Restore the previewed file: a URL deep-link for this session wins, otherwise the file this
-  // session was last viewing (persisted per-session in the browser).
-  const [selected, setSelected] = useState<FileEntry | null>(() => {
-    const u = readUrlState();
-    const path = u.session === sessionId && u.file ? u.file : loadSessionUi(sessionId).file;
-    return path ? fileEntryFromPath(path) : null;
-  });
+  // Open files shown as tabs above the preview. Clicking a file opens (or re-activates) its tab; the
+  // active tab is what the preview renders. Restored from the URL deep-link / per-session storage.
+  const [tabs, setTabs] = useState<FileEntry[]>(() => restoreTabs(sessionId, true).tabs);
+  const [activePath, setActivePath] = useState<string | null>(() => restoreTabs(sessionId, true).active);
+  // The transient "preview" tab: single-clicking a file reuses this one slot instead of piling up
+  // tabs; middle-/double-click opens a pinned tab and clears the preview mark.
+  const [previewPath, setPreviewPath] = useState<string | null>(() => restoreTabs(sessionId, true).preview);
+  const selected = useMemo(
+    () => tabs.find((t) => t.path === activePath) ?? null,
+    [tabs, activePath]
+  );
+  // The active preview registers its unsaved-edit state here so closing that tab can prompt to save.
+  const previewGuard = useRef<PreviewGuard>({ dirty: false, save: async () => true });
+  // Promise-based "save changes?" dialog shown when a tab with unsaved edits is about to close.
+  const [closeGuard, setCloseGuard] = useState<{ name: string } | null>(null);
+  const closeGuardResolve = useRef<((choice: "save" | "discard" | "cancel") => void) | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FileEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const [showChanges, setShowChanges] = useState(false);
+  // Whether the tree shows git changes (+ the history panel) instead of all files — remembered per
+  // session so returning to it (or reloading) restores the changes/history view.
+  const [showChanges, setShowChanges] = useState(() => loadSessionUi(sessionId).changes ?? false);
+  const toggleChanges = useCallback(() => {
+    setShowChanges((v) => {
+      const next = !v;
+      if (v) setCommitSel(null); // leaving changes mode drops the commit preview
+      saveSessionUi(sessionId, { changes: next });
+      return next;
+    });
+  }, [sessionId]);
   // A file picked out of a commit in the History panel — previewed in place of a working-tree file.
   const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
   const [treeWidth, setTreeWidth] = useState(readTreeWidth); // desktop tree-pane width (px)
@@ -192,17 +245,129 @@ export const FileBrowser = forwardRef<
     return u.session === sessionId && u.file ? u.file : loadSessionUi(sessionId).file ?? null;
   });
 
-  // Select a working-tree file: mirror it into the URL, remember it for this session, and clear any
-  // commit preview.
-  const selectFile = useCallback(
-    (f: FileEntry) => {
-      setCommitSel(null);
-      setSelected(f);
-      patchUrlState({ file: f.path });
-      saveSessionUi(sessionId, { file: f.path });
+  // Persist the open tabs + active + preview mark for this session; mirror the active into the URL.
+  const persistTabs = useCallback(
+    (nextTabs: FileEntry[], nextActive: string | null, nextPreview: string | null) => {
+      saveSessionUi(sessionId, {
+        file: nextActive ?? "",
+        files: nextTabs.map((t) => t.path),
+        preview: nextPreview ?? "",
+      });
+      patchUrlState({ file: nextActive ?? undefined });
     },
     [sessionId]
   );
+
+  // Guard against silently dropping unsaved edits in the active tab: if it's dirty, ask whether to
+  // save, discard, or cancel. Returns false to abort. Called before anything that would navigate
+  // away from (or close) the edited file. Only the active tab can be edited.
+  const guardActiveEdits = useCallback(async (): Promise<boolean> => {
+    if (!previewGuard.current.dirty) return true;
+    setCloseGuard({ name: selected?.name ?? "This file" });
+    const choice = await new Promise<"save" | "discard" | "cancel">((resolve) => {
+      closeGuardResolve.current = resolve;
+    });
+    if (choice === "cancel") return false;
+    if (choice === "save") return previewGuard.current.save();
+    return true; // discard
+  }, [selected]);
+
+  const settleCloseGuard = useCallback((choice: "save" | "discard" | "cancel") => {
+    closeGuardResolve.current?.(choice);
+    closeGuardResolve.current = null;
+    setCloseGuard(null);
+  }, []);
+
+  // Open a file and activate it. `pin` decides the tab model:
+  //  - pin=false (single click): reuse the one transient preview slot — replace the current preview
+  //    tab in place, or create it if there's none. Keeps the tab list from piling up.
+  //  - pin=true (middle/double click): open (or promote to) a permanent tab.
+  const openFile = useCallback(
+    async (f: FileEntry, pin: boolean) => {
+      // Switching away from an unsaved edit prompts to save first.
+      if (f.path !== activePath && !(await guardActiveEdits())) return;
+      setCommitSel(null);
+      const isOpen = tabs.some((t) => t.path === f.path);
+      let next: FileEntry[];
+      let nextPreview = previewPath;
+      if (isOpen) {
+        next = tabs.map((t) => (t.path === f.path ? f : t)); // refresh entry (size may now be known)
+        if (pin && previewPath === f.path) nextPreview = null; // promote the preview tab to pinned
+      } else if (pin || !previewPath) {
+        next = [...tabs, f]; // new tab (pinned, or the first preview tab)
+        if (!pin) nextPreview = f.path;
+      } else {
+        next = tabs.map((t) => (t.path === previewPath ? f : t)); // reuse the preview slot in place
+        nextPreview = f.path;
+      }
+      setTabs(next);
+      setActivePath(f.path);
+      setPreviewPath(nextPreview);
+      persistTabs(next, f.path, nextPreview);
+    },
+    [tabs, activePath, previewPath, persistTabs, guardActiveEdits]
+  );
+
+  // Tree/list selection: single click previews, middle/double click opens a pinned tab.
+  const selectFile = useCallback(
+    (f: FileEntry, newTab?: boolean) => openFile(f, !!newTab),
+    [openFile]
+  );
+
+  // Switch to an already-open tab (doesn't change its preview/pinned status). Switching away from an
+  // unsaved edit prompts to save first.
+  const activateTab = useCallback(
+    async (path: string) => {
+      if (path === activePath) return;
+      if (!(await guardActiveEdits())) return;
+      setCommitSel(null);
+      setActivePath(path);
+      persistTabs(tabs, path, previewPath);
+    },
+    [tabs, activePath, previewPath, persistTabs, guardActiveEdits]
+  );
+
+  // Double-clicking a preview tab pins it so single-clicking other files won't replace it.
+  const pinTab = useCallback(
+    (path: string) => {
+      if (previewPath !== path) return;
+      setPreviewPath(null);
+      persistTabs(tabs, path, null);
+    },
+    [tabs, previewPath, persistTabs]
+  );
+
+  // Close a tab; if it was the active one, fall back to its neighbour (or empty).
+  const closeTab = useCallback(
+    async (path: string) => {
+      const idx = tabs.findIndex((t) => t.path === path);
+      if (idx === -1) return;
+      // Only the active tab can hold unsaved edits — guard just that case.
+      if (path === activePath && !(await guardActiveEdits())) return;
+      const next = tabs.filter((t) => t.path !== path);
+      const nextActive =
+        activePath === path
+          ? next.length
+            ? next[Math.min(idx, next.length - 1)].path
+            : null
+          : activePath;
+      const nextPreview = previewPath === path ? null : previewPath;
+      setTabs(next);
+      setActivePath(nextActive);
+      setPreviewPath(nextPreview);
+      persistTabs(next, nextActive, nextPreview);
+    },
+    [tabs, activePath, previewPath, persistTabs, guardActiveEdits]
+  );
+
+  // Close every open tab.
+  const closeAllTabs = useCallback(async () => {
+    if (!(await guardActiveEdits())) return;
+    setTabs([]);
+    setActivePath(null);
+    setPreviewPath(null);
+    persistTabs([], null, null);
+  }, [persistTabs, guardActiveEdits]);
 
   // ---- Per-node file operations (rename / delete / new folder inside a folder) ----
   const confirm = useConfirm();
@@ -215,17 +380,28 @@ export const FileBrowser = forwardRef<
       if (!clean || clean === path.split("/").pop()) return;
       try {
         await api.renameSessionFile(sessionId, path, clean);
-        // Follow the selection if the renamed entry (or its ancestor) was the open file.
+        // Follow any open tab whose file (or ancestor folder) was renamed.
         const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
         const newPath = parent ? `${parent}/${clean}` : clean;
-        if (selected && (selected.path === path || selected.path.startsWith(path + "/")))
-          selectFile(fileEntryFromPath(selected.path.replace(path, newPath)));
+        const affected = (p: string) => p === path || p.startsWith(path + "/");
+        if (tabs.some((t) => affected(t.path))) {
+          const next = tabs.map((t) =>
+            affected(t.path) ? fileEntryFromPath(t.path.replace(path, newPath)) : t
+          );
+          const remap = (p: string | null) => (p && affected(p) ? p.replace(path, newPath) : p);
+          const nextActive = remap(activePath);
+          const nextPreview = remap(previewPath);
+          setTabs(next);
+          setActivePath(nextActive);
+          setPreviewPath(nextPreview);
+          persistTabs(next, nextActive, nextPreview);
+        }
         onRefresh?.();
       } catch {
         /* ignore — best effort */
       }
     },
-    [sessionId, selected, selectFile, onRefresh]
+    [sessionId, tabs, activePath, previewPath, persistTabs, onRefresh]
   );
 
   const doDelete = useCallback(
@@ -243,17 +419,24 @@ export const FileBrowser = forwardRef<
       if (!ok) return;
       try {
         await api.deleteSessionFile(sessionId, entry.path);
-        if (selected && (selected.path === entry.path || selected.path.startsWith(entry.path + "/"))) {
-          setSelected(null);
-          patchUrlState({ file: undefined });
-          saveSessionUi(sessionId, { file: "" });
+        // Drop any tab for the deleted file (or files under a deleted folder).
+        const affected = (p: string) => p === entry.path || p.startsWith(entry.path + "/");
+        if (tabs.some((t) => affected(t.path))) {
+          const next = tabs.filter((t) => !affected(t.path));
+          const nextActive =
+            activePath && !affected(activePath) ? activePath : next[0]?.path ?? null;
+          const nextPreview = previewPath && !affected(previewPath) ? previewPath : null;
+          setTabs(next);
+          setActivePath(nextActive);
+          setPreviewPath(nextPreview);
+          persistTabs(next, nextActive, nextPreview);
         }
         onRefresh?.();
       } catch {
         /* ignore — best effort */
       }
     },
-    [sessionId, selected, confirm, onRefresh]
+    [sessionId, tabs, activePath, previewPath, persistTabs, confirm, onRefresh]
   );
 
   // Open the new-folder creator targeting a specific directory ("" = repo root).
@@ -277,15 +460,12 @@ export const FileBrowser = forwardRef<
   // view, select it, and expand the tree down to it.
   const revealFile = useCallback(
     (path: string) => {
-      setCommitSel(null);
       setShowChanges(false);
       setQuery("");
-      setSelected(fileEntryFromPath(path));
       setExpandTo(path);
-      patchUrlState({ file: path });
-      saveSessionUi(sessionId, { file: path });
+      openFile(fileEntryFromPath(path), false);
     },
-    [sessionId]
+    [openFile]
   );
 
   // Let SessionView open a file here (from a terminal file-link click).
@@ -298,18 +478,20 @@ export const FileBrowser = forwardRef<
   useEffect(() => {
     if (prevSession.current === sessionId) return;
     prevSession.current = sessionId;
-    const storedFile = loadSessionUi(sessionId).file ?? null;
-    setSelected(storedFile ? fileEntryFromPath(storedFile) : null);
-    setExpandTo(storedFile);
+    const restored = restoreTabs(sessionId, false);
+    setTabs(restored.tabs);
+    setActivePath(restored.active);
+    setPreviewPath(restored.preview);
+    setExpandTo(restored.active);
     setCommitSel(null);
     setQuery("");
-    setShowChanges(false);
+    setShowChanges(loadSessionUi(sessionId).changes ?? false);
     setUploadDir("");
     setUploadError(null);
     setCreatingFolder(false);
     setNewFolder("");
     setFolderError(null);
-    patchUrlState({ file: storedFile ?? undefined });
+    patchUrlState({ file: restored.active ?? undefined });
   }, [sessionId]);
 
   // Changes can be shown for another worktree of the same repo. "" = the session's own working dir.
@@ -385,12 +567,7 @@ export const FileBrowser = forwardRef<
             {gitFiles && (
               <button
                 title={showChanges ? "Show all files" : "Show git changes only"}
-                onClick={() =>
-                  setShowChanges((v) => {
-                    if (v) setCommitSel(null); // leaving changes mode drops the commit preview
-                    return !v;
-                  })
-                }
+                onClick={toggleChanges}
                 className={cn(
                   "flex items-center gap-1 rounded px-1 py-0.5 hover:text-foreground",
                   showChanges ? "bg-amber-500/15 text-amber-500" : ""
@@ -575,39 +752,207 @@ export const FileBrowser = forwardRef<
         className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:block"
       />
 
-      <div className="min-h-0 min-w-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {commitSel ? (
-          commitSel.path ? (
-            <CommitFilePreview
-              key={`${commitSel.hash}:${commitSel.path}`}
-              sessionId={sessionId}
-              selection={{ ...commitSel, path: commitSel.path }}
-              onBack={() => setCommitSel((s) => (s ? { ...s, path: undefined, status: undefined } : null))}
-              onClose={() => setCommitSel(null)}
-              onOpenInTree={revealFile}
-            />
-          ) : (
-            <CommitDetailPreview
-              sessionId={sessionId}
-              selection={commitSel}
-              onSelectFile={setCommitSel}
-              onClose={() => setCommitSel(null)}
-            />
-          )
+          <div className="min-h-0 flex-1">
+            {commitSel.path ? (
+              <CommitFilePreview
+                key={`${commitSel.hash}:${commitSel.path}`}
+                sessionId={sessionId}
+                selection={{ ...commitSel, path: commitSel.path }}
+                onBack={() => setCommitSel((s) => (s ? { ...s, path: undefined, status: undefined } : null))}
+                onClose={() => setCommitSel(null)}
+                onOpenInTree={revealFile}
+              />
+            ) : (
+              <CommitDetailPreview
+                sessionId={sessionId}
+                selection={commitSel}
+                onSelectFile={setCommitSel}
+                onClose={() => setCommitSel(null)}
+              />
+            )}
+          </div>
         ) : (
-          <FilePreview
-            sessionId={sessionId}
-            file={selected}
-            gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
-            gitDir={worktreeDir || undefined}
-            refreshToken={refreshToken}
-            onSaved={onRefresh}
-          />
+          <>
+            {tabs.length > 0 && (
+              <FileTabStrip
+                tabs={tabs}
+                activePath={activePath}
+                previewPath={previewPath}
+                gitFiles={effectiveGitFiles}
+                onActivate={activateTab}
+                onPin={pinTab}
+                onClose={closeTab}
+                onCloseAll={closeAllTabs}
+              />
+            )}
+            <div className="min-h-0 flex-1">
+              <FilePreview
+                sessionId={sessionId}
+                file={selected}
+                gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
+                gitDir={worktreeDir || undefined}
+                refreshToken={refreshToken}
+                onSaved={onRefresh}
+                guard={previewGuard}
+              />
+            </div>
+          </>
         )}
       </div>
+
+      {/* Save-changes prompt shown when a tab with unsaved edits is about to close. */}
+      <Dialog open={!!closeGuard} onOpenChange={(o) => !o && settleCloseGuard("cancel")}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Save changes?</DialogTitle>
+            <DialogDescription>
+              <span className="font-medium text-foreground">{closeGuard?.name}</span> has unsaved
+              changes. Save them before closing?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => settleCloseGuard("cancel")}>
+              Cancel
+            </Button>
+            <Button variant="outline" onClick={() => settleCloseGuard("discard")}>
+              Don't save
+            </Button>
+            <Button onClick={() => settleCloseGuard("save")} autoFocus>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 });
+
+/**
+ * Tab strip above the preview: one tab per open file. The transient "preview" tab (opened by a
+ * single click) is shown in italics; double-clicking it pins it. Middle-click closes a tab, and a
+ * trailing "close all" button clears them.
+ */
+function FileTabStrip({
+  tabs,
+  activePath,
+  previewPath,
+  gitFiles,
+  onActivate,
+  onPin,
+  onClose,
+  onCloseAll,
+}: {
+  tabs: FileEntry[];
+  activePath: string | null;
+  previewPath: string | null;
+  gitFiles?: GitFiles;
+  onActivate: (path: string) => void;
+  onPin: (path: string) => void;
+  onClose: (path: string) => void;
+  onCloseAll: () => void;
+}) {
+  // Translate a vertical mouse wheel into horizontal scrolling over the strip. Uses a native,
+  // non-passive listener so preventDefault works (React's onWheel is passive and can't).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0 || el.scrollWidth <= el.clientWidth) return; // nothing to scroll sideways
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Keep the active tab in view: when selection changes (or tabs shift), scroll the strip so the
+  // active tab is visible. Adjusts only the container's own scrollLeft, never the page.
+  useEffect(() => {
+    const el = scrollRef.current;
+    const active = el?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!el || !active) return;
+    const c = el.getBoundingClientRect();
+    const a = active.getBoundingClientRect();
+    const pad = 8;
+    let target = el.scrollLeft;
+    if (a.left < c.left) target -= c.left - a.left + pad;
+    else if (a.right > c.right) target += a.right - c.right + pad;
+    if (target !== el.scrollLeft) el.scrollTo({ left: target, behavior: "smooth" });
+  }, [activePath, tabs.length]);
+
+  return (
+    <div className="flex shrink-0 items-stretch border-b bg-muted/30">
+      <div ref={scrollRef} className="hover-scrollbar flex flex-1 items-stretch gap-0.5 overflow-x-auto px-1 pt-1">
+        {tabs.map((t) => {
+          const kind = fileKind(t.name);
+          const Icon =
+            kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "binary" ? FileIcon : FileText;
+          const active = t.path === activePath;
+          const preview = t.path === previewPath;
+          return (
+            <div
+              key={t.path}
+              role="tab"
+              aria-selected={active}
+              title={t.path}
+              onClick={() => onActivate(t.path)}
+              onDoubleClick={() => onPin(t.path)}
+              // Middle-click closes the tab (matches browser tab behaviour).
+              onMouseDown={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault();
+                  onClose(t.path);
+                }
+              }}
+              className={cn(
+                "group/tab flex shrink-0 cursor-pointer items-center gap-1.5 rounded-t border-b-2 px-2 py-1.5 text-xs",
+                active
+                  ? "border-primary bg-background text-foreground"
+                  : "border-transparent text-muted-foreground hover:bg-background/60 hover:text-foreground"
+              )}
+            >
+              <Icon className="size-3.5 shrink-0" />
+              <span
+                className={cn(
+                  "max-w-[12rem] truncate",
+                  preview && "italic",
+                  gitFiles?.[t.path] && STATUS_COLOR[gitFiles[t.path]]
+                )}
+              >
+                {t.name}
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose(t.path);
+                }}
+                title="Close tab"
+                className={cn(
+                  "-mr-0.5 ml-0.5 rounded p-0.5 hover:bg-accent hover:text-foreground",
+                  active ? "opacity-100" : "opacity-0 group-hover/tab:opacity-100"
+                )}
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {tabs.length > 1 && (
+        <button
+          onClick={onCloseAll}
+          title="Close all tabs"
+          className="flex shrink-0 items-center border-l px-2 text-muted-foreground hover:bg-background hover:text-foreground"
+        >
+          <X className="size-4" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 export const STATUS_COLOR: Record<string, string> = {
   M: "text-amber-500",
@@ -648,7 +993,7 @@ function FlatFileList({
   empty: string;
   gitFiles?: GitFiles;
   selectedPath: string | null;
-  onSelect: (f: FileEntry) => void;
+  onSelect: (f: FileEntry, newTab?: boolean) => void;
   actions: RowActions;
 }) {
   if (loading)
@@ -661,7 +1006,15 @@ function FlatFileList({
         const kind = fileKind(e.name);
         const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : FileText;
         return (
-          <Row key={e.path} depth={0} selected={selectedPath === e.path} entry={e} actions={actions} onClick={() => onSelect(e)}>
+          <Row
+            key={e.path}
+            depth={0}
+            selected={selectedPath === e.path}
+            entry={e}
+            actions={actions}
+            onClick={() => onSelect(e)}
+            onOpenNewTab={() => onSelect(e, true)}
+          >
             <Icon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col">
               <span className={cn("truncate", gitFiles?.[e.path] && STATUS_COLOR[gitFiles[e.path]])}>{e.name}</span>
@@ -695,7 +1048,7 @@ function TreeLevel({
   selectedPath: string | null;
   expandTo: string | null;
   gitFiles?: GitFiles;
-  onSelect: (f: FileEntry) => void;
+  onSelect: (f: FileEntry, newTab?: boolean) => void;
   uploadDir: string;
   onSelectDir: (path: string) => void;
   actions: RowActions;
@@ -774,7 +1127,7 @@ function TreeDir({
   selectedPath: string | null;
   expandTo: string | null;
   gitFiles?: GitFiles;
-  onSelect: (f: FileEntry) => void;
+  onSelect: (f: FileEntry, newTab?: boolean) => void;
   uploadDir: string;
   onSelectDir: (path: string) => void;
   actions: RowActions;
@@ -852,7 +1205,7 @@ function FileRow({
   depth: number;
   selected: boolean;
   gitStatus?: string;
-  onSelect: (f: FileEntry) => void;
+  onSelect: (f: FileEntry, newTab?: boolean) => void;
   actions: RowActions;
 }) {
   const kind = fileKind(entry.name);
@@ -866,7 +1219,15 @@ function FileRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
-    <Row ref={ref} depth={depth} selected={selected} entry={entry} actions={actions} onClick={() => onSelect(entry)}>
+    <Row
+      ref={ref}
+      depth={depth}
+      selected={selected}
+      entry={entry}
+      actions={actions}
+      onClick={() => onSelect(entry)}
+      onOpenNewTab={() => onSelect(entry, true)}
+    >
       <span className="size-3.5 shrink-0" />
       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       <span className={cn("truncate", gitStatus && STATUS_COLOR[gitStatus])}>{entry.name}</span>
@@ -881,12 +1242,13 @@ const Row = forwardRef<
     depth: number;
     selected?: boolean;
     onClick: () => void;
+    onOpenNewTab?: () => void; // file-only: middle-/double-click opens a pinned tab
     entry: FileEntry;
     actions: RowActions;
     extraActions?: React.ReactNode; // dir-only: "new folder here"
     children: React.ReactNode;
   }
->(function Row({ depth, selected, onClick, entry, actions, extraActions, children }, ref) {
+>(function Row({ depth, selected, onClick, onOpenNewTab, entry, actions, extraActions, children }, ref) {
   const renaming = actions.renamingPath === entry.path;
   return (
     <div
@@ -908,6 +1270,17 @@ const Row = forwardRef<
         <>
           <button
             onClick={onClick}
+            onDoubleClick={onOpenNewTab}
+            // Middle-click opens the file in a new pinned tab (browser-link behaviour).
+            onAuxClick={(e) => {
+              if (e.button === 1 && onOpenNewTab) {
+                e.preventDefault();
+                onOpenNewTab();
+              }
+            }}
+            onMouseDown={(e) => {
+              if (e.button === 1) e.preventDefault(); // suppress middle-click autoscroll
+            }}
             style={{ paddingLeft: depth * 12 + 8 }}
             className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left"
           >
@@ -961,6 +1334,7 @@ function FilePreview({
   gitDir,
   refreshToken,
   onSaved,
+  guard,
 }: {
   sessionId: string;
   file: FileEntry | null;
@@ -970,6 +1344,8 @@ function FilePreview({
   gitDir?: string;
   refreshToken: number;
   onSaved?: () => void;
+  // Lets the parent read this preview's unsaved-edit state (and trigger a save) when closing a tab.
+  guard?: React.MutableRefObject<PreviewGuard>;
 }) {
   const [text, setText] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "toolarge">("idle");
@@ -984,6 +1360,14 @@ function FilePreview({
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [copiedPath, setCopiedPath] = useState(false);
+
+  const copyPath = useCallback(async () => {
+    if (!file) return;
+    await writeToClipboard(file.path);
+    setCopiedPath(true);
+    setTimeout(() => setCopiedPath(false), 1500);
+  }, [file]);
 
   const kind = file ? fileKind(file.name) : "binary";
   const isMarkdown = !!file && ["md", "markdown"].includes(fileExt(file.name));
@@ -1061,8 +1445,8 @@ function FilePreview({
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreen, editing]);
 
-  async function save() {
-    if (!file) return;
+  async function save(): Promise<boolean> {
+    if (!file) return true;
     setSaving(true);
     setSaveError(null);
     try {
@@ -1070,12 +1454,27 @@ function FilePreview({
       setText(draft);
       setEditing(false);
       onSaved?.(); // refresh git status (file may now be modified)
+      return true;
     } catch {
       setSaveError("Failed to save.");
+      return false;
     } finally {
       setSaving(false);
     }
   }
+
+  // Report unsaved-edit state up so closing this file's tab can prompt to save. Runs every render so
+  // `save`'s current closure (draft/file) is always the one the parent calls; cleared on unmount.
+  const dirty = editing && draft !== (text ?? "");
+  useEffect(() => {
+    if (guard) guard.current = { dirty, save };
+  });
+  useEffect(
+    () => () => {
+      if (guard) guard.current = { dirty: false, save: async () => true };
+    },
+    [guard]
+  );
 
   if (!file) {
     return (
@@ -1098,25 +1497,37 @@ function FilePreview({
             {file.name}
             {editing && <span className="ml-1 text-amber-500">•</span>}
           </div>
-          <div className="truncate font-mono text-[11px] text-muted-foreground">
-            {file.path} · {formatSize(file.size)}
-          </div>
+          <button
+            type="button"
+            onClick={copyPath}
+            title="Copy file path"
+            className="group/path flex max-w-full items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            <span className="truncate">
+              {file.path} · {formatSize(file.size)}
+            </span>
+            {copiedPath ? (
+              <Check className="size-3 shrink-0 text-emerald-500" />
+            ) : (
+              <Copy className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100" />
+            )}
+          </button>
         </div>
 
         {editing ? (
           <>
             {saveError && <span className="text-xs text-destructive">{saveError}</span>}
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)} disabled={saving}>
+            <Button variant="ghost" size="sm" className="h-7" onClick={() => setEditing(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button size="sm" onClick={save} disabled={saving}>
+            <Button size="sm" className="h-7" onClick={save} disabled={saving}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Save
             </Button>
           </>
         ) : (
           <>
             {gitStatus && (
-              <div className="hidden overflow-hidden rounded-md border sm:flex">
+              <div className="hidden h-7 overflow-hidden rounded-md border sm:flex">
                 <TabButton active={view === "preview"} onClick={() => setView("preview")}>
                   Preview
                 </TabButton>
@@ -1127,7 +1538,7 @@ function FilePreview({
             )}
 
             {(isMarkdown || isHtml) && view === "preview" && (
-              <div className="hidden overflow-hidden rounded-md border sm:flex">
+              <div className="hidden h-7 overflow-hidden rounded-md border sm:flex">
                 <TabButton active={mdView === "rendered"} onClick={() => setMdView("rendered")}>
                   {isHtml ? "Preview" : "Rendered"}
                 </TabButton>
@@ -1141,6 +1552,7 @@ function FilePreview({
               <Button
                 variant="outline"
                 size="sm"
+                className="h-7"
                 onClick={() => {
                   setDraft(text ?? "");
                   setEditing(true);
@@ -1151,7 +1563,7 @@ function FilePreview({
             )}
 
             {kind === "image" && view === "preview" && (
-              <Button variant="outline" size="sm" onClick={() => setLightbox(true)}>
+              <Button variant="outline" size="sm" className="h-7" onClick={() => setLightbox(true)}>
                 <Expand className="size-4" /> <span className="hidden sm:inline">Fullscreen</span>
               </Button>
             )}
@@ -1161,6 +1573,7 @@ function FilePreview({
               <Button
                 variant="outline"
                 size="sm"
+                className="h-7"
                 onClick={() => setFullscreen((f) => !f)}
                 title={fullscreen ? "Exit full screen (Esc)" : "Full screen"}
               >
@@ -1168,7 +1581,7 @@ function FilePreview({
                 <span className="hidden sm:inline">{fullscreen ? "Exit" : "Fullscreen"}</span>
               </Button>
             )}
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="outline" size="sm" className="h-7">
               <a href={sessionFileUrl(sessionId, file.path, true)} download={file.name}>
                 <Download className="size-4" /> <span className="hidden sm:inline">Download</span>
               </a>

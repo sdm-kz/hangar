@@ -182,12 +182,41 @@
   background-color: color-mix(in oklch, var(--color-muted) 45%, transparent);
 }
 
+/* Slim scrollbar whose thumb only appears on hover (e.g. the file-tab strip). The track keeps its
+   6px so the tabs don't jump when the thumb fades in. */
+.hover-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.hover-scrollbar::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.hover-scrollbar::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+}
+.hover-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.hover-scrollbar:hover {
+  scrollbar-color: color-mix(in oklch, var(--color-muted-foreground) 40%, transparent) transparent;
+}
+.hover-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklch, var(--color-muted-foreground) 40%, transparent);
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
   }
   html, body, #root {
     height: 100%;
+  }
+  html, body {
+    /* The app is a fixed-height SPA; the document never scrolls. Kill browser overscroll so an
+       upward drag (e.g. in the terminal) can't trigger iOS/Android pull-to-refresh. */
+    overscroll-behavior: none;
   }
   body {
     margin: 0;
