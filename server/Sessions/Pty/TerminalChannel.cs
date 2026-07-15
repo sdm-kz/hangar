@@ -80,15 +80,14 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised when Claude confirms a <c>/rename</c> in the terminal, with the new name.</summary>
     public event Action<string>? RenameCommandDetected;
 
-    // Require the tool-result marker — a non-ASCII box glyph (⎿) that Claude Code prints before the
-    // "Session renamed to:" line — immediately before the phrase (only spaces/tabs between). That
-    // anchor is the key: prose is plain ASCII, so it can never satisfy `[^\x00-\x7f]`, which stops the
-    // detector firing when the phrase merely appears in assistant text (e.g. discussing this feature).
-    // Under Latin1 the marker's UTF-8 bytes decode to chars ≥ 0x80, so it works server-side too.
-    // Names can contain spaces ("AB-103 Fix Login Page"), so we then capture a run of printable
-    // ASCII (lazy, up to the next non-ASCII/newline boundary) rather than a single slug token; trailing
-    // padding spaces are trimmed by the caller.
-    [GeneratedRegex(@"[^\x00-\x7f][ \t]*Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|$)")]
+    // Only treat "Session renamed to: X" as a real rename when it's paired with the "/rename …" command
+    // that produced it a few lines earlier. That pairing is what a genuine rename always has (whether
+    // typed by the user or injected by the app) and what prose never has — so the detector no longer
+    // fires just because the phrase appears in assistant text (which mis-renamed sessions to sentence
+    // fragments), yet still catches every real rename regardless of the exact marker glyph. Names can
+    // contain spaces, so the confirmation name is captured as a run of printable ASCII (lazy, up to the
+    // next non-ASCII/newline boundary); trailing padding spaces are trimmed by the caller.
+    [GeneratedRegex(@"/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|$)")]
     private static partial Regex RenameConfirmRegex();
 
     // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
@@ -101,7 +100,9 @@ public sealed partial class TerminalChannel : IDisposable
         string? name = null;
         foreach (Match m in RenameConfirmRegex().Matches(text))
             name = m.Groups[1].Value.TrimEnd(); // last (most recent) confirmation wins; drop pad spaces
-        _renameScanTail = text.Length > 256 ? text[^256..] : text;
+        // Keep a generous tail: the "/rename …" command and its confirmation can span reads, and the
+        // regex allows a few hundred chars between them.
+        _renameScanTail = text.Length > 2048 ? text[^2048..] : text;
         if (!string.IsNullOrEmpty(name) && name != _lastRenameSeen)
         {
             _lastRenameSeen = name;
