@@ -191,7 +191,7 @@ export function ServerFileViewer({
           </div>
         ) : kind === "video" ? (
           <div className="flex h-full items-center justify-center bg-black p-2">
-            <video src={serverFileUrl(path)} controls className="max-h-full max-w-full" />
+            <video src={serverFileUrl(path)} controls className="max-h-full max-w-full object-contain" />
           </div>
         ) : kind !== "text" ? (
           <DownloadPrompt path={path} name={name} />

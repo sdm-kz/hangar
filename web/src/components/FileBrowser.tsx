@@ -1208,8 +1208,12 @@ function FilePreview({
             )}
 
             {kind === "video" && (
-              <div className="flex min-h-full items-center justify-center bg-black p-2">
-                <video src={sessionFileUrl(sessionId, file.path)} controls className="max-h-full max-w-full" />
+              <div className="flex h-full items-center justify-center bg-black p-2">
+                <video
+                  src={sessionFileUrl(sessionId, file.path)}
+                  controls
+                  className="max-h-full max-w-full object-contain"
+                />
               </div>
             )}
 
