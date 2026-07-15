@@ -1552,19 +1552,20 @@ function FilePreview({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7"
+                className="h-7 w-7 px-0"
+                title="Edit"
                 onClick={() => {
                   setDraft(text ?? "");
                   setEditing(true);
                 }}
               >
-                <Pencil className="size-4" /> <span className="hidden sm:inline">Edit</span>
+                <Pencil className="size-4" />
               </Button>
             )}
 
             {kind === "image" && view === "preview" && (
-              <Button variant="outline" size="sm" className="h-7" onClick={() => setLightbox(true)}>
-                <Expand className="size-4" /> <span className="hidden sm:inline">Fullscreen</span>
+              <Button variant="outline" size="sm" className="h-7 w-7 px-0" title="Fullscreen" onClick={() => setLightbox(true)}>
+                <Expand className="size-4" />
               </Button>
             )}
 
@@ -1573,17 +1574,16 @@ function FilePreview({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7"
+                className="h-7 w-7 px-0"
                 onClick={() => setFullscreen((f) => !f)}
                 title={fullscreen ? "Exit full screen (Esc)" : "Full screen"}
               >
                 {fullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-                <span className="hidden sm:inline">{fullscreen ? "Exit" : "Fullscreen"}</span>
               </Button>
             )}
-            <Button asChild variant="outline" size="sm" className="h-7">
+            <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Download">
               <a href={sessionFileUrl(sessionId, file.path, true)} download={file.name}>
-                <Download className="size-4" /> <span className="hidden sm:inline">Download</span>
+                <Download className="size-4" />
               </a>
             </Button>
           </>
