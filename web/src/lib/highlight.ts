@@ -63,6 +63,7 @@ const EXT_LANG: Record<string, string> = {
   nuspec: "xml",
   html: "xml",
   htm: "xml",
+  cshtml: "xml",
   yaml: "yaml",
   yml: "yaml",
 };
