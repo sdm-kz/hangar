@@ -98,11 +98,20 @@ public sealed class SessionManager : IDisposable
             .Select(s => s.Id)
             .ToArray();
 
+    // Shown by Claude Code throughout generation (including the thinking phase, when no PTY output
+    // flows and IsBusy can read false) — a reliable "still working, not waiting" signal.
+    private static readonly Regex WorkingHint =
+        new(@"esc to interrupt", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private bool IsAwaitingInput(Pty.TerminalChannel term)
     {
-        // Scan roughly the current screen (≥ two screenfuls), not the whole scrollback, so a prompt
-        // from an earlier turn can't linger as a false positive — mirrors the watchdog's Tail().
-        var text = Tail(term.RecentText, Math.Max(50, term.Rows * 2));
+        // Only the last handful of lines: a live prompt is the most recent output, so once the answer
+        // and Claude's reply append after it the menu scrolls out of this window and stops counting.
+        // (RecentText is the stripped output stream and RETAINS overwritten menus — Claude Code redraws
+        // via cursor moves, which stripping drops — so a wide window keeps matching an already-answered
+        // prompt, which flagged sessions as waiting long after the user replied.)
+        var text = Tail(term.RecentText, 15);
+        if (WorkingHint.IsMatch(text)) return false; // actively generating — not waiting
         return _inputPrompts.Any(r => r.IsMatch(text));
     }
 
