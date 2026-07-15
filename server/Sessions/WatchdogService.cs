@@ -48,7 +48,12 @@ public sealed class WatchdogOptions
         // would make the watchdog think a prompt is always waiting and never auto-continue. Match the
         // permission dialog's actual wording / numbered options instead.
         @"Do you want",
-        @"❯\s*\d+\.", // the ❯ cursor sitting on a numbered option (a selection menu), not the input box
+        @"❯\s*\d+\.", // the ❯ cursor on a numbered option (works only where the glyph survives)
+        // A numbered selection menu: a line starting with the selector — ASCII '>' or the ❯ glyph,
+        // which the Latin1-decoded RecentText mangles into non-ASCII bytes — followed by "N." / "N)".
+        // Requires a digit after the selector, so it matches a menu but not the normal input box; and
+        // requires the selector, so it doesn't match Claude's plain numbered lists (which start "N.").
+        @"(?m)^\s{0,4}(?:>|[^\x00-\x7f]{1,4})\s*\d+[.)]\s",
         @"\b1\.\s*Yes\b",
         @"\(y/n\)",
         @"\[y/N\]",
