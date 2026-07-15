@@ -70,6 +70,27 @@ function stripAnsi(s: string): string {
 // mid-redraw (no boundary yet). Trailing padding spaces are trimmed at the capture site.
 const RENAME_CONFIRM = /Session renamed to:\s*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e])/g;
 
+// File-link matcher for the terminal. Two forms:
+//  1) a PATH with a separator (optional drive `C:\`, one or more `segment/`, then `name.ext`, any
+//     extension) — resolved against the working dir and opened directly.
+//  2) a BARE filename with a *known* extension (no directory) — searched for under the working dir
+//     (there may be several). The extension whitelist keeps prose like "e.g." or "3.14" from lighting
+//     up; paths in form 1 accept any extension since the separator already implies a real path.
+// The `(?<!:\/\/)` guard avoids swallowing the domain of an http(s):// URL (the URL provider,
+// registered first, keeps precedence there).
+const FILE_LINK =
+  /(?<!:\/\/)(?:[A-Za-z]:)?[\\/]?(?:[\w.-]+[\\/])+[\w.-]+\.[A-Za-z0-9]{1,12}|(?<![\w./\\-])[\w-]+\.(?:md|markdown|txt|log|csv|tsv|json|jsonc|ya?ml|toml|ini|env|xml|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|cs|java|kt|go|rs|rb|php|py|pyi|c|cc|cpp|h|hpp|swift|sql|sh|bash|zsh|ps1|psm1|bat|cmd|dockerfile|gradle|properties|lock|sln|csproj|props|targets)(?![\w])/i;
+
+// Resolve a path clicked in the terminal to an absolute server path. Absolute paths (POSIX, Windows
+// drive, or UNC-ish leading separator) pass through; relative paths are joined onto the session's
+// working directory. The server's /api/fs/file normalizes mixed separators and `..`, so a plain join
+// is enough — no client-side path arithmetic needed.
+function resolveTerminalPath(workingDir: string, matched: string): string {
+  const isAbsolute = /^([A-Za-z]:[\\/]|[\\/])/.test(matched);
+  if (isAbsolute) return matched;
+  return workingDir.replace(/[\\/]+$/, "") + "/" + matched;
+}
+
 /**
  * Live terminal for a session: an xterm.js terminal wired to the ConPTY-backed WebSocket at
  * /hub/sessions/{id}/terminal. Output frames arrive as binary VT bytes; keystrokes and resizes
@@ -77,17 +98,34 @@ const RENAME_CONFIRM = /Session renamed to:\s*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7
  */
 export function TerminalPane({
   sessionId,
+  workingDirectory,
   onRenameDetected,
+  onOpenFile,
+  onFindFile,
 }: {
   sessionId: string;
+  // The session's working directory, used to resolve a relative file path clicked in the terminal.
+  workingDirectory: string;
   // Fired with the new name when Claude's "Session renamed to:" confirmation appears in this
   // terminal, so the app can update the session name immediately instead of waiting for a poll.
   onRenameDetected?: (name: string) => void;
+  // Fired with an absolute server path when a full file path in the terminal is clicked, so the app
+  // can open it in the main-area file viewer.
+  onOpenFile?: (absolutePath: string) => void;
+  // Fired with a bare filename (no directory) clicked in the terminal, so the app can search the
+  // working directory for it and open it (or offer a picker when several match).
+  onFindFile?: (name: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  // Kept in a ref so the socket handler always sees the latest callback without re-opening the socket.
+  // Kept in refs so the link/socket handlers always see the latest values without re-opening the socket.
   const onRenameRef = useRef(onRenameDetected);
   onRenameRef.current = onRenameDetected;
+  const onOpenFileRef = useRef(onOpenFile);
+  onOpenFileRef.current = onOpenFile;
+  const onFindFileRef = useRef(onFindFile);
+  onFindFileRef.current = onFindFile;
+  const workingDirRef = useRef(workingDirectory);
+  workingDirRef.current = workingDirectory;
   // Rolling tail of recent output (ANSI-stripped) so a confirmation split across frames still matches.
   const renameBufRef = useRef("");
   const lastNameRef = useRef<string | null>(null);
@@ -121,6 +159,49 @@ export function TerminalPane({
           window.open(uri, "_blank", "noopener,noreferrer");
       })
     );
+    // Detect file paths and open them in the app's file viewer. WebLinksAddon can't be reused here —
+    // it validates every match with `new URL()`, so non-URL paths are discarded — so we register a
+    // custom link provider. It reconstructs each logical line (joining wrapped rows so a long path
+    // spanning terminal rows stays a single link), matches FILE_PATH, and maps string indices back to
+    // 1-based buffer cells. Same click gating as URLs; relative paths resolve against the working dir.
+    const fileLinks = term.registerLinkProvider({
+      provideLinks(bufferLine, cb) {
+        const buf = term.buffer.active;
+        const startRow = bufferLine - 1; // provideLinks is 1-based; getLine is 0-based
+        const first = buf.getLine(startRow);
+        // Skip wrapped continuation rows — each logical line is handled once at its first row.
+        if (!first || first.isWrapped) return cb(undefined);
+
+        const rows = [first.translateToString(false)]; // untrimmed → each row is exactly `cols` wide
+        for (let i = startRow + 1; i < buf.length; i++) {
+          const l = buf.getLine(i);
+          if (!l || !l.isWrapped) break;
+          rows.push(l.translateToString(false));
+        }
+        const cols = term.cols;
+        const text = rows.join("");
+        const cell = (idx: number) => ({ x: (idx % cols) + 1, y: startRow + Math.floor(idx / cols) + 1 });
+
+        const links = [...text.matchAll(new RegExp(FILE_LINK.source, "gi"))].map((m) => {
+          const matched = m[0];
+          const idx = m.index ?? 0;
+          return {
+            text: matched,
+            range: { start: cell(idx), end: cell(idx + matched.length) },
+            decorations: { pointerCursor: true, underline: true },
+            activate: (event: MouseEvent, uri: string) => {
+              if (!(isTouch || event.ctrlKey || event.metaKey)) return;
+              const t = uri.trim();
+              // A separator means it's a real path (resolve + open); otherwise it's a bare filename
+              // to search for under the working directory.
+              if (/[\\/]/.test(t)) onOpenFileRef.current?.(resolveTerminalPath(workingDirRef.current, t));
+              else onFindFileRef.current?.(t);
+            },
+          };
+        });
+        cb(links.length ? links : undefined);
+      },
+    });
     term.open(host);
     try {
       fit.fit();
@@ -297,6 +378,7 @@ export function TerminalPane({
 
     return () => {
       ro.disconnect();
+      fileLinks.dispose();
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);

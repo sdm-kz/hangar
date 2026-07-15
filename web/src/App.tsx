@@ -332,6 +332,13 @@ export function App() {
     setSidebarOpen(false);
   }, []);
 
+  // Reveal the open file in the Files tree: switch the sidebar to the Files tab (which expands and
+  // scrolls to openFile) and open the mobile drawer so it's visible on small screens.
+  const revealInFiles = useCallback(() => {
+    setSidebarTab("files");
+    setSidebarOpen(true);
+  }, []);
+
   // Clone a session: open the create dialog prefilled with its settings (the one-time initial prompt
   // can't be recovered, so it starts empty) for the user to adjust before launching.
   const cloneSession = useCallback((s: SessionInfo) => {
@@ -564,6 +571,7 @@ export function App() {
           <ServerFileViewer
             path={openFile}
             onClose={() => setOpenFile(null)}
+            onReveal={revealInFiles}
             onToggleSidebar={() => setSidebarOpen(true)}
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}

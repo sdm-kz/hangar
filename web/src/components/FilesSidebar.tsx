@@ -74,6 +74,10 @@ export function FilesSidebar({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null); // tree scroll container, for scroll-into-view
+  const openPathRef = useRef(openPath);
+  openPathRef.current = openPath;
+  const scrolledRef = useRef<string | null>(null); // last openPath we scrolled to
 
   const listDir = useCallback(async (path: string) => {
     setLoading((s) => new Set(s).add(path));
@@ -91,13 +95,33 @@ export function FilesSidebar({
     }
   }, []);
 
-  // Initial load: drive roots plus the default start folder auto-expanded so the tree lands somewhere
-  // useful instead of at bare drive letters.
+  // Expand the tree down to (and select) a file's directory, loading each ancestor as needed. Used to
+  // "reveal" a file opened elsewhere (a terminal link, the preview's Show-in-Files button).
+  const revealPath = useCallback(
+    async (filePath: string) => {
+      const dir = parentOf(filePath);
+      if (!dir) return;
+      const chain: string[] = [];
+      let cur: string | null = dir;
+      while (cur) {
+        chain.unshift(cur);
+        cur = parentOf(cur);
+      }
+      setExpanded((s) => new Set([...s, ...chain]));
+      setSelectedDir(dir);
+      await Promise.all(chain.map(listDir));
+    },
+    [listDir]
+  );
+
+  // Initial load: drive roots plus a useful starting point — the open file (revealed) if one is set,
+  // otherwise the default start folder, so the tree doesn't land on bare drive letters.
   useEffect(() => {
     (async () => {
       try {
         const res = await api.fsList();
         setDrives(res.drives);
+        if (openPathRef.current) return; // a file is open — the reveal effect below expands to it
         if (res.current) {
           // Expand the chain from the drive root down to the default folder.
           const chain: string[] = [];
@@ -116,6 +140,22 @@ export function FilesSidebar({
       }
     })();
   }, [listDir]);
+
+  // Reveal the open file whenever it changes (e.g. the Files tab was opened via Show-in-Files, or a
+  // different terminal link was clicked while the tab is showing).
+  useEffect(() => {
+    if (openPath) revealPath(openPath);
+  }, [openPath, revealPath]);
+
+  // Once the revealed file's row is rendered, scroll it into view (once per open file).
+  useEffect(() => {
+    if (!openPath || scrolledRef.current === openPath) return;
+    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-fspath="${CSS.escape(openPath)}"]`);
+    if (el) {
+      scrolledRef.current = openPath;
+      el.scrollIntoView({ block: "center" });
+    }
+  }, [openPath, children]);
 
   const toggle = useCallback(
     (path: string) => {
@@ -248,7 +288,7 @@ export function FilesSidebar({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto py-1">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto py-1">
         {drives.map((d) => (
           <TreeNode
             key={d.path}
@@ -323,6 +363,7 @@ function TreeNode({
   return (
     <div>
       <div
+        data-fspath={path}
         className={cn(
           "group flex items-center gap-1 rounded px-1 py-0.5 text-sm",
           "cursor-pointer hover:bg-accent",

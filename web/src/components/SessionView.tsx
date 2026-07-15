@@ -4,13 +4,20 @@ import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
 import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
-import { FileBrowser } from "./FileBrowser";
+import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
 import { TerminalPane } from "./TerminalPane";
 import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { Check, Columns2, Copy, ExternalLink, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, ExternalLink, FileText, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
@@ -21,6 +28,17 @@ const SPLIT_WIDTH_KEY = "claudeweb.splitFilesWidth";
 function readSplitWidth() {
   const n = Number(localStorage.getItem(SPLIT_WIDTH_KEY));
   return Number.isFinite(n) && n >= SPLIT_MIN ? n : SPLIT_DEFAULT;
+}
+
+// Convert an absolute path (from a terminal file-link) into one relative to the session's working
+// directory, using forward slashes (the shape FileBrowser uses). Returns null if it's outside the
+// working directory — the per-session browser can only show files under it.
+function toWorkingDirRelative(workingDir: string, abs: string): string | null {
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const a = norm(abs);
+  const wd = norm(workingDir);
+  if (a.toLowerCase() === wd.toLowerCase()) return "";
+  return a.toLowerCase().startsWith(wd.toLowerCase() + "/") ? a.slice(wd.length + 1) : null;
 }
 
 function StateBadge({ state }: { state: SessionInfo["state"] }) {
@@ -66,6 +84,9 @@ export function SessionView({
   // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
   const [wdEnabled, setWdEnabled] = useState(session.watchdogEnabled);
   const contentRef = useRef<HTMLDivElement>(null);
+  const fileBrowserRef = useRef<FileBrowserHandle>(null);
+  // Candidates when a bare filename clicked in the terminal matched more than one file.
+  const [filePicker, setFilePicker] = useState<{ name: string; matches: string[] } | null>(null);
 
   useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
 
@@ -133,6 +154,51 @@ export function SessionView({
       saveSessionUi(session.id, { view: next });
     },
     [session.id]
+  );
+
+  // Open a working-tree-relative file in this session's Files panel. If the panel is already showing
+  // (files/split), reveal it via the browser's imperative handle; otherwise seed the selection and
+  // switch to the Files view so the browser opens it as it mounts.
+  const openInFiles = useCallback(
+    (rel: string) => {
+      if (view === "terminal") {
+        saveSessionUi(session.id, { file: rel });
+        patchUrlState({ file: rel });
+        changeView("files");
+      } else {
+        fileBrowserRef.current?.revealFile(rel);
+      }
+    },
+    [view, session.id, changeView]
+  );
+
+  // A full file path clicked in the terminal: resolve it under the working directory, then open it in
+  // this session's Files panel (ignore paths outside the working directory — the browser can't show them).
+  const onTerminalOpenFile = useCallback(
+    (absolutePath: string) => {
+      const rel = toWorkingDirRelative(session.workingDirectory, absolutePath);
+      if (rel) openInFiles(rel);
+    },
+    [session.workingDirectory, openInFiles]
+  );
+
+  // A bare filename clicked in the terminal: search the working directory. Open the single hit, or
+  // offer a picker when several match.
+  const onTerminalFindFile = useCallback(
+    async (name: string) => {
+      try {
+        const res = await api.searchSessionFiles(session.id, name);
+        const files = res.entries.filter((e) => !e.isDir);
+        const exact = files.filter((e) => e.name === name);
+        const list = (exact.length ? exact : files).map((e) => e.path);
+        if (list.length === 0) return;
+        if (list.length === 1) openInFiles(list[0]);
+        else setFilePicker({ name, matches: list });
+      } catch {
+        /* ignore — search is best-effort */
+      }
+    },
+    [session.id, openInFiles]
   );
 
   // Seed the store with the initial mode (once), so returning to this session restores it even when
@@ -396,6 +462,7 @@ export function SessionView({
             )}
           >
             <FileBrowser
+              ref={fileBrowserRef}
               sessionId={session.id}
               gitFiles={git?.isRepo ? git.files : undefined}
               onRefresh={onRefresh}
@@ -417,10 +484,41 @@ export function SessionView({
           <TerminalPane
             key={session.id}
             sessionId={session.id}
+            workingDirectory={session.workingDirectory}
             onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
+            onOpenFile={onTerminalOpenFile}
+            onFindFile={onTerminalFindFile}
           />
         </div>
       </div>
+
+      {/* Picker shown when a bare filename clicked in the terminal matched more than one file. */}
+      <Dialog open={!!filePicker} onOpenChange={(o) => !o && setFilePicker(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="truncate">Open “{filePicker?.name}”</DialogTitle>
+            <DialogDescription>
+              {filePicker?.matches.length} files match under the working directory — pick one.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="-mx-1 max-h-80 overflow-auto">
+            {filePicker?.matches.map((rel) => (
+              <button
+                key={rel}
+                onClick={() => {
+                  openInFiles(rel);
+                  setFilePicker(null);
+                }}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                title={rel}
+              >
+                <FileText className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate">{rel}</span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

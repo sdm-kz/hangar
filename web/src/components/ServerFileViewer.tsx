@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Download,
+  FolderTree,
   Loader2,
   Menu,
   PanelLeftOpen,
@@ -32,12 +33,15 @@ function baseName(p: string): string {
 export function ServerFileViewer({
   path,
   onClose,
+  onReveal,
   onToggleSidebar,
   collapsed,
   onToggleCollapsed,
 }: {
   path: string;
   onClose: () => void;
+  // Reveal this file in the Files tab tree (switch tab + expand/scroll to it).
+  onReveal?: () => void;
   onToggleSidebar: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -158,6 +162,11 @@ export function ServerFileViewer({
               </Button>
             </>
           )
+        )}
+        {onReveal && (
+          <Button variant="ghost" size="icon" onClick={onReveal} title="Show in Files">
+            <FolderTree className="size-4" />
+          </Button>
         )}
         <Button variant="ghost" size="icon" asChild title="Download">
           <a href={serverFileUrl(path, true)} download={name}>

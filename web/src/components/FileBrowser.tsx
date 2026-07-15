@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, sessionFileUrl } from "@/lib/api";
@@ -64,18 +64,21 @@ function fileEntryFromPath(path: string): FileEntry {
   return { name: path.split("/").pop() || path, path, isDir: false, size: 0 };
 }
 
+/** Imperative handle: lets a parent (SessionView) open a file in this browser from elsewhere. */
+export interface FileBrowserHandle {
+  revealFile: (path: string) => void;
+}
+
 /** Two-pane file explorer: searchable, auto-refreshing directory tree + preview/edit pane. */
-export function FileBrowser({
-  sessionId,
-  gitFiles,
-  onRefresh,
-  refreshToken = 0,
-}: {
-  sessionId: string;
-  gitFiles?: GitFiles;
-  onRefresh?: () => void;
-  refreshToken?: number;
-}) {
+export const FileBrowser = forwardRef<
+  FileBrowserHandle,
+  {
+    sessionId: string;
+    gitFiles?: GitFiles;
+    onRefresh?: () => void;
+    refreshToken?: number;
+  }
+>(function FileBrowser({ sessionId, gitFiles, onRefresh, refreshToken = 0 }, ref) {
   // Restore the previewed file: a URL deep-link for this session wins, otherwise the file this
   // session was last viewing (persisted per-session in the browser).
   const [selected, setSelected] = useState<FileEntry | null>(() => {
@@ -201,6 +204,9 @@ export function FileBrowser({
     },
     [sessionId]
   );
+
+  // Let SessionView open a file here (from a terminal file-link click).
+  useImperativeHandle(ref, () => ({ revealFile }), [revealFile]);
 
   // When the session actually changes, restore that session's last-previewed file (or clear if it
   // had none). Skips the initial mount (and StrictMode's double-invoked mount effect), so the
@@ -469,7 +475,7 @@ export function FileBrowser({
       </div>
     </div>
   );
-}
+});
 
 export const STATUS_COLOR: Record<string, string> = {
   M: "text-amber-500",
