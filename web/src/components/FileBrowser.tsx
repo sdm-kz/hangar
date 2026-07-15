@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, sessionFileUrl } from "@/lib/api";
-import type { FileEntry } from "@/types";
+import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
@@ -312,15 +312,46 @@ export const FileBrowser = forwardRef<
     patchUrlState({ file: storedFile ?? undefined });
   }, [sessionId]);
 
-  const changeCount = gitFiles ? Object.keys(gitFiles).length : 0;
+  // Changes can be shown for another worktree of the same repo. "" = the session's own working dir.
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
+  const [worktreeDir, setWorktreeDir] = useState("");
+  const [altStatus, setAltStatus] = useState<GitStatus | null>(null);
+
+  // Load the worktree list the first time the changes view is opened.
+  useEffect(() => {
+    if (!showChanges || worktrees.length) return;
+    api.gitWorktrees(sessionId).then(setWorktrees).catch(() => {});
+  }, [showChanges, sessionId, worktrees.length]);
+
+  // Reset the worktree picker when switching sessions.
+  useEffect(() => {
+    setWorktreeDir("");
+    setAltStatus(null);
+    setWorktrees([]);
+  }, [sessionId]);
+
+  // Fetch the selected (non-current) worktree's status; the current one uses the passed gitFiles.
+  useEffect(() => {
+    if (!worktreeDir) return void setAltStatus(null);
+    let cancelled = false;
+    api.gitStatus(sessionId, worktreeDir).then((s) => !cancelled && setAltStatus(s)).catch(() => !cancelled && setAltStatus(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [worktreeDir, sessionId, refreshToken]);
+
+  // Which repo's changes to show: the session's own (gitFiles) or the picked worktree's (altStatus).
+  const effectiveGitFiles = worktreeDir ? altStatus?.files : gitFiles;
+
+  const changeCount = effectiveGitFiles ? Object.keys(effectiveGitFiles).length : 0;
   const changeEntries = useMemo<FileEntry[]>(
     () =>
-      gitFiles
-        ? Object.keys(gitFiles)
+      effectiveGitFiles
+        ? Object.keys(effectiveGitFiles)
             .sort((a, b) => a.localeCompare(b))
             .map((p) => ({ name: p.split("/").pop() || p, path: p, isDir: false, size: 0 }))
         : [],
-    [gitFiles]
+    [effectiveGitFiles]
   );
 
   // Debounced recursive search.
@@ -421,6 +452,26 @@ export const FileBrowser = forwardRef<
             )}
           </div>
         )}
+        {/* In the changes view, pick which worktree of the repo to inspect. */}
+        {showChanges && worktrees.length > 1 && (
+          <div className="flex items-center gap-1 px-3 pb-1 text-[10px] text-muted-foreground">
+            <span className="shrink-0">Worktree:</span>
+            <select
+              value={worktreeDir}
+              onChange={(e) => setWorktreeDir(e.target.value)}
+              title="Show changes from another worktree of this repo"
+              className="min-w-0 flex-1 truncate rounded border bg-background px-1 py-0.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
+            >
+              {worktrees.map((w) => (
+                <option key={w.path} value={w.isCurrent ? "" : w.path}>
+                  {w.path.split(/[/\\]+/).filter(Boolean).pop()}
+                  {w.branch ? ` · ${w.branch}` : ""}
+                  {w.isCurrent ? " (this session)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {creatingFolder && (
           <div className="px-2 pb-1">
@@ -483,7 +534,7 @@ export const FileBrowser = forwardRef<
             <FlatFileList
               entries={changeEntries}
               empty="No changes"
-              gitFiles={gitFiles}
+              gitFiles={effectiveGitFiles}
               selectedPath={selected?.path ?? null}
               onSelect={selectFile}
               actions={rowActions}
@@ -547,7 +598,8 @@ export const FileBrowser = forwardRef<
           <FilePreview
             sessionId={sessionId}
             file={selected}
-            gitStatus={selected ? gitFiles?.[selected.path] : undefined}
+            gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
+            gitDir={worktreeDir || undefined}
             refreshToken={refreshToken}
             onSaved={onRefresh}
           />
@@ -906,12 +958,16 @@ function FilePreview({
   sessionId,
   file,
   gitStatus,
+  gitDir,
   refreshToken,
   onSaved,
 }: {
   sessionId: string;
   file: FileEntry | null;
   gitStatus?: string;
+  // When set, diffs come from another worktree of the repo. Its files live outside the session's
+  // working dir, so only the diff is available (no raw content preview/edit).
+  gitDir?: string;
   refreshToken: number;
   onSaved?: () => void;
 }) {
@@ -943,13 +999,14 @@ function FilePreview({
   useEffect(() => {
     setText(null);
     setStatus("idle");
-    setView("preview");
+    // Another worktree's files aren't reachable for raw preview — show the diff instead.
+    setView(gitDir ? "diff" : "preview");
     setDiff(null);
     setMdView("rendered");
     setEditing(false);
     setSaveError(null);
     setFullscreen(false);
-    if (!file || kind !== "text") return;
+    if (gitDir || !file || kind !== "text") return;
     if (file.size > MAX_TEXT_PREVIEW) {
       setStatus("toolarge");
       return;
@@ -963,14 +1020,14 @@ function FilePreview({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, file, kind]);
+  }, [sessionId, file, kind, gitDir]);
 
   // Auto-refresh: when the working dir changes, re-fetch the current file's content and
   // invalidate the cached diff — but never clobber an in-progress edit.
   useEffect(() => {
     if (!file || editing) return;
     setDiff(null); // force diff to reload lazily
-    if (fileKind(file.name) !== "text" || file.size > MAX_TEXT_PREVIEW) return;
+    if (gitDir || fileKind(file.name) !== "text" || file.size > MAX_TEXT_PREVIEW) return;
     let cancelled = false;
     api
       .fetchSessionFileText(sessionId, file.path)
@@ -987,14 +1044,14 @@ function FilePreview({
     let cancelled = false;
     setDiffLoading(true);
     api
-      .gitDiff(sessionId, file.path)
+      .gitDiff(sessionId, file.path, gitDir)
       .then((d) => !cancelled && setDiff(d.diff || ""))
       .catch(() => !cancelled && setDiff(""))
       .finally(() => !cancelled && setDiffLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [view, sessionId, file, diff]);
+  }, [view, sessionId, file, diff, gitDir]);
 
   // Esc leaves the full-page popup (but not while editing — Esc there could drop unsaved text).
   useEffect(() => {

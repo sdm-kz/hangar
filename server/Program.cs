@@ -436,24 +436,36 @@ internal static class Program
             return v is null ? Results.NotFound() : Results.Ok(new { version = v });
         });
 
-        // ---- Git status / diff for the session's working directory --------------------------
-        app.MapGet("/api/sessions/{id}/git/status", (string id, SessionManager mgr) =>
+        // ---- Git status / diff for the session's working directory (or another worktree via ?dir=) ----
+        // The optional `dir` selects a different worktree of the same repo; it's validated against the
+        // repo's worktree list so callers can't point git at an arbitrary folder.
+        app.MapGet("/api/sessions/{id}/git/worktrees", (string id, SessionManager mgr) =>
         {
             var info = mgr.Get(id);
-            return info is null ? Results.NotFound() : Results.Ok(GitService.Status(info.WorkingDirectory));
+            return info is null ? Results.NotFound() : Results.Ok(GitService.Worktrees(info.WorkingDirectory));
         });
 
-        app.MapGet("/api/sessions/{id}/git/diff", (string id, string path, SessionManager mgr) =>
+        app.MapGet("/api/sessions/{id}/git/status", (string id, string? dir, SessionManager mgr) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            if (SessionFileBrowser.ResolveSafe(info.WorkingDirectory, path) is null)
+            var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
+            return root is null ? Results.BadRequest(new { error = "invalid worktree" }) : Results.Ok(GitService.Status(root));
+        });
+
+        app.MapGet("/api/sessions/{id}/git/diff", (string id, string path, string? dir, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
+            if (root is null) return Results.BadRequest(new { error = "invalid worktree" });
+            if (SessionFileBrowser.ResolveSafe(root, path) is null)
                 return Results.BadRequest(new { error = "invalid path" });
 
-            var status = GitService.Status(info.WorkingDirectory);
+            var status = GitService.Status(root);
             if (!status.IsRepo) return Results.Ok(new GitDiff(false, path, "", ""));
             var code = status.Files.TryGetValue(path, out var c) ? c : "";
-            return Results.Ok(GitService.Diff(info.WorkingDirectory, path, code));
+            return Results.Ok(GitService.Diff(root, path, code));
         });
 
         // Commit history (newest first, paged via skip/count).

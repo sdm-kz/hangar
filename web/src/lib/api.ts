@@ -9,6 +9,7 @@ import type {
   GitLog,
   GitRefs,
   GitStatus,
+  GitWorktree,
   SessionInfo,
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
@@ -193,11 +194,17 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, res.statusText);
     return res.text();
   },
-  gitStatus(id: string): Promise<GitStatus> {
-    return request(`/api/sessions/${id}/git/status`);
+  // Git status/diff for the session's working dir, or another worktree of the same repo via `dir`.
+  gitStatus(id: string, dir?: string): Promise<GitStatus> {
+    const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+    return request(`/api/sessions/${id}/git/status${q}`);
   },
-  gitDiff(id: string, path: string): Promise<GitDiff> {
-    return request(`/api/sessions/${id}/git/diff?path=${encodeURIComponent(path)}`);
+  gitDiff(id: string, path: string, dir?: string): Promise<GitDiff> {
+    const q = dir ? `&dir=${encodeURIComponent(dir)}` : "";
+    return request(`/api/sessions/${id}/git/diff?path=${encodeURIComponent(path)}${q}`);
+  },
+  gitWorktrees(id: string): Promise<GitWorktree[]> {
+    return request(`/api/sessions/${id}/git/worktrees`);
   },
   // Commit history. scope: undefined/"HEAD" = the folder's current branch, "*" = all branches
   // (--all), or a branch name to view that specific branch (possibly living in another worktree).

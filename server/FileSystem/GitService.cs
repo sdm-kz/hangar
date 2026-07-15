@@ -19,6 +19,10 @@ public sealed record GitRef(string Name, bool IsCurrent, string? WorktreePath);
 
 public sealed record GitRefs(bool IsRepo, string? Current, IReadOnlyList<GitRef> Branches);
 
+/// <summary>A worktree of a repo: its folder, the branch checked out there, and whether it's the
+/// session's own folder.</summary>
+public sealed record GitWorktree(string Path, string? Branch, bool IsCurrent);
+
 public sealed record GitCommitFile(string Path, string Status);
 
 public sealed record GitCommitDetail(
@@ -242,6 +246,46 @@ public static class GitService
             branches.Add(new GitRef(name, name == current, otherWorktree));
         }
         return new GitRefs(true, current, branches);
+    }
+
+    /// <summary>List the repo's worktrees (folder + checked-out branch), flagging the session's own.</summary>
+    public static IReadOnlyList<GitWorktree> Worktrees(string workingDir)
+    {
+        if (!IsRepo(workingDir)) return Array.Empty<GitWorktree>();
+        var list = new List<GitWorktree>();
+        string? path = null, branch = null;
+
+        void Flush()
+        {
+            if (path is not null)
+            {
+                var name = branch != null && branch.StartsWith("refs/heads/", StringComparison.Ordinal)
+                    ? branch["refs/heads/".Length..]
+                    : branch;
+                list.Add(new GitWorktree(path, name, SamePath(path, workingDir)));
+            }
+            path = null;
+            branch = null;
+        }
+
+        foreach (var line in Run(workingDir, out _, "worktree", "list", "--porcelain").Split('\n'))
+        {
+            var l = line.TrimEnd('\r');
+            if (l.StartsWith("worktree ", StringComparison.Ordinal)) { Flush(); path = l["worktree ".Length..].Trim(); }
+            else if (l.StartsWith("branch ", StringComparison.Ordinal)) branch = l["branch ".Length..].Trim();
+            else if (l.Length == 0) Flush();
+        }
+        Flush();
+        return list;
+    }
+
+    /// <summary>Validate a requested worktree folder against the session's repo: returns the working dir
+    /// itself when <paramref name="dir"/> is empty, the matching worktree path when it's one of the repo's
+    /// worktrees, or null otherwise (so callers can't run git against an arbitrary folder).</summary>
+    public static string? ResolveWorktree(string workingDir, string? dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir)) return workingDir;
+        return Worktrees(workingDir).FirstOrDefault(w => SamePath(w.Path, dir))?.Path;
     }
 
     // A branch/ref token safe to hand to git as a revision: rules out option-injection ("-x") and

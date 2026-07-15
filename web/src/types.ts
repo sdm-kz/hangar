@@ -104,6 +104,12 @@ export interface GitRefs {
   branches: GitRef[];
 }
 
+export interface GitWorktree {
+  path: string; // absolute folder of the worktree
+  branch: string | null;
+  isCurrent: boolean; // the session's own working directory
+}
+
 export interface GitCommitFile {
   path: string;
   status: string; // status letter (M/A/D/R)
