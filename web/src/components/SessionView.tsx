@@ -8,7 +8,7 @@ import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
 import { TerminalPane } from "./TerminalPane";
 import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { Check, Columns2, Copy, ExternalLink, FileText, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
@@ -365,15 +365,29 @@ export function SessionView({
                 Needs attention
               </Badge>
             )}
-            {session.remoteControl && (
-              <Badge
-                variant="outline"
-                className="hidden gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-500 sm:inline-flex"
-                title="Registered for Remote Control — drive it from the Claude Code app"
-              >
-                <Radio className="size-3" /> RC
-              </Badge>
-            )}
+            {session.remoteControl &&
+              (session.state === "Running" ? (
+                <a
+                  href={session.remoteUrl ?? "https://claude.ai/code"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={cn(
+                    badgeVariants({ variant: "outline" }),
+                    "hidden gap-1 border-emerald-500/40 text-emerald-600 transition-colors hover:bg-emerald-500/10 dark:text-emerald-500 sm:inline-flex"
+                  )}
+                  title="Open this Remote Control session in the Claude Code app"
+                >
+                  <Radio className="size-3" /> RC
+                </a>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="hidden gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-500 sm:inline-flex"
+                  title="Registered for Remote Control — drive it from the Claude Code app"
+                >
+                  <Radio className="size-3" /> RC
+                </Badge>
+              ))}
             {git?.isRepo && git.branch && (
               <Badge variant="outline" className="min-w-0 shrink gap-1" title="Current git branch">
                 <GitBranch className="size-3 shrink-0" />
@@ -454,13 +468,6 @@ export function SessionView({
               <span className="hidden sm:inline">Continue</span>
             </Button>
           </>
-        )}
-        {session.remoteControl && session.state === "Running" && (
-          <Button asChild variant="outline" size="sm" className="hidden lg:inline-flex">
-            <a href={session.remoteUrl ?? "https://claude.ai/code"} target="_blank" rel="noreferrer">
-              <ExternalLink className="size-4" /> Open in app
-            </a>
-          </Button>
         )}
         <Button variant="destructive" size="sm" onClick={stop} disabled={busy}>
           {busy ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
