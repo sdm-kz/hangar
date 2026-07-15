@@ -5,7 +5,8 @@ import { useConfirm } from "@/components/ui/confirm";
 import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
 import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
-import { TerminalPane } from "./TerminalPane";
+import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
+import { PostponedPool } from "./PostponedPool";
 import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import { Badge, badgeVariants } from "@/components/ui/badge";
@@ -64,6 +65,7 @@ function StateBadge({ state }: { state: SessionInfo["state"] }) {
 
 export function SessionView({
   session,
+  busy,
   onToggleSidebar,
   collapsed,
   onToggleCollapsed,
@@ -73,6 +75,8 @@ export function SessionView({
   onTerminalColor,
 }: {
   session: SessionInfo;
+  // Whether Claude is currently working in this session (from the live /hub/events busy set).
+  busy?: boolean;
   onToggleSidebar: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -84,7 +88,8 @@ export function SessionView({
   onTerminalColor?: (id: string, color: string) => void;
 }) {
   const confirm = useConfirm();
-  const [busy, setBusy] = useState(false);
+  const terminalRef = useRef<TerminalPaneHandle>(null);
+  const [stopping, setStopping] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -298,12 +303,12 @@ export function SessionView({
       confirmLabel: running ? "Stop" : "Remove",
     });
     if (!ok) return;
-    setBusy(true);
+    setStopping(true);
     try {
       await api.deleteSession(session.id);
       onStopped(session.id);
     } finally {
-      setBusy(false);
+      setStopping(false);
     }
   }
 
@@ -472,8 +477,8 @@ export function SessionView({
             </Button>
           </>
         )}
-        <Button variant="destructive" size="sm" onClick={stop} disabled={busy}>
-          {busy ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
+        <Button variant="destructive" size="sm" onClick={stop} disabled={stopping}>
+          {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
           <span className="hidden sm:inline">{session.state === "Running" ? "Stop" : "Remove"}</span>
         </Button>
         </div>
@@ -509,16 +514,21 @@ export function SessionView({
           />
         )}
 
-        <div className={cn("min-h-0 min-w-0 flex-1", view === "files" && "hidden")}>
-          <TerminalPane
-            key={session.id}
-            sessionId={session.id}
-            workingDirectory={session.workingDirectory}
-            onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
-            onColorDetected={(color) => onTerminalColor?.(session.id, color)}
-            onOpenFile={onTerminalOpenFile}
-            onFindFile={onTerminalFindFile}
-          />
+        <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", view === "files" && "hidden")}>
+          {/* The pane keeps flex-1 so FitAddon measures the height left over by the pool bar below. */}
+          <div className="min-h-0 flex-1">
+            <TerminalPane
+              key={session.id}
+              ref={terminalRef}
+              sessionId={session.id}
+              workingDirectory={session.workingDirectory}
+              onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
+              onColorDetected={(color) => onTerminalColor?.(session.id, color)}
+              onOpenFile={onTerminalOpenFile}
+              onFindFile={onTerminalFindFile}
+            />
+          </div>
+          <PostponedPool sessionId={session.id} busy={busy} terminalRef={terminalRef} />
         </div>
       </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
@@ -98,36 +98,75 @@ function resolveTerminalPath(workingDir: string, matched: string): string {
   return workingDir.replace(/[\\/]+$/, "") + "/" + matched;
 }
 
+// Imperative handle so a sibling (the postponed-messages pool) can inject a whole message — text
+// plus already-uploaded image paths — into the live PTY without owning the socket itself.
+// After pasting an image path, Claude Code ingests it asynchronously (reads the file, swaps in an
+// "[Image #N]" chip); submitting before that settles makes the Enter get swallowed and the message
+// sits unsent in the input box. Wait this long between the image paste(s) and the submit.
+const IMAGE_SETTLE_MS = 600;
+
+export interface TerminalPaneHandle {
+  // True while the terminal socket is open and can accept input.
+  isReady: () => boolean;
+  // Send one message to Claude: the text then each image path (both as bracketed pastes so multi-line
+  // content stays literal), followed by a single Enter to submit. Resolves false if the socket closed.
+  sendMessage: (msg: { text: string; imagePaths: string[] }) => Promise<boolean>;
+}
+
 /**
  * Live terminal for a session: an xterm.js terminal wired to the ConPTY-backed WebSocket at
  * /hub/sessions/{id}/terminal. Output frames arrive as binary VT bytes; keystrokes and resizes
  * are sent back (binary input, JSON control). Mount one per session (key by session id).
  */
-export function TerminalPane({
-  sessionId,
-  workingDirectory,
-  onRenameDetected,
-  onColorDetected,
-  onOpenFile,
-  onFindFile,
-}: {
-  sessionId: string;
-  // The session's working directory, used to resolve a relative file path clicked in the terminal.
-  workingDirectory: string;
-  // Fired with the new name when Claude's "Session renamed to:" confirmation appears in this
-  // terminal, so the app can update the session name immediately instead of waiting for a poll.
-  onRenameDetected?: (name: string) => void;
-  // Fired with the new color when Claude's "Session color set to:" confirmation appears (a /color
-  // typed in the terminal), so the sessions list can recolor immediately instead of on the next poll.
-  onColorDetected?: (color: string) => void;
-  // Fired with an absolute server path when a full file path in the terminal is clicked, so the app
-  // can open it in the main-area file viewer.
-  onOpenFile?: (absolutePath: string) => void;
-  // Fired with a bare filename (no directory) clicked in the terminal, so the app can search the
-  // working directory for it and open it (or offer a picker when several match).
-  onFindFile?: (name: string) => void;
-}) {
+export const TerminalPane = forwardRef<
+  TerminalPaneHandle,
+  {
+    sessionId: string;
+    // The session's working directory, used to resolve a relative file path clicked in the terminal.
+    workingDirectory: string;
+    // Fired with the new name when Claude's "Session renamed to:" confirmation appears in this
+    // terminal, so the app can update the session name immediately instead of waiting for a poll.
+    onRenameDetected?: (name: string) => void;
+    // Fired with the new color when Claude's "Session color set to:" confirmation appears (a /color
+    // typed in the terminal), so the sessions list can recolor immediately instead of on the next poll.
+    onColorDetected?: (color: string) => void;
+    // Fired with an absolute server path when a full file path in the terminal is clicked, so the app
+    // can open it in the main-area file viewer.
+    onOpenFile?: (absolutePath: string) => void;
+    // Fired with a bare filename (no directory) clicked in the terminal, so the app can search the
+    // working directory for it and open it (or offer a picker when several match).
+    onFindFile?: (name: string) => void;
+  }
+>(function TerminalPane(
+  { sessionId, workingDirectory, onRenameDetected, onColorDetected, onOpenFile, onFindFile },
+  ref
+) {
   const hostRef = useRef<HTMLDivElement>(null);
+  // Holds the live terminal socket so the imperative handle can write to it; set inside the socket
+  // effect below and nulled on teardown. `null` means "not connected" → sendMessage returns false.
+  const wsRef = useRef<WebSocket | null>(null);
+  useImperativeHandle(
+    ref,
+    (): TerminalPaneHandle => ({
+      isReady: () => wsRef.current?.readyState === WebSocket.OPEN,
+      sendMessage: async ({ text, imagePaths }) => {
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        const enc = new TextEncoder();
+        // Bracketed paste keeps any embedded newlines literal; the separate trailing \r is the one
+        // submit — sending raw \n/\r inside the text would split one message into several prompts.
+        if (text) ws.send(enc.encode(`\x1b[200~${text}\x1b[201~`));
+        for (const p of imagePaths) ws.send(enc.encode(`\x1b[200~${p}\x1b[201~`));
+        // Let Claude Code finish ingesting any pasted image before we submit, or the Enter is lost.
+        if (imagePaths.length) await new Promise((r) => setTimeout(r, IMAGE_SETTLE_MS));
+        const live = wsRef.current;
+        if (!live || live.readyState !== WebSocket.OPEN) return false;
+        live.send(enc.encode("\r"));
+        return true;
+      },
+    }),
+    []
+  );
   // Kept in refs so the link/socket handlers always see the latest values without re-opening the socket.
   const onRenameRef = useRef(onRenameDetected);
   onRenameRef.current = onRenameDetected;
@@ -229,6 +268,7 @@ export function TerminalPane({
     const url = `${proto}://${location.host}/hub/sessions/${sessionId}/terminal?access_token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
+    wsRef.current = ws; // expose to the imperative handle (sendMessage)
 
     const sendResize = () => {
       // Skip while the pane is hidden (e.g. the Files full view keeps us mounted but
@@ -324,6 +364,9 @@ export function TerminalPane({
     // Non-image pastes fall through to xterm's normal text handling. Listens on document in the
     // capture phase so it fires before xterm processes the paste, regardless of focus target.
     const onPaste = async (e: ClipboardEvent) => {
+      // Let the postponed-messages pool handle its own pastes: this capture-phase listener would
+      // otherwise swallow an image pasted into the pool's composer before it bubbles to the textarea.
+      if ((e.target as HTMLElement | null)?.closest?.("[data-postponed-pool]")) return;
       const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
       if (!item) return;
       e.preventDefault();
@@ -410,6 +453,7 @@ export function TerminalPane({
       document.removeEventListener("paste", onPaste, true);
       themeSub();
       dataSub.dispose();
+      wsRef.current = null;
       try {
         ws.close();
       } catch {
@@ -427,4 +471,4 @@ export function TerminalPane({
       <div ref={hostRef} className="h-full w-full overscroll-contain overflow-hidden" />
     </div>
   );
-}
+});

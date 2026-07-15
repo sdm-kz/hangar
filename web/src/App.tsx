@@ -599,6 +599,7 @@ export function App() {
         ) : active ? (
           <SessionView
             session={active}
+            busy={busyIds.has(active.id)}
             onToggleSidebar={() => setSidebarOpen(true)}
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}
