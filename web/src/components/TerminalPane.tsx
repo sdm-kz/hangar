@@ -72,6 +72,11 @@ function stripAnsi(s: string): string {
 // positioning, so the prompt can end up adjacent to the name (e.g. "main>"). Trailing spaces trimmed.
 const RENAME_CONFIRM = /\/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)/g;
 
+// Same idea for `/color <name>`: the "/color" command paired with Claude's "Session color set to:
+// <name>" confirmation, so the color only updates on a genuine command (not the phrase in prose).
+// The color is a single word (a color name), captured as a run of letters. Mirrors the server sniffer.
+const COLOR_CONFIRM = /\/color\b[^\r\n]*[\r\n][\s\S]{0,500}?Session color set to:[ \t]*([A-Za-z]{1,20})/g;
+
 // File-link matcher for the terminal. Two forms:
 //  1) a PATH with a separator (optional drive `C:\`, one or more `segment/`, then `name.ext`, any
 //     extension) — resolved against the working dir and opened directly.
@@ -102,6 +107,7 @@ export function TerminalPane({
   sessionId,
   workingDirectory,
   onRenameDetected,
+  onColorDetected,
   onOpenFile,
   onFindFile,
 }: {
@@ -111,6 +117,9 @@ export function TerminalPane({
   // Fired with the new name when Claude's "Session renamed to:" confirmation appears in this
   // terminal, so the app can update the session name immediately instead of waiting for a poll.
   onRenameDetected?: (name: string) => void;
+  // Fired with the new color when Claude's "Session color set to:" confirmation appears (a /color
+  // typed in the terminal), so the sessions list can recolor immediately instead of on the next poll.
+  onColorDetected?: (color: string) => void;
   // Fired with an absolute server path when a full file path in the terminal is clicked, so the app
   // can open it in the main-area file viewer.
   onOpenFile?: (absolutePath: string) => void;
@@ -122,6 +131,8 @@ export function TerminalPane({
   // Kept in refs so the link/socket handlers always see the latest values without re-opening the socket.
   const onRenameRef = useRef(onRenameDetected);
   onRenameRef.current = onRenameDetected;
+  const onColorRef = useRef(onColorDetected);
+  onColorRef.current = onColorDetected;
   const onOpenFileRef = useRef(onOpenFile);
   onOpenFileRef.current = onOpenFile;
   const onFindFileRef = useRef(onFindFile);
@@ -129,8 +140,10 @@ export function TerminalPane({
   const workingDirRef = useRef(workingDirectory);
   workingDirRef.current = workingDirectory;
   // Rolling tail of recent output (ANSI-stripped) so a confirmation split across frames still matches.
-  const renameBufRef = useRef("");
+  // Shared by the rename and color detectors.
+  const scanBufRef = useRef("");
   const lastNameRef = useRef<string | null>(null);
+  const lastColorRef = useRef<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -278,15 +291,24 @@ export function TerminalPane({
       // Accumulate every frame (the confirmation's phrase and name can arrive in separate frames), and
       // require a following boundary char so the newest name — which the TUI ends with a box-drawing
       // char, not a newline — is captured cleanly instead of lagging a rename behind.
-      renameBufRef.current = (renameBufRef.current + stripAnsi(text)).slice(-2048);
-      if (renameBufRef.current.includes("Session renamed to:")) {
+      scanBufRef.current = (scanBufRef.current + stripAnsi(text)).slice(-2048);
+      if (scanBufRef.current.includes("Session renamed to:")) {
         let name: string | null = null;
-        for (const m of renameBufRef.current.matchAll(RENAME_CONFIRM)) {
+        for (const m of scanBufRef.current.matchAll(RENAME_CONFIRM)) {
           name = m[1].trimEnd(); // last (most recent) confirmation wins; drop panel pad spaces
         }
         if (name && name !== lastNameRef.current) {
           lastNameRef.current = name;
           onRenameRef.current?.(name);
+        }
+      }
+      // Same detection for a `/color <name>` typed in the terminal.
+      if (scanBufRef.current.includes("Session color set to:")) {
+        let color: string | null = null;
+        for (const m of scanBufRef.current.matchAll(COLOR_CONFIRM)) color = m[1];
+        if (color && color !== lastColorRef.current) {
+          lastColorRef.current = color;
+          onColorRef.current?.(color);
         }
       }
     };

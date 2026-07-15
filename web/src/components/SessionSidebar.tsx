@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
+import { sessionColor } from "@/lib/sessionColors";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
@@ -249,6 +250,8 @@ export function SessionSidebar({
   // dropped in grouped mode where the folder is already in the header.
   const renderRow = (s: SessionInfo, showPath: boolean) => {
     const restorable = s.state === "Restorable";
+    // Color set via `/color` in the terminal, shown as a left accent stripe on the row.
+    const color = sessionColor(s.color);
     // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     return (
@@ -264,13 +267,20 @@ export function SessionSidebar({
         onAuxClick={restorable ? undefined : (e) => e.button === 1 && openInNewTab()}
         title={restorable ? undefined : "Middle-click or Ctrl/⌘-click to open in a new tab"}
         className={cn(
-          "group flex flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
+          "group relative flex flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
           restorable ? "opacity-80" : "cursor-pointer",
           activeId === s.id && !restorable && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
           !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
         )}
       >
+        {color && (
+          <span
+            aria-hidden
+            className="absolute inset-y-1 left-0 w-1 rounded-full"
+            style={{ backgroundColor: color }}
+          />
+        )}
         <div className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 flex-1 items-center gap-1">
             {/* Fixed-width gutter so the title never shifts when the activity dot appears. Busy

@@ -167,7 +167,7 @@ public sealed class SessionManager : IDisposable
 
         if (_sessions.TryGetValue(id, out var s))
         {
-            if (s.Rename(clean)) // raises NameChanged -> SavePersisted
+            if (s.Rename(clean)) // raises MetadataChanged -> SavePersisted
                 s.Terminal?.InjectInput($"/rename {clean}\r");
             return true;
         }
@@ -233,8 +233,8 @@ public sealed class SessionManager : IDisposable
             _exe,
             _loggerFactory.CreateLogger<ClaudeSession>());
 
-        // Re-persist and push whenever the name changes (a UI rename or a `/rename` typed in the terminal).
-        session.NameChanged += _ => { SavePersisted(); RaiseChanged(); };
+        // Re-persist and push whenever a persisted field changes (a rename or a `/color` in the terminal).
+        session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
         _sessions[session.Id] = session;
         session.Start();
         SavePersisted();
@@ -259,7 +259,8 @@ public sealed class SessionManager : IDisposable
                 Model: p.Model,
                 InitialPrompt: null, // resumed via --continue; don't re-fire the old launch prompt
                 PermissionMode: p.PermissionMode,
-                Continue: true));
+                Continue: true,
+                Color: p.Color));
         }
         catch
         {

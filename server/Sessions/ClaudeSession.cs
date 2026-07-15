@@ -27,6 +27,8 @@ public sealed class ClaudeSession : IDisposable
 
     public string Id { get; }
     public string Name { get; private set; }
+    /// <summary>Session color (a color name set via <c>/color</c> in the terminal), or null.</summary>
+    public string? Color { get; private set; }
     public string WorkingDirectory { get; }
     public bool RemoteControl { get; }
     public string? Model { get; }
@@ -51,8 +53,8 @@ public sealed class ClaudeSession : IDisposable
     /// <summary>Bumped whenever the working directory changes; the UI polls it to auto-refresh.</summary>
     public long FsVersion => Interlocked.Read(ref _fsVersion);
 
-    /// <summary>Raised after <see cref="Rename"/> changes the name, so the manager can re-persist.</summary>
-    public event Action<ClaudeSession>? NameChanged;
+    /// <summary>Raised when a persisted field (name or color) changes, so the manager can re-persist.</summary>
+    public event Action<ClaudeSession>? MetadataChanged;
 
     /// <summary>
     /// Change the session's display name (from a UI rename or a <c>/rename</c> typed in the terminal).
@@ -63,8 +65,30 @@ public sealed class ClaudeSession : IDisposable
         var clean = SanitizeName(newName);
         if (clean.Length == 0 || clean == Name) return false;
         Name = clean;
-        NameChanged?.Invoke(this);
+        MetadataChanged?.Invoke(this);
         return true;
+    }
+
+    /// <summary>
+    /// Set the session's color (from a <c>/color</c> typed in the terminal). Sanitizes to a short
+    /// color name. Returns false when the color is empty or unchanged.
+    /// </summary>
+    public bool SetColor(string? newColor)
+    {
+        var clean = SanitizeColor(newColor);
+        if (clean is null || clean == Color) return false;
+        Color = clean;
+        MetadataChanged?.Invoke(this);
+        return true;
+    }
+
+    /// <summary>Normalize a color token to lowercase letters, capped; null when there's nothing usable.</summary>
+    public static string? SanitizeColor(string? color)
+    {
+        if (string.IsNullOrWhiteSpace(color)) return null;
+        var clean = new string(color.Where(char.IsLetter).ToArray()).ToLowerInvariant();
+        if (clean.Length == 0) return null;
+        return clean.Length > 20 ? clean[..20] : clean;
     }
 
     /// <summary>Trim, drop control chars (so it's safe to echo/inject as a terminal command), cap length.</summary>
@@ -87,6 +111,7 @@ public sealed class ClaudeSession : IDisposable
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
             : req.Name!.Trim();
+        Color = SanitizeColor(req.Color); // carried across a restore; otherwise set later via /color
         _exe = exe;
         _log = log;
     }
@@ -94,16 +119,17 @@ public sealed class ClaudeSession : IDisposable
     /// <summary>Render a persisted entry as a <see cref="SessionState.Restorable"/> snapshot for the UI.</summary>
     public static SessionInfo RestorableInfo(PersistedSession p) => new(
         p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.PermissionMode,
-        SessionState.Restorable, ProcessId: 0, p.CreatedAt);
+        SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color);
 
     public SessionInfo ToInfo() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, PermissionMode, State, ProcessId, CreatedAt,
         RemoteUrl: _terminal?.RemoteUrl,
         WatchdogEnabled: WatchdogEnabled,
-        WatchdogStatus: WatchdogStatus);
+        WatchdogStatus: WatchdogStatus,
+        Color: Color);
 
     public PersistedSession ToPersisted() => new(
-        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt);
+        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt, Color);
 
     /// <summary>Coerce an incoming/persisted mode string to a known value; anything unknown → "default".</summary>
     public static string NormalizeMode(string? mode) => mode switch
@@ -136,6 +162,12 @@ public sealed class ClaudeSession : IDisposable
             {
                 if (Rename(name))
                     _log.LogInformation("Session {Id} renamed to '{Name}' via terminal /rename", Id, Name);
+            };
+            // Likewise mirror a `/color <name>` typed at the prompt into the session's color.
+            _terminal.ColorCommandDetected += color =>
+            {
+                if (SetColor(color))
+                    _log.LogInformation("Session {Id} color set to '{Color}' via terminal /color", Id, Color);
             };
             ProcessId = _terminal.ProcessId;
             _process = Process.GetProcessById(ProcessId);

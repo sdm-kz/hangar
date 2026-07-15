@@ -23,7 +23,9 @@ public sealed record CreateSessionRequest(
     /// <summary>Permission mode: default | auto | acceptEdits | bypassPermissions (null = default).</summary>
     string? PermissionMode = null,
     /// <summary>Resume the folder's most recent conversation (<c>claude --continue</c>).</summary>
-    bool Continue = false);
+    bool Continue = false,
+    /// <summary>Session color (a color name set via <c>/color</c>); carried across a restore. Null = none.</summary>
+    string? Color = null);
 
 /// <summary>
 /// On-disk record of a launched session, used to re-attach to still-running Remote Control
@@ -40,7 +42,9 @@ public sealed record PersistedSession(
     string? PermissionMode,
     int ProcessId,
     long ProcessStartTicks,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    /// <summary>Session color (a color name set via <c>/color</c>); null when never set.</summary>
+    string? Color = null);
 
 /// <summary>Serializable snapshot of a session, sent to the browser.</summary>
 public sealed record SessionInfo(
@@ -59,4 +63,6 @@ public sealed record SessionInfo(
     /// <summary>Whether the hang watchdog may auto-continue this session.</summary>
     bool WatchdogEnabled = true,
     /// <summary>Watchdog view of the session: "healthy" | "recovering" | "attention".</summary>
-    string WatchdogStatus = "healthy");
+    string WatchdogStatus = "healthy",
+    /// <summary>Session color (a color name set via <c>/color</c>), shown in the sessions list. Null = none.</summary>
+    string? Color = null);

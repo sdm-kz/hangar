@@ -140,6 +140,12 @@ export function App() {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
   }, []);
 
+  // A /color detected in a session's terminal: apply it directly so the sessions list recolors
+  // immediately (the server also persists it, arriving on the next poll).
+  const onTerminalColor = useCallback((id: string, color: string) => {
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, color } : s)));
+  }, []);
+
   // Mirror the active session into the URL so a refresh/shared link restores it.
   useEffect(() => {
     patchUrlState({ session: activeId ?? undefined });
@@ -599,6 +605,7 @@ export function App() {
             onStopped={(id) => setSessions((prev) => prev.filter((s) => s.id !== id))}
             onRename={onRename}
             onTerminalRename={onTerminalRename}
+            onTerminalColor={onTerminalColor}
           />
         ) : (
           <EmptyState

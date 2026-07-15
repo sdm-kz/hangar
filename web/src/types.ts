@@ -13,6 +13,7 @@ export interface SessionInfo {
   remoteUrl: string | null; // claude.ai deep link to this session, once printed to its terminal
   watchdogEnabled: boolean; // whether the hang watchdog may auto-continue this session
   watchdogStatus: "healthy" | "recovering" | "attention"; // watchdog's view of the session
+  color: string | null; // color name set via /color in the terminal; shown in the sessions list
 }
 
 export interface CreateSessionRequest {

@@ -92,6 +92,38 @@ public sealed partial class TerminalChannel : IDisposable
     [GeneratedRegex(@"/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)")]
     private static partial Regex RenameConfirmRegex();
 
+    // ---- /color sniffing: watch the OUTPUT for Claude's "Session color set to: <color>" confirmation.
+    // Same approach as /rename above — the typed line is unreliable, so we key off the confirmation.
+    private string _colorScanTail = "";  // carries a partial confirmation across the read boundary
+    private string? _lastColorSeen;      // dedupe: don't re-fire when the TUI repaints the same line
+
+    /// <summary>Raised when Claude confirms a <c>/color</c> in the terminal, with the new color name.</summary>
+    public event Action<string>? ColorCommandDetected;
+
+    // Pair "Session color set to: X" with the "/color …" command that produced it, mirroring the
+    // rename detector, so the phrase appearing in assistant prose can't set a bogus color. The color
+    // is a single word (a color name), captured as a run of letters.
+    [GeneratedRegex(@"/color\b[^\r\n]*[\r\n][\s\S]{0,500}?Session color set to:[ \t]*([A-Za-z]{1,20})")]
+    private static partial Regex ColorConfirmRegex();
+
+    // Scan freshly-read output for Claude's color confirmation. Returns the new color, or null.
+    // Mirrors SniffRename: last match wins, a generous tail is retained across reads, and the same
+    // color isn't reported twice in a row (TUI repaints).
+    private string? SniffColor(byte[] buf, int n)
+    {
+        var text = Vt.Strip(_colorScanTail + Encoding.Latin1.GetString(buf, 0, n));
+        string? color = null;
+        foreach (Match m in ColorConfirmRegex().Matches(text))
+            color = m.Groups[1].Value;
+        _colorScanTail = text.Length > 2048 ? text[^2048..] : text;
+        if (!string.IsNullOrEmpty(color) && color != _lastColorSeen)
+        {
+            _lastColorSeen = color;
+            return color;
+        }
+        return null;
+    }
+
     // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
     // Called under _lock. The name must be newline-terminated so a confirmation split across two
     // reads isn't captured half-formed; the unterminated tail is retained for the next read.
@@ -146,6 +178,7 @@ public sealed partial class TerminalChannel : IDisposable
                 Array.Copy(buf, chunk, n);
                 Volatile.Write(ref _lastOutputTick, Environment.TickCount64);
                 string? rename;
+                string? color;
                 lock (_lock)
                 {
                     _ring.Append(chunk);
@@ -153,9 +186,11 @@ public sealed partial class TerminalChannel : IDisposable
                     foreach (var w in _subs.Values) w.TryWrite(chunk);
                     SniffRemoteUrl(buf, n);
                     rename = SniffRename(buf, n);
+                    color = SniffColor(buf, n);
                 }
-                // Fire outside the lock so a handler (which renames the session) can't deadlock us.
+                // Fire outside the lock so a handler (which mutates the session) can't deadlock us.
                 if (rename is not null) RenameCommandDetected?.Invoke(rename);
+                if (color is not null) ColorCommandDetected?.Invoke(color);
             }
         }
         catch (Exception ex)

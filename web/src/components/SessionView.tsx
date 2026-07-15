@@ -70,6 +70,7 @@ export function SessionView({
   onStopped,
   onRename,
   onTerminalRename,
+  onTerminalColor,
 }: {
   session: SessionInfo;
   onToggleSidebar: () => void;
@@ -79,6 +80,8 @@ export function SessionView({
   onRename: (id: string, name: string) => void;
   // Apply a rename detected in this session's terminal (Claude's /rename confirmation).
   onTerminalRename?: (id: string, name: string) => void;
+  // Apply a color detected in this session's terminal (Claude's /color confirmation).
+  onTerminalColor?: (id: string, color: string) => void;
 }) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -512,6 +515,7 @@ export function SessionView({
             sessionId={session.id}
             workingDirectory={session.workingDirectory}
             onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
+            onColorDetected={(color) => onTerminalColor?.(session.id, color)}
             onOpenFile={onTerminalOpenFile}
             onFindFile={onTerminalFindFile}
           />
