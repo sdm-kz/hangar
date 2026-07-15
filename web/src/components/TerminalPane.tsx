@@ -63,12 +63,13 @@ function stripAnsi(s: string): string {
     .replace(/\r/g, "\n");
 }
 
-// Claude's confirmation line, e.g. "Session renamed to: AB-103 Fix Login Page". Names can
-// contain spaces, so we capture a run of printable ASCII (not a single slug token). The lazy match
-// plus the required following boundary — a newline or any non-ASCII char (box-drawing/spinner glyph)
-// — stops at the panel edge rather than the first inner space, and won't grab a half-drawn name
-// mid-redraw (no boundary yet). Trailing padding spaces are trimmed at the capture site.
-const RENAME_CONFIRM = /Session renamed to:\s*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e])/g;
+// Claude's confirmation line, e.g. "⎿  Session renamed to: AB-103 Fix Login Page". We require
+// the tool-result marker — a non-ASCII box glyph (⎿) — immediately before the phrase (only spaces
+// between). That anchor is essential: prose is plain ASCII, so this never fires when the phrase merely
+// appears in assistant text (e.g. discussing this feature), which used to mis-rename the session to a
+// sentence fragment. Names can contain spaces, so we then capture a run of printable ASCII (lazy, up
+// to the next non-ASCII/newline boundary); trailing padding spaces are trimmed at the capture site.
+const RENAME_CONFIRM = /[^\x00-\x7f][ \t]*Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|$)/g;
 
 // File-link matcher for the terminal. Two forms:
 //  1) a PATH with a separator (optional drive `C:\`, one or more `segment/`, then `name.ext`, any

@@ -80,13 +80,15 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised when Claude confirms a <c>/rename</c> in the terminal, with the new name.</summary>
     public event Action<string>? RenameCommandDetected;
 
-    // Names can contain spaces ("AB-103 Fix Login Page"), so we capture a run of printable
-    // ASCII rather than a single slug token. The lazy quantifier plus the required following boundary
-    // — any non-ASCII byte or control char (newline, box-drawing/spinner glyph; under Latin1 those
-    // decode to bytes outside 0x20-0x7e) — stops the capture at the panel edge, not the first inner
-    // space, and never grabs a half-drawn name mid-redraw (there'd be no boundary yet). Trailing
+    // Require the tool-result marker — a non-ASCII box glyph (⎿) that Claude Code prints before the
+    // "Session renamed to:" line — immediately before the phrase (only spaces/tabs between). That
+    // anchor is the key: prose is plain ASCII, so it can never satisfy `[^\x00-\x7f]`, which stops the
+    // detector firing when the phrase merely appears in assistant text (e.g. discussing this feature).
+    // Under Latin1 the marker's UTF-8 bytes decode to chars ≥ 0x80, so it works server-side too.
+    // Names can contain spaces ("AB-103 Fix Login Page"), so we then capture a run of printable
+    // ASCII (lazy, up to the next non-ASCII/newline boundary) rather than a single slug token; trailing
     // padding spaces are trimmed by the caller.
-    [GeneratedRegex(@"Session renamed to:\s*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e])")]
+    [GeneratedRegex(@"[^\x00-\x7f][ \t]*Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|$)")]
     private static partial Regex RenameConfirmRegex();
 
     // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
