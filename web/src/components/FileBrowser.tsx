@@ -43,6 +43,7 @@ import {
   FolderPlus,
   GitCompare,
   Image as ImageIcon,
+  ListTree,
   Loader2,
   Maximize2,
   Minimize2,
@@ -154,6 +155,15 @@ export const FileBrowser = forwardRef<
       const next = !v;
       if (v) setCommitSel(null); // leaving changes mode drops the commit preview
       saveSessionUi(sessionId, { changes: next });
+      return next;
+    });
+  }, [sessionId]);
+  // In the changes view, group changed files under collapsible folders instead of a flat list.
+  const [changesTree, setChangesTree] = useState(() => loadSessionUi(sessionId).changesTree ?? false);
+  const toggleChangesTree = useCallback(() => {
+    setChangesTree((v) => {
+      const next = !v;
+      saveSessionUi(sessionId, { changesTree: next });
       return next;
     });
   }, [sessionId]);
@@ -486,6 +496,7 @@ export const FileBrowser = forwardRef<
     setCommitSel(null);
     setQuery("");
     setShowChanges(loadSessionUi(sessionId).changes ?? false);
+    setChangesTree(loadSessionUi(sessionId).changesTree ?? false);
     setUploadDir("");
     setUploadError(null);
     setCreatingFolder(false);
@@ -536,10 +547,18 @@ export const FileBrowser = forwardRef<
     [effectiveGitFiles]
   );
 
-  // Debounced recursive search.
+  // In the changes view the search box filters the changed-file list in place (below), so the query
+  // narrows the changes rather than searching the whole working tree.
+  const filteredChangeEntries = useMemo<FileEntry[]>(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return changeEntries;
+    return changeEntries.filter((e) => e.path.toLowerCase().includes(q));
+  }, [changeEntries, query]);
+
+  // Debounced recursive search — only for the all-files tree; the changes view filters locally.
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
+    if (!q || showChanges) {
       setResults(null);
       setSearching(false);
       return;
@@ -553,7 +572,7 @@ export const FileBrowser = forwardRef<
         .finally(() => setSearching(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [query, sessionId, refreshToken]);
+  }, [query, sessionId, refreshToken, showChanges]);
 
   return (
     <div className="flex h-full flex-col md:flex-row">
@@ -575,6 +594,18 @@ export const FileBrowser = forwardRef<
               >
                 <GitCompare className="size-3.5" />
                 {changeCount > 0 && <span className="text-[10px] font-semibold">{changeCount}</span>}
+              </button>
+            )}
+            {gitFiles && showChanges && (
+              <button
+                title={changesTree ? "Show as a flat list" : "Group by folders"}
+                onClick={toggleChangesTree}
+                className={cn(
+                  "flex items-center rounded px-1 py-0.5 hover:text-foreground",
+                  changesTree ? "bg-accent text-foreground" : ""
+                )}
+              >
+                <ListTree className="size-3.5" />
               </button>
             )}
             <button
@@ -680,7 +711,7 @@ export const FileBrowser = forwardRef<
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search files…"
+              placeholder={showChanges ? "Search changes…" : "Search files…"}
               className="h-8 pl-7 pr-7 text-xs"
               spellCheck={false}
             />
@@ -697,21 +728,32 @@ export const FileBrowser = forwardRef<
         </div>
 
         <div className="flex-1 overflow-auto px-1 pb-2">
-          {query.trim() ? (
+          {showChanges ? (
+            changesTree ? (
+              <ChangesTree
+                entries={filteredChangeEntries}
+                empty={query.trim() ? "No matching changes" : "No changes"}
+                gitFiles={effectiveGitFiles}
+                selectedPath={selected?.path ?? null}
+                onSelect={selectFile}
+                actions={rowActions}
+              />
+            ) : (
+              <FlatFileList
+                entries={filteredChangeEntries}
+                empty={query.trim() ? "No matching changes" : "No changes"}
+                gitFiles={effectiveGitFiles}
+                selectedPath={selected?.path ?? null}
+                onSelect={selectFile}
+                actions={rowActions}
+              />
+            )
+          ) : query.trim() ? (
             <FlatFileList
               entries={results ?? []}
               loading={searching && results === null}
               empty="No matches"
               gitFiles={gitFiles}
-              selectedPath={selected?.path ?? null}
-              onSelect={selectFile}
-              actions={rowActions}
-            />
-          ) : showChanges ? (
-            <FlatFileList
-              entries={changeEntries}
-              empty="No changes"
-              gitFiles={effectiveGitFiles}
               selectedPath={selected?.path ?? null}
               onSelect={selectFile}
               actions={rowActions}
@@ -1024,6 +1066,176 @@ function FlatFileList({
           </Row>
         );
       })}
+    </>
+  );
+}
+
+// A folder in the changes tree: its own changed files plus nested subfolders. Built entirely from the
+// flat list of changed paths — no directory listing needed, so folders with no changes never appear.
+interface ChangeDir {
+  name: string; // display segment (may be a compacted chain like "a/b/c")
+  path: string; // full folder path, unique — used as the collapse key
+  dirs: Map<string, ChangeDir>;
+  files: FileEntry[];
+}
+
+function buildChangeTree(entries: FileEntry[]): ChangeDir {
+  const root: ChangeDir = { name: "", path: "", dirs: new Map(), files: [] };
+  for (const e of entries) {
+    const parts = e.path.split("/");
+    parts.pop(); // file name — the entry itself lands in `files`
+    let node = root;
+    let acc = "";
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      let child = node.dirs.get(part);
+      if (!child) {
+        child = { name: part, path: acc, dirs: new Map(), files: [] };
+        node.dirs.set(part, child);
+      }
+      node = child;
+    }
+    node.files.push(e);
+  }
+  return root;
+}
+
+// Collapse a chain of single-child folders that hold no files of their own into one row ("a/b/c"),
+// matching how editors render sparse change trees. The returned node keeps the deepest folder's path.
+function compactDir(dir: ChangeDir): ChangeDir {
+  let node = dir;
+  let name = dir.name;
+  while (node.files.length === 0 && node.dirs.size === 1) {
+    const [child] = node.dirs.values();
+    name = `${name}/${child.name}`;
+    node = child;
+  }
+  return { name, path: node.path, dirs: node.dirs, files: node.files };
+}
+
+function countChanges(dir: ChangeDir): number {
+  let n = dir.files.length;
+  for (const d of dir.dirs.values()) n += countChanges(d);
+  return n;
+}
+
+/** Changed files grouped into a collapsible folder tree (the changes view's "group by folders" mode). */
+function ChangesTree({
+  entries,
+  empty,
+  gitFiles,
+  selectedPath,
+  onSelect,
+  actions,
+}: {
+  entries: FileEntry[];
+  empty: string;
+  gitFiles?: GitFiles;
+  selectedPath: string | null;
+  onSelect: (f: FileEntry, newTab?: boolean) => void;
+  actions: RowActions;
+}) {
+  const root = useMemo(() => buildChangeTree(entries), [entries]);
+  // Folders are expanded by default; this holds the ones the user has collapsed.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const toggle = useCallback((path: string) => {
+    setCollapsed((s) => {
+      const n = new Set(s);
+      n.has(path) ? n.delete(path) : n.add(path);
+      return n;
+    });
+  }, []);
+
+  if (entries.length === 0) return <IndentedNote depth={0}>{empty}</IndentedNote>;
+
+  return (
+    <ChangeDirChildren
+      dir={root}
+      depth={0}
+      collapsed={collapsed}
+      onToggle={toggle}
+      gitFiles={gitFiles}
+      selectedPath={selectedPath}
+      onSelect={onSelect}
+      actions={actions}
+    />
+  );
+}
+
+interface ChangeTreeProps {
+  collapsed: Set<string>;
+  onToggle: (path: string) => void;
+  gitFiles?: GitFiles;
+  selectedPath: string | null;
+  onSelect: (f: FileEntry, newTab?: boolean) => void;
+  actions: RowActions;
+}
+
+// Render a folder's subfolders (compacted, alphabetical) followed by its own changed files.
+function ChangeDirChildren({ dir, depth, ...rest }: { dir: ChangeDir; depth: number } & ChangeTreeProps) {
+  const dirs = useMemo(
+    () => [...dir.dirs.values()].map(compactDir).sort((a, b) => a.name.localeCompare(b.name)),
+    [dir]
+  );
+  const files = useMemo(() => [...dir.files].sort((a, b) => a.name.localeCompare(b.name)), [dir]);
+  return (
+    <>
+      {dirs.map((d) => (
+        <ChangeDirNode key={d.path} dir={d} depth={depth} {...rest} />
+      ))}
+      {files.map((e) => (
+        <Row
+          key={e.path}
+          depth={depth}
+          selected={rest.selectedPath === e.path}
+          entry={e}
+          actions={rest.actions}
+          onClick={() => rest.onSelect(e)}
+          onOpenNewTab={() => rest.onSelect(e, true)}
+        >
+          <span className="size-3.5 shrink-0" />
+          {(() => {
+            const kind = fileKind(e.name);
+            const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : FileText;
+            return <Icon className="size-3.5 shrink-0 text-muted-foreground" />;
+          })()}
+          <span className={cn("truncate", rest.gitFiles?.[e.path] && STATUS_COLOR[rest.gitFiles[e.path]])}>
+            {e.name}
+          </span>
+          <GitMarker status={rest.gitFiles?.[e.path]} />
+        </Row>
+      ))}
+    </>
+  );
+}
+
+function ChangeDirNode({ dir, depth, ...rest }: { dir: ChangeDir; depth: number } & ChangeTreeProps) {
+  const open = !rest.collapsed.has(dir.path);
+  return (
+    <>
+      <div className="group relative flex items-center rounded-sm text-xs hover:bg-accent">
+        <button
+          onClick={() => rest.onToggle(dir.path)}
+          style={{ paddingLeft: depth * 12 + 8 }}
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left"
+        >
+          {open ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          {open ? (
+            <FolderOpen className="size-3.5 shrink-0 text-amber-500" />
+          ) : (
+            <Folder className="size-3.5 shrink-0 text-amber-500" />
+          )}
+          <span className="truncate text-muted-foreground">{dir.name}</span>
+          <span className="ml-auto shrink-0 pl-1 text-[10px] font-medium text-muted-foreground">
+            {countChanges(dir)}
+          </span>
+        </button>
+      </div>
+      {open && <ChangeDirChildren dir={dir} depth={depth + 1} {...rest} />}
     </>
   );
 }

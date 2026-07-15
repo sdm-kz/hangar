@@ -12,6 +12,7 @@ export interface SessionUi {
   files?: string[]; // paths of all open file tabs, in order (the active one is `file`)
   preview?: string; // path of the transient "preview" tab (reused by single-click), if any
   changes?: boolean; // Files tree showing git changes (+ history panel) instead of all files
+  changesTree?: boolean; // in the changes view, group files by folder (tree) instead of a flat list
 }
 
 type Store = Record<string, SessionUi>;
