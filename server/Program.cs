@@ -308,6 +308,9 @@ internal static class Program
             return Results.Ok(new { paths });
         });
 
+        app.MapPost("/api/fs/delete", (FsPathRequest body) =>
+            ServerFileBrowser.Delete(body.Path) ? Results.Ok() : Results.BadRequest(new { error = "could not delete" }));
+
         // ---- Per-session file browsing (confined to the session's working directory) --------
         app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, SessionManager mgr) =>
         {
@@ -393,6 +396,26 @@ internal static class Program
                 paths.Add(rel);
             }
             return Results.Ok(new { paths });
+        });
+
+        // Rename a file/folder within the working dir (bare new name, same parent).
+        app.MapPost("/api/sessions/{id}/fs/rename", (string id, FileRenameRequest body, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            return SessionFileBrowser.Rename(info.WorkingDirectory, body.Path, body.NewName)
+                ? Results.Ok()
+                : Results.BadRequest(new { error = "could not rename" });
+        });
+
+        // Delete a file/folder (recursively) within the working dir.
+        app.MapPost("/api/sessions/{id}/fs/delete", (string id, FolderRequest body, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            return !string.IsNullOrEmpty(body.Path) && SessionFileBrowser.Delete(info.WorkingDirectory, body.Path)
+                ? Results.Ok()
+                : Results.BadRequest(new { error = "could not delete" });
         });
 
         // Create a folder (possibly nested, e.g. "a/b/c") under the working dir.
@@ -523,6 +546,7 @@ internal record LoginRequest(string? Password);
 internal record WatchdogRequest(bool Enabled);
 internal record RenameRequest(string Name);
 internal record FileWriteRequest(string Path, string? Content);
+internal record FileRenameRequest(string Path, string NewName);
 internal record FolderRequest(string? Path);
 internal record FolderCreateRequest(string? Path);
 internal record FsWriteRequest(string Path, string? Content);

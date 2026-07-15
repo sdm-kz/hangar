@@ -136,6 +136,20 @@ public static class ServerFileBrowser
         catch { return null; }
     }
 
+    /// <summary>Delete a file or directory (recursively) by absolute path. Returns false on failure.</summary>
+    public static bool Delete(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        try
+        {
+            var full = Path.GetFullPath(path);
+            if (Directory.Exists(full)) { Directory.Delete(full, recursive: true); return true; }
+            if (File.Exists(full)) { File.Delete(full); return true; }
+            return false;
+        }
+        catch { return false; }
+    }
+
     /// <summary>Save an uploaded stream into <paramref name="folder"/> under a clobber-free name.
     /// Returns the written full path, or null if the folder is missing.</summary>
     public static async Task<string?> SaveUpload(string folder, string fileName, Stream content)

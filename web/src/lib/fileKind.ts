@@ -1,6 +1,10 @@
-export type FileKind = "image" | "text" | "office" | "binary";
+export type FileKind = "image" | "video" | "text" | "office" | "binary";
 
 const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"]);
+
+// Video formats browsers can play inline via <video>. Checked before BINARY so these preview
+// instead of showing a download prompt. Others (avi/mkv/wmv/flv) stay "binary".
+const VIDEO = new Set(["mp4", "webm", "ogv", "m4v", "mov"]);
 
 // Office documents we render inline (read-only) via docx-preview / SheetJS.
 const OFFICE = new Set(["docx", "xlsx"]);
@@ -33,6 +37,7 @@ export function fileExt(name: string): string {
 export function fileKind(name: string): FileKind {
   const ext = fileExt(name);
   if (ext && IMAGE.has(ext)) return "image";
+  if (ext && VIDEO.has(ext)) return "video";
   if (ext && OFFICE.has(ext)) return "office";
   if (ext && BINARY.has(ext)) return "binary";
   return "text";

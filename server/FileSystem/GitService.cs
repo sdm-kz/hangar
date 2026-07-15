@@ -231,7 +231,8 @@ public static class GitService
         }
 
         var branches = new List<GitRef>();
-        foreach (var line in Run(workingDir, out _, "for-each-ref", "--format=%(refname:short)", "refs/heads").Split('\n'))
+        // Newest first: sort by the branch tip's commit date, descending.
+        foreach (var line in Run(workingDir, out _, "for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads").Split('\n'))
         {
             var name = line.TrimEnd('\r').Trim();
             if (name.Length == 0) continue;

@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import type { DirEntry, FsNode } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +21,9 @@ import {
   Loader2,
   Pencil,
   RefreshCw,
+  Trash2,
   Upload,
+  Video,
 } from "lucide-react";
 
 // Trailing path segment, used as a node's display name when the API gives an absolute path.
@@ -47,6 +50,7 @@ function join(dir: string, name: string): string {
 function FileGlyph({ name }: { name: string }) {
   const kind = fileKind(name);
   if (kind === "image") return <ImageIcon className="size-4 shrink-0 text-muted-foreground" />;
+  if (kind === "video") return <Video className="size-4 shrink-0 text-muted-foreground" />;
   if (kind === "text") return <FileText className="size-4 shrink-0 text-muted-foreground" />;
   return <FileIcon className="size-4 shrink-0 text-muted-foreground" />;
 }
@@ -66,6 +70,7 @@ export function FilesSidebar({
   onOpenFile: (path: string) => void;
   onNewSession: (path: string) => void; // start a session in a folder (hover action on dir rows)
 }) {
+  const confirm = useConfirm();
   const [drives, setDrives] = useState<DirEntry[]>([]);
   const [children, setChildren] = useState<Map<string, FsNode[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -197,6 +202,29 @@ export function FilesSidebar({
     [reload, openPath, onOpenFile]
   );
 
+  const doDelete = useCallback(
+    async (path: string, isDir: boolean) => {
+      const ok = await confirm({
+        title: `Delete ${isDir ? "folder" : "file"}?`,
+        description: (
+          <>
+            Permanently delete <span className="font-medium text-foreground">{baseName(path)}</span>
+            {isDir && " and everything inside it"}.
+          </>
+        ),
+        confirmLabel: "Delete",
+      });
+      if (!ok) return;
+      try {
+        await api.fsDelete(path);
+        reload(parentOf(path));
+      } catch {
+        setError("Delete failed.");
+      }
+    },
+    [confirm, reload, openPath, onOpenFile]
+  );
+
   const newFolder = useCallback(async () => {
     if (!selectedDir) return;
     const name = window.prompt("New folder name:");
@@ -309,6 +337,7 @@ export function FilesSidebar({
             onStartRename={setRenaming}
             onRename={doRename}
             onCancelRename={() => setRenaming(null)}
+            onDelete={doDelete}
           />
         ))}
       </div>
@@ -335,6 +364,7 @@ function TreeNode({
   onStartRename,
   onRename,
   onCancelRename,
+  onDelete,
 }: {
   path: string;
   name: string;
@@ -353,6 +383,7 @@ function TreeNode({
   onStartRename: (path: string) => void;
   onRename: (path: string, name: string) => void;
   onCancelRename: () => void;
+  onDelete: (path: string, isDir: boolean) => void;
 }) {
   const isOpen = expanded.has(path);
   const isBusy = loading.has(path);
@@ -406,7 +437,7 @@ function TreeNode({
             <Bot className="size-3.5" />
           </button>
         )}
-        {/* Drives can't be renamed; everything else can, via a hover pencil. */}
+        {/* Drives can't be renamed/deleted; everything else can, via hover actions. */}
         {!isDrive && renaming !== path && (
           <button
             className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
@@ -417,6 +448,18 @@ function TreeNode({
             }}
           >
             <Pencil className="size-3" />
+          </button>
+        )}
+        {!isDrive && renaming !== path && (
+          <button
+            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-destructive group-hover:block"
+            title="Delete"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(path, isDir);
+            }}
+          >
+            <Trash2 className="size-3" />
           </button>
         )}
       </div>
@@ -447,6 +490,7 @@ function TreeNode({
                 onStartRename={onStartRename}
                 onRename={onRename}
                 onCancelRename={onCancelRename}
+                onDelete={onDelete}
               />
             ))
           )}

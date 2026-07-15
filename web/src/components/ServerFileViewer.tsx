@@ -189,6 +189,10 @@ export function ServerFileViewer({
           <div className="flex h-full items-center justify-center bg-muted/30 p-4">
             <img src={serverFileUrl(path)} alt={name} className="max-h-full max-w-full object-contain" />
           </div>
+        ) : kind === "video" ? (
+          <div className="flex h-full items-center justify-center bg-black p-2">
+            <video src={serverFileUrl(path)} controls className="max-h-full max-w-full" />
+          </div>
         ) : kind !== "text" ? (
           <DownloadPrompt path={path} name={name} />
         ) : tooLarge ? (

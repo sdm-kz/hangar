@@ -138,6 +138,9 @@ export const api = {
   fsRename(path: string, newName: string): Promise<{ path: string }> {
     return request("/api/fs/rename", { method: "POST", body: JSON.stringify({ path, newName }) });
   },
+  fsDelete(path: string): Promise<void> {
+    return request("/api/fs/delete", { method: "POST", body: JSON.stringify({ path }) });
+  },
   async fsUpload(folder: string, files: File[]): Promise<{ paths: string[] }> {
     const form = new FormData();
     form.append("path", folder);
@@ -259,6 +262,20 @@ export const api = {
   // Create a folder (may be nested, e.g. "a/b/c") under the working dir; returns its rel path.
   createSessionFolder(id: string, path: string): Promise<{ path: string }> {
     return request(`/api/sessions/${id}/fs/mkdir`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+  },
+  // Rename a file/folder within a session's working dir (bare new name, same parent).
+  renameSessionFile(id: string, path: string, newName: string): Promise<void> {
+    return request(`/api/sessions/${id}/fs/rename`, {
+      method: "POST",
+      body: JSON.stringify({ path, newName }),
+    });
+  },
+  // Delete a file/folder (recursively) within a session's working dir.
+  deleteSessionFile(id: string, path: string): Promise<void> {
+    return request(`/api/sessions/${id}/fs/delete`, {
       method: "POST",
       body: JSON.stringify({ path }),
     });

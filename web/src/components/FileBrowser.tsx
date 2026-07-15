@@ -8,6 +8,8 @@ import { highlightCode } from "@/lib/highlight";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm";
+import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,9 +40,21 @@ import {
   RefreshCw,
   Save,
   Search,
+  Trash2,
   Upload,
+  Video,
   X,
 } from "lucide-react";
+
+// Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
+interface RowActions {
+  renamingPath: string | null;
+  onStartRename: (path: string) => void;
+  onRename: (path: string, newName: string) => void;
+  onCancelRename: () => void;
+  onDelete: (entry: FileEntry) => void;
+  onNewFolderIn: (dir: string) => void;
+}
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
 const MAX_OFFICE_PREVIEW = 15_000_000; // 15 MB — parsing docx/xlsx is heavier; cap before rendering
@@ -190,6 +204,75 @@ export const FileBrowser = forwardRef<
     [sessionId]
   );
 
+  // ---- Per-node file operations (rename / delete / new folder inside a folder) ----
+  const confirm = useConfirm();
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+
+  const doRename = useCallback(
+    async (path: string, newName: string) => {
+      setRenamingPath(null);
+      const clean = newName.trim();
+      if (!clean || clean === path.split("/").pop()) return;
+      try {
+        await api.renameSessionFile(sessionId, path, clean);
+        // Follow the selection if the renamed entry (or its ancestor) was the open file.
+        const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+        const newPath = parent ? `${parent}/${clean}` : clean;
+        if (selected && (selected.path === path || selected.path.startsWith(path + "/")))
+          selectFile(fileEntryFromPath(selected.path.replace(path, newPath)));
+        onRefresh?.();
+      } catch {
+        /* ignore — best effort */
+      }
+    },
+    [sessionId, selected, selectFile, onRefresh]
+  );
+
+  const doDelete = useCallback(
+    async (entry: FileEntry) => {
+      const ok = await confirm({
+        title: `Delete ${entry.isDir ? "folder" : "file"}?`,
+        description: (
+          <>
+            Permanently delete <span className="font-medium text-foreground">{entry.name}</span>
+            {entry.isDir && " and everything inside it"}.
+          </>
+        ),
+        confirmLabel: "Delete",
+      });
+      if (!ok) return;
+      try {
+        await api.deleteSessionFile(sessionId, entry.path);
+        if (selected && (selected.path === entry.path || selected.path.startsWith(entry.path + "/"))) {
+          setSelected(null);
+          patchUrlState({ file: undefined });
+          saveSessionUi(sessionId, { file: "" });
+        }
+        onRefresh?.();
+      } catch {
+        /* ignore — best effort */
+      }
+    },
+    [sessionId, selected, confirm, onRefresh]
+  );
+
+  // Open the new-folder creator targeting a specific directory ("" = repo root).
+  const newFolderIn = useCallback((dir: string) => {
+    setUploadDir(dir);
+    setFolderError(null);
+    setNewFolder("");
+    setCreatingFolder(true);
+  }, []);
+
+  const rowActions: RowActions = {
+    renamingPath,
+    onStartRename: setRenamingPath,
+    onRename: doRename,
+    onCancelRename: () => setRenamingPath(null),
+    onDelete: doDelete,
+    onNewFolderIn: newFolderIn,
+  };
+
   // Reveal a file in the working-tree Files pane (from a commit preview): leave the changes/commit
   // view, select it, and expand the tree down to it.
   const revealFile = useCallback(
@@ -287,15 +370,9 @@ export const FileBrowser = forwardRef<
               </button>
             )}
             <button
-              title={`New folder in ${uploadDir || "root"}`}
-              onClick={() => {
-                setFolderError(null);
-                setCreatingFolder((v) => !v);
-              }}
-              className={cn(
-                "hover:text-foreground",
-                creatingFolder && "text-foreground"
-              )}
+              title="New folder at root"
+              onClick={() => (creatingFolder ? setCreatingFolder(false) : newFolderIn(""))}
+              className={cn("hover:text-foreground", creatingFolder && "text-foreground")}
             >
               <FolderPlus className="size-3.5" />
             </button>
@@ -400,6 +477,7 @@ export const FileBrowser = forwardRef<
               gitFiles={gitFiles}
               selectedPath={selected?.path ?? null}
               onSelect={selectFile}
+              actions={rowActions}
             />
           ) : showChanges ? (
             <FlatFileList
@@ -408,6 +486,7 @@ export const FileBrowser = forwardRef<
               gitFiles={gitFiles}
               selectedPath={selected?.path ?? null}
               onSelect={selectFile}
+              actions={rowActions}
             />
           ) : (
             <TreeLevel
@@ -421,6 +500,7 @@ export const FileBrowser = forwardRef<
               onSelect={selectFile}
               uploadDir={uploadDir}
               onSelectDir={setUploadDir}
+              actions={rowActions}
             />
           )}
         </div>
@@ -509,6 +589,7 @@ function FlatFileList({
   gitFiles,
   selectedPath,
   onSelect,
+  actions,
 }: {
   entries: FileEntry[];
   loading?: boolean;
@@ -516,6 +597,7 @@ function FlatFileList({
   gitFiles?: GitFiles;
   selectedPath: string | null;
   onSelect: (f: FileEntry) => void;
+  actions: RowActions;
 }) {
   if (loading)
     return <IndentedNote depth={0}><Loader2 className="size-3 animate-spin" /> Loading…</IndentedNote>;
@@ -525,9 +607,9 @@ function FlatFileList({
     <>
       {entries.map((e) => {
         const kind = fileKind(e.name);
-        const Icon = kind === "image" ? ImageIcon : FileText;
+        const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : FileText;
         return (
-          <Row key={e.path} depth={0} selected={selectedPath === e.path} onClick={() => onSelect(e)}>
+          <Row key={e.path} depth={0} selected={selectedPath === e.path} entry={e} actions={actions} onClick={() => onSelect(e)}>
             <Icon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col">
               <span className={cn("truncate", gitFiles?.[e.path] && STATUS_COLOR[gitFiles[e.path]])}>{e.name}</span>
@@ -552,6 +634,7 @@ function TreeLevel({
   onSelect,
   uploadDir,
   onSelectDir,
+  actions,
 }: {
   sessionId: string;
   path: string;
@@ -563,6 +646,7 @@ function TreeLevel({
   onSelect: (f: FileEntry) => void;
   uploadDir: string;
   onSelectDir: (path: string) => void;
+  actions: RowActions;
 }) {
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [error, setError] = useState(false);
@@ -600,6 +684,7 @@ function TreeLevel({
             onSelect={onSelect}
             uploadDir={uploadDir}
             onSelectDir={onSelectDir}
+            actions={actions}
           />
         ) : (
           <FileRow
@@ -609,6 +694,7 @@ function TreeLevel({
             selected={selectedPath === e.path}
             gitStatus={gitFiles?.[e.path]}
             onSelect={onSelect}
+            actions={actions}
           />
         )
       )}
@@ -627,6 +713,7 @@ function TreeDir({
   onSelect,
   uploadDir,
   onSelectDir,
+  actions,
 }: {
   sessionId: string;
   entry: FileEntry;
@@ -638,6 +725,7 @@ function TreeDir({
   onSelect: (f: FileEntry) => void;
   uploadDir: string;
   onSelectDir: (path: string) => void;
+  actions: RowActions;
 }) {
   // Auto-open when the file to reveal lives under this folder.
   const [open, setOpen] = useState(() => !!expandTo && expandTo.startsWith(entry.path + "/"));
@@ -647,10 +735,24 @@ function TreeDir({
       <Row
         depth={depth}
         selected={uploadDir === entry.path}
+        entry={entry}
+        actions={actions}
         onClick={() => {
           setOpen((o) => !o);
           onSelectDir(entry.path);
         }}
+        extraActions={
+          <button
+            className="rounded p-0.5 hover:bg-background hover:text-foreground"
+            title="New folder here"
+            onClick={(e) => {
+              e.stopPropagation();
+              actions.onNewFolderIn(entry.path);
+            }}
+          >
+            <FolderPlus className="size-3.5" />
+          </button>
+        }
       >
         {open ? (
           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
@@ -664,7 +766,7 @@ function TreeDir({
         )}
         <span className="truncate">{entry.name}</span>
         {!open && dirHasChanges(gitFiles, entry.path) && (
-          <span className="ml-auto size-1.5 shrink-0 rounded-full bg-amber-500" />
+          <span className="size-1.5 shrink-0 rounded-full bg-amber-500" />
         )}
       </Row>
       {open && (
@@ -679,6 +781,7 @@ function TreeDir({
           onSelect={onSelect}
           uploadDir={uploadDir}
           onSelectDir={onSelectDir}
+          actions={actions}
         />
       )}
     </>
@@ -691,24 +794,27 @@ function FileRow({
   selected,
   gitStatus,
   onSelect,
+  actions,
 }: {
   entry: FileEntry;
   depth: number;
   selected: boolean;
   gitStatus?: string;
   onSelect: (f: FileEntry) => void;
+  actions: RowActions;
 }) {
   const kind = fileKind(entry.name);
-  const Icon = kind === "image" ? ImageIcon : kind === "binary" ? FileIcon : FileText;
+  const Icon =
+    kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "binary" ? FileIcon : FileText;
   // Bring a URL-restored selection into view (fires only when a row mounts already
   // selected — normal clicks select an already-mounted row, so they don't scroll).
-  const ref = useRef<HTMLButtonElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (selected) ref.current?.scrollIntoView({ block: "nearest" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
-    <Row ref={ref} depth={depth} selected={selected} onClick={() => onSelect(entry)}>
+    <Row ref={ref} depth={depth} selected={selected} entry={entry} actions={actions} onClick={() => onSelect(entry)}>
       <span className="size-3.5 shrink-0" />
       <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       <span className={cn("truncate", gitStatus && STATUS_COLOR[gitStatus])}>{entry.name}</span>
@@ -718,21 +824,70 @@ function FileRow({
 }
 
 const Row = forwardRef<
-  HTMLButtonElement,
-  { depth: number; selected?: boolean; onClick: () => void; children: React.ReactNode }
->(function Row({ depth, selected, onClick, children }, ref) {
+  HTMLDivElement,
+  {
+    depth: number;
+    selected?: boolean;
+    onClick: () => void;
+    entry: FileEntry;
+    actions: RowActions;
+    extraActions?: React.ReactNode; // dir-only: "new folder here"
+    children: React.ReactNode;
+  }
+>(function Row({ depth, selected, onClick, entry, actions, extraActions, children }, ref) {
+  const renaming = actions.renamingPath === entry.path;
   return (
-    <button
+    <div
       ref={ref}
-      onClick={onClick}
-      style={{ paddingLeft: depth * 12 + 8 }}
       className={cn(
-        "flex w-full items-center gap-1.5 rounded-sm py-1 pr-2 text-left text-xs hover:bg-accent",
+        "group relative flex items-center rounded-sm text-xs hover:bg-accent",
         selected && "bg-accent font-medium"
       )}
     >
-      {children}
-    </button>
+      {renaming ? (
+        <div className="min-w-0 flex-1 py-0.5 pr-2" style={{ paddingLeft: depth * 12 + 8 }}>
+          <RenameField
+            value={entry.name}
+            onSubmit={(name) => actions.onRename(entry.path, name)}
+            onCancel={actions.onCancelRename}
+          />
+        </div>
+      ) : (
+        <>
+          <button
+            onClick={onClick}
+            style={{ paddingLeft: depth * 12 + 8 }}
+            className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left"
+          >
+            {children}
+          </button>
+          {/* Hover actions, overlaid at the right so they don't eat name width when idle. */}
+          <div className="absolute right-1 hidden items-center gap-0.5 rounded bg-accent pl-1 text-muted-foreground group-hover:flex">
+            {extraActions}
+            <button
+              className="rounded p-0.5 hover:bg-background hover:text-foreground"
+              title="Rename"
+              onClick={(e) => {
+                e.stopPropagation();
+                actions.onStartRename(entry.path);
+              }}
+            >
+              <Pencil className="size-3.5" />
+            </button>
+            <button
+              className="rounded p-0.5 hover:bg-background hover:text-destructive"
+              title="Delete"
+              onClick={(e) => {
+                e.stopPropagation();
+                actions.onDelete(entry);
+              }}
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 });
 
@@ -992,6 +1147,12 @@ function FilePreview({
                     className="max-h-full max-w-full object-contain shadow-sm"
                   />
                 </button>
+              </div>
+            )}
+
+            {kind === "video" && (
+              <div className="flex min-h-full items-center justify-center bg-black p-2">
+                <video src={sessionFileUrl(sessionId, file.path)} controls className="max-h-full max-w-full" />
               </div>
             )}
 

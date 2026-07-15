@@ -97,6 +97,47 @@ public static class SessionFileBrowser
         return RelOf(root, full);
     }
 
+    /// <summary>Rename a file or directory in place (same parent). <paramref name="newName"/> is a bare
+    /// name — separators and invalid filename chars are rejected. Returns false if the source escapes the
+    /// root/is missing, the name is invalid, or the target already exists.</summary>
+    public static bool Rename(string root, string rel, string newName)
+    {
+        var full = ResolveSafe(root, rel);
+        if (full is null || full.Equals(Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase)) return false;
+        var clean = newName.Trim();
+        if (clean.Length == 0 || clean.Contains('/') || clean.Contains('\\')
+            || clean.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
+
+        var parent = Path.GetDirectoryName(full);
+        if (parent is null) return false;
+        var target = Path.Combine(parent, clean);
+        if (File.Exists(target) || Directory.Exists(target)) return false;
+        try
+        {
+            if (Directory.Exists(full)) Directory.Move(full, target);
+            else if (File.Exists(full)) File.Move(full, target);
+            else return false;
+            return true;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Delete a file or directory (recursively) within the root. Refuses to delete the root
+    /// itself or a path that escapes it. Returns false on any failure.</summary>
+    public static bool Delete(string root, string rel)
+    {
+        var full = ResolveSafe(root, rel);
+        if (full is null || full.Equals(Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase)) return false;
+        try
+        {
+            if (Directory.Exists(full)) Directory.Delete(full, recursive: true);
+            else if (File.Exists(full)) File.Delete(full);
+            else return false;
+            return true;
+        }
+        catch { return false; }
+    }
+
     /// <summary>Save an uploaded file's stream into <paramref name="relFolder"/> under the root,
     /// using a clobber-free name derived from <paramref name="fileName"/> (any directory parts are
     /// stripped). Returns the written path relative to the root, or null if the folder escapes the
@@ -190,6 +231,10 @@ public static class SessionFileBrowser
             ".bmp" => "image/bmp",
             ".ico" => "image/x-icon",
             ".avif" => "image/avif",
+            ".mp4" or ".m4v" => "video/mp4",
+            ".webm" => "video/webm",
+            ".ogv" => "video/ogg",
+            ".mov" => "video/quicktime",
             ".pdf" => "application/pdf",
             _ => "application/octet-stream",
         };
