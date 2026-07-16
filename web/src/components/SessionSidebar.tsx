@@ -473,17 +473,16 @@ export function SessionSidebar({
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
+            className="h-7 w-7 shrink-0 px-0 text-muted-foreground"
             title={
               filter === "active"
-                ? "Showing running sessions only — click to show all"
+                ? `Showing ${activeCount} running session${activeCount === 1 ? "" : "s"} — click to show all`
                 : "Showing all sessions — click to show running only"
             }
             aria-pressed={filter === "active"}
             onClick={toggleFilter}
           >
             <Filter className={cn("size-3.5", filter === "active" && "text-emerald-500")} />
-            {filter === "active" ? `Active (${activeCount})` : "All"}
           </Button>
         )}
         {((tab === "sessions" && sessions.length > 0) ||

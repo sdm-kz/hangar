@@ -1744,21 +1744,26 @@ function FilePreview({
   useEffect(() => {
     if (!file || editing) return;
     // Skip while the user is selecting/copying inside the preview: swapping in fresh content (or
-    // reloading the diff) rebuilds the DOM and drops the selection. A later fs change re-runs this.
-    const sel = window.getSelection();
-    if (
-      sel &&
-      !sel.isCollapsed &&
-      contentRef.current &&
-      (contentRef.current.contains(sel.anchorNode) || contentRef.current.contains(sel.focusNode))
-    )
-      return;
+    // reloading the diff) rebuilds the DOM (the highlighted <code> is set via innerHTML) and drops
+    // the selection. Checked both now AND when the fetch resolves: a fetch kicked off by an earlier
+    // bump — before the selection began — would otherwise land mid-selection and clobber it. A later
+    // fs change re-runs this once the selection is released.
+    const selectingInPreview = () => {
+      const sel = window.getSelection();
+      return !!(
+        sel &&
+        !sel.isCollapsed &&
+        contentRef.current &&
+        (contentRef.current.contains(sel.anchorNode) || contentRef.current.contains(sel.focusNode))
+      );
+    };
+    if (selectingInPreview()) return;
     setDiff(null); // force diff to reload lazily
     if (gitDir || fileKind(file.name) !== "text" || file.size > MAX_TEXT_PREVIEW) return;
     let cancelled = false;
     api
       .fetchSessionFileText(sessionId, file.path)
-      .then((t) => !cancelled && setText(t))
+      .then((t) => !cancelled && !selectingInPreview() && setText(t))
       .catch(() => {});
     return () => {
       cancelled = true;
