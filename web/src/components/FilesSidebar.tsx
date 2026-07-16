@@ -26,6 +26,25 @@ import {
   Video,
 } from "lucide-react";
 
+// Which folders are expanded in the tree is a per-browser preference, remembered across refreshes so
+// the tree comes back the way you left it instead of collapsing to the default start folder.
+const EXPANDED_KEY = "claudeweb.filesExpanded";
+function loadExpanded(): Set<string> {
+  try {
+    const raw = localStorage.getItem(EXPANDED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveExpanded(set: Set<string>) {
+  try {
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify([...set]));
+  } catch {
+    /* storage disabled — preference is best-effort */
+  }
+}
+
 // Trailing path segment, used as a node's display name when the API gives an absolute path.
 function baseName(p: string): string {
   const parts = p.split(/[/\\]+/).filter(Boolean);
@@ -73,7 +92,7 @@ export function FilesSidebar({
   const confirm = useConfirm();
   const [drives, setDrives] = useState<DirEntry[]>([]);
   const [children, setChildren] = useState<Map<string, FsNode[]>>(new Map());
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [loading, setLoading] = useState<Set<string>>(new Set());
   const [selectedDir, setSelectedDir] = useState<string | null>(null); // target for toolbar actions
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -119,13 +138,26 @@ export function FilesSidebar({
     [listDir]
   );
 
-  // Initial load: drive roots plus a useful starting point — the open file (revealed) if one is set,
-  // otherwise the default start folder, so the tree doesn't land on bare drive letters.
+  // Remember the expanded-folder set across refreshes.
+  useEffect(() => {
+    saveExpanded(expanded);
+  }, [expanded]);
+
+  // Initial load: drive roots plus a useful starting point. Priority: (1) restore the folders the user
+  // had expanded last time, (2) reveal the open file, (3) fall back to the default start folder so the
+  // tree doesn't land on bare drive letters.
   useEffect(() => {
     (async () => {
       try {
         const res = await api.fsList();
         setDrives(res.drives);
+        // Restore the remembered tree: load every persisted-expanded folder so its rows render.
+        const persisted = loadExpanded();
+        if (persisted.size > 0) {
+          if (res.current) setSelectedDir(res.current);
+          await Promise.all([...persisted].map(listDir));
+          return;
+        }
         if (openPathRef.current) return; // a file is open — the reveal effect below expands to it
         if (res.current) {
           // Expand the chain from the drive root down to the default folder.

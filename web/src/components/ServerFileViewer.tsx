@@ -50,6 +50,7 @@ export function ServerFileViewer({
   const kind = fileKind(name);
   const ext = fileExt(name);
   const isMarkdown = ext === "md" || ext === "markdown";
+  const isHtml = ext === "html" || ext === "htm";
 
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,7 +59,7 @@ export function ServerFileViewer({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
-  const [rendered, setRendered] = useState(true); // markdown: rendered vs raw
+  const [rendered, setRendered] = useState(true); // markdown/HTML: rendered preview vs raw source
 
   // Load text content when the open file (or its kind) changes.
   useEffect(() => {
@@ -143,9 +144,9 @@ export function ServerFileViewer({
             </>
           ) : (
             <>
-              {isMarkdown && (
+              {(isMarkdown || isHtml) && (
                 <Button variant="ghost" size="sm" onClick={() => setRendered((r) => !r)}>
-                  {rendered ? "Raw" : "Rendered"}
+                  {isHtml ? (rendered ? "Source" : "Preview") : rendered ? "Raw" : "Rendered"}
                 </Button>
               )}
               <Button
@@ -214,6 +215,16 @@ export function ServerFileViewer({
           <div className="prose prose-sm dark:prose-invert max-w-none p-4">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{text ?? ""}</ReactMarkdown>
           </div>
+        ) : isHtml && rendered ? (
+          // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an opaque origin,
+          // so page scripts can't reach this app's token or DOM. Relative asset URLs won't resolve (no
+          // base) — self-contained pages preview best. Mirrors the per-session file preview.
+          <iframe
+            title={`Preview of ${name}`}
+            srcDoc={text ?? ""}
+            sandbox="allow-scripts allow-forms allow-popups allow-modals"
+            className="h-full w-full border-0 bg-white"
+          />
         ) : highlighted ? (
           <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
             <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted }} />

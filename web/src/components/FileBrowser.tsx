@@ -1691,6 +1691,9 @@ function FilePreview({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
+  // The scrollable content area; used to detect an in-progress text selection so a background
+  // auto-refresh doesn't rebuild the DOM out from under a copy.
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const copyPath = useCallback(async () => {
     if (!file) return;
@@ -1740,6 +1743,16 @@ function FilePreview({
   // invalidate the cached diff — but never clobber an in-progress edit.
   useEffect(() => {
     if (!file || editing) return;
+    // Skip while the user is selecting/copying inside the preview: swapping in fresh content (or
+    // reloading the diff) rebuilds the DOM and drops the selection. A later fs change re-runs this.
+    const sel = window.getSelection();
+    if (
+      sel &&
+      !sel.isCollapsed &&
+      contentRef.current &&
+      (contentRef.current.contains(sel.anchorNode) || contentRef.current.contains(sel.focusNode))
+    )
+      return;
     setDiff(null); // force diff to reload lazily
     if (gitDir || fileKind(file.name) !== "text" || file.size > MAX_TEXT_PREVIEW) return;
     let cancelled = false;
@@ -1920,7 +1933,7 @@ function FilePreview({
         )}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={contentRef} className="min-h-0 flex-1 overflow-auto">
         {editing ? (
           <Textarea
             value={draft}
