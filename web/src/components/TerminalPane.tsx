@@ -63,19 +63,22 @@ function stripAnsi(s: string): string {
     .replace(/\r/g, "\n");
 }
 
-// A real rename shows the "/rename <name>" command followed a few lines later by its confirmation,
-// "Session renamed to: <name>". We require that pairing so the detector only fires on a genuine rename
-// (typed or app-injected) and never when the phrase merely appears in assistant prose (which used to
-// mis-rename the session to a sentence fragment). Names can contain spaces, so the confirmation name is
-// captured as a run of printable ASCII (lazy). The capture also stops at a 2+ space run or the input
-// prompt ">", which the TUI positions on the next line via cursor moves — stripping ANSI drops that
-// positioning, so the prompt can end up adjacent to the name (e.g. "main>"). Trailing spaces trimmed.
-const RENAME_CONFIRM = /\/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)/g;
+// A real rename is the OUTPUT of a "/rename" command, not the phrase appearing in assistant prose
+// (which used to mis-rename the session to a sentence fragment — even discussing this feature, or
+// printing this detector's own regex source, did it). Two layout facts separate a real result from
+// prose, and we require BOTH: (1) the "/rename" echo and the confirmation each START a line (prose
+// embeds them mid-sentence); (2) the confirmation is a TUI command result, so it's prefixed by a
+// non-ASCII tree marker "⎿"/"└" ([^\x00-\x7f]) that assistant markdown never emits — the load-bearing
+// discriminator, since plain-ASCII prose can't produce it. Names can contain spaces, so the name is a
+// lazy run of printable ASCII; it stops at a 2+ space run or the input prompt ">", which the TUI puts on
+// the next line via cursor moves (stripping ANSI drops that, so the prompt can abut, e.g. "main>").
+// Trailing spaces trimmed. Mirrors the server sniffer (TerminalChannel.cs).
+const RENAME_CONFIRM = /(?:^|[\r\n])[^\w\r\n]{0,12}\/rename\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^\w\r\n]{0,15}[^\x00-\x7f][^\w\r\n]{0,8}Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)/g;
 
-// Same idea for `/color <name>`: the "/color" command paired with Claude's "Session color set to:
-// <name>" confirmation, so the color only updates on a genuine command (not the phrase in prose).
-// The color is a single word (a color name), captured as a run of letters. Mirrors the server sniffer.
-const COLOR_CONFIRM = /\/color\b[^\r\n]*[\r\n][\s\S]{0,500}?Session color set to:[ \t]*([A-Za-z]{1,20})/g;
+// Same discriminators for `/color <name>` (line-anchored + a non-ASCII tree marker before the
+// confirmation), so the color only updates on genuine "/color" command output, not the phrase in prose.
+// The color is a single word (a color name). Mirrors the server sniffer.
+const COLOR_CONFIRM = /(?:^|[\r\n])[^\w\r\n]{0,12}\/color\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^\w\r\n]{0,15}[^\x00-\x7f][^\w\r\n]{0,8}Session color set to:[ \t]*([A-Za-z]{1,20})/g;
 
 // File-link matcher for the terminal. Two forms:
 //  1) a PATH with a separator (optional drive `C:\`, one or more `segment/`, then `name.ext`, any

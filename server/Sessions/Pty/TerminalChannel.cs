@@ -80,16 +80,23 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised when Claude confirms a <c>/rename</c> in the terminal, with the new name.</summary>
     public event Action<string>? RenameCommandDetected;
 
-    // Only treat "Session renamed to: X" as a real rename when it's paired with the "/rename …" command
-    // that produced it a few lines earlier. That pairing is what a genuine rename always has (whether
-    // typed by the user or injected by the app) and what prose never has — so the detector no longer
-    // fires just because the phrase appears in assistant text (which mis-renamed sessions to sentence
-    // fragments), yet still catches every real rename regardless of the exact marker glyph. Names can
-    // contain spaces, so the confirmation name is captured as a run of printable ASCII (lazy). The
-    // capture also stops at a 2+ space run or the input prompt ">", which the TUI positions on the next
-    // line via cursor moves — once ANSI is stripped that positioning is lost, so the prompt can abut the
-    // name (e.g. "main>"). Trailing padding spaces are trimmed by the caller.
-    [GeneratedRegex(@"/rename\b[^\r\n]*[\r\n][\s\S]{0,500}?Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)")]
+    // Only treat "Session renamed to: X" as a real rename when it's the OUTPUT of a genuine "/rename"
+    // command, not the phrase appearing in assistant prose. Prose alone (even quoting the exact format,
+    // or the regex source of this very detector) used to mis-rename sessions to sentence fragments,
+    // because it satisfied a loose "/rename … Session renamed to:" proximity pairing. Two layout facts
+    // separate a real result from prose, and we require BOTH:
+    //   1. The "/rename" echo and the confirmation each START a line (prose embeds them mid-sentence).
+    //   2. The confirmation is a TUI command result, so it's prefixed by a non-ASCII tree marker
+    //      ("⎿"/"└") — [^\x00-\x7f] — which assistant markdown never emits. This is the load-bearing
+    //      discriminator: plain-ASCII prose (and the ASCII regex source above) can't produce it.
+    // Two Latin1 wrinkles on the server: the PTY bytes are decoded Latin1, so a UTF-8 marker like "⎿"
+    // arrives as several 0x80-0xFF chars — hence we accept a run of them around the marker; and .NET's
+    // \w is Unicode-aware (it would match those marker bytes), so we spell the word class out in ASCII
+    // ([^A-Za-z0-9_\r\n]) to keep the marker inside the "non-word leading run". Names can contain spaces,
+    // so the name is captured as a lazy run of printable ASCII; it stops at a 2+ space run or the input
+    // prompt ">", which the TUI positions on the next line via cursor moves (stripping ANSI drops that,
+    // so the prompt can abut the name, e.g. "main>"). Trailing padding spaces are trimmed by the caller.
+    [GeneratedRegex(@"(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,12}/rename\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)")]
     private static partial Regex RenameConfirmRegex();
 
     // ---- /color sniffing: watch the OUTPUT for Claude's "Session color set to: <color>" confirmation.
@@ -100,10 +107,11 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised when Claude confirms a <c>/color</c> in the terminal, with the new color name.</summary>
     public event Action<string>? ColorCommandDetected;
 
-    // Pair "Session color set to: X" with the "/color …" command that produced it, mirroring the
-    // rename detector, so the phrase appearing in assistant prose can't set a bogus color. The color
-    // is a single word (a color name), captured as a run of letters.
-    [GeneratedRegex(@"/color\b[^\r\n]*[\r\n][\s\S]{0,500}?Session color set to:[ \t]*([A-Za-z]{1,20})")]
+    // Same discriminators as the rename detector above (line-anchored + a non-ASCII tree marker before
+    // the confirmation, ASCII-spelled word class for Latin1 safety), so the phrase in assistant prose
+    // can't set a bogus color — only the genuine "/color" command result does. The color is a single
+    // word (a color name), captured as a run of letters.
+    [GeneratedRegex(@"(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,12}/color\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}Session color set to:[ \t]*([A-Za-z]{1,20})")]
     private static partial Regex ColorConfirmRegex();
 
     // Scan freshly-read output for Claude's color confirmation. Returns the new color, or null.
