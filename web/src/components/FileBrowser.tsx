@@ -33,6 +33,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Copy,
   Download,
   Expand,
@@ -90,6 +92,20 @@ function fileEntryFromPath(path: string): FileEntry {
   return { name: path.split("/").pop() || path, path, isDir: false, size: 0 };
 }
 
+// The chain of ancestor folder paths of a file/dir path ("a/b/c.txt" -> ["a", "a/b"]). Used to
+// expand the tree down to a revealed file.
+function ancestorDirs(path: string): string[] {
+  const parts = path.split("/");
+  parts.pop(); // drop the file (or leaf) segment
+  const out: string[] = [];
+  let acc = "";
+  for (const p of parts) {
+    acc = acc ? `${acc}/${p}` : p;
+    out.push(acc);
+  }
+  return out;
+}
+
 // Reconstruct the open file tabs for a session: a URL deep-link for this session wins as the active
 // tab, otherwise the per-session storage. `files` holds every open tab; the active one is always
 // present (older stored state only had a single `file`). `preview` marks the transient tab that
@@ -110,6 +126,7 @@ function restoreTabs(
 /** Imperative handle: lets a parent (SessionView) open a file in this browser from elsewhere. */
 export interface FileBrowserHandle {
   revealFile: (path: string) => void;
+  showChanges: () => void; // switch this browser into the git-changes view
 }
 
 /** How the active preview reports unsaved edits back up so closing a tab can guard them. */
@@ -158,6 +175,11 @@ export const FileBrowser = forwardRef<
       return next;
     });
   }, [sessionId]);
+  // Switch into the changes view (used by the header's branch badge). Idempotent if already there.
+  const openChanges = useCallback(() => {
+    setShowChanges(true);
+    saveSessionUi(sessionId, { changes: true });
+  }, [sessionId]);
   // In the changes view, group changed files under collapsible folders instead of a flat list.
   const [changesTree, setChangesTree] = useState(() => loadSessionUi(sessionId).changesTree ?? false);
   const toggleChangesTree = useCallback(() => {
@@ -167,6 +189,55 @@ export const FileBrowser = forwardRef<
       return next;
     });
   }, [sessionId]);
+
+  // Expanded-folder state for the two trees. Both are collapsed by default, so we persist only the
+  // set of folders the user has opened; anything absent renders collapsed. Seed the Files tree with
+  // the ancestors of the file being restored so it expands into view on load.
+  const [filesExpanded, setFilesExpanded] = useState<Set<string>>(() => {
+    const ui = loadSessionUi(sessionId);
+    const set = new Set(ui.filesExpanded ?? []);
+    const u = readUrlState();
+    const reveal = (u.session === sessionId && u.file ? u.file : ui.file) || null;
+    if (reveal) for (const d of ancestorDirs(reveal)) set.add(d);
+    return set;
+  });
+  const [changesExpanded, setChangesExpanded] = useState<Set<string>>(
+    () => new Set(loadSessionUi(sessionId).changesExpanded ?? [])
+  );
+  const toggleFilesDir = useCallback(
+    (path: string) => {
+      setFilesExpanded((s) => {
+        const n = new Set(s);
+        n.has(path) ? n.delete(path) : n.add(path);
+        saveSessionUi(sessionId, { filesExpanded: [...n] });
+        return n;
+      });
+    },
+    [sessionId]
+  );
+  const toggleChangesDir = useCallback(
+    (path: string) => {
+      setChangesExpanded((s) => {
+        const n = new Set(s);
+        n.has(path) ? n.delete(path) : n.add(path);
+        saveSessionUi(sessionId, { changesExpanded: [...n] });
+        return n;
+      });
+    },
+    [sessionId]
+  );
+  // Expand the Files tree down to a path (adds its ancestor folders to the expanded set).
+  const expandFilesTo = useCallback(
+    (path: string) => {
+      setFilesExpanded((s) => {
+        const n = new Set(s);
+        for (const d of ancestorDirs(path)) n.add(d);
+        saveSessionUi(sessionId, { filesExpanded: [...n] });
+        return n;
+      });
+    },
+    [sessionId]
+  );
   // A file picked out of a commit in the History panel — previewed in place of a working-tree file.
   const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
   const [treeWidth, setTreeWidth] = useState(readTreeWidth); // desktop tree-pane width (px)
@@ -247,13 +318,6 @@ export const FileBrowser = forwardRef<
     setTreeWidth(TREE_DEFAULT);
     localStorage.setItem(TREE_WIDTH_KEY, String(TREE_DEFAULT));
   }, []);
-
-  // Path to auto-reveal in the tree: the restored file (from URL or per-session storage). Updated on
-  // session switch so the newly-restored file expands into view; manual navigation doesn't touch it.
-  const [expandTo, setExpandTo] = useState<string | null>(() => {
-    const u = readUrlState();
-    return u.session === sessionId && u.file ? u.file : loadSessionUi(sessionId).file ?? null;
-  });
 
   // Persist the open tabs + active + preview mark for this session; mirror the active into the URL.
   const persistTabs = useCallback(
@@ -472,14 +536,14 @@ export const FileBrowser = forwardRef<
     (path: string) => {
       setShowChanges(false);
       setQuery("");
-      setExpandTo(path);
+      expandFilesTo(path);
       openFile(fileEntryFromPath(path), false);
     },
-    [openFile]
+    [openFile, expandFilesTo]
   );
 
-  // Let SessionView open a file here (from a terminal file-link click).
-  useImperativeHandle(ref, () => ({ revealFile }), [revealFile]);
+  // Let SessionView open a file here (from a terminal file-link click) or switch to the changes view.
+  useImperativeHandle(ref, () => ({ revealFile, showChanges: openChanges }), [revealFile, openChanges]);
 
   // When the session actually changes, restore that session's last-previewed file (or clear if it
   // had none). Skips the initial mount (and StrictMode's double-invoked mount effect), so the
@@ -492,11 +556,15 @@ export const FileBrowser = forwardRef<
     setTabs(restored.tabs);
     setActivePath(restored.active);
     setPreviewPath(restored.preview);
-    setExpandTo(restored.active);
+    const ui = loadSessionUi(sessionId);
+    const nextFilesExpanded = new Set(ui.filesExpanded ?? []);
+    if (restored.active) for (const d of ancestorDirs(restored.active)) nextFilesExpanded.add(d);
+    setFilesExpanded(nextFilesExpanded);
+    setChangesExpanded(new Set(ui.changesExpanded ?? []));
     setCommitSel(null);
     setQuery("");
-    setShowChanges(loadSessionUi(sessionId).changes ?? false);
-    setChangesTree(loadSessionUi(sessionId).changesTree ?? false);
+    setShowChanges(ui.changes ?? false);
+    setChangesTree(ui.changesTree ?? false);
     setUploadDir("");
     setUploadError(null);
     setCreatingFolder(false);
@@ -555,6 +623,22 @@ export const FileBrowser = forwardRef<
     return changeEntries.filter((e) => e.path.toLowerCase().includes(q));
   }, [changeEntries, query]);
 
+  // The grouped changes tree, built once here so the header's collapse/expand-all can enumerate every
+  // rendered folder (compacted paths — the same keys the folder rows toggle on).
+  const changeTreeRoot = useMemo(() => buildChangeTree(filteredChangeEntries), [filteredChangeEntries]);
+  const allChangeDirPaths = useMemo(() => collectChangeDirPaths(changeTreeRoot), [changeTreeRoot]);
+  const allChangesExpanded =
+    allChangeDirPaths.length > 0 && allChangeDirPaths.every((p) => changesExpanded.has(p));
+  const expandAllChanges = useCallback(() => {
+    const set = new Set(allChangeDirPaths);
+    setChangesExpanded(set);
+    saveSessionUi(sessionId, { changesExpanded: [...set] });
+  }, [allChangeDirPaths, sessionId]);
+  const collapseAllChanges = useCallback(() => {
+    setChangesExpanded(new Set());
+    saveSessionUi(sessionId, { changesExpanded: [] });
+  }, [sessionId]);
+
   // Debounced recursive search — only for the all-files tree; the changes view filters locally.
   useEffect(() => {
     const q = query.trim();
@@ -606,6 +690,19 @@ export const FileBrowser = forwardRef<
                 )}
               >
                 <ListTree className="size-3.5" />
+              </button>
+            )}
+            {gitFiles && showChanges && changesTree && allChangeDirPaths.length > 0 && (
+              <button
+                title={allChangesExpanded ? "Collapse all folders" : "Expand all folders"}
+                onClick={allChangesExpanded ? collapseAllChanges : expandAllChanges}
+                className="flex items-center rounded px-1 py-0.5 hover:text-foreground"
+              >
+                {allChangesExpanded ? (
+                  <ChevronsDownUp className="size-3.5" />
+                ) : (
+                  <ChevronsUpDown className="size-3.5" />
+                )}
               </button>
             )}
             <button
@@ -731,8 +828,11 @@ export const FileBrowser = forwardRef<
           {showChanges ? (
             changesTree ? (
               <ChangesTree
-                entries={filteredChangeEntries}
+                root={changeTreeRoot}
+                isEmpty={filteredChangeEntries.length === 0}
                 empty={query.trim() ? "No matching changes" : "No changes"}
+                expanded={changesExpanded}
+                onToggle={toggleChangesDir}
                 gitFiles={effectiveGitFiles}
                 selectedPath={selected?.path ?? null}
                 onSelect={selectFile}
@@ -765,7 +865,8 @@ export const FileBrowser = forwardRef<
               depth={0}
               refreshToken={refreshToken}
               selectedPath={selected?.path ?? null}
-              expandTo={expandTo}
+              expanded={filesExpanded}
+              onToggleDir={toggleFilesDir}
               gitFiles={gitFiles}
               onSelect={selectFile}
               uploadDir={uploadDir}
@@ -1119,41 +1220,52 @@ function countChanges(dir: ChangeDir): number {
   return n;
 }
 
+// Every folder path rendered in the changes tree (compacted, matching the collapse keys). Used to
+// enumerate targets for expand-all / collapse-all.
+function collectChangeDirPaths(root: ChangeDir): string[] {
+  const out: string[] = [];
+  const walk = (dir: ChangeDir) => {
+    for (const child of dir.dirs.values()) {
+      const c = compactDir(child);
+      out.push(c.path);
+      walk(c);
+    }
+  };
+  walk(root);
+  return out;
+}
+
 /** Changed files grouped into a collapsible folder tree (the changes view's "group by folders" mode). */
 function ChangesTree({
-  entries,
+  root,
+  isEmpty,
   empty,
+  expanded,
+  onToggle,
   gitFiles,
   selectedPath,
   onSelect,
   actions,
 }: {
-  entries: FileEntry[];
+  root: ChangeDir;
+  isEmpty: boolean;
   empty: string;
+  // Folders are collapsed by default; this holds the ones the user has expanded (persisted per session).
+  expanded: Set<string>;
+  onToggle: (path: string) => void;
   gitFiles?: GitFiles;
   selectedPath: string | null;
   onSelect: (f: FileEntry, newTab?: boolean) => void;
   actions: RowActions;
 }) {
-  const root = useMemo(() => buildChangeTree(entries), [entries]);
-  // Folders are expanded by default; this holds the ones the user has collapsed.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  const toggle = useCallback((path: string) => {
-    setCollapsed((s) => {
-      const n = new Set(s);
-      n.has(path) ? n.delete(path) : n.add(path);
-      return n;
-    });
-  }, []);
-
-  if (entries.length === 0) return <IndentedNote depth={0}>{empty}</IndentedNote>;
+  if (isEmpty) return <IndentedNote depth={0}>{empty}</IndentedNote>;
 
   return (
     <ChangeDirChildren
       dir={root}
       depth={0}
-      collapsed={collapsed}
-      onToggle={toggle}
+      expanded={expanded}
+      onToggle={onToggle}
       gitFiles={gitFiles}
       selectedPath={selectedPath}
       onSelect={onSelect}
@@ -1163,7 +1275,7 @@ function ChangesTree({
 }
 
 interface ChangeTreeProps {
-  collapsed: Set<string>;
+  expanded: Set<string>;
   onToggle: (path: string) => void;
   gitFiles?: GitFiles;
   selectedPath: string | null;
@@ -1210,7 +1322,7 @@ function ChangeDirChildren({ dir, depth, ...rest }: { dir: ChangeDir; depth: num
 }
 
 function ChangeDirNode({ dir, depth, ...rest }: { dir: ChangeDir; depth: number } & ChangeTreeProps) {
-  const open = !rest.collapsed.has(dir.path);
+  const open = rest.expanded.has(dir.path);
   return (
     <>
       <div className="group relative flex items-center rounded-sm text-xs hover:bg-accent">
@@ -1246,7 +1358,8 @@ function TreeLevel({
   depth,
   refreshToken,
   selectedPath,
-  expandTo,
+  expanded,
+  onToggleDir,
   gitFiles,
   onSelect,
   uploadDir,
@@ -1258,7 +1371,8 @@ function TreeLevel({
   depth: number;
   refreshToken: number;
   selectedPath: string | null;
-  expandTo: string | null;
+  expanded: Set<string>;
+  onToggleDir: (path: string) => void;
   gitFiles?: GitFiles;
   onSelect: (f: FileEntry, newTab?: boolean) => void;
   uploadDir: string;
@@ -1296,7 +1410,8 @@ function TreeLevel({
             depth={depth}
             refreshToken={refreshToken}
             selectedPath={selectedPath}
-            expandTo={expandTo}
+            expanded={expanded}
+            onToggleDir={onToggleDir}
             gitFiles={gitFiles}
             onSelect={onSelect}
             uploadDir={uploadDir}
@@ -1325,7 +1440,8 @@ function TreeDir({
   depth,
   refreshToken,
   selectedPath,
-  expandTo,
+  expanded,
+  onToggleDir,
   gitFiles,
   onSelect,
   uploadDir,
@@ -1337,15 +1453,16 @@ function TreeDir({
   depth: number;
   refreshToken: number;
   selectedPath: string | null;
-  expandTo: string | null;
+  expanded: Set<string>;
+  onToggleDir: (path: string) => void;
   gitFiles?: GitFiles;
   onSelect: (f: FileEntry, newTab?: boolean) => void;
   uploadDir: string;
   onSelectDir: (path: string) => void;
   actions: RowActions;
 }) {
-  // Auto-open when the file to reveal lives under this folder.
-  const [open, setOpen] = useState(() => !!expandTo && expandTo.startsWith(entry.path + "/"));
+  // Open state is lifted to the parent so it persists per session (collapsed by default).
+  const open = expanded.has(entry.path);
   return (
     <>
       {/* Clicking a folder toggles it open and makes it the upload target. */}
@@ -1355,7 +1472,7 @@ function TreeDir({
         entry={entry}
         actions={actions}
         onClick={() => {
-          setOpen((o) => !o);
+          onToggleDir(entry.path);
           onSelectDir(entry.path);
         }}
         extraActions={
@@ -1393,7 +1510,8 @@ function TreeDir({
           depth={depth + 1}
           refreshToken={refreshToken}
           selectedPath={selectedPath}
-          expandTo={expandTo}
+          expanded={expanded}
+          onToggleDir={onToggleDir}
           gitFiles={gitFiles}
           onSelect={onSelect}
           uploadDir={uploadDir}

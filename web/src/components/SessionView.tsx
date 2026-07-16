@@ -201,6 +201,17 @@ export function SessionView({
     [view, session.id, changeView]
   );
 
+  // Open this session's git-changes view (from the header branch badge). If the Files panel is already
+  // showing, flip it via the imperative handle; otherwise seed the mode and switch to the Files view.
+  const openChanges = useCallback(() => {
+    if (view === "terminal") {
+      saveSessionUi(session.id, { changes: true });
+      changeView("files");
+    } else {
+      fileBrowserRef.current?.showChanges();
+    }
+  }, [view, session.id, changeView]);
+
   // A full file path clicked in the terminal: resolve it under the working directory, then open it in
   // this session's Files panel (ignore paths outside the working directory — the browser can't show them).
   const onTerminalOpenFile = useCallback(
@@ -397,11 +408,19 @@ export function SessionView({
                 </Badge>
               ))}
             {git?.isRepo && git.branch && (
-              <Badge variant="outline" className="min-w-0 shrink gap-1" title="Current git branch">
+              <button
+                type="button"
+                onClick={openChanges}
+                className={cn(
+                  badgeVariants({ variant: "outline" }),
+                  "min-w-0 shrink gap-1 transition-colors hover:bg-accent"
+                )}
+                title="Show git changes"
+              >
                 <GitBranch className="size-3 shrink-0" />
                 <span className="max-w-[6rem] truncate sm:max-w-[10rem]">{git.branch}</span>
                 {changeCount > 0 && <span className="shrink-0 text-amber-500">·{changeCount}</span>}
-              </Badge>
+              </button>
             )}
           </div>
           <p className="flex items-center font-mono text-[11px] text-muted-foreground">
@@ -468,18 +487,22 @@ export function SessionView({
             </Button>
             <Button
               variant="outline"
-              size="sm"
+              size="icon"
               onClick={sendContinue}
               title="Send “continue” to this session now"
             >
               <Play className="size-4" />
-              <span className="hidden sm:inline">Continue</span>
             </Button>
           </>
         )}
-        <Button variant="destructive" size="sm" onClick={stop} disabled={stopping}>
+        <Button
+          variant="destructive"
+          size="icon"
+          onClick={stop}
+          disabled={stopping}
+          title={session.state === "Running" ? "Stop session" : "Remove session"}
+        >
           {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
-          <span className="hidden sm:inline">{session.state === "Running" ? "Stop" : "Remove"}</span>
         </Button>
         </div>
       </header>
