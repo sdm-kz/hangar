@@ -19,6 +19,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
 import {
   Copy,
+  Filter,
   Plus,
   Radio,
   RotateCcw,
@@ -47,6 +48,25 @@ function loadGrouped(): boolean {
 function saveGrouped(v: boolean) {
   try {
     localStorage.setItem(GROUPED_KEY, v ? "1" : "0");
+  } catch {
+    /* storage disabled — preference is best-effort */
+  }
+}
+
+// Session-state filter: "active" shows only running sessions, "all" shows everything (exited/closed
+// too). Per-browser preference, remembered across refreshes like the grouped toggle.
+type SessionFilter = "active" | "all";
+const FILTER_KEY = "claudeweb.sessionsFilter";
+function loadFilter(): SessionFilter {
+  try {
+    return localStorage.getItem(FILTER_KEY) === "active" ? "active" : "all";
+  } catch {
+    return "all";
+  }
+}
+function saveFilter(v: SessionFilter) {
+  try {
+    localStorage.setItem(FILTER_KEY, v);
   } catch {
     /* storage disabled — preference is best-effort */
   }
@@ -137,19 +157,43 @@ function GroupHeader({
   );
 }
 
-/** Shared collapse-set state hook for grouped lists. */
+// Which folder groups are collapsed is a per-browser preference, remembered across refreshes (like
+// the grouped-vs-flat toggle). Stored as the list of collapsed dir paths; anything absent is expanded.
+const COLLAPSED_KEY = "claudeweb.sessionsCollapsedGroups";
+function loadCollapsed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveCollapsed(set: Set<string>) {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set]));
+  } catch {
+    /* storage disabled — preference is best-effort */
+  }
+}
+
+/** Shared collapse-set state hook for grouped lists; persists the set so it survives a page refresh. */
 function useCollapsedGroups() {
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
   const toggle = (dir: string) =>
     setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(dir)) next.delete(dir);
       else next.add(dir);
+      saveCollapsed(next);
       return next;
     });
   // Collapse every given folder, or clear the set to expand all.
   const setAll = (dirs: string[], allCollapsed: boolean) =>
-    setCollapsed(allCollapsed ? new Set(dirs) : new Set());
+    setCollapsed(() => {
+      const next = allCollapsed ? new Set(dirs) : new Set<string>();
+      saveCollapsed(next);
+      return next;
+    });
   return { collapsed, toggle, setAll };
 }
 
@@ -226,15 +270,22 @@ export function SessionSidebar({
 }) {
   const [tab, setTab] = useState<"sessions" | "recent">("sessions");
   const [grouped, setGrouped] = useState<boolean>(loadGrouped);
+  const [filter, setFilter] = useState<SessionFilter>(loadFilter);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Folder whose bulk-remove popup is open (its normalized dirKey), or null.
   const [removeDir, setRemoveDir] = useState<string | null>(null);
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
 
+  // Sessions shown after applying the active/all filter ("active" = running only). Recents aren't
+  // filtered (they're presets, not live sessions).
+  const visibleSessions =
+    filter === "active" ? sessions.filter((s) => s.state === "Running") : sessions;
+  const activeCount = sessions.filter((s) => s.state === "Running").length;
+
   // Dirs of the groups currently shown, and whether every one is collapsed — drives the
   // collapse/expand-all toggle so it flips to "expand" once nothing is left open.
   const visibleDirs = (tab === "sessions"
-    ? groupByFolder(sessions)
+    ? groupByFolder(visibleSessions)
     : groupByFolder(recents)
   ).map((g) => g.dir);
   const allCollapsed = visibleDirs.length > 0 && visibleDirs.every((d) => collapsed.has(d));
@@ -244,6 +295,13 @@ export function SessionSidebar({
     setGrouped((v) => {
       saveGrouped(!v);
       return !v;
+    });
+
+  const toggleFilter = () =>
+    setFilter((v) => {
+      const next = v === "active" ? "all" : "active";
+      saveFilter(next);
+      return next;
     });
 
   // A single session row. Sessions are ordered newest-first (by creation time); `showPath` is
@@ -411,6 +469,23 @@ export function SessionSidebar({
         <TabButton active={tab === "recent"} onClick={() => setTab("recent")}>
           Recent{recents.length > 0 && ` (${recents.length})`}
         </TabButton>
+        {tab === "sessions" && sessions.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
+            title={
+              filter === "active"
+                ? "Showing running sessions only — click to show all"
+                : "Showing all sessions — click to show running only"
+            }
+            aria-pressed={filter === "active"}
+            onClick={toggleFilter}
+          >
+            <Filter className={cn("size-3.5", filter === "active" && "text-emerald-500")} />
+            {filter === "active" ? `Active (${activeCount})` : "All"}
+          </Button>
+        )}
         {((tab === "sessions" && sessions.length > 0) ||
           (tab === "recent" && recents.length > 0)) && (
           <Button
@@ -453,12 +528,14 @@ export function SessionSidebar({
         />
       ) : (
       <div className="flex-1 overflow-auto px-2 pb-2">
-        {sessions.length === 0 && (
+        {sessions.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
-        )}
+        ) : visibleSessions.length === 0 ? (
+          <p className="px-2 py-6 text-center text-xs text-muted-foreground">No running sessions</p>
+        ) : null}
         {grouped ? (
           <div className="space-y-2">
-            {groupByFolder(sessions).map((g) => {
+            {groupByFolder(visibleSessions).map((g) => {
               const isCollapsed = collapsed.has(g.dir);
               return (
                 <div key={g.dir}>
@@ -479,7 +556,7 @@ export function SessionSidebar({
             })}
           </div>
         ) : (
-          <div className="space-y-1">{sessions.map((s) => renderRow(s, true))}</div>
+          <div className="space-y-1">{visibleSessions.map((s) => renderRow(s, true))}</div>
         )}
       </div>
       )}
