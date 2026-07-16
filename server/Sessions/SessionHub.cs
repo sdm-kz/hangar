@@ -32,6 +32,11 @@ public sealed class SessionHub : BackgroundService
     // Recompute at least this often to catch transitions that don't flow through Changed.
     private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(1000);
 
+    // Re-send the snapshot at least this often even when nothing changed, as a keepalive: it lets a
+    // client detect a half-open socket (silence => dead => reconnect) and self-heals any dropped frame.
+    private static readonly TimeSpan KeepAlive = TimeSpan.FromSeconds(4);
+    private DateTime _lastSentUtc = DateTime.MinValue;
+
     // Match the minimal-API wire format: camelCase properties, enums as their string names.
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web)
     {
@@ -75,8 +80,12 @@ public sealed class SessionHub : BackgroundService
     {
         if (_clients.IsEmpty) return; // nobody listening — don't bother recomputing
         var json = Serialize();
-        if (json == _last) return;
+        var now = DateTime.UtcNow;
+        // Send on any change, or at least every KeepAlive as a liveness ping (so a stalled client can
+        // tell a live-but-idle stream from a dead socket).
+        if (json == _last && now - _lastSentUtc < KeepAlive) return;
         _last = json;
+        _lastSentUtc = now;
         var bytes = Encoding.UTF8.GetBytes(json);
         foreach (var c in _clients.Values)
             c.Outbox.Writer.TryWrite(bytes);

@@ -159,16 +159,23 @@ export function App() {
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
   // (new/renamed/exited sessions, Claude going active/idle, watchdog status), so the UI stays current
   // without polling. If the socket drops, the interval polls below take over until it reconnects.
+  const wsRef = useRef<WebSocket | null>(null);
+  const lastHubMsgRef = useRef<number>(0); // wall-clock of the last frame, for the liveness watchdog
   useEffect(() => {
     if (auth !== "authed") return;
-    let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;
     let closed = false; // set on unmount so a pending reconnect doesn't fire
 
     const connect = () => {
-      ws = new WebSocket(sessionsStreamUrl());
-      ws.onopen = () => setStreamUp(true);
+      const ws = new WebSocket(sessionsStreamUrl());
+      wsRef.current = ws;
+      lastHubMsgRef.current = Date.now();
+      ws.onopen = () => {
+        lastHubMsgRef.current = Date.now();
+        setStreamUp(true);
+      };
       ws.onmessage = (e) => {
+        lastHubMsgRef.current = Date.now();
         try {
           const msg = JSON.parse(e.data) as {
             sessions: SessionInfo[];
@@ -179,31 +186,45 @@ export function App() {
           setBusyIds(new Set(msg.busy));
           setWaitingIds(new Set(msg.waiting ?? []));
         } catch {
-          /* ignore a malformed frame */
+          /* ignore a malformed frame (e.g. a keepalive ping) */
         }
       };
       ws.onclose = () => {
         setStreamUp(false);
         if (!closed) retry = setTimeout(connect, 2000);
       };
-      ws.onerror = () => ws?.close();
+      ws.onerror = () => ws.close();
     };
     connect();
 
     return () => {
       closed = true;
       if (retry) clearTimeout(retry);
-      ws?.close();
+      wsRef.current?.close();
+      wsRef.current = null;
     };
   }, [auth, applySessions]);
 
-  // Poll the session list so state badges (running/exited) stay fresh — only while the stream is
-  // down. We always do one immediate fetch for a fast first paint, even before the stream connects.
+  // Liveness watchdog: a WebSocket can go half-open (e.g. after a server restart) without ever firing
+  // onclose, which leaves streamUp stuck true and the UI silently stale — updates then only arrive on a
+  // manual refetch (tab focus, a resize). The server sends a keepalive frame every few seconds, so if
+  // we've heard nothing for a while the socket is dead: force-close it to trigger the reconnect path.
+  useEffect(() => {
+    if (auth !== "authed" || !streamUp) return;
+    const t = setInterval(() => {
+      if (Date.now() - lastHubMsgRef.current > 15000) wsRef.current?.close();
+    }, 5000);
+    return () => clearInterval(t);
+  }, [auth, streamUp]);
+
+  // Poll the session list as a backstop so the badges/names can't get stuck stale. The hub WebSocket
+  // normally keeps this live, but a half-open socket or a dropped frame would otherwise strand the list
+  // until the next manual refetch — so keep a gentle poll running even while the stream looks up, and
+  // poll faster when it's down. Always do one immediate fetch for a fast first paint.
   useEffect(() => {
     if (auth !== "authed") return;
     refresh();
-    if (streamUp) return; // the stream keeps the list fresh; poll only as a fallback
-    const t = setInterval(refresh, 4000);
+    const t = setInterval(refresh, streamUp ? 3000 : 2000);
     return () => clearInterval(t);
   }, [auth, refresh, streamUp]);
 
