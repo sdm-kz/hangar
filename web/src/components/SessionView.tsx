@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { sessionColor } from "@/lib/sessionColors";
 import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
@@ -345,6 +346,15 @@ export function SessionView({
         )}
         <div className="min-w-0 flex-1">
           <div className="group flex min-w-0 items-center gap-2 overflow-hidden">
+            {/* Session color (set via `/color` in the terminal) — same accent shown in the sidebar list. */}
+            {sessionColor(session.color) && (
+              <span
+                aria-hidden
+                className="size-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: sessionColor(session.color)! }}
+                title={`Color: ${session.color}`}
+              />
+            )}
             {renaming ? (
               <RenameField
                 value={session.name}
@@ -471,6 +481,7 @@ export function SessionView({
             <Button
               variant="ghost"
               size="icon"
+              className="size-[30px]"
               onClick={toggleWatchdog}
               title={
                 wdEnabled
@@ -488,6 +499,7 @@ export function SessionView({
             <Button
               variant="outline"
               size="icon"
+              className="size-[30px]"
               onClick={sendContinue}
               title="Send “continue” to this session now"
             >
@@ -498,6 +510,7 @@ export function SessionView({
         <Button
           variant="destructive"
           size="icon"
+          className="size-[30px]"
           onClick={stop}
           disabled={stopping}
           title={session.state === "Running" ? "Stop session" : "Remove session"}
