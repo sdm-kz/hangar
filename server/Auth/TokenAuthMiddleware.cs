@@ -11,8 +11,12 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
         var path = ctx.Request.Path;
 
         var isProtected = path.StartsWithSegments("/api") || path.StartsWithSegments("/hub");
-        // The login and auth-config endpoints must be reachable before a token exists.
-        var isPublic = path.StartsWithSegments("/api/auth/login") || path.StartsWithSegments("/api/auth/config");
+        // The login and auth-config endpoints must be reachable before a token exists. The hook
+        // callback (/api/hooks) is called by the claude subprocess, which has no browser token; it
+        // authenticates with its own X-Hook-Token header, validated inside the endpoint.
+        var isPublic = path.StartsWithSegments("/api/auth/login")
+            || path.StartsWithSegments("/api/auth/config")
+            || path.StartsWithSegments("/api/hooks");
 
         if (!isProtected || isPublic)
         {

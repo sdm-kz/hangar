@@ -163,9 +163,10 @@ public sealed partial class TerminalChannel : IDisposable
         _log = log;
     }
 
-    public static TerminalChannel Start(string fileName, IReadOnlyList<string> args, string cwd, ILogger log)
+    public static TerminalChannel Start(string fileName, IReadOnlyList<string> args, string cwd, ILogger log,
+        IReadOnlyDictionary<string, string>? extraEnv = null)
     {
-        var pty = PtySession.Start(fileName, args, cwd, 120, 30);
+        var pty = PtySession.Start(fileName, args, cwd, 120, 30, extraEnv);
         var channel = new TerminalChannel(pty, log);
         // A dedicated blocking-read thread bridges the (synchronous) PTY pipe to async subscribers.
         var t = new Thread(channel.ReadPump) { IsBackground = true, Name = $"pty-read-{pty.ProcessId}" };

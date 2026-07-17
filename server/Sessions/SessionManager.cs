@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ClaudeWeb.Server.Auth;
 
 namespace ClaudeWeb.Server.Sessions;
 
@@ -33,6 +34,8 @@ public sealed class SessionManager : IDisposable
     private readonly ILogger<SessionManager> _log;
     private readonly ExecutableSpec _exe;
     private readonly SessionManagerOptions _options;
+    private readonly TokenStore _tokens;
+    private readonly HookEventStore _hooks;
     private readonly string _stateFile;
     private readonly object _saveLock = new();
     // Same prompt patterns the watchdog uses to avoid auto-answering a dialog — reused here to
@@ -50,9 +53,11 @@ public sealed class SessionManager : IDisposable
 
     private void RaiseChanged() => Changed?.Invoke();
 
-    public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, ILoggerFactory loggerFactory)
+    public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, TokenStore tokens, HookEventStore hooks, ILoggerFactory loggerFactory)
     {
         _options = options;
+        _tokens = tokens;
+        _hooks = hooks;
         _loggerFactory = loggerFactory;
         _log = loggerFactory.CreateLogger<SessionManager>();
         _exe = ClaudeExecutableResolver.Resolve(options.ClaudeExecutable);
@@ -80,9 +85,17 @@ public sealed class SessionManager : IDisposable
     /// <summary>Ids of live sessions where Claude is currently generating output (for the "active" dot).</summary>
     public IReadOnlyCollection<string> BusySessionIds() =>
         _sessions.Values
-            .Where(s => s.State == SessionState.Running && s.Terminal?.IsBusy == true)
+            .Where(s => s.State == SessionState.Running && IsBusy(s))
             .Select(s => s.Id)
             .ToArray();
+
+    /// <summary>
+    /// Whether Claude is generating in a session. Prefers the authoritative hook-derived status (exact
+    /// UserPromptSubmit→Stop transitions); falls back to the terminal-output heuristic for sessions that
+    /// haven't produced a hook event yet (e.g. hooks disabled, or the brief window before SessionStart).
+    /// </summary>
+    private bool IsBusy(ClaudeSession s) =>
+        _hooks.TryGetStatus(s.Id, out var st) ? st.Busy : s.Terminal?.IsBusy == true;
 
     /// <summary>
     /// Ids of live sessions that appear to be waiting on the user — a permission/confirmation dialog
@@ -92,11 +105,19 @@ public sealed class SessionManager : IDisposable
     /// </summary>
     public IReadOnlyCollection<string> AwaitingInputIds() =>
         _sessions.Values
-            .Where(s => s.State == SessionState.Running
-                     && s.Terminal is { IsBusy: false } t
-                     && IsAwaitingInput(t))
+            .Where(s => s.State == SessionState.Running && IsAwaitingInput(s))
             .Select(s => s.Id)
             .ToArray();
+
+    /// <summary>
+    /// Whether a session is waiting on the user. Prefers the hook-derived status (a
+    /// Notification/PermissionRequest fired with no answer yet); falls back to the on-screen prompt
+    /// heuristic for sessions without hook data.
+    /// </summary>
+    private bool IsAwaitingInput(ClaudeSession s) =>
+        _hooks.TryGetStatus(s.Id, out var st)
+            ? st.Waiting
+            : s.Terminal is { IsBusy: false } t && IsAwaitingInput(t);
 
     // Shown by Claude Code throughout generation (including the thinking phase, when no PTY output
     // flows and IsBusy can read false) — a reliable "still working, not waiting" signal.
@@ -231,7 +252,8 @@ public sealed class SessionManager : IDisposable
         var session = new ClaudeSession(
             req with { WorkingDirectory = fullDir },
             _exe,
-            _loggerFactory.CreateLogger<ClaudeSession>());
+            _loggerFactory.CreateLogger<ClaudeSession>(),
+            _tokens.HookToken);
 
         // Re-persist and push whenever a persisted field changes (a rename or a `/color` in the terminal).
         session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
@@ -280,6 +302,7 @@ public sealed class SessionManager : IDisposable
         {
             if (stopProcess) s.Stop();
             s.Dispose();
+            _hooks.Forget(id);
             SavePersisted();
             RaiseChanged();
             return true;

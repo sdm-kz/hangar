@@ -32,11 +32,16 @@ public sealed class PtySession : IDisposable
         ProcessId = conn.Pid;
     }
 
-    public static PtySession Start(string fileName, IReadOnlyList<string> arguments, string workingDirectory, short cols, short rows)
+    public static PtySession Start(string fileName, IReadOnlyList<string> arguments, string workingDirectory, short cols, short rows,
+        IReadOnlyDictionary<string, string>? extraEnv = null)
     {
         var env = new Dictionary<string, string>();
         foreach (System.Collections.DictionaryEntry kv in Environment.GetEnvironmentVariables())
             env[(string)kv.Key] = kv.Value?.ToString() ?? "";
+        // Session-specific overrides (e.g. hook correlation vars) — added last so they win.
+        if (extraEnv is not null)
+            foreach (var kv in extraEnv)
+                env[kv.Key] = kv.Value;
 
         var options = new PtyOptions
         {

@@ -44,6 +44,7 @@ public sealed class SessionHub : BackgroundService
     };
 
     private readonly SessionManager _mgr;
+    private readonly HookEventStore _hooks;
     private readonly ILogger<SessionHub> _log;
     private readonly ConcurrentDictionary<Guid, Client> _clients = new();
     // Released by Poke and awaited (with a timeout) by the broadcast loop, so we wake on either an
@@ -51,11 +52,15 @@ public sealed class SessionHub : BackgroundService
     private readonly SemaphoreSlim _wake = new(0, 1);
     private string? _last;
 
-    public SessionHub(SessionManager mgr, ILogger<SessionHub> log)
+    public SessionHub(SessionManager mgr, HookEventStore hooks, ILogger<SessionHub> log)
     {
         _mgr = mgr;
+        _hooks = hooks;
         _log = log;
         _mgr.Changed += Poke;
+        // A hook event (busy/idle/waiting transition) should push to the browser at once, not wait
+        // for the next periodic tick.
+        _hooks.Changed += Poke;
     }
 
     /// <summary>Request an immediate recompute + broadcast (coalesced with any pending wake).</summary>
@@ -145,6 +150,7 @@ public sealed class SessionHub : BackgroundService
     public override void Dispose()
     {
         _mgr.Changed -= Poke;
+        _hooks.Changed -= Poke;
         base.Dispose();
     }
 }

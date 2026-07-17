@@ -16,6 +16,7 @@ public sealed class ClaudeSession : IDisposable
 {
     private readonly ExecutableSpec _exe;
     private readonly ILogger _log;
+    private readonly string? _hookToken; // injected into the child's env so its hooks can authenticate back
     private Process? _process;
     private TerminalChannel? _terminal;
     private FileSystemWatcher? _watcher;
@@ -100,8 +101,9 @@ public sealed class ClaudeSession : IDisposable
         return clean.Length > 100 ? clean[..100] : clean;
     }
 
-    public ClaudeSession(CreateSessionRequest req, ExecutableSpec exe, ILogger log)
+    public ClaudeSession(CreateSessionRequest req, ExecutableSpec exe, ILogger log, string? hookToken = null)
     {
+        _hookToken = hookToken;
         Id = Guid.NewGuid().ToString("n");
         WorkingDirectory = req.WorkingDirectory;
         RemoteControl = req.RemoteControl;
@@ -155,9 +157,15 @@ public sealed class ClaudeSession : IDisposable
         _log.LogInformation("Launching claude session {Id} in {Cwd}: {Exe} {Args}",
             Id, WorkingDirectory, _exe.FileName, string.Join(' ', launchArgs));
 
+        // Correlation for Claude's http hooks: the child inherits these, and the (global) hook config
+        // reads them into the X-Session-Id / X-Hook-Token headers it posts back to /api/hooks.
+        var extraEnv = new Dictionary<string, string> { ["CLAUDEWEB_SESSION_ID"] = Id };
+        if (!string.IsNullOrEmpty(_hookToken))
+            extraEnv["CLAUDEWEB_HOOK_TOKEN"] = _hookToken;
+
         try
         {
-            _terminal = TerminalChannel.Start(_exe.FileName, launchArgs, WorkingDirectory, _log);
+            _terminal = TerminalChannel.Start(_exe.FileName, launchArgs, WorkingDirectory, _log, extraEnv);
             // Mirror a `/rename <name>` typed at the Claude prompt into our own name. Claude handles
             // the command natively; we just observe it in the input stream and follow along.
             _terminal.RenameCommandDetected += name =>

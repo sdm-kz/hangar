@@ -28,6 +28,26 @@ public sealed class TokenStore
 
     public bool AuthDisabled => string.IsNullOrEmpty(_options.Password);
 
+    /// <summary>
+    /// Secret that authorizes Claude hook callbacks (<c>POST /api/hooks</c>), passed by the hook as the
+    /// <c>X-Hook-Token</c> header. Minted fresh per app run and injected into each launched session's
+    /// environment as <c>CLAUDEWEB_HOOK_TOKEN</c>, so the static global hook config only references the
+    /// env var — never the literal secret — and stays valid across restarts.
+    /// </summary>
+    public string HookToken { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+
+    /// <summary>
+    /// Validate the <c>X-Hook-Token</c> header on a hook callback. Constant-time compare. Returns false
+    /// for a null/empty header (a non-ClaudeWeb session, whose env var is unset, sends an empty value).
+    /// </summary>
+    public bool IsValidHookToken(string? token)
+    {
+        if (string.IsNullOrEmpty(token)) return false;
+        var a = System.Text.Encoding.UTF8.GetBytes(token);
+        var b = System.Text.Encoding.UTF8.GetBytes(HookToken);
+        return CryptographicOperations.FixedTimeEquals(a, b);
+    }
+
     public string? Login(string? password)
     {
         if (AuthDisabled) return NewToken();

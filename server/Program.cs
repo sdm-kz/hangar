@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using System.Windows.Forms;
 using ClaudeWeb.Server.Auth;
 using ClaudeWeb.Server.FileSystem;
@@ -37,6 +38,15 @@ internal static class Program
         }
 
         var app = BuildApp(args, contentRoot);
+
+        // Register ClaudeWeb's Claude Code hooks in ~/.claude/settings.json so launched sessions report
+        // their lifecycle back to /api/hooks (driving reliable busy/idle/waiting status). Opt out with
+        // Hooks:Enabled=false; the app then falls back to terminal-scraping heuristics.
+        if (app.Configuration.GetValue("Hooks:Enabled", true))
+        {
+            var hookLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Hooks");
+            Sessions.ClaudeHookStore.EnsureConfigured(port, hookLog);
+        }
 
         if (isService)
         {
@@ -93,6 +103,9 @@ internal static class Program
         builder.Services.AddSingleton(authOptions);
         builder.Services.AddSingleton<TokenStore>();
         builder.Services.AddSingleton(sessionOptions);
+        // Collects Claude hook callbacks and derives live busy/waiting status; consumed by SessionManager
+        // and pushed by SessionHub.
+        builder.Services.AddSingleton<HookEventStore>();
         builder.Services.AddSingleton<SessionManager>();
         // The session-list push hub is one instance shared as both a singleton (so the endpoint can
         // reach it) and a hosted service (so its broadcast loop runs for the app's lifetime).
@@ -137,6 +150,27 @@ internal static class Program
             Results.Ok(new { authRequired = !tokens.AuthDisabled }));
 
         app.MapGet("/api/sessions", (SessionManager mgr) => Results.Ok(mgr.List()));
+
+        // Claude hook callback: each launched session's http hooks POST their event JSON here, tagged
+        // with X-Session-Id (our GUID) and X-Hook-Token (per-run secret), both sourced from env vars we
+        // inject at launch. Correlated events feed HookEventStore's live busy/waiting status. A request
+        // without a valid token or a known session (e.g. a plain `claude` run elsewhere on the machine)
+        // is a quiet no-op — we always return an empty 200 so we never block or error the caller.
+        app.MapPost("/api/hooks", async (HttpContext ctx, TokenStore tokens, HookEventStore hooks) =>
+        {
+            var token = ctx.Request.Headers["X-Hook-Token"].ToString();
+            var sessionId = ctx.Request.Headers["X-Session-Id"].ToString();
+            if (tokens.IsValidHookToken(token) && !string.IsNullOrEmpty(sessionId))
+            {
+                try
+                {
+                    using var doc = await JsonDocument.ParseAsync(ctx.Request.Body);
+                    hooks.Ingest(sessionId, doc.RootElement);
+                }
+                catch { /* malformed body — ignore, still ack */ }
+            }
+            return Results.Ok();
+        });
 
         // Ids of sessions Claude is actively generating in — polled faster than the full list to drive
         // the live "active" dot in the session sidebar. Kept as a fallback for when the push hub
