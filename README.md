@@ -1,4 +1,8 @@
-# Claude Web
+# Homeport
+
+> **Name:** the project will be renamed to **Homeport** (the home port your remote sessions launch
+> from). The rename (repo, `ClaudeWeb.exe`, namespaces) is not done yet — for now the executable is
+> still `ClaudeWeb.exe`.
 
 A .NET 10 **Windows tray application** (backend + web UI in one `.exe`) that **launches Claude Code
 CLI sessions with Remote Control enabled** so you can drive them from the **Claude Code app**
