@@ -426,6 +426,7 @@ export function App() {
     // response returns, so drop any existing copy of its id before appending to avoid a duplicate row.
     setSessions((prev) => [...prev.filter((x) => x.id !== s.id), s]);
     setActiveId(s.id);
+    setSidebarTab("sessions"); // if launched from the Files/recent pane, switch to the list so the new session shows selected
     setSidebarOpen(false);
     loadRecents(); // the dialog just saved this launch as a recent preset (server-side)
   }
