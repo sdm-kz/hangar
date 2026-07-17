@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FolderPicker } from "./FolderPicker";
-import { History, Loader2, Radio, X, Zap } from "lucide-react";
+import { Activity, History, Loader2, Radio, X, Zap } from "lucide-react";
 
 const MODELS = [
   { value: "", label: "Default" },
@@ -69,6 +69,8 @@ export function NewSessionDialog({
   const [model, setModel] = useState("");
   const [remoteControl, setRemoteControl] = useState(true);
   const [permissionMode, setPermissionMode] = useState("auto");
+  const [watchdog, setWatchdog] = useState(false); // hang watchdog — off by default
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
@@ -78,6 +80,7 @@ export function NewSessionDialog({
     if (!open) return;
     api.getRecents().then((r) => setRecents(r.folders)).catch(() => {});
     setError(null);
+    setWatchdog(false); // always default the watchdog off, even when prefilling from a preset
     if (preset) {
       setDir(preset.workingDirectory);
       setName(preset.name);
@@ -103,6 +106,7 @@ export function NewSessionDialog({
         model: model || null,
         initialPrompt: command.trim() || null,
         permissionMode,
+        watchdogEnabled: watchdog,
       });
       // Remember the folder + full launch preset server-side for quick reuse next time. Both are
       // fire-and-forget: a failure here shouldn't block the (already created) session.
@@ -230,6 +234,23 @@ export function NewSessionDialog({
               <p className="text-xs text-muted-foreground">
                 Start Claude with <code className="font-mono">--remote-control</code> so this session appears in
                 the Claude Code app (claude.ai/code &amp; mobile) and you control it from there.
+              </p>
+            </div>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
+            <Checkbox
+              checked={watchdog}
+              onCheckedChange={(v) => setWatchdog(v === true)}
+              className="mt-0.5"
+            />
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5 text-sm font-medium">
+                <Activity className="size-3.5" /> Hang watchdog
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Auto-sends <code className="font-mono">continue</code> when the session hangs on an API or
+                streaming error. Off by default; you can also toggle it later from the session header.
               </p>
             </div>
           </label>

@@ -25,7 +25,9 @@ public sealed record CreateSessionRequest(
     /// <summary>Resume the folder's most recent conversation (<c>claude --continue</c>).</summary>
     bool Continue = false,
     /// <summary>Session color (a color name set via <c>/color</c>); carried across a restore. Null = none.</summary>
-    string? Color = null);
+    string? Color = null,
+    /// <summary>Whether the hang watchdog may auto-continue this session. Off by default.</summary>
+    bool WatchdogEnabled = false);
 
 /// <summary>
 /// On-disk record of a launched session, used to re-attach to still-running Remote Control

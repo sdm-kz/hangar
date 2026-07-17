@@ -23,6 +23,7 @@ export interface CreateSessionRequest {
   model?: string | null;
   initialPrompt?: string | null;
   permissionMode?: string | null;
+  watchdogEnabled?: boolean; // opt into the hang watchdog (auto-continue on API errors); off by default
 }
 
 export interface DirEntry {

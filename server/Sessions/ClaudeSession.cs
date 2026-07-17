@@ -41,8 +41,9 @@ public sealed class ClaudeSession : IDisposable
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
 
     // ---- Watchdog (auto-recover from a hung API/streaming error) -------------------------------
-    /// <summary>Whether the hang watchdog may auto-continue this session (user-toggleable).</summary>
-    public bool WatchdogEnabled { get; set; } = true;
+    /// <summary>Whether the hang watchdog may auto-continue this session (user-toggleable). Off by
+    /// default; the launch request opts in, and it can be toggled later per session.</summary>
+    public bool WatchdogEnabled { get; set; }
     /// <summary>Current watchdog view of the session: "healthy" | "recovering" | "attention".</summary>
     public string WatchdogStatus { get; internal set; } = "healthy";
     /// <summary>Auto-continues fired since the session last looked healthy (reset on recovery).</summary>
@@ -108,6 +109,7 @@ public sealed class ClaudeSession : IDisposable
         InitialPrompt = string.IsNullOrWhiteSpace(req.InitialPrompt) ? null : req.InitialPrompt!.Trim();
         PermissionMode = NormalizeMode(req.PermissionMode);
         Continue = req.Continue;
+        WatchdogEnabled = req.WatchdogEnabled;
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
             : req.Name!.Trim();
