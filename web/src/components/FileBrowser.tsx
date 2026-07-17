@@ -1758,13 +1758,28 @@ function FilePreview({
       );
     };
     if (selectingInPreview()) return;
-    setDiff(null); // force diff to reload lazily
-    if (gitDir || fileKind(file.name) !== "text" || file.size > MAX_TEXT_PREVIEW) return;
     let cancelled = false;
-    api
-      .fetchSessionFileText(sessionId, file.path)
-      .then((t) => !cancelled && !selectingInPreview() && setText(t))
-      .catch(() => {});
+    if (view === "diff") {
+      // The diff is on screen: refetch it in the background and swap in only if it actually changed,
+      // so the pane doesn't flash to empty/loading on every tick. (Nulling it here is what caused the
+      // flicker.) Not toggling diffLoading keeps the current diff visible until the new one lands.
+      api
+        .gitDiff(sessionId, file.path, gitDir)
+        .then((d) => {
+          if (cancelled) return;
+          const next = d.diff || "";
+          setDiff((prev) => (prev === next ? prev : next));
+        })
+        .catch(() => {});
+    } else {
+      setDiff(null); // diff not visible — drop the cached one so it reloads fresh when next viewed
+      if (!gitDir && fileKind(file.name) === "text" && file.size <= MAX_TEXT_PREVIEW) {
+        api
+          .fetchSessionFileText(sessionId, file.path)
+          .then((t) => !cancelled && !selectingInPreview() && setText(t))
+          .catch(() => {});
+      }
+    }
     return () => {
       cancelled = true;
     };

@@ -255,12 +255,16 @@ internal static class Program
         //      confined to a session). Same token auth as everything under /api. -------------------
         app.MapGet("/api/fs/list", (string? path) => Results.Ok(ServerFileBrowser.Browse(path, defaultFolder)));
 
-        app.MapGet("/api/fs/file", (string path, bool? download) =>
+        app.MapGet("/api/fs/file", (string path, bool? download, HttpContext http) =>
         {
             var full = Path.GetFullPath(path);
             if (!File.Exists(full)) return Results.NotFound();
             var contentType = SessionFileBrowser.ContentType(full);
             var name = Path.GetFileName(full);
+            // Force revalidation: the URL is stable per path, so without this the browser serves a
+            // stale heuristically-cached body after the file changes. ETag/Last-Modified still yield a
+            // cheap 304 when unchanged.
+            http.Response.Headers.CacheControl = "no-cache";
             return download == true
                 ? Results.File(full, contentType, fileDownloadName: name, enableRangeProcessing: true)
                 : Results.File(full, contentType, enableRangeProcessing: true);
@@ -320,7 +324,7 @@ internal static class Program
             return listing is null ? Results.NotFound() : Results.Ok(listing);
         });
 
-        app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, SessionManager mgr) =>
+        app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, SessionManager mgr, HttpContext http) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
@@ -329,6 +333,10 @@ internal static class Program
 
             var contentType = SessionFileBrowser.ContentType(full);
             var name = Path.GetFileName(full);
+            // Force revalidation: the URL is stable per path, so without this the browser serves a
+            // stale heuristically-cached body after the file changes. ETag/Last-Modified still yield a
+            // cheap 304 when unchanged.
+            http.Response.Headers.CacheControl = "no-cache";
             return download == true
                 ? Results.File(full, contentType, fileDownloadName: name, enableRangeProcessing: true)
                 : Results.File(full, contentType, enableRangeProcessing: true);
