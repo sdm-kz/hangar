@@ -59,6 +59,7 @@ import {
   X,
 } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
+import { CopyPathButton } from "./CopyPathButton";
 
 // Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
 interface RowActions {
@@ -1619,6 +1620,10 @@ const Row = forwardRef<
           {/* Hover actions, overlaid at the right so they don't eat name width when idle. */}
           <div className="absolute right-1 hidden items-center gap-0.5 rounded bg-accent pl-1 text-muted-foreground group-hover:flex">
             {extraActions}
+            <CopyPathButton
+              path={entry.path}
+              className="rounded p-0.5 hover:bg-background hover:text-foreground"
+            />
             <button
               className="rounded p-0.5 hover:bg-background hover:text-foreground"
               title="Rename"
