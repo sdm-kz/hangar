@@ -48,6 +48,21 @@ internal static class Program
             Sessions.ClaudeHookStore.EnsureConfigured(port, hookLog);
         }
 
+        // --resume-sessions: once the host is up, relaunch (with --continue) the sessions that were
+        // running at the previous exit. deploy.ps1 passes this by default so a redeploy restores them.
+        if (args.Contains("--resume-sessions", StringComparer.OrdinalIgnoreCase))
+        {
+            app.Lifetime.ApplicationStarted.Register(() =>
+            {
+                try { app.Services.GetRequiredService<SessionManager>().ResumePersisted(); }
+                catch (Exception ex)
+                {
+                    app.Services.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger("Startup").LogWarning(ex, "Could not resume sessions");
+                }
+            });
+        }
+
         if (isService)
         {
             app.Run(); // headless: block on the web host

@@ -293,6 +293,25 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
+    /// Relaunch every persisted session that was running at the previous exit (<see cref="PersistedSession.WasRunning"/>),
+    /// resuming its conversation with <c>--continue</c>. Called once at startup when the app is launched
+    /// with <c>--resume-sessions</c> (deploy.ps1 passes it by default), so a restart/redeploy brings the
+    /// working sessions back instead of leaving them as manual "Reopen" entries. Best-effort: a session
+    /// whose folder is gone or that fails to launch simply stays a Restorable entry.
+    /// </summary>
+    public void ResumePersisted()
+    {
+        var ids = _restorable.Values.Where(p => p.WasRunning).Select(p => p.Id).ToArray();
+        if (ids.Length == 0) return;
+        _log.LogInformation("Resuming {Count} session(s) that were running at the last exit", ids.Length);
+        foreach (var id in ids)
+        {
+            try { Restore(id); }
+            catch (Exception ex) { _log.LogWarning(ex, "Could not resume session {Id}", id); }
+        }
+    }
+
+    /// <summary>
     /// Remove a session. <paramref name="stopProcess"/> also kills the claude process. Also forgets
     /// a Restorable entry from a previous run (nothing to stop in that case).
     /// </summary>
@@ -349,9 +368,11 @@ public sealed class SessionManager : IDisposable
                 Directory.CreateDirectory(Path.GetDirectoryName(_stateFile)!);
                 // Persist live sessions plus any still-unrestored entries from prior runs, so they
                 // survive further restarts. Live entries win if an id somehow appears in both.
-                var live = _sessions.Values.Select(s => s.ToPersisted());
+                var live = _sessions.Values.Select(s => s.ToPersisted()); // WasRunning=true
                 var liveIds = _sessions.Keys.ToHashSet();
-                var pending = _restorable.Values.Where(p => !liveIds.Contains(p.Id));
+                // Carried-over Restorable entries were NOT running this run, so clear WasRunning — only
+                // sessions live at the last save auto-resume, not stale leftovers from earlier runs.
+                var pending = _restorable.Values.Where(p => !liveIds.Contains(p.Id)).Select(p => p with { WasRunning = false });
                 var list = live.Concat(pending).OrderBy(p => p.CreatedAt).ToList();
                 File.WriteAllText(_stateFile, JsonSerializer.Serialize(list, new JsonSerializerOptions { WriteIndented = true }));
             }

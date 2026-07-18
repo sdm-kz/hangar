@@ -46,7 +46,14 @@ public sealed record PersistedSession(
     long ProcessStartTicks,
     DateTimeOffset CreatedAt,
     /// <summary>Session color (a color name set via <c>/color</c>); null when never set.</summary>
-    string? Color = null);
+    string? Color = null,
+    /// <summary>
+    /// Whether this session was live (running) at the most recent save — i.e. it was running when the
+    /// app exited. Used by <c>--resume-sessions</c> to auto-relaunch (with <c>--continue</c>) only the
+    /// sessions that were actually running, not stale Restorable leftovers. Legacy state files without
+    /// this key load as false. See <see cref="SessionManager.ResumePersisted"/>.
+    /// </summary>
+    bool WasRunning = false);
 
 /// <summary>Serializable snapshot of a session, sent to the browser.</summary>
 public sealed record SessionInfo(

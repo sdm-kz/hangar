@@ -133,7 +133,8 @@ public sealed class ClaudeSession : IDisposable
         Color: Color);
 
     public PersistedSession ToPersisted() => new(
-        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt, Color);
+        Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt, Color,
+        WasRunning: true); // a live session is, by definition, running when persisted
 
     /// <summary>Coerce an incoming/persisted mode string to a known value; anything unknown → "default".</summary>
     public static string NormalizeMode(string? mode) => mode switch

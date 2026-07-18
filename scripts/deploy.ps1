@@ -7,7 +7,9 @@
   wwwroot is mirrored so stale hashed assets from previous builds are pruned.
 
   The running instance (Windows service "ClaudeWeb" or the tray ClaudeWeb.exe) is stopped so
-  its files unlock, then restarted the same way it was running.
+  its files unlock, then restarted the same way it was running. By default the tray relaunch passes
+  --resume-sessions so the sessions that were running before the restart come back (relaunched with
+  --continue); pass -ResumeSessions:$false to leave them as manual "Reopen" entries instead.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1
@@ -16,8 +18,9 @@
 #>
 param(
   [string]$Target = "C:\apps\claude-web",
-  [switch]$SkipBuild,   # deploy the existing ./publish output without rebuilding
-  [switch]$NoRestart    # leave the app stopped after deploying
+  [switch]$SkipBuild,           # deploy the existing ./publish output without rebuilding
+  [switch]$NoRestart,           # leave the app stopped after deploying
+  [bool]$ResumeSessions = $true # relaunch (with --continue) the sessions that were running before the restart
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,8 +85,15 @@ if (-not $NoRestart) {
     Write-Host "==> Starting ClaudeWeb service" -ForegroundColor Cyan
     Start-Service -Name "ClaudeWeb"
   } else {
-    Write-Host "==> Launching ClaudeWeb.exe (system tray)" -ForegroundColor Cyan
-    Start-Process (Join-Path $Target "ClaudeWeb.exe")
+    # --resume-sessions relaunches the sessions that were running before the stop (with --continue).
+    $exe = Join-Path $Target "ClaudeWeb.exe"
+    if ($ResumeSessions) {
+      Write-Host "==> Launching ClaudeWeb.exe (system tray, resuming sessions)" -ForegroundColor Cyan
+      Start-Process $exe -ArgumentList "--resume-sessions"
+    } else {
+      Write-Host "==> Launching ClaudeWeb.exe (system tray)" -ForegroundColor Cyan
+      Start-Process $exe
+    }
   }
 } else {
   Write-Host "    (-NoRestart) App left stopped. Start it with: $Target\ClaudeWeb.exe" -ForegroundColor DarkGray
