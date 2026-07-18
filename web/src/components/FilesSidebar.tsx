@@ -5,6 +5,7 @@ import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
+import { CopyPathButton } from "./CopyPathButton";
 import { Button } from "@/components/ui/button";
 import {
   Bot,
@@ -456,6 +457,14 @@ function TreeNode({
         )}
 
         {isBusy && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
+        {/* Copy the absolute path — available on drives, folders and files alike. */}
+        {renaming !== path && (
+          <CopyPathButton
+            path={path}
+            iconClassName="size-3"
+            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+          />
+        )}
         {/* Start a Claude session in this folder — hover action on any directory row. */}
         {isDir && renaming !== path && (
           <button
