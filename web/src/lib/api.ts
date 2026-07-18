@@ -162,6 +162,16 @@ export const api = {
     return res.json();
   },
 
+  // ---- Postponed messages (server-backed per session, in .claudeweb/postponed.json) ----
+  // Stored server-side so the pool survives a reload and is shared across devices. Returns the raw
+  // parsed JSON (an array); the caller validates the shape.
+  getPostponed(sessionId: string): Promise<unknown> {
+    return request(`/api/sessions/${sessionId}/postponed`);
+  },
+  putPostponed(sessionId: string, body: string): Promise<void> {
+    return request(`/api/sessions/${sessionId}/postponed`, { method: "PUT", body });
+  },
+
   // ---- Recent launch presets & folders (server-backed, shared across devices) ----
   // Each mutation returns the full updated set so the caller can setState from the response.
   getRecents(): Promise<Recents> {

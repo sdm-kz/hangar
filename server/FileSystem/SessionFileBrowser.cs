@@ -59,6 +59,15 @@ public static class SessionFileBrowser
         return new FileListing((rel ?? "").Replace('\\', '/'), entries);
     }
 
+    /// <summary>Read a text file within the root, or null if the path escapes the root, doesn't exist,
+    /// or can't be read.</summary>
+    public static string? ReadTextSafe(string root, string rel)
+    {
+        var full = ResolveSafe(root, rel);
+        if (full is null || !File.Exists(full)) return null;
+        try { return File.ReadAllText(full); } catch { return null; }
+    }
+
     /// <summary>Overwrite a text file within the root. Returns false if the path escapes the root
     /// or its parent directory does not exist.</summary>
     public static bool Write(string root, string rel, string content)

@@ -486,6 +486,31 @@ internal static class Program
                 : Results.Ok(new { path = rel });
         });
 
+        // Postponed messages: drafts stashed while Claude is busy, persisted server-side per session
+        // (in .claudeweb/postponed.json under the working dir, alongside the images they reference) so
+        // they survive a reload and are shared across devices. Keyed by the working directory via the
+        // file location, so they also carry across a resume (--continue relaunches under a new session
+        // id but the same folder).
+        app.MapGet("/api/sessions/{id}/postponed", (string id, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            var json = SessionFileBrowser.ReadTextSafe(info.WorkingDirectory, ".claudeweb/postponed.json");
+            return Results.Content(json ?? "[]", "application/json");
+        });
+
+        app.MapPut("/api/sessions/{id}/postponed", async (string id, HttpContext ctx, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            using var reader = new StreamReader(ctx.Request.Body);
+            var body = await reader.ReadToEndAsync();
+            if (body.Length > 512 * 1024) return Results.BadRequest(new { error = "too large" });
+            return SessionFileBrowser.WriteBytes(info.WorkingDirectory, ".claudeweb/postponed.json", System.Text.Encoding.UTF8.GetBytes(body)) is not null
+                ? Results.Ok()
+                : Results.BadRequest(new { error = "invalid path" });
+        });
+
         // Filesystem change counter — the UI polls this to auto-refresh the tree.
         app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
         {

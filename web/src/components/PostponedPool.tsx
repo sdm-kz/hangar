@@ -46,7 +46,7 @@ export function PostponedPool({
   busy?: boolean;
   terminalRef: React.RefObject<TerminalPaneHandle | null>;
 }) {
-  const [messages, setMessages] = useState<PostponedMessage[]>(() => loadPostponed(sessionId));
+  const [messages, setMessages] = useState<PostponedMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [draftImages, setDraftImages] = useState<PostponedImage[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -55,20 +55,25 @@ export function PostponedPool({
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Reload (and reset the composer) when switching sessions — each session has its own stash.
+  // Reload (from the server) and reset the composer when switching sessions — each session has its
+  // own stash. `cancelled` guards against a slow load landing after another session switch.
   useEffect(() => {
-    setMessages(loadPostponed(sessionId));
+    let cancelled = false;
+    setMessages([]);
     setDraft("");
     setDraftImages([]);
     setError(null);
+    loadPostponed(sessionId).then((m) => { if (!cancelled) setMessages(m); }).catch(() => {});
+    return () => { cancelled = true; };
   }, [sessionId]);
 
-  // Persist alongside every mutation (rather than via an effect) so a session switch can't race a
-  // save of the previous session's messages under the new session's key.
+  // Persist (to the server) alongside every mutation rather than via an effect, so a session switch
+  // can't race a save of the previous session's messages under the new session's id. The save is
+  // fire-and-forget and captures the sessionId it was created for.
   const commit = useCallback(
     (next: PostponedMessage[]) => {
       setMessages(next);
-      savePostponed(sessionId, next);
+      void savePostponed(sessionId, next);
     },
     [sessionId]
   );
