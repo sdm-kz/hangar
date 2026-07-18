@@ -135,13 +135,29 @@ export function NewSessionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent
+        className="flex max-h-[90vh] flex-col"
+        onOpenAutoFocus={(e) => {
+          // Prefilled with a folder (clone / "new session here") — keep the folder picker collapsed
+          // instead of auto-focusing its input, which would pop the browser open over the whole form.
+          if (preset?.workingDirectory) e.preventDefault();
+        }}
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>New session</DialogTitle>
           <DialogDescription>Start a Claude Code session in a working folder.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        {/* Enter submits (native form submit); the folder picker and the command textarea handle
+            Enter themselves, so they don't trigger it. The body scrolls on short screens. */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            create();
+          }}
+          className="flex min-h-0 flex-1 flex-col gap-4"
+        >
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
           <div className="space-y-2">
             <Label>Working folder</Label>
             <FolderPicker value={dir} onChange={setDir} />
@@ -276,17 +292,18 @@ export function NewSessionDialog({
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
-        </div>
+          </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
-            Cancel
-          </Button>
-          <Button onClick={create} disabled={busy}>
-            {busy && <Loader2 className="size-4 animate-spin" />}
-            Create
-          </Button>
-        </DialogFooter>
+          <DialogFooter className="shrink-0">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy}>
+              {busy && <Loader2 className="size-4 animate-spin" />}
+              Create
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
