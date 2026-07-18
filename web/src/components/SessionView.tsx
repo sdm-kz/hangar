@@ -326,7 +326,16 @@ export function SessionView({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex flex-col gap-2 border-b px-3 py-2 md:h-14 md:flex-row md:items-center md:gap-2 md:py-0">
+      <header className="relative flex flex-col gap-2 border-b px-3 py-2 md:h-14 md:flex-row md:items-center md:gap-2 md:py-0">
+        {/* Session color (set via `/color`) as a left accent border — the same color the sidebar row shows. */}
+        {sessionColor(session.color) && (
+          <span
+            aria-hidden
+            className="absolute inset-y-0 left-0 w-1"
+            style={{ backgroundColor: sessionColor(session.color)! }}
+            title={`Color: ${session.color}`}
+          />
+        )}
         {/* Title group: full-width first row on mobile so the name + folder read clearly; on desktop
             it's the flex-1 left side of a single row. */}
         <div className="flex min-w-0 items-center gap-2 md:flex-1">
@@ -346,15 +355,6 @@ export function SessionView({
         )}
         <div className="min-w-0 flex-1">
           <div className="group flex min-w-0 items-center gap-2 overflow-hidden">
-            {/* Session color (set via `/color` in the terminal) — same accent shown in the sidebar list. */}
-            {sessionColor(session.color) && (
-              <span
-                aria-hidden
-                className="size-2.5 shrink-0 rounded-full"
-                style={{ backgroundColor: sessionColor(session.color)! }}
-                title={`Color: ${session.color}`}
-              />
-            )}
             {renaming ? (
               <RenameField
                 value={session.name}
