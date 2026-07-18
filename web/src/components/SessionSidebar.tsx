@@ -429,9 +429,9 @@ export function SessionSidebar({
                   onRestore(s.id);
                 }}
                 title="Reopen — resumes this conversation (--continue)"
-                className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                className="rounded p-0.5 text-muted-foreground hover:text-foreground"
               >
-                <RotateCcw className="size-3" /> Reopen
+                <RotateCcw className="size-3.5" />
               </button>
             )}
             <button
