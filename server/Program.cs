@@ -23,6 +23,9 @@ internal static class Program
         var isService = WindowsServiceHelpers.IsWindowsService();
         var contentRoot = ResolveContentRoot();
         var port = GetPort(contentRoot);
+        // The address the tray icon (and a single-instance relaunch) opens. Defaults to the local
+        // loopback, but Server:PublicUrl overrides it with an externally reachable hostname.
+        var openUrl = ResolveOpenUrl(contentRoot, port);
 
         // Single-instance for the interactive tray: a second launch just opens the UI and exits.
         Mutex? mutex = null;
@@ -32,7 +35,7 @@ internal static class Program
             mutex = new Mutex(true, $"ClaudeWeb.SingleInstance.v1.{port}", out var isNew);
             if (!isNew)
             {
-                OpenBrowser($"http://localhost:{port}");
+                OpenBrowser(openUrl);
                 return;
             }
         }
@@ -80,7 +83,7 @@ internal static class Program
         Application.SetCompatibleTextRenderingDefault(false);
         // Route UI-thread exceptions to the crash log and keep the tray alive rather than terminating.
         CrashHandler.InstallWinForms();
-        using (var tray = new TrayApplicationContext(app, $"http://localhost:{port}"))
+        using (var tray = new TrayApplicationContext(app, openUrl))
             Application.Run(tray);
 
         try { app.StopAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult(); } catch { }
@@ -613,6 +616,25 @@ internal static class Program
         return Directory.Exists(Path.Combine(baseDir, "wwwroot"))
             ? baseDir
             : Directory.GetCurrentDirectory();
+    }
+
+    // The URL the tray icon and single-instance relaunch open. Server:PublicUrl (e.g. a reverse-proxied
+    // public hostname) wins when set; otherwise fall back to the local loopback on the bound port. The
+    // web host itself still binds to Server:Urls — this only changes where the tray navigates.
+    private static string ResolveOpenUrl(string contentRoot, int port)
+    {
+        try
+        {
+            var config = new ConfigurationBuilder()
+                .SetBasePath(contentRoot)
+                .AddJsonFile("appsettings.json", optional: true)
+                .AddEnvironmentVariables()
+                .Build();
+            var publicUrl = config["Server:PublicUrl"];
+            if (!string.IsNullOrWhiteSpace(publicUrl)) return publicUrl.Trim();
+        }
+        catch { /* fall back to loopback below */ }
+        return $"http://localhost:{port}";
     }
 
     private static int GetPort(string contentRoot)
