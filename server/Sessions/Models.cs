@@ -84,4 +84,10 @@ public sealed record SessionInfo(
     /// <summary>Watchdog view of the session: "healthy" | "recovering" | "attention".</summary>
     string WatchdogStatus = "healthy",
     /// <summary>Session color (a color name set via <c>/color</c>), shown in the sessions list. Null = none.</summary>
-    string? Color = null);
+    string? Color = null,
+    /// <summary>
+    /// For a Restorable entry: whether reopening can resume the EXACT conversation (<c>--resume &lt;id&gt;</c>,
+    /// because we captured Claude's session id) versus falling back to the folder's most recent
+    /// (<c>--continue</c>). Lets the reopen dialog say which it'll do. Always false for live sessions.
+    /// </summary>
+    bool ResumeExact = false);

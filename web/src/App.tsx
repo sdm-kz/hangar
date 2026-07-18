@@ -463,15 +463,25 @@ export function App() {
     [recents]
   );
 
-  // Reopen a Restorable session: it relaunches with --continue and returns a fresh live session.
+  // Reopen a Restorable session: it relaunches (resuming its conversation) and returns a fresh live
+  // session. Uses --resume <id> for the exact conversation when we captured Claude's session id,
+  // otherwise --continue (the folder's most recent).
   async function onRestore(id: string) {
     const s = sessions.find((x) => x.id === id);
     const ok = await confirm({
       title: "Reopen session?",
       description: (
         <>
-          Relaunch <span className="font-medium text-foreground">{s?.name}</span> and resume its
-          conversation (<span className="font-mono">--continue</span>).
+          Relaunch <span className="font-medium text-foreground">{s?.name}</span> and resume{" "}
+          {s?.resumeExact ? (
+            <>
+              this exact conversation (<span className="font-mono">--resume</span>).
+            </>
+          ) : (
+            <>
+              the folder&rsquo;s most recent conversation (<span className="font-mono">--continue</span>).
+            </>
+          )}
         </>
       ),
       confirmLabel: "Reopen",

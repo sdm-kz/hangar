@@ -126,7 +126,8 @@ public sealed class ClaudeSession : IDisposable
     /// <summary>Render a persisted entry as a <see cref="SessionState.Restorable"/> snapshot for the UI.</summary>
     public static SessionInfo RestorableInfo(PersistedSession p) => new(
         p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.PermissionMode,
-        SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color);
+        SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color,
+        ResumeExact: p.ClaudeSessionId is not null);
 
     public SessionInfo ToInfo() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, PermissionMode, State, ProcessId, CreatedAt,

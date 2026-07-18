@@ -428,7 +428,7 @@ export function SessionSidebar({
                   e.stopPropagation();
                   onRestore(s.id);
                 }}
-                title="Reopen — resumes this conversation (--continue)"
+                title="Reopen — relaunch and resume this session's conversation"
                 className="rounded p-0.5 text-muted-foreground hover:text-foreground"
               >
                 <RotateCcw className="size-3.5" />

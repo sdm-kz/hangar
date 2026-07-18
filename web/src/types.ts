@@ -14,6 +14,7 @@ export interface SessionInfo {
   watchdogEnabled: boolean; // whether the hang watchdog may auto-continue this session
   watchdogStatus: "healthy" | "recovering" | "attention"; // watchdog's view of the session
   color: string | null; // color name set via /color in the terminal; shown in the sessions list
+  resumeExact: boolean; // Restorable: reopen can --resume the exact conversation (vs --continue fallback)
 }
 
 export interface CreateSessionRequest {
