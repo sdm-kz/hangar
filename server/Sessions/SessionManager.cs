@@ -279,9 +279,10 @@ public sealed class SessionManager : IDisposable
                 Name: p.Name,
                 RemoteControl: p.RemoteControl,
                 Model: p.Model,
-                InitialPrompt: null, // resumed via --continue; don't re-fire the old launch prompt
+                InitialPrompt: null, // resumed; don't re-fire the old launch prompt
                 PermissionMode: p.PermissionMode,
-                Continue: true,
+                Continue: true, // fallback when we never captured the Claude session id
+                ResumeSessionId: p.ClaudeSessionId, // reopen the EXACT conversation when known
                 Color: p.Color));
         }
         catch
@@ -368,7 +369,10 @@ public sealed class SessionManager : IDisposable
                 Directory.CreateDirectory(Path.GetDirectoryName(_stateFile)!);
                 // Persist live sessions plus any still-unrestored entries from prior runs, so they
                 // survive further restarts. Live entries win if an id somehow appears in both.
-                var live = _sessions.Values.Select(s => s.ToPersisted()); // WasRunning=true
+                // WasRunning=true; stamp each with Claude's own session id (from hooks, or the id we
+                // resumed with) so a future reopen can --resume the exact conversation.
+                var live = _sessions.Values.Select(s =>
+                    s.ToPersisted() with { ClaudeSessionId = _hooks.ClaudeSessionId(s.Id) ?? s.ResumeSessionId });
                 var liveIds = _sessions.Keys.ToHashSet();
                 // Carried-over Restorable entries were NOT running this run, so clear WasRunning — only
                 // sessions live at the last save auto-resume, not stale leftovers from earlier runs.

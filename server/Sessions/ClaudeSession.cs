@@ -37,6 +37,8 @@ public sealed class ClaudeSession : IDisposable
     /// <summary>Normalized permission mode: default | auto | acceptEdits | bypassPermissions.</summary>
     public string PermissionMode { get; }
     public bool Continue { get; }
+    /// <summary>When set, reopen resumes this exact Claude conversation (<c>--resume &lt;id&gt;</c>) instead of <c>--continue</c>.</summary>
+    public string? ResumeSessionId { get; }
     public SessionState State { get; private set; } = SessionState.Running;
     public int ProcessId { get; private set; }
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
@@ -111,6 +113,7 @@ public sealed class ClaudeSession : IDisposable
         InitialPrompt = string.IsNullOrWhiteSpace(req.InitialPrompt) ? null : req.InitialPrompt!.Trim();
         PermissionMode = NormalizeMode(req.PermissionMode);
         Continue = req.Continue;
+        ResumeSessionId = string.IsNullOrWhiteSpace(req.ResumeSessionId) ? null : req.ResumeSessionId;
         WatchdogEnabled = req.WatchdogEnabled;
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
@@ -198,9 +201,16 @@ public sealed class ClaudeSession : IDisposable
     private List<string> BuildArgs()
     {
         var args = new List<string>();
-        // Reopened session: resume the folder's most recent conversation instead of starting fresh.
-        // (A ConPTY child dies with the host, so "restore" relaunches the process and continues.)
-        if (Continue)
+        // Reopened session: relaunch resuming its conversation instead of starting fresh (a ConPTY child
+        // dies with the host). Prefer --resume <id> to reopen the EXACT conversation — a folder can hold
+        // several, and --continue would grab whichever was most recent. Fall back to --continue when we
+        // never captured the session id (e.g. a pre-hooks session).
+        if (ResumeSessionId is not null)
+        {
+            args.Add("--resume");
+            args.Add(ResumeSessionId);
+        }
+        else if (Continue)
             args.Add("--continue");
         // Permission mode controls how much the session runs unattended (there's no human at the
         // pseudo-terminal to answer prompts). "default" leaves decisions to the interactive Claude
@@ -233,8 +243,8 @@ public sealed class ClaudeSession : IDisposable
         }
         // The initial prompt is a positional argument and MUST come last, after all flags.
         // Claude submits it on startup and stays interactive (works alongside --remote-control).
-        // Skipped when continuing so we don't re-fire the original launch prompt onto the resumed run.
-        if (InitialPrompt is not null && !Continue)
+        // Skipped when resuming (--continue/--resume) so we don't re-fire the original launch prompt.
+        if (InitialPrompt is not null && !Continue && ResumeSessionId is null)
             args.Add(InitialPrompt);
         return args;
     }

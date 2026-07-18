@@ -25,6 +25,7 @@ public sealed class HookEventStore
         public bool Waiting;
         public string? CurrentTool;
         public DateTimeOffset LastEventAt;
+        public string? ClaudeSessionId; // Claude Code's own session id (for --resume of the exact convo)
         public readonly Queue<string> Recent = new(); // last few "event[:tool]" strings, for debug/logging
         public readonly object Gate = new();
     }
@@ -56,6 +57,18 @@ public sealed class HookEventStore
     public void Forget(string sessionId) => _byId.TryRemove(sessionId, out _);
 
     /// <summary>
+    /// Claude Code's own session id for our session, once a hook has reported it — used to reopen the
+    /// exact conversation with <c>--resume</c> (a folder can hold several sessions, so <c>--continue</c>
+    /// picks the wrong one). Null until the first hook arrives.
+    /// </summary>
+    public string? ClaudeSessionId(string sessionId)
+    {
+        if (_byId.TryGetValue(sessionId, out var s))
+            lock (s.Gate) return s.ClaudeSessionId;
+        return null;
+    }
+
+    /// <summary>
     /// Apply one hook callback to a session's status. <paramref name="payload"/> is the raw hook JSON
     /// body; we read <c>hook_event_name</c> and, where relevant, <c>tool_name</c> /
     /// <c>notification_type</c>. Unknown events just refresh the timestamp.
@@ -66,11 +79,13 @@ public sealed class HookEventStore
         if (string.IsNullOrEmpty(evt)) return;
         var tool = Str(payload, "tool_name") ?? Str(payload, "toolName");
         var notif = Str(payload, "notification_type") ?? Str(payload, "notificationType");
+        var claudeSessionId = Str(payload, "session_id") ?? Str(payload, "sessionId");
 
         var s = _byId.GetOrAdd(sessionId, _ => new State());
         lock (s.Gate)
         {
             s.LastEventAt = DateTimeOffset.Now;
+            if (!string.IsNullOrEmpty(claudeSessionId)) s.ClaudeSessionId = claudeSessionId;
             switch (evt)
             {
                 case "SessionStart":

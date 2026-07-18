@@ -24,6 +24,11 @@ public sealed record CreateSessionRequest(
     string? PermissionMode = null,
     /// <summary>Resume the folder's most recent conversation (<c>claude --continue</c>).</summary>
     bool Continue = false,
+    /// <summary>
+    /// Resume a specific Claude conversation by its session id (<c>claude --resume &lt;id&gt;</c>). Preferred
+    /// over <see cref="Continue"/> when known, since a folder can hold several sessions. Null = not used.
+    /// </summary>
+    string? ResumeSessionId = null,
     /// <summary>Session color (a color name set via <c>/color</c>); carried across a restore. Null = none.</summary>
     string? Color = null,
     /// <summary>Whether the hang watchdog may auto-continue this session. Off by default.</summary>
@@ -47,6 +52,11 @@ public sealed record PersistedSession(
     DateTimeOffset CreatedAt,
     /// <summary>Session color (a color name set via <c>/color</c>); null when never set.</summary>
     string? Color = null,
+    /// <summary>
+    /// Claude Code's own session id (captured from hook callbacks), so a reopen resumes the exact
+    /// conversation with <c>--resume</c> rather than the folder's most-recent one. Null if never seen.
+    /// </summary>
+    string? ClaudeSessionId = null,
     /// <summary>
     /// Whether this session was live (running) at the most recent save — i.e. it was running when the
     /// app exited. Used by <c>--resume-sessions</c> to auto-relaunch (with <c>--continue</c>) only the
