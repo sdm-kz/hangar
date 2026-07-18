@@ -4,6 +4,7 @@ using System.Windows.Forms;
 using ClaudeWeb.Server.Auth;
 using ClaudeWeb.Server.FileSystem;
 using ClaudeWeb.Server.Logging;
+using ClaudeWeb.Server.Push;
 using ClaudeWeb.Server.Sessions;
 using ClaudeWeb.Server.Tray;
 using Microsoft.Extensions.Hosting;
@@ -132,6 +133,11 @@ internal static class Program
         builder.Services.AddSingleton(watchdogOptions);
         builder.Services.AddHostedService<WatchdogService>();
         builder.Services.AddSingleton<RecentsStore>();
+        // Web Push: the VAPID keypair, the subscription store, and the notifier that fires a push on
+        // the same attention/waiting transitions the UI shows — so alerts arrive with every tab closed.
+        builder.Services.AddSingleton<VapidKeyStore>();
+        builder.Services.AddSingleton<PushSubscriptionStore>();
+        builder.Services.AddHostedService<PushNotifier>();
         builder.Services.ConfigureHttpJsonOptions(o =>
             o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
@@ -299,6 +305,24 @@ internal static class Program
         app.MapPost("/api/recents/sessions/reorder", (List<RecentSession> body, RecentsStore store) => Results.Ok(store.ReorderSessions(body)));
         app.MapPost("/api/recents/folders", (FolderRequest body, RecentsStore store) => Results.Ok(store.AddFolder(body.Path)));
         app.MapPost("/api/recents/folders/remove", (FolderRequest body, RecentsStore store) => Results.Ok(store.RemoveFolder(body.Path)));
+
+        // ---- Web Push subscriptions (background notifications when the tab/PWA is closed) ----------
+        // The VAPID public key is not secret and is needed before the browser can subscribe, so its
+        // config endpoint is on the public allowlist in TokenAuthMiddleware; subscribe/unsubscribe are
+        // token-gated like everything else.
+        app.MapGet("/api/push/config", (VapidKeyStore vapid) => Results.Ok(new { publicKey = vapid.Keys.PublicKey }));
+        app.MapPost("/api/push/subscribe", (PushSubscribeRequest body, PushSubscriptionStore store) =>
+        {
+            if (body.Endpoint is null || body.Keys?.P256dh is null || body.Keys?.Auth is null)
+                return Results.BadRequest(new { error = "invalid subscription" });
+            store.Add(new PushSubscriptionEntry(body.Endpoint, body.Keys.P256dh, body.Keys.Auth));
+            return Results.Ok();
+        });
+        app.MapPost("/api/push/unsubscribe", (PushUnsubscribeRequest body, PushSubscriptionStore store) =>
+        {
+            if (!string.IsNullOrWhiteSpace(body.Endpoint)) store.Remove(body.Endpoint);
+            return Results.Ok();
+        });
 
         var defaultFolder = app.Configuration["FileSystem:DefaultFolder"];
         app.MapGet("/api/fs/browse", (string? path) => Results.Ok(FileSystemBrowser.Browse(path, defaultFolder)));
@@ -669,3 +693,6 @@ internal record FsWriteRequest(string Path, string? Content);
 internal record FsPathRequest(string Path);
 internal record FsRenameRequest(string Path, string NewName);
 internal record ImageUploadRequest(string? DataBase64, string? Ext);
+internal record PushSubscribeRequest(string? Endpoint, PushKeys? Keys);
+internal record PushKeys(string? P256dh, string? Auth);
+internal record PushUnsubscribeRequest(string? Endpoint);

@@ -16,6 +16,8 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
         // authenticates with its own X-Hook-Token header, validated inside the endpoint.
         var isPublic = path.StartsWithSegments("/api/auth/login")
             || path.StartsWithSegments("/api/auth/config")
+            // The VAPID public key is not secret and the browser needs it before it can subscribe.
+            || path.StartsWithSegments("/api/push/config")
             || path.StartsWithSegments("/api/hooks");
 
         if (!isProtected || isPublic)

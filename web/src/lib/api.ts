@@ -194,6 +194,18 @@ export const api = {
     return request("/api/recents/folders/remove", { method: "POST", body: JSON.stringify({ path }) });
   },
 
+  // ---- Web Push (background notifications) ----
+  // The VAPID public key the browser needs to create a subscription (public, no auth required).
+  pushConfig(): Promise<{ publicKey: string }> {
+    return request("/api/push/config");
+  },
+  pushSubscribe(sub: { endpoint: string; keys: { p256dh: string; auth: string } }): Promise<void> {
+    return request("/api/push/subscribe", { method: "POST", body: JSON.stringify(sub) });
+  },
+  pushUnsubscribe(endpoint: string): Promise<void> {
+    return request("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) });
+  },
+
   // ---- Per-session files ----
   listSessionFiles(id: string, path?: string): Promise<FileListing> {
     const q = path ? `?path=${encodeURIComponent(path)}` : "";

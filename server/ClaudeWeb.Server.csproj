@@ -15,6 +15,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
     <PackageReference Include="Porta.Pty" Version="1.0.7" />
+    <!-- Web Push (VAPID) so the server can notify a subscribed browser/PWA even when its tab is closed. -->
+    <PackageReference Include="WebPush" Version="1.0.13" />
   </ItemGroup>
 
   <!-- The built React app lives in wwwroot; the Web SDK includes and publishes it automatically. -->

@@ -344,6 +344,21 @@ export function App() {
       Notification.requestPermission().then((p) => p === "granted" && fire());
   }, [waitingIds, sessions, auth]);
 
+  // When a push notification is tapped while a window is already open, the service worker posts the
+  // session id here so we can jump to it (the cold-open case is handled by readUrlState's ?session=).
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === "open-session" && typeof e.data.sessionId === "string") {
+        window.focus();
+        setActiveId(e.data.sessionId);
+        setOpenFile(null);
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, []);
+
   // Load the server-backed recents once authed, migrating any left over in this browser's
   // localStorage from older builds first.
   useEffect(() => {

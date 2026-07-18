@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
+import { NotificationToggle } from "./NotificationToggle";
 import { cn } from "@/lib/utils";
 import {
   Copy,
@@ -564,6 +565,7 @@ export function SessionSidebar({
         <Button variant="ghost" size="sm" className="flex-1 justify-start text-muted-foreground" onClick={onLogout}>
           <LogOut className="size-4" /> Sign out
         </Button>
+        <NotificationToggle />
         <ThemeToggle />
       </div>
 
