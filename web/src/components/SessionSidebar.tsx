@@ -430,7 +430,7 @@ export function SessionSidebar({
                   onRestore(s.id);
                 }}
                 title="Reopen — relaunch and resume this session's conversation"
-                className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                className="hidden rounded p-0.5 text-muted-foreground hover:text-foreground group-hover:inline-flex"
               >
                 <RotateCcw className="size-3.5" />
               </button>
