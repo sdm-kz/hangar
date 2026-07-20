@@ -1,12 +1,14 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { ImagePlus } from "lucide-react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
-import { api, getToken } from "@/lib/api";
+import { getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
 import { writeToClipboard } from "@/lib/clipboard";
+import { uploadImageFile } from "@/lib/upload";
 
 // Reading the clipboard (OSC 52 "?" report) is a paste-injection risk, so we never expose it —
 // only writes are honored.
@@ -148,6 +150,12 @@ export const TerminalPane = forwardRef<
   // Holds the live terminal socket so the imperative handle can write to it; set inside the socket
   // effect below and nulled on teardown. `null` means "not connected" → sendMessage returns false.
   const wsRef = useRef<WebSocket | null>(null);
+  // The live xterm instance, so the attach-image button can write its own failure notice.
+  const termRef = useRef<Terminal | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Coarse pointer → mobile/touch: surface an attach-image button since pasting an image into the
+  // terminal isn't reliably available on mobile browsers. Desktop keeps the paste path only.
+  const [isTouch] = useState(() => window.matchMedia?.("(pointer: coarse)").matches ?? false);
   useImperativeHandle(
     ref,
     (): TerminalPaneHandle => ({
@@ -199,6 +207,7 @@ export const TerminalPane = forwardRef<
       scrollback: 10000,
       theme: TERM_THEMES[getTheme()],
     });
+    termRef.current = term;
     // Re-theme live when the site theme is toggled.
     const themeSub = subscribeTheme((t) => {
       term.options.theme = TERM_THEMES[t];
@@ -375,16 +384,8 @@ export const TerminalPane = forwardRef<
       e.preventDefault();
       const file = item.getAsFile();
       if (!file) return;
-      const ext = file.type.split("/")[1] || "png";
       try {
-        const dataUrl: string = await new Promise((res, rej) => {
-          const r = new FileReader();
-          r.onload = () => res(r.result as string);
-          r.onerror = () => rej(r.error);
-          r.readAsDataURL(file);
-        });
-        const b64 = dataUrl.split(",", 2)[1] ?? "";
-        const { fullPath } = await api.uploadSessionImage(sessionId, b64, ext);
+        const { fullPath } = await uploadImageFile(sessionId, file);
         if (ws.readyState === WebSocket.OPEN)
           ws.send(new TextEncoder().encode(`\x1b[200~${fullPath}\x1b[201~`));
       } catch {
@@ -462,16 +463,56 @@ export const TerminalPane = forwardRef<
       } catch {
         /* already closing */
       }
+      termRef.current = null;
       term.dispose();
     };
   }, [sessionId]);
+
+  // Attach an image via the native picker (photo library / camera on mobile), then inject its path
+  // into the terminal exactly like a paste — the reliable way to add images on mobile browsers.
+  const onPickImages = async (files: File[]) => {
+    for (const file of files.filter((f) => f.type.startsWith("image/"))) {
+      try {
+        const { fullPath } = await uploadImageFile(sessionId, file);
+        const ws = wsRef.current;
+        if (ws?.readyState === WebSocket.OPEN)
+          ws.send(new TextEncoder().encode(`\x1b[200~${fullPath}\x1b[201~`));
+      } catch {
+        termRef.current?.write("\r\n\x1b[31m[image upload failed]\x1b[0m\r\n");
+      }
+    }
+  };
 
   // Padding lives on the outer wrapper, not the host: FitAddon measures the host (the xterm's
   // parent) and only discounts padding on the .xterm element itself, so any padding here would make
   // it overcount rows and clip the last line. The host stays padding-free and edge-to-edge.
   return (
-    <div className="h-full w-full bg-white p-2 dark:bg-[#0a0a0a]">
+    <div className="relative h-full w-full bg-white p-2 dark:bg-[#0a0a0a]">
       <div ref={hostRef} className="h-full w-full overscroll-contain overflow-hidden" />
+      {isTouch && (
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              onPickImages(Array.from(e.target.files ?? []));
+              e.target.value = ""; // allow re-picking the same file
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach an image (photo library or camera)"
+            aria-label="Attach an image"
+            className="absolute bottom-4 right-4 rounded-full border bg-background/90 p-3 text-muted-foreground shadow-md backdrop-blur hover:text-foreground"
+          >
+            <ImagePlus className="size-5" />
+          </button>
+        </>
+      )}
     </div>
   );
 });

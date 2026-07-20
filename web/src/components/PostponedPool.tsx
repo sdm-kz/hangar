@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Inbox, Pencil, Send, Trash2, X } from "lucide-react";
-import { api, sessionFileUrl } from "@/lib/api";
+import { ChevronDown, ChevronUp, ImagePlus, Inbox, Pencil, Send, Trash2, X } from "lucide-react";
+import { sessionFileUrl } from "@/lib/api";
+import { uploadImageFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,15 +22,6 @@ const SEND_GAP_MS = 150;
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || "image";
-
-function readAsDataURL(file: File): Promise<string> {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result as string);
-    r.onerror = () => rej(r.error);
-    r.readAsDataURL(file);
-  });
-}
 
 /**
  * Per-session pool of "postponed" messages: a composer pinned under the terminal where the user can
@@ -54,6 +46,7 @@ export function PostponedPool({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reload (from the server) and reset the composer when switching sessions — each session has its
   // own stash. `cancelled` guards against a slow load landing after another session switch.
@@ -140,25 +133,32 @@ export function PostponedPool({
     setFlushing(false);
   }, [messages, flushing, terminalRef, commit]);
 
+  const addImageFiles = useCallback(
+    async (files: File[]) => {
+      const images = files.filter((f) => f.type.startsWith("image/"));
+      if (!images.length) return;
+      for (const file of images) {
+        try {
+          const { path, fullPath } = await uploadImageFile(sessionId, file);
+          setDraftImages((prev) => [...prev, { path, fullPath }]);
+          setError(null);
+        } catch {
+          setError("Image upload failed.");
+        }
+      }
+    },
+    [sessionId]
+  );
+
   const onPaste = useCallback(
     async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
       if (!item) return; // text paste falls through to the textarea
       e.preventDefault();
       const file = item.getAsFile();
-      if (!file) return;
-      const ext = file.type.split("/")[1] || "png";
-      try {
-        const dataUrl = await readAsDataURL(file);
-        const b64 = dataUrl.split(",", 2)[1] ?? "";
-        const { path, fullPath } = await api.uploadSessionImage(sessionId, b64, ext);
-        setDraftImages((prev) => [...prev, { path, fullPath }]);
-        setError(null);
-      } catch {
-        setError("Image upload failed.");
-      }
+      if (file) await addImageFiles([file]);
     },
-    [sessionId]
+    [addImageFiles]
   );
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -337,6 +337,25 @@ export function PostponedPool({
               placeholder="Postpone a message — Enter to stash, Shift+Enter for a newline, paste an image"
               className="max-h-32 min-h-9 resize-none py-1.5"
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                addImageFiles(Array.from(e.target.files ?? []));
+                e.target.value = ""; // allow re-picking the same file
+              }}
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach an image (photo library or camera)"
+            >
+              <ImagePlus className="size-4" />
+            </Button>
             <Button onClick={stash} disabled={!canStash} title="Add to the postponed pool">
               Stash
             </Button>
