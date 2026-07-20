@@ -88,6 +88,11 @@ internal static class Program
             Application.Run(tray);
 
         try { app.StopAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult(); } catch { }
+        // Dispose the host so the DI container tears down: this runs SessionManager.Dispose(), which
+        // kills each session's process tree (cmd.exe -> claude.exe). StopAsync alone does NOT dispose
+        // the container, so without this the claude/node children are orphaned and keep running after
+        // the tray "Exit" (the headless service path is fine — RunAsync disposes the host itself).
+        try { (app as IDisposable)?.Dispose(); } catch { }
         mutex?.Dispose();
     }
 
