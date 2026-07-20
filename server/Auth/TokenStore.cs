@@ -1,12 +1,18 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace ClaudeWeb.Server.Auth;
 
 public sealed class AuthOptions
 {
-    /// <summary>Shared password required to log in. If empty, auth is disabled (localhost dev only).</summary>
+    /// <summary>
+    /// Bootstrap-only plaintext password. Leave empty in steady state: when set, it is treated as a
+    /// one-time set/rotate request — hashed to <c>%LocalAppData%\ClaudeWeb\auth.json</c> on startup
+    /// and then ignored, so no recoverable secret lives in config. Clear it after the first launch.
+    /// When no hash has ever been persisted and this is empty, auth is disabled (localhost dev only).
+    /// </summary>
     public string Password { get; set; } = "";
 
     /// <summary>
@@ -30,19 +36,42 @@ public sealed class TokenStore
 
     private readonly ConcurrentDictionary<string, DateTimeOffset> _tokens = new();
     private readonly AuthOptions _options;
+    private readonly ILogger<TokenStore> _logger;
     private readonly string _stateFile;
+    private readonly string _authFile;
     private readonly object _saveLock = new();
 
-    public TokenStore(AuthOptions options)
+    // Salted PBKDF2 hash of the login password (or null when never set). The plaintext is never
+    // stored — see PasswordHasher. Persisted alongside tokens under %LocalAppData%\ClaudeWeb.
+    private string? _passwordHash;
+
+    public TokenStore(AuthOptions options, ILogger<TokenStore> logger)
     {
         _options = options;
-        _stateFile = Path.Combine(
+        _logger = logger;
+        var stateDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "tokens.json");
+            "ClaudeWeb");
+        _stateFile = Path.Combine(stateDir, "tokens.json");
+        _authFile = Path.Combine(stateDir, "auth.json");
         Load();
+        LoadPasswordHash();
+
+        // A plaintext Auth:Password is a one-time bootstrap/rotation input: hash it, persist the
+        // hash, and warn the operator to remove the plaintext. It always wins so a rotation takes
+        // effect on the next restart; steady state leaves it empty and reads the persisted hash.
+        if (!string.IsNullOrEmpty(_options.Password))
+        {
+            _passwordHash = PasswordHasher.Hash(_options.Password);
+            SavePasswordHash();
+            _logger.LogWarning(
+                "A plaintext Auth:Password was detected and hashed to {AuthFile}. Remove the " +
+                "plaintext Password from appsettings.json — the persisted hash is now authoritative.",
+                _authFile);
+        }
     }
 
-    public bool AuthDisabled => string.IsNullOrEmpty(_options.Password);
+    public bool AuthDisabled => string.IsNullOrEmpty(_passwordHash);
 
     /// <summary>
     /// Secret that authorizes Claude hook callbacks (<c>POST /api/hooks</c>), passed by the hook as the
@@ -68,10 +97,8 @@ public sealed class TokenStore
     {
         if (AuthDisabled) return NewToken();
         if (password is null) return null;
-        // Constant-time comparison to avoid leaking password length/prefix via timing.
-        var a = System.Text.Encoding.UTF8.GetBytes(password);
-        var b = System.Text.Encoding.UTF8.GetBytes(_options.Password);
-        return CryptographicOperations.FixedTimeEquals(a, b) ? NewToken() : null;
+        // Verify against the stored salted hash (PasswordHasher does the constant-time compare).
+        return PasswordHasher.Verify(password, _passwordHash) ? NewToken() : null;
     }
 
     public bool IsValid(string? token) =>
@@ -131,6 +158,34 @@ public sealed class TokenStore
                 File.WriteAllText(_stateFile, JsonSerializer.Serialize(_tokens));
             }
             catch { /* best-effort — a failed persist just means re-login after the next restart */ }
+        }
+    }
+
+    // ---- Persistence: the password hash lives next to tokens.json, not in appsettings.json -------
+
+    private sealed class AuthState { public string? PasswordHash { get; set; } }
+
+    private void LoadPasswordHash()
+    {
+        try
+        {
+            if (!File.Exists(_authFile)) return;
+            var state = JsonSerializer.Deserialize<AuthState>(File.ReadAllText(_authFile));
+            if (!string.IsNullOrEmpty(state?.PasswordHash)) _passwordHash = state.PasswordHash;
+        }
+        catch { /* unreadable/old-format auth file — treat as unset (bootstrap plaintext can reseed) */ }
+    }
+
+    private void SavePasswordHash()
+    {
+        lock (_saveLock)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_authFile)!);
+                File.WriteAllText(_authFile, JsonSerializer.Serialize(new AuthState { PasswordHash = _passwordHash }));
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to persist password hash to {AuthFile}", _authFile); }
         }
     }
 }

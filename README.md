@@ -97,7 +97,10 @@ directly at its port — no Vite needed:
 powershell -ExecutionPolicy Bypass -File scripts\run.ps1
 ```
 
-The login password is in `server/appsettings.json` (`Auth:Password`).
+Set the login password by putting it in `server/appsettings.json` (`Auth:Password`) and starting
+the app once — it hashes the password to `%LocalAppData%\ClaudeWeb\auth.json` and logs a reminder
+to clear the plaintext. After that first run, blank `Auth:Password`; the persisted hash is used
+for login and no recoverable password is left on disk.
 
 ## Build the desktop app
 
@@ -107,8 +110,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
 Output: `publish\ClaudeWeb.exe` (self-contained — no .NET runtime needed) plus `wwwroot\` and
-`appsettings.json` beside it. Edit `appsettings.json` to set `Auth:Password` and `Server:Urls`
-(port), then **double-click `ClaudeWeb.exe`**. It appears in the tray; left-click to open.
+`appsettings.json` beside it. Edit `appsettings.json` to set `Auth:Password` (hashed on first
+launch — see above) and `Server:Urls` (port), then **double-click `ClaudeWeb.exe`**. It appears
+in the tray; left-click to open.
 
 **Start on login** (current user, no admin needed):
 
@@ -151,7 +155,7 @@ The same exe detects it's running under the service manager and skips the tray, 
 | Key                         | Meaning                                              | Default              |
 | --------------------------- | ---------------------------------------------------- | -------------------- |
 | `Server:Urls`               | Kestrel bind address(es); `0.0.0.0` = LAN-reachable  | `http://0.0.0.0:5099`|
-| `Auth:Password`             | Shared login password. Empty = **no auth** (dev only)| `change-me`          |
+| `Auth:Password`             | Bootstrap-only plaintext; hashed to `auth.json` on start, then clear it. Empty (with no stored hash) = **no auth** (dev only) | `""` |
 | `Auth:ApiKey`               | API key for `POST /api/external/sessions`. Empty = off| `""`                 |
 | `Sessions:ClaudeExecutable` | Path or command for the CLI (pin a full path here)   | `claude`             |
 | `Sessions:AutoTrustFolders` | Pre-accept Claude's workspace-trust prompt per folder| `true`               |
@@ -186,8 +190,10 @@ rest of `/api/*` still requires the browser bearer token.
 
 ## Security notes
 
-- Auth is a single shared password that mints an in-memory bearer token. Serve over your trusted
-  LAN; put it behind a reverse proxy with TLS if you expose it more widely.
+- Auth is a single shared password that mints an in-memory bearer token. The password is stored
+  only as a salted PBKDF2 hash in `%LocalAppData%\ClaudeWeb\auth.json` — no plaintext in config
+  once you clear `Auth:Password` after first launch. Serve over your trusted LAN; put it behind a
+  reverse proxy with TLS if you expose it more widely.
 - Launched sessions run in Claude's normal permission mode — you approve actions from the app.
 
 ## Layout
