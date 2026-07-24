@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import {
   Copy,
   Filter,
+  Inbox,
   Plus,
   Radio,
   RotateCcw,
@@ -445,6 +446,18 @@ export function SessionSidebar({
             >
               <X className="size-3.5" />
             </button>
+            {/* Postponed-message counter: always visible (unlike the hover-only actions) so a stashed
+                pool is discoverable from the list. Pinned last so the action buttons expand to its left. */}
+            {s.postponedCount > 0 && (
+              <Badge
+                variant="secondary"
+                className="gap-0.5 px-1.5"
+                title={`${s.postponedCount} postponed message${s.postponedCount === 1 ? "" : "s"}`}
+              >
+                <Inbox className="size-3" />
+                {s.postponedCount}
+              </Badge>
+            )}
           </span>
         </div>
         {showPath && (

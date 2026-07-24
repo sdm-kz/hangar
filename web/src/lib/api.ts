@@ -162,7 +162,7 @@ export const api = {
     return res.json();
   },
 
-  // ---- Postponed messages (server-backed per session, in .claudeweb/postponed.json) ----
+  // ---- Postponed messages (server-backed per session, in .claudeweb/postponed/<id>.json) ----
   // Stored server-side so the pool survives a reload and is shared across devices. Returns the raw
   // parsed JSON (an array); the caller validates the shape.
   getPostponed(sessionId: string): Promise<unknown> {

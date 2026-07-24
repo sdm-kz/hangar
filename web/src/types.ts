@@ -15,6 +15,7 @@ export interface SessionInfo {
   watchdogStatus: "healthy" | "recovering" | "attention"; // watchdog's view of the session
   color: string | null; // color name set via /color in the terminal; shown in the sessions list
   resumeExact: boolean; // Restorable: reopen can --resume the exact conversation (vs --continue fallback)
+  postponedCount: number; // number of "postponed" messages stashed for this session (0 = none)
 }
 
 export interface CreateSessionRequest {

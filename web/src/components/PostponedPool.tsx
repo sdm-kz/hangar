@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, ImagePlus, Inbox, Pencil, Send, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, ImagePlus, Inbox, Send, Trash2, X } from "lucide-react";
 import { sessionFileUrl } from "@/lib/api";
 import { uploadImageFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
@@ -59,6 +59,15 @@ export function PostponedPool({
     loadPostponed(sessionId).then((m) => { if (!cancelled) setMessages(m); }).catch(() => {});
     return () => { cancelled = true; };
   }, [sessionId]);
+
+  // Grow the composer with its content, up to 3 lines (then it scrolls). Re-runs on every draft change
+  // — including the reset to empty after a stash — so the box springs back down once sent.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft, expanded]);
 
   // Persist (to the server) alongside every mutation rather than via an effect, so a session switch
   // can't race a save of the previous session's messages under the new session's id. The save is
@@ -162,6 +171,19 @@ export function PostponedPool({
   );
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Ctrl/Cmd+J inserts a newline at the cursor — a keyboard-only alternative to Shift+Enter (which
+    // is awkward to reach on some mobile keyboards).
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const { selectionStart: start, selectionEnd: end } = el;
+      setDraft((d) => d.slice(0, start) + "\n" + d.slice(end));
+      // Drop the caret just after the inserted newline once React has repainted the new value.
+      requestAnimationFrame(() => {
+        el.selectionStart = el.selectionEnd = start + 1;
+      });
+      return;
+    }
     // Enter stashes; Shift+Enter inserts a newline.
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -253,7 +275,13 @@ export function PostponedPool({
                       />
                     </button>
                   ))}
-                  <div className="min-w-0 flex-1 self-center">
+                  {/* Click the body to pull the message back into the composer for editing. */}
+                  <button
+                    type="button"
+                    onClick={() => editMsg(m)}
+                    title="Click to edit"
+                    className="min-w-0 flex-1 cursor-pointer self-center rounded text-left hover:text-foreground"
+                  >
                     {m.text ? (
                       <p className="line-clamp-3 whitespace-pre-wrap break-words">{m.text}</p>
                     ) : (
@@ -261,7 +289,7 @@ export function PostponedPool({
                         {m.images.length} image{m.images.length === 1 ? "" : "s"}
                       </p>
                     )}
-                  </div>
+                  </button>
                   <div className="flex shrink-0 items-center self-center text-muted-foreground">
                     <button
                       type="button"
@@ -270,14 +298,6 @@ export function PostponedPool({
                       className="rounded p-1 hover:bg-accent hover:text-foreground"
                     >
                       <Send className="size-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => editMsg(m)}
-                      title="Edit in composer"
-                      className="rounded p-1 hover:bg-accent hover:text-foreground"
-                    >
-                      <Pencil className="size-3.5" />
                     </button>
                     <button
                       type="button"
@@ -334,8 +354,8 @@ export function PostponedPool({
               onPaste={onPaste}
               onKeyDown={onKeyDown}
               rows={1}
-              placeholder="Postpone a message — Enter to stash, Shift+Enter for a newline, paste an image"
-              className="max-h-32 min-h-9 resize-none py-1.5"
+              placeholder="Postpone a message — Enter to stash, Shift+Enter or Ctrl+J for a newline, paste an image"
+              className="max-h-20 min-h-10 resize-none py-2.5 leading-5"
             />
             <input
               ref={fileInputRef}

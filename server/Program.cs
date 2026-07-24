@@ -519,15 +519,14 @@ internal static class Program
         });
 
         // Postponed messages: drafts stashed while Claude is busy, persisted server-side per session
-        // (in .claudeweb/postponed.json under the working dir, alongside the images they reference) so
-        // they survive a reload and are shared across devices. Keyed by the working directory via the
-        // file location, so they also carry across a resume (--continue relaunches under a new session
-        // id but the same folder).
+        // (in .claudeweb/postponed/<id>.json under the working dir, alongside the images they reference)
+        // so they survive a reload and are shared across devices. Keyed by session id, so sessions that
+        // share a working directory each keep their own pool (a resume gets a fresh session id → empty).
         app.MapGet("/api/sessions/{id}/postponed", (string id, SessionManager mgr) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            var json = SessionFileBrowser.ReadTextSafe(info.WorkingDirectory, ".claudeweb/postponed.json");
+            var json = SessionFileBrowser.ReadTextSafe(info.WorkingDirectory, PostponedStore.RelPathFor(id));
             return Results.Content(json ?? "[]", "application/json");
         });
 
@@ -538,7 +537,7 @@ internal static class Program
             using var reader = new StreamReader(ctx.Request.Body);
             var body = await reader.ReadToEndAsync();
             if (body.Length > 512 * 1024) return Results.BadRequest(new { error = "too large" });
-            return SessionFileBrowser.WriteBytes(info.WorkingDirectory, ".claudeweb/postponed.json", System.Text.Encoding.UTF8.GetBytes(body)) is not null
+            return SessionFileBrowser.WriteBytes(info.WorkingDirectory, PostponedStore.RelPathFor(id), System.Text.Encoding.UTF8.GetBytes(body)) is not null
                 ? Results.Ok()
                 : Results.BadRequest(new { error = "invalid path" });
         });

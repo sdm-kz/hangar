@@ -90,4 +90,6 @@ public sealed record SessionInfo(
     /// because we captured Claude's session id) versus falling back to the folder's most recent
     /// (<c>--continue</c>). Lets the reopen dialog say which it'll do. Always false for live sessions.
     /// </summary>
-    bool ResumeExact = false);
+    bool ResumeExact = false,
+    /// <summary>How many "postponed" messages are stashed for this session (0 = none).</summary>
+    int PostponedCount = 0);

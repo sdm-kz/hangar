@@ -127,14 +127,16 @@ public sealed class ClaudeSession : IDisposable
     public static SessionInfo RestorableInfo(PersistedSession p) => new(
         p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.PermissionMode,
         SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color,
-        ResumeExact: p.ClaudeSessionId is not null);
+        ResumeExact: p.ClaudeSessionId is not null,
+        PostponedCount: PostponedStore.Count(p.WorkingDirectory, p.Id));
 
     public SessionInfo ToInfo() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, PermissionMode, State, ProcessId, CreatedAt,
         RemoteUrl: _terminal?.RemoteUrl,
         WatchdogEnabled: WatchdogEnabled,
         WatchdogStatus: WatchdogStatus,
-        Color: Color);
+        Color: Color,
+        PostponedCount: PostponedStore.Count(WorkingDirectory, Id));
 
     public PersistedSession ToPersisted() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt, Color,
