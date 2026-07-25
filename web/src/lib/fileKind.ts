@@ -26,6 +26,9 @@ const BINARY = new Set([
   "psd", "ai", "sketch", "fig", "db", "sqlite", "dat", "pack", "idx",
 ]);
 
+// Parsing docx/xlsx in the browser is heavy; refuse anything past this before rendering.
+export const MAX_OFFICE_PREVIEW = 15_000_000; // 15 MB
+
 export function fileExt(name: string): string {
   const i = name.lastIndexOf(".");
   return i > 0 ? name.slice(i + 1).toLowerCase() : "";

@@ -1,32 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { sessionFileUrl } from "@/lib/api";
-import { officeKind } from "@/lib/fileKind";
-import type { FileEntry } from "@/types";
+import { MAX_OFFICE_PREVIEW, officeKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 
-type Status = "loading" | "error" | "ready";
+type Status = "loading" | "error" | "toolarge" | "ready";
 
 /**
  * Read-only inline viewer for Word (.docx) and Excel (.xlsx). Fetches the file's
- * raw bytes and renders them with docx-preview / SheetJS, both loaded on demand
- * (dynamic import) so they stay out of the main bundle.
+ * raw bytes from `url` and renders them with docx-preview / SheetJS, both loaded on
+ * demand (dynamic import) so they stay out of the main bundle. The source is just a
+ * URL, so this serves both the per-session browser and the server-wide Files panel.
  */
-export function OfficeViewer({ sessionId, file }: { sessionId: string; file: FileEntry }) {
-  const kind = officeKind(file.name);
-  if (kind === "xlsx") return <XlsxViewer sessionId={sessionId} file={file} />;
-  return <DocxViewer sessionId={sessionId} file={file} />;
+export function OfficeViewer({ url, name }: { url: string; name: string }) {
+  const kind = officeKind(name);
+  if (kind === "xlsx") return <XlsxViewer url={url} />;
+  return <DocxViewer url={url} />;
 }
 
-// Fetch a session file's raw bytes as an ArrayBuffer (same auth-via-query URL the
-// image previews and fetchSessionFileText use).
-async function fetchBytes(sessionId: string, path: string, signal: AbortSignal): Promise<ArrayBuffer> {
-  const res = await fetch(sessionFileUrl(sessionId, path), { signal });
+// Thrown when the response is bigger than we're willing to parse in the browser.
+const TOO_LARGE = "toolarge";
+
+// Fetch the file's raw bytes as an ArrayBuffer (the URL carries auth in its query, same
+// as the image previews). Bails out on oversized files before buffering them.
+async function fetchBytes(url: string, signal: AbortSignal): Promise<ArrayBuffer> {
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(res.statusText);
+  const len = Number(res.headers.get("content-length"));
+  if (len > MAX_OFFICE_PREVIEW) throw new Error(TOO_LARGE);
   return res.arrayBuffer();
 }
 
-function DocxViewer({ sessionId, file }: { sessionId: string; file: FileEntry }) {
+function DocxViewer({ url }: { url: string }) {
   const [status, setStatus] = useState<Status>("loading");
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -36,7 +40,7 @@ function DocxViewer({ sessionId, file }: { sessionId: string; file: FileEntry })
     (async () => {
       try {
         const [buffer, { renderAsync }] = await Promise.all([
-          fetchBytes(sessionId, file.path, ctrl.signal),
+          fetchBytes(url, ctrl.signal),
           import("docx-preview"),
         ]);
         if (ctrl.signal.aborted || !containerRef.current) return;
@@ -46,16 +50,17 @@ function DocxViewer({ sessionId, file }: { sessionId: string; file: FileEntry })
           ignoreLastRenderedPageBreak: true,
         });
         if (!ctrl.signal.aborted) setStatus("ready");
-      } catch {
-        if (!ctrl.signal.aborted) setStatus("error");
+      } catch (e) {
+        if (!ctrl.signal.aborted) setStatus(failure(e));
       }
     })();
     return () => ctrl.abort();
-  }, [sessionId, file.path]);
+  }, [url]);
 
   return (
     <div className="relative h-full overflow-auto bg-neutral-100 p-4 dark:bg-neutral-900">
       {status === "loading" && <Centered><Loader2 className="size-4 animate-spin" /> Loading document…</Centered>}
+      {status === "toolarge" && <Centered>This document is too large to preview.</Centered>}
       {status === "error" && <Centered className="text-destructive">Failed to render document.</Centered>}
       {/* docx-preview injects its own page-styled DOM; keep it light-on-white for fidelity. */}
       <div ref={containerRef} className={cn("docx-host mx-auto", status !== "ready" && "hidden")} />
@@ -63,7 +68,7 @@ function DocxViewer({ sessionId, file }: { sessionId: string; file: FileEntry })
   );
 }
 
-function XlsxViewer({ sessionId, file }: { sessionId: string; file: FileEntry }) {
+function XlsxViewer({ url }: { url: string }) {
   const [status, setStatus] = useState<Status>("loading");
   const [sheets, setSheets] = useState<{ name: string; html: string }[]>([]);
   const [active, setActive] = useState(0);
@@ -75,7 +80,7 @@ function XlsxViewer({ sessionId, file }: { sessionId: string; file: FileEntry })
     (async () => {
       try {
         const [buffer, XLSX] = await Promise.all([
-          fetchBytes(sessionId, file.path, ctrl.signal),
+          fetchBytes(url, ctrl.signal),
           import("xlsx"),
         ]);
         if (ctrl.signal.aborted) return;
@@ -86,17 +91,18 @@ function XlsxViewer({ sessionId, file }: { sessionId: string; file: FileEntry })
         }));
         setSheets(parsed);
         setStatus("ready");
-      } catch {
-        if (!ctrl.signal.aborted) setStatus("error");
+      } catch (e) {
+        if (!ctrl.signal.aborted) setStatus(failure(e));
       }
     })();
     return () => ctrl.abort();
-  }, [sessionId, file.path]);
+  }, [url]);
 
   const activeHtml = useMemo(() => sheets[active]?.html ?? "", [sheets, active]);
 
   if (status === "loading")
     return <Centered><Loader2 className="size-4 animate-spin" /> Loading spreadsheet…</Centered>;
+  if (status === "toolarge") return <Centered>This spreadsheet is too large to preview.</Centered>;
   if (status === "error") return <Centered className="text-destructive">Failed to render spreadsheet.</Centered>;
 
   return (
@@ -124,6 +130,11 @@ function XlsxViewer({ sessionId, file }: { sessionId: string; file: FileEntry })
       />
     </div>
   );
+}
+
+// Map a thrown error to the status it should show — oversize files get their own message.
+function failure(e: unknown): Status {
+  return e instanceof Error && e.message === TOO_LARGE ? "toolarge" : "error";
 }
 
 function Centered({ children, className }: { children: React.ReactNode; className?: string }) {

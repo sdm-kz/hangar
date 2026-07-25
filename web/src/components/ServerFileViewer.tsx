@@ -7,6 +7,7 @@ import { highlightCode } from "@/lib/highlight";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { OfficeViewer } from "./OfficeViewer";
 import {
   Download,
   FolderTree,
@@ -28,7 +29,8 @@ function baseName(p: string): string {
 /**
  * Main-area preview/editor for a file on the server machine (absolute path), opened from the sidebar
  * Files tab. Text files preview with syntax highlighting and can be edited/saved; Markdown has a
- * Rendered/Raw toggle; images preview inline; anything else offers a download.
+ * Rendered/Raw toggle; images, video and Office documents (.docx/.xlsx) preview inline; anything
+ * else offers a download.
  */
 export function ServerFileViewer({
   path,
@@ -194,6 +196,8 @@ export function ServerFileViewer({
           <div className="flex h-full items-center justify-center bg-black p-2">
             <video src={serverFileUrl(path)} controls className="max-h-full max-w-full object-contain" />
           </div>
+        ) : kind === "office" ? (
+          <OfficeViewer url={serverFileUrl(path)} name={name} />
         ) : kind !== "text" ? (
           <DownloadPrompt path={path} name={name} />
         ) : tooLarge ? (
