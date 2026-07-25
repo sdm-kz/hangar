@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, sessionFileUrl } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
-import { fileExt, fileKind, formatSize } from "@/lib/fileKind";
+import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
@@ -72,7 +72,6 @@ interface RowActions {
 }
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
-const MAX_OFFICE_PREVIEW = 15_000_000; // 15 MB — parsing docx/xlsx is heavier; cap before rendering
 
 // Desktop width of the file-tree pane. Persisted per-browser and drag-resizable (like the sidebar).
 const TREE_MIN = 180;
@@ -2033,7 +2032,7 @@ function FilePreview({
               ))}
 
             {kind === "office" && file.size <= MAX_OFFICE_PREVIEW && (
-              <OfficeViewer sessionId={sessionId} file={file} />
+              <OfficeViewer url={sessionFileUrl(sessionId, file.path)} name={file.name} />
             )}
 
             {(kind === "binary" ||
