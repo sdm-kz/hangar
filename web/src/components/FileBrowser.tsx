@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
 import { OfficeViewer } from "./OfficeViewer";
+import { PdfViewer } from "./PdfViewer";
 import {
   GitHistory,
   CommitFilePreview,
@@ -2033,6 +2034,14 @@ function FilePreview({
 
             {kind === "office" && file.size <= MAX_OFFICE_PREVIEW && (
               <OfficeViewer url={sessionFileUrl(sessionId, file.path)} name={file.name} />
+            )}
+
+            {kind === "pdf" && (
+              <PdfViewer
+                url={sessionFileUrl(sessionId, file.path)}
+                downloadUrl={sessionFileUrl(sessionId, file.path, true)}
+                name={file.name}
+              />
             )}
 
             {(kind === "binary" ||

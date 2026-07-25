@@ -1,4 +1,4 @@
-export type FileKind = "image" | "video" | "text" | "office" | "binary";
+export type FileKind = "image" | "video" | "text" | "office" | "pdf" | "binary";
 
 const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"]);
 
@@ -16,8 +16,8 @@ const BINARY = new Set([
   "wasm", "node", "pyc", "pyo", "msi", "apk", "app", "dmg", "iso",
   // archives
   "zip", "tar", "gz", "tgz", "bz2", "xz", "rar", "7z", "jar", "war", "nupkg", "cab",
-  // office / documents (docx + xlsx are handled by the "office" kind and preview inline)
-  "pdf", "doc", "xls", "ppt", "pptx", "odt", "ods", "odp", "rtf",
+  // office / documents (docx + xlsx are the "office" kind and pdf is its own — all preview inline)
+  "doc", "xls", "ppt", "pptx", "odt", "ods", "odp", "rtf",
   // media
   "mp3", "wav", "flac", "ogg", "m4a", "aac", "mp4", "avi", "mov", "mkv", "webm", "wmv", "flv",
   // fonts
@@ -42,6 +42,9 @@ export function fileKind(name: string): FileKind {
   if (ext && IMAGE.has(ext)) return "image";
   if (ext && VIDEO.has(ext)) return "video";
   if (ext && OFFICE.has(ext)) return "office";
+  // PDFs render in the browser's own viewer (the server already serves them as application/pdf),
+  // so there's nothing to parse and no size cap — unlike the docx/xlsx "office" kind.
+  if (ext === "pdf") return "pdf";
   if (ext && BINARY.has(ext)) return "binary";
   return "text";
 }

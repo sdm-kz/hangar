@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { OfficeViewer } from "./OfficeViewer";
+import { PdfViewer } from "./PdfViewer";
 import {
   Download,
   FolderTree,
@@ -29,8 +30,8 @@ function baseName(p: string): string {
 /**
  * Main-area preview/editor for a file on the server machine (absolute path), opened from the sidebar
  * Files tab. Text files preview with syntax highlighting and can be edited/saved; Markdown has a
- * Rendered/Raw toggle; images, video and Office documents (.docx/.xlsx) preview inline; anything
- * else offers a download.
+ * Rendered/Raw toggle; images, video, PDFs and Office documents (.docx/.xlsx) preview inline;
+ * anything else offers a download.
  */
 export function ServerFileViewer({
   path,
@@ -198,6 +199,8 @@ export function ServerFileViewer({
           </div>
         ) : kind === "office" ? (
           <OfficeViewer url={serverFileUrl(path)} name={name} />
+        ) : kind === "pdf" ? (
+          <PdfViewer url={serverFileUrl(path)} downloadUrl={serverFileUrl(path, true)} name={name} />
         ) : kind !== "text" ? (
           <DownloadPrompt path={path} name={name} />
         ) : tooLarge ? (
