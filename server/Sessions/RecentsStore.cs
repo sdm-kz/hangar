@@ -9,7 +9,15 @@ public sealed record RecentSession(
     string Command,
     string Model,
     bool RemoteControl,
-    string PermissionMode);
+    string PermissionMode,
+    /// <summary>
+    /// Claude Code's own session id for the conversation this preset last launched, captured from the
+    /// hook callbacks (see <see cref="HookEventStore.ClaudeSessionIdCaptured"/>). Lets "continue" on a
+    /// reused preset resume that EXACT conversation (<c>--resume &lt;id&gt;</c>) instead of whichever one
+    /// in the folder happens to be the most recent. Null until a hook has reported it. Deliberately not
+    /// part of the dedupe signature — it's a property of the preset, not part of its identity.
+    /// </summary>
+    string? ClaudeSessionId = null);
 
 /// <summary>The remembered launch presets and folders, shared across every device/browser.</summary>
 public sealed record Recents(
@@ -32,6 +40,10 @@ public sealed class RecentsStore
     private readonly object _lock = new();
     private List<RecentSession> _sessions = new();
     private List<string> _folders = new();
+    // Claude session ids learned (from hooks) for a preset signature that isn't stored yet. The client
+    // saves the preset in a second request right after launching, so a fast first hook can beat it here;
+    // AddSession consults this so the id isn't lost to that race. Bounded by the preset cap.
+    private readonly Dictionary<string, string> _pendingIds = new();
 
     public RecentsStore(ILogger<RecentsStore> log)
     {
@@ -55,11 +67,47 @@ public sealed class RecentsStore
         var sig = Sig(norm);
         lock (_lock)
         {
+            // Keep the conversation id across a re-save: the client posts the preset without one (it
+            // can't know it yet), and a hook may already have reported it for this very launch.
+            if (norm.ClaudeSessionId is null)
+                norm = norm with
+                {
+                    ClaudeSessionId = _pendingIds.TryGetValue(sig, out var pending)
+                        ? pending
+                        : _sessions.FirstOrDefault(x => Sig(x) == sig)?.ClaudeSessionId,
+                };
+            _pendingIds.Remove(sig);
             _sessions.RemoveAll(x => Sig(x) == sig);
             _sessions.Insert(0, norm);
             if (_sessions.Count > MaxSessions) _sessions = _sessions.Take(MaxSessions).ToList();
             Save();
             return Snapshot();
+        }
+    }
+
+    /// <summary>
+    /// Stamp the Claude conversation id on the preset a session was launched from, so reusing it can
+    /// resume that exact conversation. Called when a hook first reports the id (see
+    /// <see cref="HookEventStore.ClaudeSessionIdCaptured"/>). If the preset hasn't been saved yet the id
+    /// is held until it is. Returns true when a stored preset changed.
+    /// </summary>
+    public bool SetClaudeSessionId(RecentSession launchedFrom, string claudeSessionId)
+    {
+        if (string.IsNullOrWhiteSpace(claudeSessionId)) return false;
+        var sig = Sig(Normalize(launchedFrom));
+        lock (_lock)
+        {
+            var i = _sessions.FindIndex(x => Sig(x) == sig);
+            if (i < 0)
+            {
+                if (_pendingIds.Count >= MaxSessions) _pendingIds.Clear(); // bound it; these are best-effort
+                _pendingIds[sig] = claudeSessionId;
+                return false;
+            }
+            if (_sessions[i].ClaudeSessionId == claudeSessionId) return false;
+            _sessions[i] = _sessions[i] with { ClaudeSessionId = claudeSessionId };
+            Save();
+            return true;
         }
     }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { folderName } from "@/lib/recentFolders";
-import { type RecentSession } from "@/lib/recentSessions";
+import { sameRecent, type RecentSession } from "@/lib/recentSessions";
 import type { SessionInfo } from "@/types";
 import {
   Dialog,
@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FolderPicker } from "./FolderPicker";
-import { Activity, History, Loader2, Radio, X, Zap } from "lucide-react";
+import { Activity, History, Loader2, Radio, RotateCcw, X, Zap } from "lucide-react";
 
 const MODELS = [
   { value: "", label: "Default" },
@@ -70,17 +70,38 @@ export function NewSessionDialog({
   const [remoteControl, setRemoteControl] = useState(true);
   const [permissionMode, setPermissionMode] = useState("auto");
   const [watchdog, setWatchdog] = useState(false); // hang watchdog — off by default
+  const [continueSession, setContinueSession] = useState(false); // resume the folder's last conversation
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
+  // The preset as the server currently has it. The one we're handed came from the session list's last
+  // load, which may predate the server stamping a conversation id onto it (that happens once Claude's
+  // first hook arrives, seconds after launch).
+  const [stored, setStored] = useState<RecentSession | null>(null);
+
+  // The exact conversation "continue" will resume, when the server has stamped one onto this preset.
+  // Tied to the folder: point the form somewhere else and the id no longer applies, so we fall back to
+  // plain --continue (the folder's most recent conversation).
+  const presetId = stored?.claudeSessionId ?? preset?.claudeSessionId ?? null;
+  const resumeId = presetId && preset?.workingDirectory === dir.trim() ? presetId : null;
 
   // Refresh the recent-folders list each time the dialog opens, and prefill from a preset if given.
   useEffect(() => {
     if (!open) return;
-    api.getRecents().then((r) => setRecents(r.folders)).catch(() => {});
+    api
+      .getRecents()
+      .then((r) => {
+        setRecents(r.folders);
+        setStored(preset ? r.sessions.find((s) => sameRecent(s, preset)) ?? null : null);
+      })
+      .catch(() => {});
     setError(null);
+    setStored(null); // until the refresh above lands
     setWatchdog(false); // always default the watchdog off, even when prefilling from a preset
+    // Relaunching a remembered preset almost always means picking the work back up, so default to
+    // continuing its conversation; a plain "New session" starts fresh.
+    setContinueSession(!!preset);
     if (preset) {
       setDir(preset.workingDirectory);
       setName(preset.name);
@@ -107,6 +128,8 @@ export function NewSessionDialog({
         initialPrompt: command.trim() || null,
         permissionMode,
         watchdogEnabled: watchdog,
+        continue: continueSession,
+        resumeSessionId: continueSession ? resumeId : null,
       });
       // Remember the folder + full launch preset server-side for quick reuse next time. Both are
       // fire-and-forget: a failure here shouldn't block the (already created) session.
@@ -236,6 +259,33 @@ export function NewSessionDialog({
               className="min-h-20"
             />
           </div>
+
+          <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
+            <Checkbox
+              checked={continueSession}
+              onCheckedChange={(v) => setContinueSession(v === true)}
+              className="mt-0.5"
+            />
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5 text-sm font-medium">
+                <RotateCcw className="size-3.5" /> Continue previous conversation
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {resumeId ? (
+                  <>
+                    Resumes <em>this</em> session&apos;s own conversation (
+                    <code className="font-mono">--resume</code>), not just the folder&apos;s most recent one.
+                  </>
+                ) : (
+                  <>
+                    Starts with <code className="font-mono">--continue</code> so Claude picks up the folder&apos;s
+                    most recent conversation instead of a blank one.
+                  </>
+                )}{" "}
+                The start command is skipped when continuing.
+              </p>
+            </div>
+          </label>
 
           <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
             <Checkbox

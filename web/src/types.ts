@@ -26,6 +26,8 @@ export interface CreateSessionRequest {
   initialPrompt?: string | null;
   permissionMode?: string | null;
   watchdogEnabled?: boolean; // opt into the hang watchdog (auto-continue on API errors); off by default
+  continue?: boolean; // resume the folder's most recent conversation (claude --continue) instead of starting fresh
+  resumeSessionId?: string | null; // resume this exact Claude conversation (claude --resume <id>); wins over `continue`
 }
 
 export interface DirEntry {

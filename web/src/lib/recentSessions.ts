@@ -8,6 +8,12 @@ export interface RecentSession {
   model: string; // "", "opus", "sonnet", "haiku"
   remoteControl: boolean;
   permissionMode: string; // default | auto | acceptEdits | bypassPermissions
+  /**
+   * Claude's own session id for the conversation this preset last launched, stamped in by the server
+   * once a hook reports it. When set, "continue" resumes that exact conversation instead of whichever
+   * one in the folder is most recent. Absent until the server has seen a hook for the launch.
+   */
+  claudeSessionId?: string | null;
 }
 
 /**
@@ -17,6 +23,21 @@ export interface RecentSession {
 export interface Recents {
   sessions: RecentSession[];
   folders: string[];
+}
+
+/**
+ * Whether two presets are the same entry. Mirrors the server's dedupe signature (RecentsStore.Sig) —
+ * everything that defines a launch, but not the conversation id the server stamps on afterwards.
+ */
+export function sameRecent(a: RecentSession, b: RecentSession): boolean {
+  return (
+    a.workingDirectory.toLowerCase() === b.workingDirectory.toLowerCase() &&
+    a.name === b.name &&
+    a.command === b.command &&
+    a.model === b.model &&
+    a.remoteControl === b.remoteControl &&
+    a.permissionMode === b.permissionMode
+  );
 }
 
 /** A short human label for a preset (custom name, else folder name). */

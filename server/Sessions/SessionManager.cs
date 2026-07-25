@@ -36,6 +36,10 @@ public sealed class SessionManager : IDisposable
     private readonly SessionManagerOptions _options;
     private readonly TokenStore _tokens;
     private readonly HookEventStore _hooks;
+    private readonly RecentsStore _recents;
+    // The launch preset each live session came from, so the Claude conversation id can be stamped back
+    // onto the matching "recent" entry once a hook reports it (see OnClaudeSessionIdCaptured).
+    private readonly ConcurrentDictionary<string, RecentSession> _launchedFrom = new();
     private readonly string _stateFile;
     private readonly object _saveLock = new();
     // Same prompt patterns the watchdog uses to avoid auto-answering a dialog — reused here to
@@ -53,11 +57,13 @@ public sealed class SessionManager : IDisposable
 
     private void RaiseChanged() => Changed?.Invoke();
 
-    public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, TokenStore tokens, HookEventStore hooks, ILoggerFactory loggerFactory)
+    public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, TokenStore tokens, HookEventStore hooks, RecentsStore recents, ILoggerFactory loggerFactory)
     {
         _options = options;
         _tokens = tokens;
         _hooks = hooks;
+        _recents = recents;
+        _hooks.ClaudeSessionIdCaptured += OnClaudeSessionIdCaptured;
         _loggerFactory = loggerFactory;
         _log = loggerFactory.CreateLogger<SessionManager>();
         _exe = ClaudeExecutableResolver.Resolve(options.ClaudeExecutable);
@@ -257,11 +263,46 @@ public sealed class SessionManager : IDisposable
 
         // Re-persist and push whenever a persisted field changes (a rename or a `/color` in the terminal).
         session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
+        _launchedFrom[session.Id] = PresetOf(req);
         _sessions[session.Id] = session;
         session.Start();
         SavePersisted();
         RaiseChanged();
         return session.ToInfo();
+    }
+
+    /// <summary>
+    /// The "recent" launch preset a request corresponds to. Built from the raw request fields — the New
+    /// Session dialog posts the very same values to /api/recents/sessions right after launching — so the
+    /// two agree on the preset's identity without any fuzzy matching.
+    /// </summary>
+    private static RecentSession PresetOf(CreateSessionRequest req) => new(
+        (req.WorkingDirectory ?? "").Trim(),
+        req.Name ?? "",
+        req.InitialPrompt ?? "",
+        req.Model ?? "",
+        req.RemoteControl,
+        req.PermissionMode ?? "");
+
+    /// <summary>
+    /// A hook reported Claude's own session id for one of our sessions. Persist it right away (both in
+    /// the session state file, for a Restorable reopen, and on the launch preset it came from, so
+    /// reusing that preset with "continue" resumes this exact conversation).
+    /// </summary>
+    private void OnClaudeSessionIdCaptured(string sessionId, string claudeSessionId)
+    {
+        try
+        {
+            if (!_sessions.ContainsKey(sessionId)) return;
+            SavePersisted();
+            if (_launchedFrom.TryGetValue(sessionId, out var preset))
+                _recents.SetClaudeSessionId(preset, claudeSessionId);
+        }
+        catch (Exception ex)
+        {
+            // Runs on the hook request's thread — never let a bookkeeping failure fail the callback.
+            _log.LogWarning(ex, "Could not record Claude session id for {Id}", sessionId);
+        }
     }
 
     /// <summary>
@@ -323,6 +364,7 @@ public sealed class SessionManager : IDisposable
             if (stopProcess) s.Stop();
             s.Dispose();
             _hooks.Forget(id);
+            _launchedFrom.TryRemove(id, out _);
             SavePersisted();
             RaiseChanged();
             return true;
@@ -389,6 +431,7 @@ public sealed class SessionManager : IDisposable
 
     public void Dispose()
     {
+        _hooks.ClaudeSessionIdCaptured -= OnClaudeSessionIdCaptured;
         // A ConPTY child can't outlive the host, so disposing ends each claude process. Their launch
         // metadata is already on disk (written on create), so they come back as Restorable next start.
         foreach (var s in _sessions.Values) s.Dispose();

@@ -40,6 +40,14 @@ public sealed class HookEventStore
     /// <summary>Raised after any ingested event changes a session's status, so the hub can push immediately.</summary>
     public event Action? Changed;
 
+    /// <summary>
+    /// Raised the first time (and on any change) we learn Claude's own session id for one of our
+    /// sessions: <c>(ourSessionId, claudeSessionId)</c>. Lets <see cref="SessionManager"/> stamp the id
+    /// where it's needed for an exact <c>--resume</c> later — the persisted state file and the matching
+    /// "recent" launch preset — at the moment it becomes known rather than on the next incidental save.
+    /// </summary>
+    public event Action<string, string>? ClaudeSessionIdCaptured;
+
     /// <summary>Current hook-derived status for a session, or false if it hasn't produced an event yet.</summary>
     public bool TryGetStatus(string sessionId, out HookStatus status)
     {
@@ -82,10 +90,15 @@ public sealed class HookEventStore
         var claudeSessionId = Str(payload, "session_id") ?? Str(payload, "sessionId");
 
         var s = _byId.GetOrAdd(sessionId, _ => new State());
+        var newClaudeSessionId = false;
         lock (s.Gate)
         {
             s.LastEventAt = DateTimeOffset.Now;
-            if (!string.IsNullOrEmpty(claudeSessionId)) s.ClaudeSessionId = claudeSessionId;
+            if (!string.IsNullOrEmpty(claudeSessionId) && s.ClaudeSessionId != claudeSessionId)
+            {
+                s.ClaudeSessionId = claudeSessionId;
+                newClaudeSessionId = true;
+            }
             switch (evt)
             {
                 case "SessionStart":
@@ -137,6 +150,7 @@ public sealed class HookEventStore
         }
 
         _log.LogTrace("Hook {Event} for session {Id} (tool={Tool}, notif={Notif})", evt, sessionId, tool, notif);
+        if (newClaudeSessionId) ClaudeSessionIdCaptured?.Invoke(sessionId, claudeSessionId!);
         Changed?.Invoke();
     }
 
