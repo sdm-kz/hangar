@@ -405,11 +405,15 @@ internal static class Program
             return listing is null ? Results.NotFound() : Results.Ok(listing);
         });
 
-        app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, SessionManager mgr, HttpContext http) =>
+        // `dir` optionally reads from another worktree of the same repo (the changes view can inspect
+        // one) — validated against the repo's worktree list, same as the git endpoints below.
+        app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, string? dir, SessionManager mgr, HttpContext http) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            var full = SessionFileBrowser.ResolveSafe(info.WorkingDirectory, path);
+            var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
+            if (root is null) return Results.BadRequest(new { error = "invalid worktree" });
+            var full = SessionFileBrowser.ResolveSafe(root, path);
             if (full is null || !File.Exists(full)) return Results.NotFound();
 
             var contentType = SessionFileBrowser.ContentType(full);

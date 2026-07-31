@@ -87,10 +87,14 @@ function readTreeWidth() {
 
 type GitFiles = Record<string, string>;
 
+// Entries built from a path alone (git status, a restored URL) carry no stat, so their size is
+// unknown rather than zero — the preview header hides it instead of claiming "0 B".
+const UNKNOWN_SIZE = -1;
+
 // Build a minimal FileEntry from a path (used to restore a selection from the URL,
 // where we only know the path). Size is filled in once the tree/preview loads.
 function fileEntryFromPath(path: string): FileEntry {
-  return { name: path.split("/").pop() || path, path, isDir: false, size: 0 };
+  return { name: path.split("/").pop() || path, path, isDir: false, size: UNKNOWN_SIZE };
 }
 
 // The chain of ancestor folder paths of a file/dir path ("a/b/c.txt" -> ["a", "a/b"]). Used to
@@ -611,7 +615,7 @@ export const FileBrowser = forwardRef<
       effectiveGitFiles
         ? Object.keys(effectiveGitFiles)
             .sort((a, b) => a.localeCompare(b))
-            .map((p) => ({ name: p.split("/").pop() || p, path: p, isDir: false, size: 0 }))
+            .map((p) => ({ name: p.split("/").pop() || p, path: p, isDir: false, size: UNKNOWN_SIZE }))
         : [],
     [effectiveGitFiles]
   );
@@ -932,11 +936,12 @@ export const FileBrowser = forwardRef<
               />
             )}
             <div className="min-h-0 flex-1">
+              {/* gitDir only in the changes view — the file tree always browses the session's own dir. */}
               <FilePreview
                 sessionId={sessionId}
                 file={selected}
                 gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
-                gitDir={worktreeDir || undefined}
+                gitDir={(showChanges && worktreeDir) || undefined}
                 refreshToken={refreshToken}
                 onSaved={onRefresh}
                 guard={previewGuard}
@@ -1674,8 +1679,8 @@ function FilePreview({
   sessionId: string;
   file: FileEntry | null;
   gitStatus?: string;
-  // When set, diffs come from another worktree of the repo. Its files live outside the session's
-  // working dir, so only the diff is available (no raw content preview/edit).
+  // When set, changes come from another worktree of the repo. Its files live outside the session's
+  // working dir, so every read is scoped to that dir; editing stays disabled there.
   gitDir?: string;
   refreshToken: number;
   onSaved?: () => void;
@@ -1710,7 +1715,12 @@ function FilePreview({
   const kind = file ? fileKind(file.name) : "binary";
   const isMarkdown = !!file && ["md", "markdown"].includes(fileExt(file.name));
   const isHtml = !!file && ["html", "htm"].includes(fileExt(file.name));
-  const canEdit = kind === "text" && status === "idle" && text !== null;
+  // Another worktree's files are read-only here: the write endpoint is confined to the session's dir.
+  const canEdit = kind === "text" && status === "idle" && text !== null && !gitDir;
+  const rawUrl = useCallback(
+    (download = false) => (file ? sessionFileUrl(sessionId, file.path, download, gitDir) : ""),
+    [sessionId, file, gitDir]
+  );
 
   // Syntax-highlighted HTML for the plain-text view (null for unsupported languages).
   const highlighted = useMemo(
@@ -1721,14 +1731,13 @@ function FilePreview({
   useEffect(() => {
     setText(null);
     setStatus("idle");
-    // Another worktree's files aren't reachable for raw preview — show the diff instead.
-    setView(gitDir ? "diff" : "preview");
+    setView("preview");
     setDiff(null);
     setMdView("rendered");
     setEditing(false);
     setSaveError(null);
     setFullscreen(false);
-    if (gitDir || !file || kind !== "text") return;
+    if (!file || kind !== "text") return;
     if (file.size > MAX_TEXT_PREVIEW) {
       setStatus("toolarge");
       return;
@@ -1736,7 +1745,7 @@ function FilePreview({
     let cancelled = false;
     setStatus("loading");
     api
-      .fetchSessionFileText(sessionId, file.path)
+      .fetchSessionFileText(sessionId, file.path, gitDir)
       .then((t) => !cancelled && (setText(t), setStatus("idle")))
       .catch(() => !cancelled && setStatus("error"));
     return () => {
@@ -1778,9 +1787,9 @@ function FilePreview({
         .catch(() => {});
     } else {
       setDiff(null); // diff not visible — drop the cached one so it reloads fresh when next viewed
-      if (!gitDir && fileKind(file.name) === "text" && file.size <= MAX_TEXT_PREVIEW) {
+      if (fileKind(file.name) === "text" && file.size <= MAX_TEXT_PREVIEW) {
         api
-          .fetchSessionFileText(sessionId, file.path)
+          .fetchSessionFileText(sessionId, file.path, gitDir)
           .then((t) => !cancelled && !selectingInPreview() && setText(t))
           .catch(() => {});
       }
@@ -1872,7 +1881,8 @@ function FilePreview({
             className="group/path flex max-w-full items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
           >
             <span className="truncate">
-              {file.path} · {formatSize(file.size)}
+              {file.path}
+              {file.size >= 0 && ` · ${formatSize(file.size)}`}
             </span>
             {copiedPath ? (
               <Check className="size-3 shrink-0 text-emerald-500" />
@@ -1950,7 +1960,7 @@ function FilePreview({
               </Button>
             )}
             <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Download">
-              <a href={sessionFileUrl(sessionId, file.path, true)} download={file.name}>
+              <a href={rawUrl(true)} download={file.name}>
                 <Download className="size-4" />
               </a>
             </Button>
@@ -1980,7 +1990,7 @@ function FilePreview({
               <div className="flex min-h-full items-center justify-center bg-[repeating-conic-gradient(theme(colors.muted)_0%_25%,transparent_0%_50%)] bg-[length:20px_20px] p-4">
                 <button onClick={() => setLightbox(true)} title="Click to zoom" className="cursor-zoom-in">
                   <img
-                    src={sessionFileUrl(sessionId, file.path)}
+                    src={rawUrl()}
                     alt={file.name}
                     className="max-h-full max-w-full object-contain shadow-sm"
                   />
@@ -1991,7 +2001,7 @@ function FilePreview({
             {kind === "video" && (
               <div className="flex h-full items-center justify-center bg-black p-2">
                 <video
-                  src={sessionFileUrl(sessionId, file.path)}
+                  src={rawUrl()}
                   controls
                   className="max-h-full max-w-full object-contain"
                 />
@@ -2033,13 +2043,13 @@ function FilePreview({
               ))}
 
             {kind === "office" && file.size <= MAX_OFFICE_PREVIEW && (
-              <OfficeViewer url={sessionFileUrl(sessionId, file.path)} name={file.name} />
+              <OfficeViewer url={rawUrl()} name={file.name} />
             )}
 
             {kind === "pdf" && (
               <PdfViewer
-                url={sessionFileUrl(sessionId, file.path)}
-                downloadUrl={sessionFileUrl(sessionId, file.path, true)}
+                url={rawUrl()}
+                downloadUrl={rawUrl(true)}
                 name={file.name}
               />
             )}
@@ -2055,7 +2065,7 @@ function FilePreview({
                     : "No preview available for this file type."}
                 </p>
                 <Button asChild variant="outline" size="sm">
-                  <a href={sessionFileUrl(sessionId, file.path, true)} download={file.name}>
+                  <a href={rawUrl(true)} download={file.name}>
                     <Download className="size-4" /> Download
                   </a>
                 </Button>
@@ -2067,7 +2077,7 @@ function FilePreview({
 
       {lightbox && (
         <ImageLightbox
-          src={sessionFileUrl(sessionId, file.path)}
+          src={rawUrl()}
           name={file.name}
           onClose={() => setLightbox(false)}
         />

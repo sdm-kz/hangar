@@ -211,8 +211,8 @@ export const api = {
     const q = path ? `?path=${encodeURIComponent(path)}` : "";
     return request(`/api/sessions/${id}/fs/list${q}`);
   },
-  async fetchSessionFileText(id: string, path: string): Promise<string> {
-    const res = await fetch(sessionFileUrl(id, path));
+  async fetchSessionFileText(id: string, path: string, dir?: string): Promise<string> {
+    const res = await fetch(sessionFileUrl(id, path, false, dir));
     if (!res.ok) throw new ApiError(res.status, res.statusText);
     return res.text();
   },
@@ -339,11 +339,15 @@ export function serverFileUrl(path: string, download = false): string {
   return `/api/fs/file?${params.toString()}`;
 }
 
-/** URL for a session file's raw bytes; token is passed in the query so it works in <img>/<a>. */
-export function sessionFileUrl(id: string, path: string, download = false): string {
+/**
+ * URL for a session file's raw bytes; token is passed in the query so it works in <img>/<a>.
+ * `dir` reads the file from another worktree of the same repo instead of the session's own dir.
+ */
+export function sessionFileUrl(id: string, path: string, download = false, dir?: string): string {
   const token = getToken() ?? "";
   const params = new URLSearchParams({ path });
   if (download) params.set("download", "true");
+  if (dir) params.set("dir", dir);
   if (token) params.set("access_token", token);
   return `/api/sessions/${id}/fs/raw?${params.toString()}`;
 }
