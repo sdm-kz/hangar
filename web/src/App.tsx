@@ -6,7 +6,7 @@ import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { move } from "@/lib/sessionOrder";
 import type { SessionInfo } from "@/types";
 import { Login } from "@/components/Login";
-import { SessionSidebar } from "@/components/SessionSidebar";
+import { SessionSidebar, type SessionListTab } from "@/components/SessionSidebar";
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { FilesSidebar } from "@/components/FilesSidebar";
 import { ServerFileViewer } from "@/components/ServerFileViewer";
@@ -41,6 +41,7 @@ export function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() =>
     readUrlState().panel === "files" ? "files" : "sessions"
   );
+  const [listTab, setListTab] = useState<SessionListTab>("sessions"); // Sessions vs Recent list
   const [openFile, setOpenFile] = useState<string | null>(null); // server file open in the main area
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
@@ -441,7 +442,11 @@ export function App() {
     // response returns, so drop any existing copy of its id before appending to avoid a duplicate row.
     setSessions((prev) => [...prev.filter((x) => x.id !== s.id), s]);
     setActiveId(s.id);
-    setSidebarTab("sessions"); // if launched from the Files/recent pane, switch to the list so the new session shows selected
+    setOpenFile(null); // the new session takes over the main area, like selecting one does
+    // Launching can start from the Files tab or the Recent list; pull both sidebar levels back to the
+    // session list so the new session is visible and shown as selected.
+    setSidebarTab("sessions");
+    setListTab("sessions");
     setSidebarOpen(false);
     loadRecents(); // the dialog just saved this launch as a recent preset (server-side)
   }
@@ -578,6 +583,8 @@ export function App() {
               onReuse={reuseRecent}
               onRemoveRecent={removeRecent}
               onReorderRecent={reorderRecents}
+              tab={listTab}
+              onTabChange={setListTab}
             />
           }
           files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} onNewSession={newSessionInFolder} />}
@@ -625,6 +632,8 @@ export function App() {
                   onReuse={reuseRecent}
                   onRemoveRecent={removeRecent}
                   onReorderRecent={reorderRecents}
+                  tab={listTab}
+                  onTabChange={setListTab}
                 />
               }
               files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} onNewSession={newSessionInFolder} />}

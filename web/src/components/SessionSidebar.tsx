@@ -38,6 +38,9 @@ import {
   ChevronsUpDown,
 } from "lucide-react";
 
+// The two lists the session sidebar can show: live sessions, or recent launch presets.
+export type SessionListTab = "sessions" | "recent";
+
 // Grouped-vs-flat is a per-browser view preference, kept client-side like the session order.
 const GROUPED_KEY = "claudeweb.sessionsGrouped";
 function loadGrouped(): boolean {
@@ -252,6 +255,8 @@ export function SessionSidebar({
   onReuse,
   onRemoveRecent,
   onReorderRecent,
+  tab,
+  onTabChange,
 }: {
   sessions: SessionInfo[];
   busyIds: Set<string>;
@@ -269,8 +274,12 @@ export function SessionSidebar({
   onReuse: (r: RecentSession) => void;
   onRemoveRecent: (r: RecentSession) => void;
   onReorderRecent: (from: number, to: number) => void;
+  // Sessions/Recent list tab. Owned by App so creating a session can pull the sidebar back to the
+  // list, and so the desktop sidebar and the mobile drawer stay on the same tab.
+  tab: SessionListTab;
+  onTabChange: (tab: SessionListTab) => void;
 }) {
-  const [tab, setTab] = useState<"sessions" | "recent">("sessions");
+  const setTab = onTabChange;
   const [grouped, setGrouped] = useState<boolean>(loadGrouped);
   const [filter, setFilter] = useState<SessionFilter>(loadFilter);
   const [editingId, setEditingId] = useState<string | null>(null);
