@@ -185,14 +185,19 @@ export function FilesSidebar({
     if (openPath) revealPath(openPath);
   }, [openPath, revealPath]);
 
-  // Once the revealed file's row is rendered, scroll it into view (once per open file).
+  // Once the revealed file's row is rendered, scroll it into view (once per open file). Rows that are
+  // already visible stay put — otherwise clicking from one file to the next re-centres the tree and
+  // nudges it a line under the cursor.
   useEffect(() => {
     if (!openPath || scrolledRef.current === openPath) return;
-    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-fspath="${CSS.escape(openPath)}"]`);
-    if (el) {
-      scrolledRef.current = openPath;
-      el.scrollIntoView({ block: "center" });
-    }
+    const box = scrollRef.current;
+    const el = box?.querySelector<HTMLElement>(`[data-fspath="${CSS.escape(openPath)}"]`);
+    if (!box || !el) return;
+    scrolledRef.current = openPath;
+    const c = box.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (r.top >= c.top && r.bottom <= c.bottom) return;
+    el.scrollIntoView({ block: "center" });
   }, [openPath, children]);
 
   const toggle = useCallback(
