@@ -111,6 +111,9 @@ public sealed class RecentsStore
         }
     }
 
+    /// <summary>Whether two presets are the same entry (would collapse onto each other when saved).</summary>
+    public static bool SameSession(RecentSession a, RecentSession b) => Sig(Normalize(a)) == Sig(Normalize(b));
+
     public Recents RemoveSession(RecentSession r)
     {
         var sig = Sig(Normalize(r));

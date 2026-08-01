@@ -355,12 +355,15 @@ public sealed class SessionManager : IDisposable
 
     /// <summary>
     /// Remove a session. <paramref name="stopProcess"/> also kills the claude process. Also forgets
-    /// a Restorable entry from a previous run (nothing to stop in that case).
+    /// a Restorable entry from a previous run (nothing to stop in that case). Either way the session
+    /// is saved as a launch preset first, so a removed session lands in the "recent" list instead of
+    /// disappearing — see <see cref="RememberAsRecent(ClaudeSession)"/>.
     /// </summary>
     public bool Remove(string id, bool stopProcess)
     {
         if (_sessions.TryRemove(id, out var s))
         {
+            RememberAsRecent(s); // before Forget/TryRemove below — it reads the hook + launch bookkeeping
             if (stopProcess) s.Stop();
             s.Dispose();
             _hooks.Forget(id);
@@ -369,13 +372,78 @@ public sealed class SessionManager : IDisposable
             RaiseChanged();
             return true;
         }
-        if (_restorable.TryRemove(id, out _))
+        if (_restorable.TryRemove(id, out var p))
         {
+            RememberAsRecent(p);
             SavePersisted();
             RaiseChanged();
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Save a session being removed as a "recent" launch preset, so it stays one click from relaunching.
+    /// Usually the preset it was launched from is already stored and this just moves it back to the front;
+    /// it genuinely adds an entry when the preset was never saved, aged out of the cap, or was removed.
+    /// </summary>
+    private void RememberAsRecent(ClaudeSession s)
+    {
+        _launchedFrom.TryGetValue(s.Id, out var launchedFrom);
+        RememberAsRecent(new RecentSession(
+            s.WorkingDirectory,
+            PresetName(s.Name, s.WorkingDirectory),
+            s.InitialPrompt ?? "",
+            s.Model ?? "",
+            s.RemoteControl,
+            s.PermissionMode,
+            // Stamp the conversation id so reusing the preset resumes this exact conversation.
+            _hooks.ClaudeSessionId(s.Id) ?? s.ResumeSessionId), launchedFrom);
+    }
+
+    /// <summary>Same, for a Restorable entry from a previous run (no live process or hook state).</summary>
+    private void RememberAsRecent(PersistedSession p) => RememberAsRecent(new RecentSession(
+        p.WorkingDirectory,
+        PresetName(p.Name, p.WorkingDirectory),
+        p.InitialPrompt ?? "",
+        p.Model ?? "",
+        p.RemoteControl,
+        p.PermissionMode ?? "",
+        p.ClaudeSessionId), null);
+
+    private void RememberAsRecent(RecentSession preset, RecentSession? launchedFrom)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(preset.WorkingDirectory)) return;
+            // A session renamed after launch no longer matches the preset it came from; drop that stale
+            // entry so the list keeps one entry per session, under the name the user last saw.
+            if (launchedFrom is not null && !RecentsStore.SameSession(launchedFrom, preset))
+                _recents.RemoveSession(launchedFrom);
+            _recents.AddSession(preset);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort bookkeeping — never let it fail the removal itself.
+            _log.LogWarning(ex, "Could not save removed session as a recent preset");
+        }
+    }
+
+    /// <summary>
+    /// The name to store on a preset. A session launched without a name is given its folder's name, and
+    /// a preset with a blank name means exactly that — so blank it out again rather than let the resolved
+    /// name become a second, identical-looking entry.
+    /// </summary>
+    private static string PresetName(string name, string workingDirectory)
+    {
+        try
+        {
+            return name == new DirectoryInfo(workingDirectory).Name ? "" : name;
+        }
+        catch
+        {
+            return name;
+        }
     }
 
     // ---- Persistence: remember launched sessions so they can be reopened across app restarts -----

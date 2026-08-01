@@ -471,6 +471,7 @@ export function App() {
     await api.deleteSession(id).catch(() => {});
     setSessions((prev) => prev.filter((s) => s.id !== id));
     setActiveId((cur) => (cur === id ? null : cur));
+    loadRecents(); // the server saved the removed session as a preset — show it in the Recent tab
   }
 
   // Drag-to-reorder the recent presets. These are server-backed, so persist the new order there.
@@ -524,6 +525,7 @@ export function App() {
     await Promise.all(ids.map((id) => api.deleteSession(id).catch(() => {})));
     setSessions((prev) => prev.filter((s) => !set.has(s.id)));
     setActiveId((cur) => (cur && set.has(cur) ? null : cur));
+    loadRecents(); // each removed session is saved as a preset server-side; refresh the Recent tab
   }
 
   // Rename a session from the sidebar or the details header. Optimistically update the name, then
