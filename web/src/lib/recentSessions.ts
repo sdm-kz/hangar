@@ -1,3 +1,4 @@
+import type { SessionInfo } from "@/types";
 import { folderName } from "./recentFolders";
 
 /** A reusable session preset: everything needed to relaunch the same session. */
@@ -38,6 +39,24 @@ export function sameRecent(a: RecentSession, b: RecentSession): boolean {
     a.remoteControl === b.remoteControl &&
     a.permissionMode === b.permissionMode
   );
+}
+
+/**
+ * A launch preset describing an existing session, for relaunching it through the New Session dialog.
+ * The one-time initial prompt isn't recoverable from a session, so the command starts empty; the
+ * conversation id rides along (Restorable entries carry one) so "continue" resumes that exact
+ * conversation rather than the folder's most recent one.
+ */
+export function presetFromSession(s: SessionInfo): RecentSession {
+  return {
+    workingDirectory: s.workingDirectory,
+    name: s.name,
+    command: "",
+    model: s.model ?? "",
+    remoteControl: s.remoteControl,
+    permissionMode: s.permissionMode || "auto",
+    claudeSessionId: s.claudeSessionId,
+  };
 }
 
 /** A short human label for a preset (custom name, else folder name). */

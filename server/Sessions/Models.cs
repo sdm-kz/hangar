@@ -92,4 +92,11 @@ public sealed record SessionInfo(
     /// </summary>
     bool ResumeExact = false,
     /// <summary>How many "postponed" messages are stashed for this session (0 = none).</summary>
-    int PostponedCount = 0);
+    int PostponedCount = 0,
+    /// <summary>
+    /// For a Restorable entry: Claude's own session id for its conversation, when we captured one — the
+    /// id behind <see cref="ResumeExact"/>. Lets the client relaunch the entry through the New Session
+    /// dialog (adjusting the model/prompt first) and still resume that exact conversation. Null for live
+    /// sessions, which are opened rather than relaunched.
+    /// </summary>
+    string? ClaudeSessionId = null);

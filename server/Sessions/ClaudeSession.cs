@@ -128,7 +128,8 @@ public sealed class ClaudeSession : IDisposable
         p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.PermissionMode,
         SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color,
         ResumeExact: p.ClaudeSessionId is not null,
-        PostponedCount: PostponedStore.Count(p.WorkingDirectory, p.Id));
+        PostponedCount: PostponedStore.Count(p.WorkingDirectory, p.Id),
+        ClaudeSessionId: p.ClaudeSessionId);
 
     public SessionInfo ToInfo() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, PermissionMode, State, ProcessId, CreatedAt,

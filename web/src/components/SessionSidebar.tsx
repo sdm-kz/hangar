@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { NotificationToggle } from "./NotificationToggle";
+import { SessionSearchDialog } from "./SessionSearch";
 import { cn } from "@/lib/utils";
 import {
   Copy,
@@ -25,6 +26,7 @@ import {
   Plus,
   Radio,
   RotateCcw,
+  Search,
   X,
   LogOut,
   Pencil,
@@ -248,6 +250,7 @@ export function SessionSidebar({
   onClose,
   onClone,
   onRestore,
+  onReopen,
   onRename,
   onRemoveSessions,
   onLogout,
@@ -267,6 +270,9 @@ export function SessionSidebar({
   onClose: (id: string) => void;
   onClone: (s: SessionInfo) => void;
   onRestore: (id: string) => void;
+  // Reopen a Restorable entry through the create dialog (used by the search popup, where there's room
+  // to adjust the launch first); the list's own reopen button relaunches it directly via onRestore.
+  onReopen: (s: SessionInfo, preset: RecentSession) => void;
   onRename: (id: string, name: string) => void;
   onRemoveSessions: (ids: string[]) => void;
   onLogout: () => void;
@@ -285,6 +291,8 @@ export function SessionSidebar({
   const [editingId, setEditingId] = useState<string | null>(null);
   // Folder whose bulk-remove popup is open (its normalized dirKey), or null.
   const [removeDir, setRemoveDir] = useState<string | null>(null);
+  // Whether the search popup (sessions + recents) is open.
+  const [searching, setSearching] = useState(false);
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
 
   // Sessions shown after applying the active/all filter ("active" = running only). Recents aren't
@@ -492,6 +500,17 @@ export function SessionSidebar({
         <TabButton active={tab === "recent"} onClick={() => setTab("recent")}>
           Recent{recents.length > 0 && ` (${recents.length})`}
         </TabButton>
+        {(sessions.length > 0 || recents.length > 0) && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0 text-muted-foreground"
+            title="Search sessions and recents"
+            onClick={() => setSearching(true)}
+          >
+            <Search className="size-4" />
+          </Button>
+        )}
         {tab === "sessions" && sessions.length > 0 && (
           <Button
             variant="ghost"
@@ -590,6 +609,23 @@ export function SessionSidebar({
         <NotificationToggle />
         <ThemeToggle />
       </div>
+
+      {searching && (
+        <SessionSearchDialog
+          sessions={sessions}
+          recents={recents}
+          activeId={activeId}
+          // Opening a session from search also pulls the list back to the Sessions tab, so the row the
+          // user just picked is the one shown as selected.
+          onSelect={(id) => {
+            setTab("sessions");
+            onSelect(id);
+          }}
+          onReopen={onReopen}
+          onReuse={onReuse}
+          onClose={() => setSearching(false)}
+        />
+      )}
 
       {removeDir && (
         <FolderRemoveDialog
@@ -739,7 +775,7 @@ function RecentList({
     >
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1">
-          <span className="truncate font-medium">{recentLabel(r)}</span>
+          <span className="truncate">{recentLabel(r)}</span>
         </span>
         <button
           onClick={(e) => {

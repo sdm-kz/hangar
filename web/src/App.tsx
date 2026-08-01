@@ -46,6 +46,9 @@ export function App() {
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
+  // Restorable session the create dialog was opened from (see reopenAsNew): once the replacement
+  // launches, that stale entry is forgotten so the same conversation isn't listed twice.
+  const [newFromId, setNewFromId] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentSession[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(
@@ -383,6 +386,16 @@ export function App() {
     setSidebarOpen(false);
   }
 
+  // Reopen a Restorable session through the create dialog instead of relaunching it straight away, so
+  // the model/prompt/permissions can be adjusted first. The preset carries its conversation id, so the
+  // dialog's "continue" resumes that exact conversation; the stale entry is forgotten once it starts.
+  const reopenAsNew = useCallback((s: SessionInfo, preset: RecentSession) => {
+    setNewPreset(preset);
+    setNewFromId(s.id);
+    setNewOpen(true);
+    setSidebarOpen(false);
+  }, []);
+
   // Open a server file (from the Files tab) in the main content area; close the mobile drawer.
   const openServerFile = useCallback((path: string) => {
     setOpenFile(path);
@@ -438,9 +451,13 @@ export function App() {
   }
 
   function onCreated(s: SessionInfo) {
+    // Reopened a Restorable entry through the dialog: the new session took its place, so forget it.
+    const replaced = newFromId;
+    setNewFromId(null);
+    if (replaced) api.deleteSession(replaced).catch(() => {});
     // Idempotent add: the live stream may already have pushed this new session before the create
     // response returns, so drop any existing copy of its id before appending to avoid a duplicate row.
-    setSessions((prev) => [...prev.filter((x) => x.id !== s.id), s]);
+    setSessions((prev) => [...prev.filter((x) => x.id !== s.id && x.id !== replaced), s]);
     setActiveId(s.id);
     setOpenFile(null); // the new session takes over the main area, like selecting one does
     // Launching can start from the Files tab or the Recent list; pull both sidebar levels back to the
@@ -578,6 +595,7 @@ export function App() {
               onClose={onClose}
               onClone={cloneSession}
               onRestore={onRestore}
+              onReopen={reopenAsNew}
               onRename={onRename}
               onRemoveSessions={onRemoveSessions}
               onLogout={onLogout}
@@ -627,6 +645,7 @@ export function App() {
                   onClose={onClose}
                   onClone={cloneSession}
                   onRestore={onRestore}
+                  onReopen={reopenAsNew}
                   onRename={onRename}
                   onRemoveSessions={onRemoveSessions}
                   onLogout={onLogout}
@@ -680,7 +699,10 @@ export function App() {
         open={newOpen}
         onOpenChange={(o) => {
           setNewOpen(o);
-          if (!o) setNewPreset(null); // clear preset so the next plain "New session" starts fresh
+          if (!o) {
+            setNewPreset(null); // clear preset so the next plain "New session" starts fresh
+            setNewFromId(null); // dismissed without launching — keep the Restorable entry as it is
+          }
         }}
         onCreated={onCreated}
         preset={newPreset}
