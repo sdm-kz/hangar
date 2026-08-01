@@ -32,7 +32,7 @@ public sealed record Recents(
 /// </summary>
 public sealed class RecentsStore
 {
-    private const int MaxSessions = 12;
+    private const int MaxSessions = 100;
     private const int MaxFolders = 8;
 
     private readonly string _file;
