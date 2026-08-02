@@ -326,7 +326,7 @@ export function SessionView({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="relative flex flex-col gap-1.5 border-b px-3 py-2">
+      <header className="relative flex shrink-0 flex-col">
         {/* Session color (set via `/color`) as a left accent border — the same color the sidebar row shows. */}
         {sessionColor(session.color) && (
           <span
@@ -336,8 +336,9 @@ export function SessionView({
             title={`Color: ${session.color}`}
           />
         )}
-        {/* Row 1: session name + badges, with uptime and the info popup next to the branch badge. */}
-        <div className="flex min-w-0 items-center gap-2">
+        {/* Row 1: session name + badges on the left, uptime/info/RC and session actions on the
+            right — h-14 so it lines up with the sidebar's app header. */}
+        <div className="flex h-10 min-w-0 shrink-0 items-center gap-2 border-b px-3">
         <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleSidebar}>
           <Menu className="size-5" />
         </Button>
@@ -452,15 +453,55 @@ export function SessionView({
                     <Radio className="size-3" /> RC
                   </Badge>
                 ))}
+              {session.state === "Running" && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-[30px]"
+                    onClick={toggleWatchdog}
+                    title={
+                      wdEnabled
+                        ? "Hang watchdog on — auto-sends “continue” on API errors. Click to disable."
+                        : "Hang watchdog off. Click to enable auto-recovery."
+                    }
+                    aria-pressed={wdEnabled}
+                  >
+                    {wdEnabled ? (
+                      <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-500" />
+                    ) : (
+                      <ShieldOff className="size-4 text-muted-foreground" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="size-[30px]"
+                    onClick={sendContinue}
+                    title="Send “continue” to this session now"
+                  >
+                    <Play className="size-4" />
+                  </Button>
+                </>
+              )}
+              <Button
+                variant="destructive"
+                size="icon"
+                className="size-[30px]"
+                onClick={stop}
+                disabled={stopping}
+                title={session.state === "Running" ? "Stop session" : "Remove session"}
+              >
+                {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
+              </Button>
             </div>
           </div>
         </div>
 
-        {/* Row 2: view switcher on the left, session actions on the right. */}
-        <div className="flex items-center gap-2">
-        {/* Terminal is the primary surface; Files is the secondary view of the working directory.
+        {/* Row 2: view tabs resting on the header's bottom border, styled like the sidebar tabs.
+            Terminal is the primary surface; Files is the secondary view of the working directory.
             Split shows both side by side (desktop only). */}
-        <div className="flex shrink-0 items-center rounded-md border p-0.5">
+        <div className="flex h-10 shrink-0 items-center border-b">
           <ViewTab active={view === "terminal"} onClick={() => changeView("terminal")}>
             <TerminalSquare className="size-4" />
             <span className="hidden sm:inline">Terminal</span>
@@ -473,52 +514,6 @@ export function SessionView({
             <FolderTree className="size-4" />
             <span className="hidden sm:inline">Files</span>
           </ViewTab>
-        </div>
-
-        {/* Session actions sit at the far right, away from the view switcher. */}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-        {session.state === "Running" && (
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-[30px]"
-              onClick={toggleWatchdog}
-              title={
-                wdEnabled
-                  ? "Hang watchdog on — auto-sends “continue” on API errors. Click to disable."
-                  : "Hang watchdog off. Click to enable auto-recovery."
-              }
-              aria-pressed={wdEnabled}
-            >
-              {wdEnabled ? (
-                <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-500" />
-              ) : (
-                <ShieldOff className="size-4 text-muted-foreground" />
-              )}
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              className="size-[30px]"
-              onClick={sendContinue}
-              title="Send “continue” to this session now"
-            >
-              <Play className="size-4" />
-            </Button>
-          </>
-        )}
-        <Button
-          variant="destructive"
-          size="icon"
-          className="size-[30px]"
-          onClick={stop}
-          disabled={stopping}
-          title={session.state === "Running" ? "Stop session" : "Remove session"}
-        >
-          {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
-        </Button>
-        </div>
         </div>
       </header>
 
@@ -685,8 +680,10 @@ function ViewTab({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors",
-        active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+        "flex h-full items-center gap-1.5 border-b-2 px-3 text-sm font-medium transition-colors",
+        active
+          ? "border-primary text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground",
         className
       )}
     >

@@ -27,7 +27,7 @@ export function AppSidebar({
   return (
     <div className="flex h-full flex-col bg-card">
       {/* App header sits above the tabs so the branding is always on top. */}
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b px-3">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
         <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <Bot className="size-4" />
         </div>
@@ -44,7 +44,7 @@ export function AppSidebar({
           </Button>
         )}
       </div>
-      <div className="flex shrink-0 border-b">
+      <div className="flex h-10 shrink-0 border-b">
         <TabButton active={tab === "sessions"} onClick={() => onTabChange("sessions")}>
           <MessagesSquare className="size-4" />
           Sessions
@@ -81,7 +81,7 @@ function TabButton({
       onClick={onClick}
       {...rest}
       className={cn(
-        "flex flex-1 items-center justify-center gap-1.5 border-b-2 py-2 text-sm font-medium transition-colors",
+        "flex h-full flex-1 items-center justify-center gap-1.5 border-b-2 text-sm font-medium transition-colors",
         active
           ? "border-primary text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground"
