@@ -154,9 +154,14 @@ export function App() {
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, color } : s)));
   }, []);
 
-  // Mirror the active session into the URL so a refresh/shared link restores it.
+  // Mirror the active session into the URL so a refresh/shared link restores it. On a real switch
+  // (not the initial restore) also drop `file` — a lingering deep-link file belongs to the previous
+  // session and would otherwise open in the new one; its own tabs still restore from sessionUi.
+  const urlSessionRef = useRef(activeId);
   useEffect(() => {
-    patchUrlState({ session: activeId ?? undefined });
+    const switched = urlSessionRef.current !== activeId;
+    urlSessionRef.current = activeId;
+    patchUrlState({ session: activeId ?? undefined, ...(switched && { file: undefined }) });
   }, [activeId]);
 
   // Mirror the sidebar tab so a refresh (or a new-tab deep link) restores the Files view.
