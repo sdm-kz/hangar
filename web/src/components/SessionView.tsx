@@ -393,29 +393,6 @@ export function SessionView({
                 Needs attention
               </Badge>
             )}
-            {session.remoteControl &&
-              (session.state === "Running" ? (
-                <a
-                  href={session.remoteUrl ?? "https://claude.ai/code"}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={cn(
-                    badgeVariants({ variant: "outline" }),
-                    "hidden gap-1 border-emerald-500/40 text-emerald-600 transition-colors hover:bg-emerald-500/10 dark:text-emerald-500 sm:inline-flex"
-                  )}
-                  title="Open this Remote Control session in the Claude Code app"
-                >
-                  <Radio className="size-3" /> RC
-                </a>
-              ) : (
-                <Badge
-                  variant="outline"
-                  className="hidden gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-500 sm:inline-flex"
-                  title="Registered for Remote Control — drive it from the Claude Code app"
-                >
-                  <Radio className="size-3" /> RC
-                </Badge>
-              ))}
             {git?.isRepo && git.branch && (
               <button
                 type="button"
@@ -431,30 +408,56 @@ export function SessionView({
                 {changeCount > 0 && <span className="shrink-0 text-amber-500">·{changeCount}</span>}
               </button>
             )}
-            {session.state === "Running" && (
-              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
-              </span>
-            )}
-            <SessionInfoPopover session={session} nowTick={nowTick} />
+            <button
+              type="button"
+              onClick={copyPath}
+              title="Copy working directory"
+              className="group/path flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              <span className="truncate">{session.workingDirectory}</span>
+              {copiedPath ? (
+                <Check className="size-3 shrink-0 text-emerald-500" />
+              ) : (
+                <Copy className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100" />
+              )}
+            </button>
+            {/* Right side of the title row: uptime · info popup · RC badge. */}
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {session.state === "Running" && (
+                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                  up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
+                </span>
+              )}
+              <SessionInfoPopover session={session} nowTick={nowTick} />
+              {session.remoteControl &&
+                (session.state === "Running" ? (
+                  <a
+                    href={session.remoteUrl ?? "https://claude.ai/code"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={cn(
+                      badgeVariants({ variant: "outline" }),
+                      "hidden gap-1 border-emerald-500/40 text-emerald-600 transition-colors hover:bg-emerald-500/10 dark:text-emerald-500 sm:inline-flex"
+                    )}
+                    title="Open this Remote Control session in the Claude Code app"
+                  >
+                    <Radio className="size-3" /> RC
+                  </a>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className="hidden gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-500 sm:inline-flex"
+                    title="Registered for Remote Control — drive it from the Claude Code app"
+                  >
+                    <Radio className="size-3" /> RC
+                  </Badge>
+                ))}
+            </div>
           </div>
         </div>
 
-        {/* Row 2: working directory with the view switcher and session actions right next to it. */}
+        {/* Row 2: view switcher on the left, session actions on the right. */}
         <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={copyPath}
-          title="Copy working directory"
-          className="group/path flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
-        >
-          <span className="truncate">{session.workingDirectory}</span>
-          {copiedPath ? (
-            <Check className="size-3 shrink-0 text-emerald-500" />
-          ) : (
-            <Copy className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100" />
-          )}
-        </button>
         {/* Terminal is the primary surface; Files is the secondary view of the working directory.
             Split shows both side by side (desktop only). */}
         <div className="flex shrink-0 items-center rounded-md border p-0.5">
@@ -634,7 +637,7 @@ function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTic
         <Info className="size-3.5" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-3 text-popover-foreground shadow-md">
+        <div className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-3 text-popover-foreground shadow-md">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
             <InfoRow label="State">{session.state}</InfoRow>
             <InfoRow label="PID">{session.processId}</InfoRow>
