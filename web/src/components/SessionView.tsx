@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { sessionColor } from "@/lib/sessionColors";
-import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, Info, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
@@ -326,7 +326,7 @@ export function SessionView({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="relative flex flex-col gap-2 border-b px-3 py-2 md:h-14 md:flex-row md:items-center md:gap-2 md:py-0">
+      <header className="relative flex flex-col gap-1.5 border-b px-3 py-2">
         {/* Session color (set via `/color`) as a left accent border — the same color the sidebar row shows. */}
         {sessionColor(session.color) && (
           <span
@@ -336,9 +336,8 @@ export function SessionView({
             title={`Color: ${session.color}`}
           />
         )}
-        {/* Title group: full-width first row on mobile so the name + folder read clearly; on desktop
-            it's the flex-1 left side of a single row. */}
-        <div className="flex min-w-0 items-center gap-2 md:flex-1">
+        {/* Row 1: session name + badges, with uptime and the info popup next to the branch badge. */}
+        <div className="flex min-w-0 items-center gap-2">
         <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleSidebar}>
           <Menu className="size-5" />
         </Button>
@@ -353,8 +352,8 @@ export function SessionView({
             <PanelLeftOpen className="size-5" />
           </Button>
         )}
-        <div className="min-w-0 flex-1">
-          <div className="group flex min-w-0 items-center gap-2 overflow-hidden">
+          {/* No overflow-hidden here — it would clip the info popup; children truncate themselves. */}
+          <div className="group flex min-w-0 flex-1 items-center gap-2">
             {renaming ? (
               <RenameField
                 value={session.name}
@@ -432,36 +431,33 @@ export function SessionView({
                 {changeCount > 0 && <span className="shrink-0 text-amber-500">·{changeCount}</span>}
               </button>
             )}
+            {session.state === "Running" && (
+              <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
+              </span>
+            )}
+            <SessionInfoPopover session={session} nowTick={nowTick} />
           </div>
-          <p className="flex items-center font-mono text-[11px] text-muted-foreground">
-            <button
-              type="button"
-              onClick={copyPath}
-              title="Copy working directory"
-              className="group/path flex min-w-0 items-center gap-1 hover:text-foreground"
-            >
-              <span className="truncate">{session.workingDirectory}</span>
-              {copiedPath ? (
-                <Check className="size-3 shrink-0 text-emerald-500" />
-              ) : (
-                <Copy className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100" />
-              )}
-            </button>
-            <span className="shrink-0 whitespace-pre">
-              {session.model ? ` · ${session.model}` : ""} · pid {session.processId}
-              {session.state === "Running" &&
-                ` · up ${formatUptime(nowTick - new Date(session.createdAt).getTime())}`}
-            </span>
-          </p>
-        </div>
         </div>
 
-        {/* Controls row: view switcher + session actions. Sits below the title on mobile, right side
-            of the header on desktop. */}
+        {/* Row 2: working directory with the view switcher and session actions right next to it. */}
         <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={copyPath}
+          title="Copy working directory"
+          className="group/path flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          <span className="truncate">{session.workingDirectory}</span>
+          {copiedPath ? (
+            <Check className="size-3 shrink-0 text-emerald-500" />
+          ) : (
+            <Copy className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100" />
+          )}
+        </button>
         {/* Terminal is the primary surface; Files is the secondary view of the working directory.
             Split shows both side by side (desktop only). */}
-        <div className="flex items-center rounded-md border p-0.5">
+        <div className="flex shrink-0 items-center rounded-md border p-0.5">
           <ViewTab active={view === "terminal"} onClick={() => changeView("terminal")}>
             <TerminalSquare className="size-4" />
             <span className="hidden sm:inline">Terminal</span>
@@ -476,6 +472,8 @@ export function SessionView({
           </ViewTab>
         </div>
 
+        {/* Session actions sit at the far right, away from the view switcher. */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
         {session.state === "Running" && (
           <>
             <Button
@@ -517,6 +515,7 @@ export function SessionView({
         >
           {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
         </Button>
+        </div>
         </div>
       </header>
 
@@ -596,6 +595,74 @@ export function SessionView({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// The "i" popup holding the session details that used to crowd the header line (pid, model, …).
+function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTick: number }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative flex shrink-0 items-center">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title="Session info"
+        aria-expanded={open}
+        className={cn(
+          "text-muted-foreground transition-colors hover:text-foreground",
+          open && "text-foreground"
+        )}
+      >
+        <Info className="size-3.5" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-3 text-popover-foreground shadow-md">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+            <InfoRow label="State">{session.state}</InfoRow>
+            <InfoRow label="PID">{session.processId}</InfoRow>
+            {session.model && <InfoRow label="Model">{session.model}</InfoRow>}
+            {session.permissionMode && <InfoRow label="Permissions">{session.permissionMode}</InfoRow>}
+            <InfoRow label="Remote Control">{session.remoteControl ? "on" : "off"}</InfoRow>
+            <InfoRow label="Watchdog">{session.watchdogEnabled ? "on" : "off"}</InfoRow>
+            <InfoRow label="Started">{new Date(session.createdAt).toLocaleString()}</InfoRow>
+            {session.state === "Running" && (
+              <InfoRow label="Uptime">
+                {formatUptime(nowTick - new Date(session.createdAt).getTime())}
+              </InfoRow>
+            )}
+            <InfoRow label="Folder">{session.workingDirectory}</InfoRow>
+            <InfoRow label="Session id">{session.id}</InfoRow>
+          </dl>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InfoRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className="whitespace-nowrap text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-all font-mono">{children}</dd>
+    </>
   );
 }
 
