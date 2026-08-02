@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { NotificationToggle } from "./NotificationToggle";
-import { SessionSearchDialog } from "./SessionSearch";
 import { cn } from "@/lib/utils";
 import {
   Copy,
@@ -250,7 +249,6 @@ export function SessionSidebar({
   onClose,
   onClone,
   onRestore,
-  onReopen,
   onRename,
   onRemoveSessions,
   onLogout,
@@ -258,6 +256,7 @@ export function SessionSidebar({
   onReuse,
   onRemoveRecent,
   onReorderRecent,
+  onSearch,
   tab,
   onTabChange,
 }: {
@@ -270,9 +269,6 @@ export function SessionSidebar({
   onClose: (id: string) => void;
   onClone: (s: SessionInfo) => void;
   onRestore: (id: string) => void;
-  // Reopen a Restorable entry through the create dialog (used by the search popup, where there's room
-  // to adjust the launch first); the list's own reopen button relaunches it directly via onRestore.
-  onReopen: (s: SessionInfo, preset: RecentSession) => void;
   onRename: (id: string, name: string) => void;
   onRemoveSessions: (ids: string[]) => void;
   onLogout: () => void;
@@ -280,6 +276,10 @@ export function SessionSidebar({
   onReuse: (r: RecentSession) => void;
   onRemoveRecent: (r: RecentSession) => void;
   onReorderRecent: (from: number, to: number) => void;
+  // Open the search popup (sessions + recents). Owned by App: the popup is also opened by a global
+  // hotkey, which must work with the sidebar collapsed, and the sidebar is mounted twice (desktop
+  // column + mobile drawer) so it can't own the dialog without mounting two copies.
+  onSearch: () => void;
   // Sessions/Recent list tab. Owned by App so creating a session can pull the sidebar back to the
   // list, and so the desktop sidebar and the mobile drawer stay on the same tab.
   tab: SessionListTab;
@@ -291,8 +291,6 @@ export function SessionSidebar({
   const [editingId, setEditingId] = useState<string | null>(null);
   // Folder whose bulk-remove popup is open (its normalized dirKey), or null.
   const [removeDir, setRemoveDir] = useState<string | null>(null);
-  // Whether the search popup (sessions + recents) is open.
-  const [searching, setSearching] = useState(false);
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
 
   // Sessions shown after applying the active/all filter ("active" = running only). Recents aren't
@@ -505,8 +503,8 @@ export function SessionSidebar({
             variant="ghost"
             size="icon"
             className="size-7 shrink-0 text-muted-foreground"
-            title="Search sessions and recents"
-            onClick={() => setSearching(true)}
+            title="Search sessions and recents (Ctrl+Shift+F)"
+            onClick={onSearch}
           >
             <Search className="size-4" />
           </Button>
@@ -609,23 +607,6 @@ export function SessionSidebar({
         <NotificationToggle />
         <ThemeToggle />
       </div>
-
-      {searching && (
-        <SessionSearchDialog
-          sessions={sessions}
-          recents={recents}
-          activeId={activeId}
-          // Opening a session from search also pulls the list back to the Sessions tab, so the row the
-          // user just picked is the one shown as selected.
-          onSelect={(id) => {
-            setTab("sessions");
-            onSelect(id);
-          }}
-          onReopen={onReopen}
-          onReuse={onReuse}
-          onClose={() => setSearching(false)}
-        />
-      )}
 
       {removeDir && (
         <FolderRemoveDialog

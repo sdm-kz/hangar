@@ -12,6 +12,7 @@ import { FilesSidebar } from "@/components/FilesSidebar";
 import { ServerFileViewer } from "@/components/ServerFileViewer";
 import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
+import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
@@ -50,6 +51,9 @@ export function App() {
   // launches, that stale entry is forgotten so the same conversation isn't listed twice.
   const [newFromId, setNewFromId] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentSession[]>([]);
+  // Search popup over sessions + recents. Owned here (not by the sidebar) so the hotkey below works
+  // with the sidebar collapsed, and so the two sidebar instances don't each mount a dialog.
+  const [searching, setSearching] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("claudeweb.sidebarCollapsed") === "1"
@@ -363,6 +367,23 @@ export function App() {
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
   }, []);
 
+  // Ctrl+Shift+F (⌘⇧F on Mac) opens the session search popup from anywhere. Capture phase with
+  // stopPropagation so it wins even while the terminal has focus (the keystroke would otherwise go
+  // to the pty); a shifted combo because plain Ctrl+letter chords belong to the shell and the TUI —
+  // and a terminal can't encode Ctrl+Shift+F distinctly anyway, so intercepting it costs nothing.
+  useEffect(() => {
+    if (auth !== "authed") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSearching(true);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [auth]);
+
   // Load the server-backed recents once authed, migrating any left over in this browser's
   // localStorage from older builds first.
   useEffect(() => {
@@ -595,7 +616,6 @@ export function App() {
               onClose={onClose}
               onClone={cloneSession}
               onRestore={onRestore}
-              onReopen={reopenAsNew}
               onRename={onRename}
               onRemoveSessions={onRemoveSessions}
               onLogout={onLogout}
@@ -603,6 +623,7 @@ export function App() {
               onReuse={reuseRecent}
               onRemoveRecent={removeRecent}
               onReorderRecent={reorderRecents}
+              onSearch={() => setSearching(true)}
               tab={listTab}
               onTabChange={setListTab}
             />
@@ -645,7 +666,6 @@ export function App() {
                   onClose={onClose}
                   onClone={cloneSession}
                   onRestore={onRestore}
-                  onReopen={reopenAsNew}
                   onRename={onRename}
                   onRemoveSessions={onRemoveSessions}
                   onLogout={onLogout}
@@ -653,6 +673,7 @@ export function App() {
                   onReuse={reuseRecent}
                   onRemoveRecent={removeRecent}
                   onReorderRecent={reorderRecents}
+                  onSearch={() => setSearching(true)}
                   tab={listTab}
                   onTabChange={setListTab}
                 />
@@ -694,6 +715,24 @@ export function App() {
           />
         )}
       </main>
+
+      {searching && (
+        <SessionSearchDialog
+          sessions={sessions}
+          recents={recents}
+          activeId={activeId}
+          // Opening a session from search also pulls the list back to the Sessions tab (so the row
+          // just picked is the one shown selected) and closes the mobile drawer.
+          onSelect={(id) => {
+            setListTab("sessions");
+            selectSession(id);
+            setSidebarOpen(false);
+          }}
+          onReopen={reopenAsNew}
+          onReuse={reuseRecent}
+          onClose={() => setSearching(false)}
+        />
+      )}
 
       <NewSessionDialog
         open={newOpen}
