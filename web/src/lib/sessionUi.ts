@@ -12,6 +12,7 @@ export interface SessionUi {
   files?: string[]; // paths of all open file tabs, in order (the active one is `file`)
   preview?: string; // path of the transient "preview" tab (reused by single-click), if any
   changes?: boolean; // Files tree showing git changes (+ history panel) instead of all files
+  worktree?: string; // absolute path of the repo worktree being browsed ("" = the session's own dir)
   changesTree?: boolean; // in the changes view, group files by folder (tree) instead of a flat list
   filesExpanded?: string[]; // Files tree: folder paths the user has expanded (all collapsed by default)
   changesExpanded?: string[]; // changes tree (grouped mode): folder paths expanded (all collapsed by default)

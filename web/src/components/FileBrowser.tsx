@@ -64,6 +64,7 @@ import { CopyPathButton } from "./CopyPathButton";
 
 // Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
 interface RowActions {
+  readOnly: boolean; // browsing another worktree — mutating actions are hidden
   renamingPath: string | null;
   onStartRename: (path: string) => void;
   onRename: (path: string, newName: string) => void;
@@ -185,6 +186,56 @@ export const FileBrowser = forwardRef<
     setShowChanges(true);
     saveSessionUi(sessionId, { changes: true });
   }, [sessionId]);
+  // The whole browser (Files tree, search, changes, preview) can be pointed at another worktree of
+  // the session's repo. "" = the session's own working dir. Another worktree's files live outside
+  // the session's dir, so browsing one is read-only — the write/rename/delete/upload endpoints stay
+  // confined to the session's own working directory.
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
+  // Restored per session (and across reloads); "" until proven otherwise by the list below.
+  const [worktreeDir, setWorktreeDir] = useState(() => loadSessionUi(sessionId).worktree ?? "");
+  const [altStatus, setAltStatus] = useState<GitStatus | null>(null);
+  const readOnly = !!worktreeDir;
+
+  const pickWorktree = useCallback(
+    (dir: string) => {
+      setWorktreeDir(dir);
+      saveSessionUi(sessionId, { worktree: dir });
+    },
+    [sessionId]
+  );
+
+  // Per session: restore its saved worktree pick and (re)load the repo's worktree list. A stale
+  // response landing after a quick session switch must be dropped — validating the restored pick
+  // against another session's list would wrongly wipe it.
+  useEffect(() => {
+    setWorktreeDir(loadSessionUi(sessionId).worktree ?? "");
+    setAltStatus(null);
+    setWorktrees([]);
+    let cancelled = false;
+    api.gitWorktrees(sessionId).then((list) => !cancelled && setWorktrees(list)).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  // Drop a restored pick that's no longer one of the repo's worktrees (removed since it was saved);
+  // a pick that became the session's own dir also falls back to "". Skipped until this session's
+  // list has actually loaded (a repo always lists at least its main worktree).
+  useEffect(() => {
+    if (!worktreeDir || !worktrees.length) return;
+    if (!worktrees.some((w) => !w.isCurrent && w.path === worktreeDir)) pickWorktree("");
+  }, [worktrees, worktreeDir, pickWorktree]);
+
+  // Fetch the selected (non-current) worktree's status; the current one uses the passed gitFiles.
+  useEffect(() => {
+    if (!worktreeDir) return void setAltStatus(null);
+    let cancelled = false;
+    api.gitStatus(sessionId, worktreeDir).then((s) => !cancelled && setAltStatus(s)).catch(() => !cancelled && setAltStatus(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [worktreeDir, sessionId, refreshToken]);
+
   // In the changes view, group changed files under collapsible folders instead of a flat list.
   const [changesTree, setChangesTree] = useState(() => loadSessionUi(sessionId).changesTree ?? false);
   const toggleChangesTree = useCallback(() => {
@@ -527,6 +578,7 @@ export const FileBrowser = forwardRef<
   }, []);
 
   const rowActions: RowActions = {
+    readOnly,
     renamingPath,
     onStartRename: setRenamingPath,
     onRename: doRename,
@@ -578,34 +630,6 @@ export const FileBrowser = forwardRef<
     patchUrlState({ file: restored.active ?? undefined });
   }, [sessionId]);
 
-  // Changes can be shown for another worktree of the same repo. "" = the session's own working dir.
-  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
-  const [worktreeDir, setWorktreeDir] = useState("");
-  const [altStatus, setAltStatus] = useState<GitStatus | null>(null);
-
-  // Load the worktree list the first time the changes view is opened.
-  useEffect(() => {
-    if (!showChanges || worktrees.length) return;
-    api.gitWorktrees(sessionId).then(setWorktrees).catch(() => {});
-  }, [showChanges, sessionId, worktrees.length]);
-
-  // Reset the worktree picker when switching sessions.
-  useEffect(() => {
-    setWorktreeDir("");
-    setAltStatus(null);
-    setWorktrees([]);
-  }, [sessionId]);
-
-  // Fetch the selected (non-current) worktree's status; the current one uses the passed gitFiles.
-  useEffect(() => {
-    if (!worktreeDir) return void setAltStatus(null);
-    let cancelled = false;
-    api.gitStatus(sessionId, worktreeDir).then((s) => !cancelled && setAltStatus(s)).catch(() => !cancelled && setAltStatus(null));
-    return () => {
-      cancelled = true;
-    };
-  }, [worktreeDir, sessionId, refreshToken]);
-
   // Which repo's changes to show: the session's own (gitFiles) or the picked worktree's (altStatus).
   const effectiveGitFiles = worktreeDir ? altStatus?.files : gitFiles;
 
@@ -655,13 +679,13 @@ export const FileBrowser = forwardRef<
     setSearching(true);
     const t = setTimeout(() => {
       api
-        .searchSessionFiles(sessionId, q)
+        .searchSessionFiles(sessionId, q, worktreeDir || undefined)
         .then((r) => setResults(r.entries))
         .catch(() => setResults([]))
         .finally(() => setSearching(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [query, sessionId, refreshToken, showChanges]);
+  }, [query, sessionId, refreshToken, showChanges, worktreeDir]);
 
   return (
     <div className="flex h-full flex-col md:flex-row">
@@ -710,13 +734,15 @@ export const FileBrowser = forwardRef<
                 )}
               </button>
             )}
-            <button
-              title="New folder at root"
-              onClick={() => (creatingFolder ? setCreatingFolder(false) : newFolderIn(""))}
-              className={cn("hover:text-foreground", creatingFolder && "text-foreground")}
-            >
-              <FolderPlus className="size-3.5" />
-            </button>
+            {!readOnly && (
+              <button
+                title="New folder at root"
+                onClick={() => (creatingFolder ? setCreatingFolder(false) : newFolderIn(""))}
+                className={cn("hover:text-foreground", creatingFolder && "text-foreground")}
+              >
+                <FolderPlus className="size-3.5" />
+              </button>
+            )}
             <input
               ref={fileInputRef}
               type="file"
@@ -727,27 +753,29 @@ export const FileBrowser = forwardRef<
                 e.target.value = ""; // allow re-selecting the same file later
               }}
             />
-            <button
-              title={uploadError ?? `Upload file(s) to ${uploadDir || "root"}`}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className={cn(
-                "hover:text-foreground disabled:opacity-50",
-                uploadError && "text-destructive"
-              )}
-            >
-              {uploading ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Upload className="size-3.5" />
-              )}
-            </button>
+            {!readOnly && (
+              <button
+                title={uploadError ?? `Upload file(s) to ${uploadDir || "root"}`}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className={cn(
+                  "hover:text-foreground disabled:opacity-50",
+                  uploadError && "text-destructive"
+                )}
+              >
+                {uploading ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Upload className="size-3.5" />
+                )}
+              </button>
+            )}
             <button title="Refresh" onClick={() => onRefresh?.()} className="hover:text-foreground">
               <RefreshCw className="size-3.5" />
             </button>
           </div>
         </div>
-        {!showChanges && !query.trim() && (
+        {!showChanges && !readOnly && !query.trim() && (
           <div className="flex items-center gap-1 px-3 pb-1 text-[10px] text-muted-foreground">
             <span className="shrink-0">Upload target:</span>
             <span className="truncate font-medium text-foreground">{uploadDir || "root"}</span>
@@ -762,14 +790,14 @@ export const FileBrowser = forwardRef<
             )}
           </div>
         )}
-        {/* In the changes view, pick which worktree of the repo to inspect. */}
-        {showChanges && worktrees.length > 1 && (
+        {/* Pick which worktree of the repo to browse (Files tree, search, changes and preview). */}
+        {worktrees.length > 1 && (
           <div className="flex items-center gap-1 px-3 pb-1 text-[10px] text-muted-foreground">
             <span className="shrink-0">Worktree:</span>
             <select
               value={worktreeDir}
-              onChange={(e) => setWorktreeDir(e.target.value)}
-              title="Show changes from another worktree of this repo"
+              onChange={(e) => pickWorktree(e.target.value)}
+              title="Browse another worktree of this repo (read-only)"
               className="min-w-0 flex-1 truncate rounded border bg-background px-1 py-0.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
             >
               {worktrees.map((w) => (
@@ -783,7 +811,7 @@ export const FileBrowser = forwardRef<
           </div>
         )}
 
-        {creatingFolder && (
+        {creatingFolder && !readOnly && (
           <div className="px-2 pb-1">
             <div className="flex items-center gap-1">
               <Input
@@ -858,7 +886,7 @@ export const FileBrowser = forwardRef<
               entries={results ?? []}
               loading={searching && results === null}
               empty="No matches"
-              gitFiles={gitFiles}
+              gitFiles={effectiveGitFiles}
               selectedPath={selected?.path ?? null}
               onSelect={selectFile}
               actions={rowActions}
@@ -866,13 +894,14 @@ export const FileBrowser = forwardRef<
           ) : (
             <TreeLevel
               sessionId={sessionId}
+              dir={worktreeDir || undefined}
               path=""
               depth={0}
               refreshToken={refreshToken}
               selectedPath={selected?.path ?? null}
               expanded={filesExpanded}
               onToggleDir={toggleFilesDir}
-              gitFiles={gitFiles}
+              gitFiles={effectiveGitFiles}
               onSelect={selectFile}
               uploadDir={uploadDir}
               onSelectDir={setUploadDir}
@@ -936,12 +965,11 @@ export const FileBrowser = forwardRef<
               />
             )}
             <div className="min-h-0 flex-1">
-              {/* gitDir only in the changes view — the file tree always browses the session's own dir. */}
               <FilePreview
                 sessionId={sessionId}
                 file={selected}
                 gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
-                gitDir={(showChanges && worktreeDir) || undefined}
+                gitDir={worktreeDir || undefined}
                 refreshToken={refreshToken}
                 onSaved={onRefresh}
                 guard={previewGuard}
@@ -1360,6 +1388,7 @@ function ChangeDirNode({ dir, depth, ...rest }: { dir: ChangeDir; depth: number 
 
 function TreeLevel({
   sessionId,
+  dir,
   path,
   depth,
   refreshToken,
@@ -1373,6 +1402,7 @@ function TreeLevel({
   actions,
 }: {
   sessionId: string;
+  dir?: string; // another worktree of the session's repo to list from (read-only browsing)
   path: string;
   depth: number;
   refreshToken: number;
@@ -1392,13 +1422,13 @@ function TreeLevel({
   useEffect(() => {
     let cancelled = false;
     api
-      .listSessionFiles(sessionId, path || undefined)
+      .listSessionFiles(sessionId, path || undefined, dir)
       .then((r) => !cancelled && (setEntries(r.entries), setError(false)))
       .catch(() => !cancelled && setError(true));
     return () => {
       cancelled = true;
     };
-  }, [sessionId, path, refreshToken]);
+  }, [sessionId, dir, path, refreshToken]);
 
   if (error) return <IndentedNote depth={depth}>Unable to read folder</IndentedNote>;
   if (entries === null)
@@ -1412,6 +1442,7 @@ function TreeLevel({
           <TreeDir
             key={e.path}
             sessionId={sessionId}
+            dir={dir}
             entry={e}
             depth={depth}
             refreshToken={refreshToken}
@@ -1442,6 +1473,7 @@ function TreeLevel({
 
 function TreeDir({
   sessionId,
+  dir,
   entry,
   depth,
   refreshToken,
@@ -1455,6 +1487,7 @@ function TreeDir({
   actions,
 }: {
   sessionId: string;
+  dir?: string;
   entry: FileEntry;
   depth: number;
   refreshToken: number;
@@ -1512,6 +1545,7 @@ function TreeDir({
       {open && (
         <TreeLevel
           sessionId={sessionId}
+          dir={dir}
           path={entry.path}
           depth={depth + 1}
           refreshToken={refreshToken}
@@ -1622,33 +1656,38 @@ const Row = forwardRef<
           >
             {children}
           </button>
-          {/* Hover actions, overlaid at the right so they don't eat name width when idle. */}
+          {/* Hover actions, overlaid at the right so they don't eat name width when idle. Mutating
+              ones are hidden while browsing another worktree (endpoints only touch the session dir). */}
           <div className="absolute right-1 hidden items-center gap-0.5 rounded bg-accent pl-1 text-muted-foreground group-hover:flex">
-            {extraActions}
+            {!actions.readOnly && extraActions}
             <CopyPathButton
               path={entry.path}
               className="rounded p-0.5 hover:bg-background hover:text-foreground"
             />
-            <button
-              className="rounded p-0.5 hover:bg-background hover:text-foreground"
-              title="Rename"
-              onClick={(e) => {
-                e.stopPropagation();
-                actions.onStartRename(entry.path);
-              }}
-            >
-              <Pencil className="size-3.5" />
-            </button>
-            <button
-              className="rounded p-0.5 hover:bg-background hover:text-destructive"
-              title="Delete"
-              onClick={(e) => {
-                e.stopPropagation();
-                actions.onDelete(entry);
-              }}
-            >
-              <Trash2 className="size-3.5" />
-            </button>
+            {!actions.readOnly && (
+              <>
+                <button
+                  className="rounded p-0.5 hover:bg-background hover:text-foreground"
+                  title="Rename"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    actions.onStartRename(entry.path);
+                  }}
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+                <button
+                  className="rounded p-0.5 hover:bg-background hover:text-destructive"
+                  title="Delete"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    actions.onDelete(entry);
+                  }}
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </>
+            )}
           </div>
         </>
       )}

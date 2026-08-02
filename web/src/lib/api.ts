@@ -207,9 +207,13 @@ export const api = {
   },
 
   // ---- Per-session files ----
-  listSessionFiles(id: string, path?: string): Promise<FileListing> {
-    const q = path ? `?path=${encodeURIComponent(path)}` : "";
-    return request(`/api/sessions/${id}/fs/list${q}`);
+  // `dir` lists from another worktree of the session's repo instead of its working dir.
+  listSessionFiles(id: string, path?: string, dir?: string): Promise<FileListing> {
+    const q = new URLSearchParams();
+    if (path) q.set("path", path);
+    if (dir) q.set("dir", dir);
+    const s = q.toString();
+    return request(`/api/sessions/${id}/fs/list${s ? `?${s}` : ""}`);
   },
   async fetchSessionFileText(id: string, path: string, dir?: string): Promise<string> {
     const res = await fetch(sessionFileUrl(id, path, false, dir));
@@ -309,8 +313,9 @@ export const api = {
       body: JSON.stringify({ path }),
     });
   },
-  searchSessionFiles(id: string, q: string): Promise<FileListing> {
-    return request(`/api/sessions/${id}/fs/search?q=${encodeURIComponent(q)}`);
+  searchSessionFiles(id: string, q: string, dir?: string): Promise<FileListing> {
+    const d = dir ? `&dir=${encodeURIComponent(dir)}` : "";
+    return request(`/api/sessions/${id}/fs/search?q=${encodeURIComponent(q)}${d}`);
   },
   async fsVersion(id: string): Promise<number> {
     const r = await request<{ version: number }>(`/api/sessions/${id}/fs/version`);

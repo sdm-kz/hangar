@@ -396,12 +396,15 @@ internal static class Program
         app.MapPost("/api/fs/delete", (FsPathRequest body) =>
             ServerFileBrowser.Delete(body.Path) ? Results.Ok() : Results.BadRequest(new { error = "could not delete" }));
 
-        // ---- Per-session file browsing (confined to the session's working directory) --------
-        app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, SessionManager mgr) =>
+        // ---- Per-session file browsing (confined to the session's working directory, or another
+        //      worktree of the same repo via `dir` — validated against the repo's worktree list) ----
+        app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, string? dir, SessionManager mgr) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            var listing = SessionFileBrowser.List(info.WorkingDirectory, path);
+            var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
+            if (root is null) return Results.BadRequest(new { error = "invalid worktree" });
+            var listing = SessionFileBrowser.List(root, path);
             return listing is null ? Results.NotFound() : Results.Ok(listing);
         });
 
@@ -427,12 +430,13 @@ internal static class Program
                 : Results.File(full, contentType, enableRangeProcessing: true);
         });
 
-        app.MapGet("/api/sessions/{id}/fs/search", (string id, string q, SessionManager mgr) =>
+        app.MapGet("/api/sessions/{id}/fs/search", (string id, string q, string? dir, SessionManager mgr) =>
         {
             var info = mgr.Get(id);
-            return info is null
-                ? Results.NotFound()
-                : Results.Ok(new { entries = SessionFileBrowser.Search(info.WorkingDirectory, q) });
+            if (info is null) return Results.NotFound();
+            var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
+            if (root is null) return Results.BadRequest(new { error = "invalid worktree" });
+            return Results.Ok(new { entries = SessionFileBrowser.Search(root, q) });
         });
 
         app.MapPost("/api/sessions/{id}/fs/write", (string id, FileWriteRequest body, SessionManager mgr) =>
