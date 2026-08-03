@@ -56,12 +56,15 @@ export function NewSessionDialog({
   onOpenChange,
   onCreated,
   preset,
+  defaultContinue,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (s: SessionInfo) => void;
   /** When opened from the Recent tab, prefill the form with this preset. */
   preset?: RecentSession | null;
+  /** Overrides the "continue conversation" default (normally on for presets, off otherwise). */
+  defaultContinue?: boolean;
 }) {
   const [dir, setDir] = useState("");
   const [name, setName] = useState("");
@@ -100,8 +103,9 @@ export function NewSessionDialog({
     setStored(null); // until the refresh above lands
     setWatchdog(false); // always default the watchdog off, even when prefilling from a preset
     // Relaunching a remembered preset almost always means picking the work back up, so default to
-    // continuing its conversation; a plain "New session" starts fresh.
-    setContinueSession(!!preset);
+    // continuing its conversation; a plain "New session" starts fresh. Some openers override this
+    // (cloning a live session wants a fresh conversation alongside the original).
+    setContinueSession(defaultContinue ?? !!preset);
     if (preset) {
       setDir(preset.workingDirectory);
       setName(preset.name);
@@ -110,7 +114,7 @@ export function NewSessionDialog({
       setRemoteControl(preset.remoteControl);
       setPermissionMode(preset.permissionMode || "auto");
     }
-  }, [open, preset]);
+  }, [open, preset, defaultContinue]);
 
   async function create() {
     if (!dir.trim()) {

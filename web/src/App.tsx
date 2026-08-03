@@ -47,6 +47,8 @@ export function App() {
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
+  // Override for the dialog's "continue conversation" default; undefined = the dialog's own default.
+  const [newDefaultContinue, setNewDefaultContinue] = useState<boolean | undefined>(undefined);
   // Restorable session the create dialog was opened from (see reopenAsNew): once the replacement
   // launches, that stale entry is forgotten so the same conversation isn't listed twice.
   const [newFromId, setNewFromId] = useState<string | null>(null);
@@ -404,6 +406,7 @@ export function App() {
 
   function openNew(preset: RecentSession | null = null) {
     setNewPreset(preset);
+    setNewDefaultContinue(undefined);
     setNewOpen(true);
   }
 
@@ -417,6 +420,7 @@ export function App() {
   // dialog's "continue" resumes that exact conversation; the stale entry is forgotten once it starts.
   const reopenAsNew = useCallback((s: SessionInfo, preset: RecentSession) => {
     setNewPreset(preset);
+    setNewDefaultContinue(undefined);
     setNewFromId(s.id);
     setNewOpen(true);
     setSidebarOpen(false);
@@ -446,6 +450,9 @@ export function App() {
       remoteControl: s.remoteControl,
       permissionMode: s.permissionMode || "auto",
     });
+    // The clone runs alongside the original, so it should start a fresh conversation, not steal
+    // (or fork) the live session's one.
+    setNewDefaultContinue(false);
     setNewOpen(true);
     setSidebarOpen(false);
   }, []);
@@ -461,6 +468,8 @@ export function App() {
       remoteControl: true,
       permissionMode: "auto",
     });
+    // "New session in this folder" means starting fresh there, not resuming whatever ran last.
+    setNewDefaultContinue(false);
     setNewOpen(true);
     setSidebarOpen(false);
   }, []);
@@ -618,6 +627,7 @@ export function App() {
               activeId={activeId}
               onSelect={selectSession}
               onNew={() => openNew()}
+              onNewInFolder={newSessionInFolder}
               onClose={onClose}
               onClone={cloneSession}
               onRestore={onRestore}
@@ -668,6 +678,7 @@ export function App() {
                     openNew();
                     setSidebarOpen(false);
                   }}
+                  onNewInFolder={newSessionInFolder}
                   onClose={onClose}
                   onClone={cloneSession}
                   onRestore={onRestore}
@@ -745,11 +756,13 @@ export function App() {
           setNewOpen(o);
           if (!o) {
             setNewPreset(null); // clear preset so the next plain "New session" starts fresh
+            setNewDefaultContinue(undefined);
             setNewFromId(null); // dismissed without launching — keep the Restorable entry as it is
           }
         }}
         onCreated={onCreated}
         preset={newPreset}
+        defaultContinue={newDefaultContinue}
       />
     </div>
   );

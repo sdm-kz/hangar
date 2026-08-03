@@ -123,12 +123,15 @@ function GroupHeader({
   count,
   collapsed,
   onToggle,
+  onNewSession,
   onRemove,
 }: {
   dir: string;
   count: number;
   collapsed: boolean;
   onToggle: () => void;
+  // When provided (sessions view only), shows a plus button to start a session in this folder.
+  onNewSession?: () => void;
   // When provided (sessions view only), shows a trash button to bulk-remove the folder's sessions.
   onRemove?: () => void;
 }) {
@@ -149,6 +152,16 @@ function GroupHeader({
         <span className="truncate font-mono text-[11px] font-medium">{folderLabel(dir)}</span>
       </button>
       <span className="shrink-0 text-[10px]">{count}</span>
+      {onNewSession && (
+        <button
+          type="button"
+          onClick={onNewSession}
+          title="New session in this folder"
+          className="shrink-0 opacity-0 transition-opacity hover:text-foreground group-hover/gh:opacity-100"
+        >
+          <Plus className="size-3.5" />
+        </button>
+      )}
       {onRemove && (
         <button
           type="button"
@@ -246,6 +259,7 @@ export function SessionSidebar({
   activeId,
   onSelect,
   onNew,
+  onNewInFolder,
   onClose,
   onClone,
   onRestore,
@@ -266,6 +280,7 @@ export function SessionSidebar({
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
   onClose: (id: string) => void;
   onClone: (s: SessionInfo) => void;
   onRestore: (id: string) => void;
@@ -583,6 +598,7 @@ export function SessionSidebar({
                     count={g.items.length}
                     collapsed={isCollapsed}
                     onToggle={() => toggleGroup(g.dir)}
+                    onNewSession={() => onNewInFolder(g.dir)}
                     onRemove={() => setRemoveDir(dirKey(g.dir))}
                   />
                   {!isCollapsed && (
