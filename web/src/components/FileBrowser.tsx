@@ -1734,15 +1734,19 @@ function FilePreview({
   const [lightbox, setLightbox] = useState(false);
   const [mdView, setMdView] = useState<"rendered" | "raw">("rendered");
   const [fullscreen, setFullscreen] = useState(false); // full-page popup preview
+  const [reload, setReload] = useState(0); // cache-buster bumped by the header's refresh button
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [copiedPath, setCopiedPath] = useState(false);
+  const [copiedText, setCopiedText] = useState(false);
   // The scrollable content area; used to detect an in-progress text selection so a background
   // auto-refresh doesn't rebuild the DOM out from under a copy.
   const contentRef = useRef<HTMLDivElement>(null);
+  // The preview root; focused when the full-page popup opens so Esc lands on it right away.
+  const rootRef = useRef<HTMLDivElement>(null);
 
   const copyPath = useCallback(async () => {
     if (!file) return;
@@ -1751,14 +1755,28 @@ function FilePreview({
     setTimeout(() => setCopiedPath(false), 1500);
   }, [file]);
 
+  // Header button: select the whole visible preview and copy the file's raw text.
+  const copyContents = useCallback(async () => {
+    if (text === null) return;
+    if (contentRef.current) window.getSelection()?.selectAllChildren(contentRef.current);
+    await writeToClipboard(text);
+    setCopiedText(true);
+    setTimeout(() => setCopiedText(false), 1500);
+  }, [text]);
+
   const kind = file ? fileKind(file.name) : "binary";
   const isMarkdown = !!file && ["md", "markdown"].includes(fileExt(file.name));
   const isHtml = !!file && ["html", "htm"].includes(fileExt(file.name));
   // Another worktree's files are read-only here: the write endpoint is confined to the session's dir.
   const canEdit = kind === "text" && status === "idle" && text !== null && !gitDir;
   const rawUrl = useCallback(
-    (download = false) => (file ? sessionFileUrl(sessionId, file.path, download, gitDir) : ""),
-    [sessionId, file, gitDir]
+    (download = false) => {
+      if (!file) return "";
+      const url = sessionFileUrl(sessionId, file.path, download, gitDir);
+      // Cache-buster so URL-sourced previews (image, video, PDF, office) re-fetch on manual reload.
+      return reload > 0 && !download ? `${url}&r=${reload}` : url;
+    },
+    [sessionId, file, gitDir, reload]
   );
 
   // Syntax-highlighted HTML for the plain-text view (null for unsupported languages).
@@ -1776,6 +1794,7 @@ function FilePreview({
     setEditing(false);
     setSaveError(null);
     setFullscreen(false);
+    setReload(0);
     if (!file || kind !== "text") return;
     if (file.size > MAX_TEXT_PREVIEW) {
       setStatus("toolarge");
@@ -1853,12 +1872,38 @@ function FilePreview({
     };
   }, [view, sessionId, file, diff, gitDir]);
 
+  // Manual reload from the header: re-fetch the text/diff, and bump the cache-buster so
+  // URL-sourced previews (image, video, PDF, office) re-fetch too.
+  const refresh = useCallback(() => {
+    setReload((r) => r + 1);
+    if (!file) return;
+    if (view === "diff") {
+      setDiff(null); // the diff effect refetches when it's null
+      return;
+    }
+    if (fileKind(file.name) === "text" && file.size <= MAX_TEXT_PREVIEW) {
+      setStatus("loading");
+      api
+        .fetchSessionFileText(sessionId, file.path, gitDir)
+        .then((t) => (setText(t), setStatus("idle")))
+        .catch(() => setStatus("error"));
+    }
+  }, [file, view, sessionId, gitDir]);
+
   // Esc leaves the full-page popup (but not while editing — Esc there could drop unsaved text).
+  // Capture phase + focusing the popup on entry so the key still lands here after clicks inside
+  // the preview. Keys pressed inside an embedded PDF/iframe can't reach this document at all, so
+  // the minimize button stays as the fallback there.
   useEffect(() => {
     if (!fullscreen || editing) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFullscreen(false);
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    rootRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [fullscreen, editing]);
 
   async function save(): Promise<boolean> {
@@ -1902,8 +1947,10 @@ function FilePreview({
 
   return (
     <div
+      ref={rootRef}
+      tabIndex={-1}
       className={cn(
-        "flex flex-col",
+        "flex flex-col outline-none",
         fullscreen ? "fixed inset-0 z-50 bg-background" : "h-full"
       )}
     >
@@ -1985,6 +2032,22 @@ function FilePreview({
                 <Expand className="size-4" />
               </Button>
             )}
+
+            {kind === "text" && view === "preview" && text !== null && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 w-7 px-0"
+                title="Select all & copy"
+                onClick={copyContents}
+              >
+                {copiedText ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+              </Button>
+            )}
+
+            <Button variant="outline" size="sm" className="h-7 w-7 px-0" title="Reload" onClick={refresh}>
+              <RefreshCw className={cn("size-4", kind === "text" && status === "loading" && "animate-spin")} />
+            </Button>
 
             {/* Non-image previews open in a full-page popup instead of the image lightbox. */}
             {kind !== "image" && (
