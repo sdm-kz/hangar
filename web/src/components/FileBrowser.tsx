@@ -1612,7 +1612,7 @@ const Row = forwardRef<
     depth: number;
     selected?: boolean;
     onClick: () => void;
-    onOpenNewTab?: () => void; // file-only: middle-/double-click opens a pinned tab
+    onOpenNewTab?: () => void; // file-only: middle-/double-/modifier-click opens a pinned tab
     entry: FileEntry;
     actions: RowActions;
     extraActions?: React.ReactNode; // dir-only: "new folder here"
@@ -1639,7 +1639,11 @@ const Row = forwardRef<
       ) : (
         <>
           <button
-            onClick={onClick}
+            // Cmd/Ctrl+click opens a pinned tab like middle-click (no middle button on trackpads).
+            onClick={(e) => {
+              if ((e.metaKey || e.ctrlKey) && onOpenNewTab) onOpenNewTab();
+              else onClick();
+            }}
             onDoubleClick={onOpenNewTab}
             // Middle-click opens the file in a new pinned tab (browser-link behaviour).
             onAuxClick={(e) => {
