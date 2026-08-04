@@ -171,6 +171,12 @@ export function App() {
     patchUrlState({ panel: sidebarTab === "files" ? "files" : undefined });
   }, [sidebarTab]);
 
+  // Reflect the active session in the page title so browser tabs are tellable apart.
+  useEffect(() => {
+    const name = sessions.find((s) => s.id === activeId)?.name;
+    document.title = name ? `${name} - Claude Web` : "Claude Web";
+  }, [activeId, sessions]);
+
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
   // (new/renamed/exited sessions, Claude going active/idle, watchdog status), so the UI stays current
   // without polling. If the socket drops, the interval polls below take over until it reconnects.
