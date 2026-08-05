@@ -1,6 +1,4 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { api, sessionFileUrl } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
@@ -22,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
+import { Markdown } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
 import {
@@ -2156,7 +2155,7 @@ function FilePreview({
             {kind === "text" && status === "idle" && text !== null &&
               (isMarkdown && mdView === "rendered" ? (
                 <div style={{ zoom }} className="prose prose-sm max-w-none p-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+                  <Markdown text={text} />
                 </div>
               ) : isHtml && mdView === "rendered" ? (
                 // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an

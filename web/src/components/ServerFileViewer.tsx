@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { api, serverFileUrl } from "@/lib/api";
 import { fileExt, fileKind } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Markdown } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
 import { ZoomControls } from "./ZoomControls";
@@ -250,7 +249,7 @@ export function ServerFileViewer({
           />
         ) : isMarkdown && rendered ? (
           <div style={{ zoom }} className="prose prose-sm dark:prose-invert max-w-none p-4">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{text ?? ""}</ReactMarkdown>
+            <Markdown text={text ?? ""} />
           </div>
         ) : isHtml && rendered ? (
           // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an opaque origin,
