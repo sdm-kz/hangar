@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, ZoomIn, ZoomOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { MAX_OFFICE_PREVIEW, officeKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 
@@ -30,8 +31,64 @@ async function fetchBytes(url: string, signal: AbortSignal): Promise<ArrayBuffer
   return res.arrayBuffer();
 }
 
+// Discrete zoom stops shared by both viewers; 1 is the always-present default.
+const ZOOM_LEVELS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+
+/**
+ * Floating −/percent/+ overlay for the corner of a viewer. Clicking the percentage
+ * resets to 100%. The value is applied by the caller via CSS `zoom`, which (unlike
+ * `transform: scale`) participates in layout so scrollbars stay correct.
+ */
+function ZoomControls({
+  zoom,
+  onChange,
+  className = "right-3 top-3",
+}: {
+  zoom: number;
+  onChange: (zoom: number) => void;
+  /** Position within the nearest relative ancestor; xlsx overrides to bottom-right (like Excel). */
+  className?: string;
+}) {
+  const step = (dir: 1 | -1) => {
+    const i = ZOOM_LEVELS.indexOf(zoom) + dir;
+    onChange(ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, i))]);
+  };
+  return (
+    <div className={cn("absolute z-10 flex items-center rounded-md border bg-background/90 p-0.5 shadow-sm backdrop-blur", className)}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        title="Zoom out"
+        disabled={zoom === ZOOM_LEVELS[0]}
+        onClick={() => step(-1)}
+      >
+        <ZoomOut className="size-4" />
+      </Button>
+      <button
+        className="min-w-11 rounded px-1 py-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent"
+        title="Reset zoom"
+        onClick={() => onChange(1)}
+      >
+        {Math.round(zoom * 100)}%
+      </button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        title="Zoom in"
+        disabled={zoom === ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}
+        onClick={() => step(1)}
+      >
+        <ZoomIn className="size-4" />
+      </Button>
+    </div>
+  );
+}
+
 function DocxViewer({ url }: { url: string }) {
   const [status, setStatus] = useState<Status>("loading");
+  const [zoom, setZoom] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -58,12 +115,16 @@ function DocxViewer({ url }: { url: string }) {
   }, [url]);
 
   return (
-    <div className="relative h-full overflow-auto bg-neutral-100 p-4 dark:bg-neutral-900">
+    <div className="relative h-full bg-neutral-100 dark:bg-neutral-900">
       {status === "loading" && <Centered><Loader2 className="size-4 animate-spin" /> Loading document…</Centered>}
       {status === "toolarge" && <Centered>This document is too large to preview.</Centered>}
       {status === "error" && <Centered className="text-destructive">Failed to render document.</Centered>}
-      {/* docx-preview injects its own page-styled DOM; keep it light-on-white for fidelity. */}
-      <div ref={containerRef} className={cn("docx-host mx-auto", status !== "ready" && "hidden")} />
+      {status === "ready" && <ZoomControls zoom={zoom} onChange={setZoom} />}
+      {/* The scroll area wraps the host so the zoom controls stay put while the pages scroll. */}
+      <div className={cn("h-full overflow-auto p-4", status !== "ready" && "hidden")}>
+        {/* docx-preview injects its own page-styled DOM; keep it light-on-white for fidelity. */}
+        <div ref={containerRef} className="docx-host mx-auto" style={{ zoom }} />
+      </div>
     </div>
   );
 }
@@ -72,6 +133,7 @@ function XlsxViewer({ url }: { url: string }) {
   const [status, setStatus] = useState<Status>("loading");
   const [sheets, setSheets] = useState<{ name: string; html: string }[]>([]);
   const [active, setActive] = useState(0);
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -106,7 +168,9 @@ function XlsxViewer({ url }: { url: string }) {
   if (status === "error") return <Centered className="text-destructive">Failed to render spreadsheet.</Centered>;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
+      {/* Bottom-right like a real spreadsheet, and clear of the sheet-tab strip up top. */}
+      <ZoomControls zoom={zoom} onChange={setZoom} className="bottom-3 right-3" />
       {sheets.length > 1 && (
         <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b px-2 py-1">
           {sheets.map((s, i) => (
@@ -123,8 +187,11 @@ function XlsxViewer({ url }: { url: string }) {
           ))}
         </div>
       )}
-      {/* SheetJS emits a static <table> (no scripts). Style it for borders + dark mode. */}
+      {/* SheetJS emits a static <table> (no scripts). Style it for borders + dark mode.
+          CSS `zoom` scales the table while flexbox keeps the container's size, so
+          overflow-auto scrolling stays correct at any level. */}
       <div
+        style={{ zoom }}
         className="xlsx-host min-h-0 flex-1 overflow-auto p-3 text-xs"
         dangerouslySetInnerHTML={{ __html: activeHtml }}
       />
