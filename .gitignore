@@ -26,5 +26,8 @@ server/appsettings.Development.json
 .DS_Store
 Thumbs.db
 
+# Playwright MCP artifacts (screenshots/logs from browser-driven verification)
+.playwright-mcp/
+
 # Local helper with a hardcoded API key — never commit
 scripts/new-session.ps1
