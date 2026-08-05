@@ -16,6 +16,21 @@ export interface UrlState {
 }
 
 /**
+ * URL for the standalone full-page preview of a server file (absolute path), meant to be opened
+ * in a new browser tab. It's a separate mode, not part of UrlState: main.tsx sees `preview` and
+ * mounts the minimal PreviewApp instead of the full App, and since the path lives in the query
+ * string a refresh of that tab restores the same preview.
+ */
+export function previewUrl(absPath: string): string {
+  return `${window.location.pathname}?preview=${encodeURIComponent(absPath)}`;
+}
+
+/** The `preview` param if this tab was opened as a standalone file preview (see previewUrl). */
+export function readPreviewPath(): string | null {
+  return new URLSearchParams(window.location.search).get("preview");
+}
+
+/**
  * Deep-link URL for the Files sidebar tab, used to open it in a new browser tab. Only carries
  * `panel=files`; session/tab/file belong to the session view and aren't relevant to the Files tree.
  */

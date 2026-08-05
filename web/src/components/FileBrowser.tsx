@@ -5,7 +5,7 @@ import { api, sessionFileUrl } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
-import { readUrlState, patchUrlState } from "@/lib/urlState";
+import { readUrlState, patchUrlState, previewUrl } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm";
@@ -39,6 +39,7 @@ import {
   Copy,
   Download,
   Expand,
+  ExternalLink,
   File as FileIcon,
   FileText,
   Folder,
@@ -61,6 +62,7 @@ import {
 } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 import { CopyPathButton } from "./CopyPathButton";
+import { ZoomControls } from "./ZoomControls";
 
 // Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
 interface RowActions {
@@ -146,11 +148,14 @@ export const FileBrowser = forwardRef<
   FileBrowserHandle,
   {
     sessionId: string;
+    // The session's absolute working dir; only used to turn a relative file path into an absolute
+    // one for the standalone new-tab preview (which reads through the server-wide file API).
+    workingDirectory: string;
     gitFiles?: GitFiles;
     onRefresh?: () => void;
     refreshToken?: number;
   }
->(function FileBrowser({ sessionId, gitFiles, onRefresh, refreshToken = 0 }, ref) {
+>(function FileBrowser({ sessionId, workingDirectory, gitFiles, onRefresh, refreshToken = 0 }, ref) {
   // Open files shown as tabs above the preview. Clicking a file opens (or re-activates) its tab; the
   // active tab is what the preview renders. Restored from the URL deep-link / per-session storage.
   const [tabs, setTabs] = useState<FileEntry[]>(() => restoreTabs(sessionId, true).tabs);
@@ -967,6 +972,7 @@ export const FileBrowser = forwardRef<
             <div className="min-h-0 flex-1">
               <FilePreview
                 sessionId={sessionId}
+                workingDirectory={workingDirectory}
                 file={selected}
                 gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
                 gitDir={worktreeDir || undefined}
@@ -1712,6 +1718,7 @@ function IndentedNote({ depth, children }: { depth: number; children: React.Reac
 
 function FilePreview({
   sessionId,
+  workingDirectory,
   file,
   gitStatus,
   gitDir,
@@ -1720,6 +1727,8 @@ function FilePreview({
   guard,
 }: {
   sessionId: string;
+  // Absolute working dir, for resolving the previewed file's server path (new-tab preview).
+  workingDirectory: string;
   file: FileEntry | null;
   gitStatus?: string;
   // When set, changes come from another worktree of the repo. Its files live outside the session's
@@ -1739,6 +1748,8 @@ function FilePreview({
   const [mdView, setMdView] = useState<"rendered" | "raw">("rendered");
   const [fullscreen, setFullscreen] = useState(false); // full-page popup preview
   const [reload, setReload] = useState(0); // cache-buster bumped by the header's refresh button
+  // Text/markdown preview zoom; kept while switching files so a chosen size sticks.
+  const [zoom, setZoom] = useState(1);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -1782,6 +1793,13 @@ function FilePreview({
     },
     [sessionId, file, gitDir, reload]
   );
+
+  // Absolute server path of the previewed file, for the standalone new-tab preview: session file
+  // paths are relative to the working dir (or the browsed worktree), but that page reads through
+  // the server-wide file API, which takes absolute paths. Mixed separators are fine on Windows.
+  const absPath = file
+    ? `${(gitDir || workingDirectory).replace(/[/\\]+$/, "")}/${file.path}`
+    : "";
 
   // Syntax-highlighted HTML for the plain-text view (null for unsupported languages).
   const highlighted = useMemo(
@@ -2065,6 +2083,12 @@ function FilePreview({
                 {fullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
               </Button>
             )}
+            {/* Standalone full-page preview in its own browser tab; survives a refresh there. */}
+            <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Open in new browser tab">
+              <a href={previewUrl(absPath)} target="_blank" rel="noreferrer">
+                <ExternalLink className="size-4" />
+              </a>
+            </Button>
             <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Download">
               <a href={rawUrl(true)} download={file.name}>
                 <Download className="size-4" />
@@ -2074,7 +2098,14 @@ function FilePreview({
         )}
       </header>
 
-      <div ref={contentRef} className="min-h-0 flex-1 overflow-auto">
+      <div className="relative min-h-0 flex-1">
+        {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. The
+            sandboxed HTML iframe is excluded — CSS zoom would scale the frame, not its document. */}
+        {!editing && view === "preview" && kind === "text" && status === "idle" && text !== null &&
+          !(isHtml && mdView === "rendered") && (
+            <ZoomControls zoom={zoom} onChange={setZoom} className="bottom-3 right-3" />
+          )}
+        <div ref={contentRef} className="h-full overflow-auto">
         {editing ? (
           <Textarea
             value={draft}
@@ -2124,7 +2155,7 @@ function FilePreview({
             )}
             {kind === "text" && status === "idle" && text !== null &&
               (isMarkdown && mdView === "rendered" ? (
-                <div className="prose prose-sm max-w-none p-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
+                <div style={{ zoom }} className="prose prose-sm max-w-none p-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
                 </div>
               ) : isHtml && mdView === "rendered" ? (
@@ -2138,14 +2169,14 @@ function FilePreview({
                   className="h-full w-full border-0 bg-white"
                 />
               ) : highlighted !== null ? (
-                <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
+                <pre style={{ zoom }} className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
                   <code
                     className="hljs bg-transparent p-0"
                     dangerouslySetInnerHTML={{ __html: highlighted }}
                   />
                 </pre>
               ) : (
-                <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
+                <pre style={{ zoom }} className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
               ))}
 
             {kind === "office" && file.size <= MAX_OFFICE_PREVIEW && (
@@ -2179,6 +2210,7 @@ function FilePreview({
             )}
           </>
         )}
+        </div>
       </div>
 
       {lightbox && (

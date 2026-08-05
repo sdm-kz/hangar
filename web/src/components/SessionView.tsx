@@ -531,6 +531,7 @@ export function SessionView({
             <FileBrowser
               ref={fileBrowserRef}
               sessionId={session.id}
+              workingDirectory={session.workingDirectory}
               gitFiles={git?.isRepo ? git.files : undefined}
               onRefresh={onRefresh}
               refreshToken={refreshToken}

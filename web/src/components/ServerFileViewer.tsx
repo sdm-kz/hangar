@@ -9,8 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
+import { ZoomControls } from "./ZoomControls";
+import { previewUrl } from "@/lib/urlState";
 import {
   Download,
+  ExternalLink,
   FolderTree,
   Loader2,
   Menu,
@@ -32,22 +35,28 @@ function baseName(p: string): string {
  * Files tab. Text files preview with syntax highlighting and can be edited/saved; Markdown has a
  * Rendered/Raw toggle; images, video, PDFs and Office documents (.docx/.xlsx) preview inline;
  * anything else offers a download.
+ *
+ * Also doubles as the whole page in the standalone preview tab (PreviewApp): there is no sidebar
+ * or session view there, so every app-chrome callback is optional — leave them out and the
+ * corresponding buttons (menu, close, open-in-new-tab) disappear.
  */
 export function ServerFileViewer({
   path,
   onClose,
   onReveal,
   onToggleSidebar,
-  collapsed,
+  collapsed = false,
   onToggleCollapsed,
 }: {
   path: string;
-  onClose: () => void;
+  /** Return to the session view. Absent in the standalone preview tab, which has nowhere to go. */
+  onClose?: () => void;
   // Reveal this file in the Files tab tree (switch tab + expand/scroll to it).
   onReveal?: () => void;
-  onToggleSidebar: () => void;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
+  /** Open the mobile sidebar drawer. Absent in the standalone preview tab (no sidebar). */
+  onToggleSidebar?: () => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
   const name = baseName(path);
   const kind = fileKind(name);
@@ -63,6 +72,8 @@ export function ServerFileViewer({
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [rendered, setRendered] = useState(true); // markdown/HTML: rendered preview vs raw source
+  // Text/markdown preview zoom; kept while switching files so a chosen size sticks.
+  const [zoom, setZoom] = useState(1);
 
   // Load text content when the open file (or its kind) changes.
   useEffect(() => {
@@ -110,10 +121,12 @@ export function ServerFileViewer({
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-2 border-b px-3 py-2">
-        <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleSidebar} title="Sessions & files">
-          <Menu className="size-5" />
-        </Button>
-        {collapsed && (
+        {onToggleSidebar && (
+          <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleSidebar} title="Sessions & files">
+            <Menu className="size-5" />
+          </Button>
+        )}
+        {collapsed && onToggleCollapsed && (
           <Button
             variant="ghost"
             size="icon"
@@ -172,17 +185,34 @@ export function ServerFileViewer({
             <FolderTree className="size-4" />
           </Button>
         )}
+        {/* Embedded in the app: offer the same file as a standalone full-page preview in its own
+            browser tab (the path rides in the query string, so that tab survives a refresh). */}
+        {onClose && (
+          <Button variant="ghost" size="icon" asChild title="Open in new browser tab">
+            <a href={previewUrl(path)} target="_blank" rel="noreferrer">
+              <ExternalLink className="size-4" />
+            </a>
+          </Button>
+        )}
         <Button variant="ghost" size="icon" asChild title="Download">
           <a href={serverFileUrl(path, true)} download={name}>
             <Download className="size-4" />
           </a>
         </Button>
-        <Button variant="ghost" size="icon" onClick={onClose} title="Close">
-          <X className="size-5" />
-        </Button>
+        {onClose && (
+          <Button variant="ghost" size="icon" onClick={onClose} title="Close">
+            <X className="size-5" />
+          </Button>
+        )}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="relative min-h-0 flex-1">
+        {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. The
+            sandboxed HTML iframe is excluded — CSS zoom would scale the frame, not its document. */}
+        {kind === "text" && !tooLarge && !editing && text !== null && !(isHtml && rendered) && (
+          <ZoomControls zoom={zoom} onChange={setZoom} className="bottom-3 right-3" />
+        )}
+        <div className="h-full overflow-auto">
         {error ? (
           <div className="p-6 text-sm text-destructive">{error}</div>
         ) : loading ? (
@@ -219,7 +249,7 @@ export function ServerFileViewer({
             className="h-full w-full resize-none rounded-none border-0 font-mono text-xs leading-relaxed focus-visible:ring-0"
           />
         ) : isMarkdown && rendered ? (
-          <div className="prose prose-sm dark:prose-invert max-w-none p-4">
+          <div style={{ zoom }} className="prose prose-sm dark:prose-invert max-w-none p-4">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{text ?? ""}</ReactMarkdown>
           </div>
         ) : isHtml && rendered ? (
@@ -233,12 +263,13 @@ export function ServerFileViewer({
             className="h-full w-full border-0 bg-white"
           />
         ) : highlighted ? (
-          <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
+          <pre style={{ zoom }} className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
             <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted }} />
           </pre>
         ) : (
-          <pre className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
+          <pre style={{ zoom }} className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
         )}
+        </div>
       </div>
     </div>
   );
