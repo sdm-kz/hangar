@@ -96,6 +96,7 @@ export function MarkdownToc({
     }
   });
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const listRef = useRef<HTMLElement | null>(null);
 
   const toggle = () => {
@@ -110,8 +111,10 @@ export function MarkdownToc({
   };
 
   // Collect the rendered headings once the markdown is in the DOM (they render synchronously,
-  // unlike mermaid diagrams, so one pass after each text change is enough).
+  // unlike mermaid diagrams, so one pass after each text change is enough). A leftover filter
+  // belongs to the previous document, so drop it.
   useEffect(() => {
+    setQuery("");
     const root = containerRef.current;
     if (!root) return;
     const heads = Array.from(
@@ -177,6 +180,8 @@ export function MarkdownToc({
 
   if (entries.length === 0) return null;
   const minLevel = Math.min(...entries.map((e) => e.level));
+  const q = query.trim().toLowerCase();
+  const visible = q ? entries.filter((e) => e.label.toLowerCase().includes(q)) : entries;
 
   return (
     <div className={cn("absolute right-3 top-3 z-10 flex flex-col items-end", className)}>
@@ -192,9 +197,31 @@ export function MarkdownToc({
       {open && (
         <nav
           ref={listRef}
-          className="mt-2 max-h-[min(24rem,60vh)] w-60 max-w-[70vw] overflow-y-auto rounded-md border bg-background/95 py-1 shadow-md backdrop-blur"
+          className="mt-2 max-h-[min(24rem,60vh)] w-60 max-w-[70vw] overflow-y-auto rounded-md border bg-background/95 pb-1 shadow-md backdrop-blur"
         >
-          {entries.map((e) => (
+          {/* Sticky so the filter stays reachable while the section list scrolls under it. */}
+          <div className="sticky top-0 border-b bg-background/95 p-1 backdrop-blur">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Filter sections…"
+              autoFocus
+              className="h-6 w-full rounded-sm bg-muted/50 px-1.5 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+              onKeyDown={(e) => {
+                // Enter jumps to the first match; Esc clears the filter before anything
+                // else (like a dialog) gets to act on it.
+                if (e.key === "Enter" && visible[0]) anchorTo(visible[0].id, visible[0].el);
+                if (e.key === "Escape" && query) {
+                  e.stopPropagation();
+                  setQuery("");
+                }
+              }}
+            />
+          </div>
+          {visible.length === 0 && (
+            <div className="px-2.5 py-2 text-xs text-muted-foreground">No matching sections.</div>
+          )}
+          {visible.map((e) => (
             <button
               key={e.id}
               data-active={e.id === activeId || undefined}

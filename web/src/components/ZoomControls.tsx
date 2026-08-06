@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { ZoomIn, ZoomOut } from "lucide-react";
+import { useCallback, useEffect, useState, type RefObject } from "react";
+import { ArrowDown, ArrowUp, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +33,86 @@ export function usePersistentZoom(key: string): [number, (zoom: number) => void]
     [storageKey]
   );
   return [zoom, set];
+}
+
+// Hide the jump buttons this close to the respective end — a jump that saves less than half a
+// screen isn't worth the visual noise.
+const JUMP_SLACK = 200;
+
+/**
+ * Floating jump-to-top/bottom buttons for a scrollable preview. Position them via `className`
+ * inside a `relative` ancestor. Each button only appears when there is meaningfully far to go in
+ * its direction, so nothing shows on short content, at the top only ↓ shows, and so on.
+ */
+export function ScrollJumpButtons({
+  containerRef,
+  watch,
+  className = "bottom-14 right-3",
+}: {
+  /** The scrollable element the buttons act on. */
+  containerRef: RefObject<HTMLElement | null>;
+  /** Any value that changes when the container's content is swapped, to re-measure and re-observe. */
+  watch?: unknown;
+  className?: string;
+}) {
+  const [canUp, setCanUp] = useState(false);
+  const [canDown, setCanDown] = useState(false);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      setCanUp(el.scrollTop > JUMP_SLACK);
+      setCanDown(el.scrollTop + el.clientHeight < el.scrollHeight - JUMP_SLACK);
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    el.addEventListener("scroll", schedule, { passive: true });
+    // The container itself never resizes when content grows — watch its child (late images,
+    // mermaid diagrams, zoom changes) so the buttons appear/disappear as scrollHeight changes.
+    const ro = new ResizeObserver(schedule);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("scroll", schedule);
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [containerRef, watch]);
+
+  const jump = (top: number) => containerRef.current?.scrollTo({ top, behavior: "smooth" });
+
+  if (!canUp && !canDown) return null;
+  return (
+    <div className={cn("absolute z-10 flex flex-col gap-1", className)}>
+      {canUp && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 rounded-md border bg-background/90 shadow-sm backdrop-blur"
+          title="Scroll to top"
+          onClick={() => jump(0)}
+        >
+          <ArrowUp className="size-4" />
+        </Button>
+      )}
+      {canDown && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 rounded-md border bg-background/90 shadow-sm backdrop-blur"
+          title="Scroll to bottom"
+          onClick={() => jump(containerRef.current?.scrollHeight ?? 0)}
+        >
+          <ArrowDown className="size-4" />
+        </Button>
+      )}
+    </div>
+  );
 }
 
 /**

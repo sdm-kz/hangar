@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
-import { ZoomControls, usePersistentZoom } from "./ZoomControls";
+import { ScrollJumpButtons, ZoomControls, usePersistentZoom } from "./ZoomControls";
 import { CopyPathButton } from "./CopyPathButton";
 import { previewUrl } from "@/lib/urlState";
 import { writeToClipboard } from "@/lib/clipboard";
@@ -187,9 +187,17 @@ export function ServerFileViewer({
           </Button>
         )}
         <div className="group min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">
-            {name}
-            {editing && <span className="ml-1 text-amber-500">•</span>}
+          <div className="flex min-w-0 items-center gap-1">
+            <div className="truncate text-sm font-medium">
+              {name}
+              {editing && <span className="ml-1 text-amber-500">•</span>}
+            </div>
+            <CopyPathButton
+              path={name}
+              title="Copy file name"
+              className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+              iconClassName="size-3"
+            />
           </div>
           <div className="flex min-w-0 items-center gap-1">
             <div className="truncate text-xs text-muted-foreground" title={path}>
@@ -300,6 +308,7 @@ export function ServerFileViewer({
         {isMarkdown && rendered && !editing && !tooLarge && text !== null && (
           <MarkdownToc containerRef={scrollRef} text={text} />
         )}
+        {!editing && <ScrollJumpButtons containerRef={scrollRef} watch={text ?? path} />}
         <div
           ref={scrollRef}
           className="h-full overflow-auto"

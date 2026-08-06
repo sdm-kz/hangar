@@ -61,7 +61,7 @@ import {
 } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 import { CopyPathButton } from "./CopyPathButton";
-import { ZoomControls, usePersistentZoom } from "./ZoomControls";
+import { ScrollJumpButtons, ZoomControls, usePersistentZoom } from "./ZoomControls";
 
 // Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
 interface RowActions {
@@ -2108,6 +2108,9 @@ function FilePreview({
           isMarkdown && mdView === "rendered" && (
             <MarkdownToc containerRef={contentRef} text={text} />
           )}
+        {fullscreen && !editing && (
+          <ScrollJumpButtons containerRef={contentRef} watch={text ?? file.path} />
+        )}
         <div ref={contentRef} className="h-full overflow-auto">
         {editing ? (
           <Textarea
