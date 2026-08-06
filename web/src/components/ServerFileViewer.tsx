@@ -80,6 +80,16 @@ export function ServerFileViewer({
   const [zoom, setZoom] = useState(1);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  // A section anchor in the URL hash belongs to the file it was clicked in: keep it across a
+  // reload (that's what makes it restorable), but drop it when switching to a different file.
+  const prevPath = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevPath.current !== null && prevPath.current !== path && window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    prevPath.current = path;
+  }, [path]);
+
   // Load text content when the open file (or its kind) changes.
   useEffect(() => {
     setEditing(false);
@@ -110,11 +120,14 @@ export function ServerFileViewer({
   // Best-effort: markdown images that load later can still shift the layout.
   useEffect(() => {
     if (loading || editing) return;
+    // A section anchor in the URL wins over the pixel position: the Markdown component scrolls
+    // to it itself, and it stays correct even when late-rendering diagrams shift the layout.
+    if (isMarkdown && rendered && window.location.hash) return;
     const el = scrollRef.current;
     if (!el) return;
     const saved = Number(sessionStorage.getItem(scrollKey(path)));
     if (saved > 0) el.scrollTop = saved;
-  }, [path, loading, editing, text, rendered]);
+  }, [path, loading, editing, text, rendered, isMarkdown]);
 
   // highlight.js escapes its input, so the resulting HTML is safe to inject (same as FileBrowser).
   const highlighted = useMemo(
@@ -206,7 +219,16 @@ export function ServerFileViewer({
             browser tab (the path rides in the query string, so that tab survives a refresh). */}
         {onClose && (
           <Button variant="ghost" size="icon" asChild title="Open in new browser tab">
-            <a href={previewUrl(path)} target="_blank" rel="noreferrer">
+            <a
+              href={previewUrl(path)}
+              target="_blank"
+              rel="noreferrer"
+              // Carry the current section anchor along so the new tab opens at the same place.
+              // Refreshed at click time because hash changes don't re-render this component.
+              onClick={(e) => {
+                e.currentTarget.href = previewUrl(path) + window.location.hash;
+              }}
+            >
               <ExternalLink className="size-4" />
             </a>
           </Button>
