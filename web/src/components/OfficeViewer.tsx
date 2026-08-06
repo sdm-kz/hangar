@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { MAX_OFFICE_PREVIEW, officeKind } from "@/lib/fileKind";
-import { ZoomControls } from "@/components/ZoomControls";
+import { ZoomControls, usePersistentZoom } from "@/components/ZoomControls";
 import { cn } from "@/lib/utils";
 
 type Status = "loading" | "error" | "toolarge" | "ready";
@@ -33,7 +33,7 @@ async function fetchBytes(url: string, signal: AbortSignal): Promise<ArrayBuffer
 
 function DocxViewer({ url }: { url: string }) {
   const [status, setStatus] = useState<Status>("loading");
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = usePersistentZoom("docx");
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -78,7 +78,7 @@ function XlsxViewer({ url }: { url: string }) {
   const [status, setStatus] = useState<Status>("loading");
   const [sheets, setSheets] = useState<{ name: string; html: string }[]>([]);
   const [active, setActive] = useState(0);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = usePersistentZoom("xlsx");
 
   useEffect(() => {
     const ctrl = new AbortController();

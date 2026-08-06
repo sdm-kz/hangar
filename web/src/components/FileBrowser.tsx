@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
-import { Markdown } from "./Markdown";
+import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
 import {
@@ -61,7 +61,7 @@ import {
 } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 import { CopyPathButton } from "./CopyPathButton";
-import { ZoomControls } from "./ZoomControls";
+import { ZoomControls, usePersistentZoom } from "./ZoomControls";
 
 // Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
 interface RowActions {
@@ -1747,8 +1747,8 @@ function FilePreview({
   const [mdView, setMdView] = useState<"rendered" | "raw">("rendered");
   const [fullscreen, setFullscreen] = useState(false); // full-page popup preview
   const [reload, setReload] = useState(0); // cache-buster bumped by the header's refresh button
-  // Text/markdown preview zoom; kept while switching files so a chosen size sticks.
-  const [zoom, setZoom] = useState(1);
+  // Text/markdown preview zoom; kept while switching files and across reloads so a chosen size sticks.
+  const [zoom, setZoom] = usePersistentZoom("text");
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -2103,6 +2103,10 @@ function FilePreview({
         {!editing && view === "preview" && kind === "text" && status === "idle" && text !== null &&
           !(isHtml && mdView === "rendered") && (
             <ZoomControls zoom={zoom} onChange={setZoom} className="bottom-3 right-3" />
+          )}
+        {!editing && view === "preview" && status === "idle" && text !== null &&
+          isMarkdown && mdView === "rendered" && (
+            <MarkdownToc containerRef={contentRef} text={text} />
           )}
         <div ref={contentRef} className="h-full overflow-auto">
         {editing ? (

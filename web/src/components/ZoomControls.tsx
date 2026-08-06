@@ -1,9 +1,39 @@
+import { useCallback, useState } from "react";
 import { ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 // Discrete zoom stops shared by every zoomable preview; 1 is the always-present default.
 export const ZOOM_LEVELS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+
+/**
+ * Zoom state persisted in localStorage under `claudeweb.zoom:<key>`, so a chosen size survives
+ * page reloads (and is shared across tabs). Previews with different natural sizes use different
+ * keys — e.g. text previews vs Word documents — so one doesn't inherit the other's level.
+ */
+export function usePersistentZoom(key: string): [number, (zoom: number) => void] {
+  const storageKey = `claudeweb.zoom:${key}`;
+  const [zoom, setZoom] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem(storageKey));
+      return ZOOM_LEVELS.includes(v) ? v : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const set = useCallback(
+    (z: number) => {
+      setZoom(z);
+      try {
+        localStorage.setItem(storageKey, String(z));
+      } catch {
+        /* storage unavailable — persistence is best-effort */
+      }
+    },
+    [storageKey]
+  );
+  return [zoom, set];
+}
 
 /**
  * Floating −/percent/+ overlay for the corner of a viewer (position it via `className` inside a

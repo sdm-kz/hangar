@@ -5,12 +5,16 @@ import { highlightCode } from "@/lib/highlight";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Markdown } from "./Markdown";
+import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
-import { ZoomControls } from "./ZoomControls";
+import { ZoomControls, usePersistentZoom } from "./ZoomControls";
+import { CopyPathButton } from "./CopyPathButton";
 import { previewUrl } from "@/lib/urlState";
+import { writeToClipboard } from "@/lib/clipboard";
 import {
+  Check,
+  Copy,
   Download,
   ExternalLink,
   FolderTree,
@@ -18,6 +22,7 @@ import {
   Menu,
   PanelLeftOpen,
   Pencil,
+  RefreshCw,
   Save,
   X,
 } from "lucide-react";
@@ -76,9 +81,16 @@ export function ServerFileViewer({
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [rendered, setRendered] = useState(true); // markdown/HTML: rendered preview vs raw source
-  // Text/markdown preview zoom; kept while switching files so a chosen size sticks.
-  const [zoom, setZoom] = useState(1);
+  // Text/markdown preview zoom; kept while switching files and across reloads so a chosen size sticks.
+  const [zoom, setZoom] = usePersistentZoom("text");
+  // Bumped by the header refresh button: re-runs the text fetch and cache-busts media URLs.
+  const [reloadKey, setReloadKey] = useState(0);
+  const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Raw-bytes URL for media previews; carries the reload counter so a refresh actually bypasses
+  // the browser cache instead of re-serving the stale image/video/document.
+  const rawUrl = reloadKey ? `${serverFileUrl(path)}&v=${reloadKey}` : serverFileUrl(path);
 
   // A section anchor in the URL hash belongs to the file it was clicked in: keep it across a
   // reload (that's what makes it restorable), but drop it when switching to a different file.
@@ -112,7 +124,7 @@ export function ServerFileViewer({
     return () => {
       alive = false;
     };
-  }, [path, kind]);
+  }, [path, kind, reloadKey]);
 
   // Restore the saved scroll position once real content is in the DOM (text arrives async, so this
   // must run after the loader goes away; it also re-runs when leaving edit mode or toggling
@@ -134,6 +146,13 @@ export function ServerFileViewer({
     () => (text !== null ? highlightCode(name, text) : null),
     [name, text]
   );
+
+  const copyContent = useCallback(async () => {
+    if (text === null) return;
+    await writeToClipboard(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [text]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -167,13 +186,20 @@ export function ServerFileViewer({
             <PanelLeftOpen className="size-5" />
           </Button>
         )}
-        <div className="min-w-0 flex-1">
+        <div className="group min-w-0 flex-1">
           <div className="truncate text-sm font-medium">
             {name}
             {editing && <span className="ml-1 text-amber-500">•</span>}
           </div>
-          <div className="truncate text-xs text-muted-foreground" title={path}>
-            {path}
+          <div className="flex min-w-0 items-center gap-1">
+            <div className="truncate text-xs text-muted-foreground" title={path}>
+              {path}
+            </div>
+            <CopyPathButton
+              path={path}
+              className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+              iconClassName="size-3"
+            />
           </div>
         </div>
 
@@ -197,6 +223,15 @@ export function ServerFileViewer({
               )}
               <Button
                 variant="ghost"
+                size="icon"
+                onClick={copyContent}
+                disabled={text === null}
+                title={copied ? "Copied!" : "Copy content"}
+              >
+                {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+              </Button>
+              <Button
+                variant="ghost"
                 size="sm"
                 onClick={() => {
                   setDraft(text ?? "");
@@ -209,6 +244,17 @@ export function ServerFileViewer({
               </Button>
             </>
           )
+        )}
+        {!editing && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setReloadKey((k) => k + 1)}
+            disabled={loading}
+            title="Refresh"
+          >
+            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+          </Button>
         )}
         {onReveal && (
           <Button variant="ghost" size="icon" onClick={onReveal} title="Show in Files">
@@ -251,6 +297,9 @@ export function ServerFileViewer({
         {kind === "text" && !tooLarge && !editing && text !== null && !(isHtml && rendered) && (
           <ZoomControls zoom={zoom} onChange={setZoom} className="bottom-3 right-3" />
         )}
+        {isMarkdown && rendered && !editing && !tooLarge && text !== null && (
+          <MarkdownToc containerRef={scrollRef} text={text} />
+        )}
         <div
           ref={scrollRef}
           className="h-full overflow-auto"
@@ -273,16 +322,16 @@ export function ServerFileViewer({
           </div>
         ) : kind === "image" ? (
           <div className="flex h-full items-center justify-center bg-muted/30 p-4">
-            <img src={serverFileUrl(path)} alt={name} className="max-h-full max-w-full object-contain" />
+            <img src={rawUrl} alt={name} className="max-h-full max-w-full object-contain" />
           </div>
         ) : kind === "video" ? (
           <div className="flex h-full items-center justify-center bg-black p-2">
-            <video src={serverFileUrl(path)} controls className="max-h-full max-w-full object-contain" />
+            <video src={rawUrl} controls className="max-h-full max-w-full object-contain" />
           </div>
         ) : kind === "office" ? (
-          <OfficeViewer url={serverFileUrl(path)} name={name} />
+          <OfficeViewer url={rawUrl} name={name} />
         ) : kind === "pdf" ? (
-          <PdfViewer url={serverFileUrl(path)} downloadUrl={serverFileUrl(path, true)} name={name} />
+          <PdfViewer url={rawUrl} downloadUrl={serverFileUrl(path, true)} name={name} />
         ) : kind !== "text" ? (
           <DownloadPrompt path={path} name={name} />
         ) : tooLarge ? (
