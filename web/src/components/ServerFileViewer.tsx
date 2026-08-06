@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, serverFileUrl } from "@/lib/api";
 import { fileExt, fileKind } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
@@ -23,6 +23,11 @@ import {
 } from "lucide-react";
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB — matches the per-session browser's cap
+
+// Scroll position per file, per browser tab: lets the standalone preview tab (and a reopened file
+// in the app) come back where it was after a reload. sessionStorage keeps it tab-local and drops
+// it when the tab closes, so positions from different tabs never fight each other.
+const scrollKey = (p: string) => `claudeweb.previewScroll:${p}`;
 
 function baseName(p: string): string {
   const parts = p.split(/[/\\]+/).filter(Boolean);
@@ -73,6 +78,7 @@ export function ServerFileViewer({
   const [rendered, setRendered] = useState(true); // markdown/HTML: rendered preview vs raw source
   // Text/markdown preview zoom; kept while switching files so a chosen size sticks.
   const [zoom, setZoom] = useState(1);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Load text content when the open file (or its kind) changes.
   useEffect(() => {
@@ -97,6 +103,18 @@ export function ServerFileViewer({
       alive = false;
     };
   }, [path, kind]);
+
+  // Restore the saved scroll position once real content is in the DOM (text arrives async, so this
+  // must run after the loader goes away; it also re-runs when leaving edit mode or toggling
+  // rendered/raw, where the restore is a no-op because scrolling keeps the key up to date).
+  // Best-effort: markdown images that load later can still shift the layout.
+  useEffect(() => {
+    if (loading || editing) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const saved = Number(sessionStorage.getItem(scrollKey(path)));
+    if (saved > 0) el.scrollTop = saved;
+  }, [path, loading, editing, text, rendered]);
 
   // highlight.js escapes its input, so the resulting HTML is safe to inject (same as FileBrowser).
   const highlighted = useMemo(
@@ -211,7 +229,20 @@ export function ServerFileViewer({
         {kind === "text" && !tooLarge && !editing && text !== null && !(isHtml && rendered) && (
           <ZoomControls zoom={zoom} onChange={setZoom} className="bottom-3 right-3" />
         )}
-        <div className="h-full overflow-auto">
+        <div
+          ref={scrollRef}
+          className="h-full overflow-auto"
+          onScroll={(e) => {
+            // While the loader/editor is up the container collapses and the browser clamps
+            // scrollTop to 0 — don't let that clobber the saved position.
+            if (loading || editing) return;
+            try {
+              sessionStorage.setItem(scrollKey(path), String(e.currentTarget.scrollTop));
+            } catch {
+              /* storage unavailable — position keeping is best-effort */
+            }
+          }}
+        >
         {error ? (
           <div className="p-6 text-sm text-destructive">{error}</div>
         ) : loading ? (
