@@ -8,6 +8,8 @@ import {
 } from "react";
 import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { Element, ElementContent, Root, RootContent } from "hast";
 import { Loader2, TableOfContents, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,19 @@ import { cn } from "@/lib/utils";
  * be deep-linked and survives a reload: on mount this component scrolls to the section named by
  * the current hash.
  */
+// GitHub's sanitize schema minus the `user-content-` id clamp: documents place explicit
+// `<a id="…"></a>` anchors and link to them as `[§2.4](#s-2-4)`, so ids must survive verbatim
+// for those in-document links to resolve. Previews show the user's own local files, so DOM
+// clobbering via ids is not a concern here.
+const sanitizeSchema = {
+  ...defaultSchema,
+  clobberPrefix: "",
+  attributes: {
+    ...defaultSchema.attributes,
+    "*": [...(defaultSchema.attributes?.["*"] ?? []), "id"],
+  },
+};
+
 export function Markdown({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -56,9 +71,51 @@ export function Markdown({ text }: { text: string }) {
     };
   }, [text]);
 
+  // Make the browser back/forward buttons work across in-document link jumps. A click on a
+  // `#hash` link is a native history push, but the content scrolls inside an inner container,
+  // which the browser doesn't restore on Back — so before the click navigates, stash the
+  // container's position on the entry being left, and on popstate either restore that exact
+  // position (Back) or scroll to the hash target (Forward / no saved position).
+  useEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    const onClick = (e: globalThis.MouseEvent) => {
+      const a = (e.target as HTMLElement).closest?.('a[href^="#"]');
+      if (!a || !root.contains(a)) return;
+      const sp = scrollParentOf(root);
+      window.history.replaceState({ mdScroll: sp.scrollTop }, "", window.location.href);
+    };
+    const onPop = (e: PopStateEvent) => {
+      const saved = (e.state as { mdScroll?: unknown } | null)?.mdScroll;
+      if (typeof saved === "number") {
+        scrollParentOf(root).scrollTop = saved;
+        return;
+      }
+      const raw = window.location.hash.slice(1);
+      if (!raw) return;
+      try {
+        root.querySelector(`#${CSS.escape(decodeURIComponent(raw))}`)?.scrollIntoView();
+      } catch {
+        /* malformed hash */
+      }
+    };
+    root.addEventListener("click", onClick);
+    window.addEventListener("popstate", onPop);
+    return () => {
+      root.removeEventListener("click", onClick);
+      window.removeEventListener("popstate", onPop);
+    };
+  }, [text]);
+
   return (
     <div ref={ref}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHeadingIds]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        // Order matters: parse raw HTML first, sanitize it, then add heading ids (after
+        // sanitize so the generated ids aren't stripped).
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeHeadingIds]}
+        components={components}
+      >
         {text}
       </ReactMarkdown>
     </div>
@@ -268,6 +325,15 @@ function rehypeHeadingIds() {
     };
     visit(tree);
   };
+}
+
+/** The nearest scrollable ancestor — the container the preview's content actually scrolls in. */
+function scrollParentOf(el: HTMLElement): globalThis.Element {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const overflowY = getComputedStyle(p).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll") return p;
+  }
+  return document.scrollingElement ?? document.documentElement;
 }
 
 /** Put `#id` in the URL without a history entry, and scroll the section into view. */
