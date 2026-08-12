@@ -1,10 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { ImagePlus } from "lucide-react";
+import { ArrowDown, ImagePlus } from "lucide-react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
+import { cn } from "@/lib/utils";
 import { getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
 import { writeToClipboard } from "@/lib/clipboard";
@@ -156,6 +158,8 @@ export const TerminalPane = forwardRef<
   // Coarse pointer → mobile/touch: surface an attach-image button since pasting an image into the
   // terminal isn't reliably available on mobile browsers. Desktop keeps the paste path only.
   const [isTouch] = useState(() => window.matchMedia?.("(pointer: coarse)").matches ?? false);
+  // True while the viewport sits above the live tail — gates the jump-to-bottom button.
+  const [scrolledUp, setScrolledUp] = useState(false);
   useImperativeHandle(
     ref,
     (): TerminalPaneHandle => ({
@@ -269,6 +273,25 @@ export const TerminalPane = forwardRef<
       },
     });
     term.open(host);
+    // GPU renderer. The default DOM renderer rebuilds row elements on every scroll step, which is
+    // what makes touch scrolling lag behind the finger on phones; WebGL repaints the whole grid in
+    // one draw call. Must be loaded after open() (it needs the canvas parent). Mobile browsers drop
+    // the GL context when the tab is backgrounded or memory is tight — dispose on loss so xterm
+    // falls back to the DOM renderer instead of freezing on a dead canvas.
+    // The addon version is pinned to the core's (0.18.x ↔ xterm 5.5.x): 0.19's teardown reads
+    // `_core._store._isDisposed`, an internal that only exists in the 5.6 betas, so on 5.5 it threw
+    // out of this effect's cleanup and blanked the app on every session switch.
+    let webgl: WebglAddon | null = null;
+    try {
+      webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl?.dispose();
+        webgl = null;
+      });
+      term.loadAddon(webgl);
+    } catch {
+      webgl = null; // no WebGL available (old browser / blocked) — DOM renderer stays
+    }
     try {
       fit.fit();
     } catch {
@@ -396,14 +419,55 @@ export const TerminalPane = forwardRef<
 
     // Touch scrolling: xterm's built-in viewport touch handler only fires for touches that land on
     // the thin scrollbar viewport, but on mobile a drag lands on the screen overlay and never reaches
-    // it — so scrollback is unreachable. Translate a one-finger vertical drag into scrollback movement
+    // it — so scrollback is unreachable. Translate a one-finger vertical drag into scroll movement
     // ourselves. A tap (no meaningful move) falls through untouched, so tap-to-focus still works.
+    //
+    // Beyond the drag itself we add flick momentum: without it the content stops dead the instant the
+    // finger lifts, which is the main reason this feels unlike a native scroll view. We track recent
+    // pointer velocity, and on release keep scrolling with exponential decay until it dies out.
+    const rowHeightOf = () =>
+      // Guard both terms: a zero-height host (hidden pane) would otherwise divide to Infinity lines.
+      host.clientHeight > 0 && term.rows > 0 ? host.clientHeight / term.rows : 18;
+
+    // Apply `lines` of scroll, picking the mechanism the CURRENT buffer actually responds to.
+    // Claude Code's TUI runs in the ALTERNATE screen buffer, which by definition has no scrollback:
+    // there, `scrollLines` is a silent no-op and the only thing that moves the view is the app's own
+    // scrolling, driven by arrow keys. xterm already implements exactly that translation in its wheel
+    // handler (alt buffer + wheel → N cursor-key sequences, honoring DECCKM application-cursor mode),
+    // so we hand it a synthetic wheel of the equivalent pixel delta rather than re-deriving the escape
+    // sequences here. In the normal buffer (a plain shell) there IS scrollback, and scrollLines is the
+    // direct path — no round trip through the PTY. Returns whether the view actually moved.
+    const applyScroll = (lines: number, rowHeight: number): boolean => {
+      if (term.buffer.active.type === "alternate") {
+        const screen = host.querySelector(".xterm-screen");
+        if (!screen) return false;
+        // Untrusted events perform no default action, so this can't scroll the page — xterm's own
+        // listener is the only thing that reacts to it.
+        screen.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: lines * rowHeight, deltaMode: 0, bubbles: true, cancelable: true })
+        );
+        return true; // the app owns the scroll; we can't observe whether it hit an end
+      }
+      const before = term.buffer.active.viewportY;
+      term.scrollLines(lines);
+      return term.buffer.active.viewportY !== before;
+    };
     let lastTouchY: number | null = null;
-    let scrollAccum = 0;
+    let scrollAccum = 0; // sub-row remainder, carried across moves so slow drags still track 1:1
+    let velocity = 0; // px per frame, signed like scrollAccum (positive = toward newer output)
+    let lastMoveTs = 0;
+    let momentumRaf = 0;
+    const stopMomentum = () => {
+      if (momentumRaf) cancelAnimationFrame(momentumRaf);
+      momentumRaf = 0;
+      velocity = 0;
+    };
     const onTouchStart = (e: TouchEvent) => {
+      stopMomentum(); // a new touch always grabs the content, mid-glide included
       if (e.touches.length === 1) {
         lastTouchY = e.touches[0].clientY;
         scrollAccum = 0;
+        lastMoveTs = e.timeStamp;
       } else {
         lastTouchY = null; // pinch/multi-touch: let the browser handle it
       }
@@ -411,23 +475,56 @@ export const TerminalPane = forwardRef<
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1 || lastTouchY === null) return;
       const y = e.touches[0].clientY;
-      scrollAccum += lastTouchY - y; // dragging up (finger up) scrolls content up = toward newer
+      const dy = lastTouchY - y; // dragging up (finger up) scrolls content up = toward newer
+      scrollAccum += dy;
       lastTouchY = y;
-      // Guard both terms: a zero-height host (hidden pane) would otherwise divide to Infinity lines.
-      const rowHeight = host.clientHeight > 0 && term.rows > 0 ? host.clientHeight / term.rows : 18;
+      // Normalize to px-per-frame (~16.7ms) and smooth, so one jittery sample can't define the flick.
+      const dt = Math.max(1, e.timeStamp - lastMoveTs);
+      lastMoveTs = e.timeStamp;
+      velocity = velocity * 0.7 + (dy / dt) * 16.7 * 0.3;
+      const rowHeight = rowHeightOf();
       const lines = Math.trunc(scrollAccum / rowHeight);
       if (lines !== 0) {
-        term.scrollLines(lines);
+        applyScroll(lines, rowHeight);
         scrollAccum -= lines * rowHeight;
-        e.preventDefault(); // we own this gesture; don't let the page pan underneath
       }
+      // Own the gesture as soon as it reads as a vertical drag — even before a full row of travel —
+      // so the page underneath never pans or pull-to-refreshes mid-scroll.
+      if (Math.abs(scrollAccum) > 2 || lines !== 0) e.preventDefault();
     };
-    const onTouchEnd = () => {
+    const onTouchEnd = (e: TouchEvent) => {
       lastTouchY = null;
+      // A stale sample (finger held still before lifting) must not fling; require a recent, fast move.
+      if (e.timeStamp - lastMoveTs > 80 || Math.abs(velocity) < 1.5) {
+        velocity = 0;
+        return;
+      }
+      const step = () => {
+        velocity *= 0.94; // ~0.5s glide; slower decay overshoots and feels slippery in a terminal
+        if (Math.abs(velocity) < 0.4) return stopMomentum();
+        scrollAccum += velocity;
+        const rowHeight = rowHeightOf();
+        const lines = Math.trunc(scrollAccum / rowHeight);
+        if (lines !== 0) {
+          const moved = applyScroll(lines, rowHeight);
+          scrollAccum -= lines * rowHeight;
+          if (!moved) return stopMomentum(); // hit top/bottom — don't keep spinning
+        }
+        momentumRaf = requestAnimationFrame(step);
+      };
+      momentumRaf = requestAnimationFrame(step);
     };
     host.addEventListener("touchstart", onTouchStart, { passive: true });
     host.addEventListener("touchmove", onTouchMove, { passive: false });
     host.addEventListener("touchend", onTouchEnd, { passive: true });
+    host.addEventListener("touchcancel", stopMomentum, { passive: true });
+
+    // Drive the jump-to-bottom button: it only makes sense while the viewport is off the live tail.
+    // A few rows of slack keeps it from flickering on the last sliver of a drag.
+    const scrollSub = term.onScroll(() => {
+      const buf = term.buffer.active;
+      setScrolledUp(buf.baseY - buf.viewportY > 2);
+    });
 
     // Refit + notify the PTY whenever the pane resizes.
     const ro = new ResizeObserver(() => sendResize());
@@ -450,9 +547,12 @@ export const TerminalPane = forwardRef<
     return () => {
       ro.disconnect();
       fileLinks.dispose();
+      scrollSub.dispose();
+      stopMomentum();
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
+      host.removeEventListener("touchcancel", stopMomentum);
       document.removeEventListener("visibilitychange", onVisible);
       document.removeEventListener("paste", onPaste, true);
       themeSub();
@@ -464,7 +564,21 @@ export const TerminalPane = forwardRef<
         /* already closing */
       }
       termRef.current = null;
-      term.dispose();
+      // Hand the renderer back to the DOM one while the core is still alive, then dispose. Letting
+      // term.dispose() unload the WebGL addon instead runs its teardown against a half-disposed
+      // core, which throws — and a throw in an effect cleanup takes the whole React tree down with
+      // it (white page). Both steps are guarded so a renderer hiccup can never escape unmount.
+      try {
+        webgl?.dispose();
+      } catch {
+        /* renderer already gone (context loss) */
+      }
+      webgl = null;
+      try {
+        term.dispose();
+      } catch {
+        /* nothing left to salvage at unmount */
+      }
     };
   }, [sessionId]);
 
@@ -489,6 +603,22 @@ export const TerminalPane = forwardRef<
   return (
     <div className="relative h-full w-full bg-white p-2 dark:bg-[#0a0a0a]">
       <div ref={hostRef} className="h-full w-full overscroll-contain overflow-hidden" />
+      {/* Scrolled off the live tail: one tap back to the bottom, instead of flicking through
+          scrollback. Sits above the attach button so the two never overlap on touch devices. */}
+      {scrolledUp && (
+        <button
+          type="button"
+          onClick={() => termRef.current?.scrollToBottom()}
+          title="Jump to the latest output"
+          aria-label="Jump to the latest output"
+          className={cn(
+            "absolute right-4 rounded-full border bg-background/90 p-3 text-muted-foreground shadow-md backdrop-blur transition hover:text-foreground",
+            isTouch ? "bottom-20" : "bottom-4"
+          )}
+        >
+          <ArrowDown className="size-5" />
+        </button>
+      )}
       {isTouch && (
         <>
           <input
