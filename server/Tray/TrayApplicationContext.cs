@@ -43,9 +43,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         _icon.ShowBalloonTip(4000);
     }
 
-    private void OpenUi()
+    /// <summary>How many closed sessions the "Recent" submenu lists before it stops.</summary>
+    private const int RecentLimit = 20;
+
+    private void OpenUi(string? sessionId = null)
     {
-        try { Process.Start(new ProcessStartInfo(_url) { UseShellExecute = true }); }
+        var target = sessionId is null
+            ? _url
+            : $"{_url.TrimEnd('/')}/?session={Uri.EscapeDataString(sessionId)}";
+        try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); }
         catch { /* no default browser configured */ }
     }
 
@@ -64,30 +70,64 @@ public sealed class TrayApplicationContext : ApplicationContext
         try { sessions = _app.Services.GetRequiredService<SessionManager>().List(); }
         catch { sessions = Array.Empty<SessionInfo>(); }
 
-        var runningCount = sessions.Count(s => s.State == SessionState.Running);
-        menu.Items.Add(new ToolStripMenuItem($"Sessions — {runningCount} running") { Enabled = false });
+        // Names repeat a lot (one per repo folder), so disambiguate only where they actually collide.
+        var duplicated = sessions
+            .GroupBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        if (sessions.Count == 0)
+        var running = sessions.Where(s => s.State == SessionState.Running).ToArray();
+        var closed = sessions.Where(s => s.State != SessionState.Running)
+            .OrderByDescending(s => s.CreatedAt)
+            .ToArray();
+
+        menu.Items.Add(new ToolStripMenuItem($"Running — {running.Length}") { Enabled = false });
+        if (running.Length == 0)
         {
-            menu.Items.Add(new ToolStripMenuItem("No sessions") { Enabled = false });
+            menu.Items.Add(new ToolStripMenuItem("No running sessions") { Enabled = false });
         }
         else
         {
-            foreach (var s in sessions)
+            foreach (var s in running) menu.Items.Add(SessionItem(s, "●", duplicated));
+        }
+
+        if (closed.Length > 0)
+        {
+            var recent = new ToolStripMenuItem($"Recent — {closed.Length}");
+            foreach (var s in closed.Take(RecentLimit))
             {
-                var glyph = s.State == SessionState.Running ? "●" : "○";
-                var item = new ToolStripMenuItem($"{glyph}  {s.Name}  ·  {s.State}", null, (_, _) => OpenUi())
-                {
-                    ToolTipText = s.RemoteControl
-                        ? $"{s.WorkingDirectory}\nRemote control — control from the Claude Code app"
-                        : s.WorkingDirectory,
-                };
-                menu.Items.Add(item);
+                recent.DropDownItems.Add(SessionItem(s, "○", duplicated));
             }
+            if (closed.Length > RecentLimit)
+            {
+                recent.DropDownItems.Add(new ToolStripSeparator());
+                recent.DropDownItems.Add(new ToolStripMenuItem(
+                    $"{closed.Length - RecentLimit} more — open Claude Web…", null, (_, _) => OpenUi()));
+            }
+            menu.Items.Add(recent);
         }
 
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => ExitApp()));
+    }
+
+    private ToolStripMenuItem SessionItem(SessionInfo s, string glyph, ISet<string> duplicated)
+    {
+        var label = duplicated.Contains(s.Name) ? $"{s.Name}  ·  {ShortPath(s.WorkingDirectory)}" : s.Name;
+        return new ToolStripMenuItem($"{glyph}  {label}", null, (_, _) => OpenUi(s.Id))
+        {
+            ToolTipText = s.RemoteControl
+                ? $"{s.WorkingDirectory}\nRemote control — control from the Claude Code app"
+                : s.WorkingDirectory,
+        };
+    }
+
+    /// <summary>Last two path segments — enough to tell same-named sessions apart without a long menu.</summary>
+    private static string ShortPath(string path)
+    {
+        var parts = path.TrimEnd('\\', '/').Split('\\', '/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length <= 2 ? path : string.Join('\\', parts[^2..]);
     }
 
     private void ExitApp()
