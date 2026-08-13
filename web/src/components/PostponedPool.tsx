@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, ImagePlus, Inbox, Send, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, ImagePlus, Inbox, Maximize2, PenLine, Send, Trash2, X } from "lucide-react";
 import { sessionFileUrl } from "@/lib/api";
 import { uploadImageFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ImageLightbox } from "./ImageLightbox";
+import { ComposerDialog, type ComposerDraft } from "./ComposerDialog";
 import {
   loadPostponed,
   newMessage,
@@ -22,6 +23,12 @@ const SEND_GAP_MS = 150;
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || "image";
+
+/**
+ * What the full-size composer is working on: the inline draft (a new message), or one already-stashed
+ * message being edited in place.
+ */
+type ComposerTarget = { kind: "draft" } | { kind: "message"; id: string };
 
 /**
  * Per-session pool of "postponed" messages: a composer pinned under the terminal where the user can
@@ -45,6 +52,8 @@ export function PostponedPool({
   const [flushing, setFlushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
+  // Non-null while the full-size composer dialog is open: what it edits, plus its seed content.
+  const [composer, setComposer] = useState<{ target: ComposerTarget; draft: ComposerDraft } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -55,6 +64,7 @@ export function PostponedPool({
     setMessages([]);
     setDraft("");
     setDraftImages([]);
+    setComposer(null);
     setError(null);
     loadPostponed(sessionId).then((m) => { if (!cancelled) setMessages(m); }).catch(() => {});
     return () => { cancelled = true; };
@@ -91,16 +101,54 @@ export function PostponedPool({
 
   const deleteMsg = useCallback((id: string) => commit(messages.filter((m) => m.id !== id)), [messages, commit]);
 
-  // Pull a stashed item back into the composer to tweak it (text appended, images merged).
-  const editMsg = useCallback(
-    (msg: PostponedMessage) => {
-      setDraft((d) => (d ? d + "\n" : "") + msg.text);
-      setDraftImages((imgs) => [...imgs, ...msg.images]);
-      commit(messages.filter((m) => m.id !== msg.id));
-      setExpanded(true);
-      textareaRef.current?.focus();
+  /** Open the full-size composer on the inline draft (a new message), carrying whatever is typed. */
+  const openComposer = useCallback(() => {
+    setComposer({ target: { kind: "draft" }, draft: { text: draft, images: draftImages } });
+  }, [draft, draftImages]);
+
+  /** Open the full-size composer on a stashed item, to rewrite or send it. */
+  const editMsg = useCallback((msg: PostponedMessage) => {
+    setComposer({ target: { kind: "message", id: msg.id }, draft: { text: msg.text, images: msg.images } });
+  }, []);
+
+  // Composer "Send": push straight into the terminal. On success drop whatever it was editing — the
+  // stashed message, or the inline draft it was seeded from. Returning false leaves the dialog open.
+  const composerSend = useCallback(
+    async (d: ComposerDraft) => {
+      const ok = await terminalRef.current?.sendMessage({
+        text: d.text,
+        imagePaths: d.images.map((i) => i.fullPath),
+      });
+      if (!ok) return false;
+      if (composer?.target.kind === "message") {
+        const id = composer.target.id;
+        commit(messages.filter((m) => m.id !== id));
+      } else {
+        setDraft("");
+        setDraftImages([]);
+      }
+      setError(null);
+      return true;
     },
-    [messages, commit]
+    [composer, messages, commit, terminalRef]
+  );
+
+  // Composer "Postpone"/"Save": stash a new message, or overwrite the one being edited in place (so it
+  // keeps its position in the pool). Expands the pool so the result is visible.
+  const composerPostpone = useCallback(
+    (d: ComposerDraft) => {
+      if (composer?.target.kind === "message") {
+        const id = composer.target.id;
+        commit(messages.map((m) => (m.id === id ? { ...m, text: d.text, images: d.images } : m)));
+      } else {
+        commit([...messages, newMessage(d.text, d.images)]);
+        setDraft("");
+        setDraftImages([]);
+      }
+      setError(null);
+      setExpanded(true);
+    },
+    [composer, messages, commit]
   );
 
   const sendOne = useCallback(
@@ -226,6 +274,19 @@ export function PostponedPool({
           {idle && (
             <span className="text-xs font-medium text-emerald-600 dark:text-emerald-500">Claude is idle</span>
           )}
+          {/* Always reachable, collapsed or not — the way in for anything longer than a line. */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={(e) => {
+              e.stopPropagation();
+              openComposer();
+            }}
+            title="Write a message in a full-size window — send it now or postpone it"
+          >
+            <PenLine className="size-4" />
+            <span className="hidden sm:inline">Compose</span>
+          </Button>
           {messages.length > 0 && (
             <Button
               size="sm"
@@ -279,7 +340,7 @@ export function PostponedPool({
                   <button
                     type="button"
                     onClick={() => editMsg(m)}
-                    title="Click to edit"
+                    title="Click to edit in the full-size composer"
                     className="min-w-0 flex-1 cursor-pointer self-center rounded text-left hover:text-foreground"
                   >
                     {m.text ? (
@@ -376,6 +437,14 @@ export function PostponedPool({
             >
               <ImagePlus className="size-4" />
             </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={openComposer}
+              title="Expand into the full-size composer"
+            >
+              <Maximize2 className="size-4" />
+            </Button>
             <Button onClick={stash} disabled={!canStash} title="Add to the postponed pool">
               Stash
             </Button>
@@ -384,6 +453,15 @@ export function PostponedPool({
         </div>
       )}
     </div>
+    <ComposerDialog
+      sessionId={sessionId}
+      open={!!composer}
+      initial={composer?.draft}
+      editing={composer?.target.kind === "message"}
+      onSend={composerSend}
+      onPostpone={composerPostpone}
+      onClose={() => setComposer(null)}
+    />
     {preview && (
       <ImageLightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />
     )}
