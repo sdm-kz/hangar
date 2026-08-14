@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { api, sessionFileUrl } from "@/lib/api";
+import { ApiError, api, sessionFileUrl } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
+import { FolderPicker } from "./FolderPicker";
 import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
@@ -44,6 +45,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  FolderSymlink,
   GitCompare,
   Image as ImageIcon,
   ListTree,
@@ -97,6 +99,19 @@ const UNKNOWN_SIZE = -1;
 // where we only know the path). Size is filled in once the tree/preview loads.
 function fileEntryFromPath(path: string): FileEntry {
   return { name: path.split("/").pop() || path, path, isDir: false, size: UNKNOWN_SIZE };
+}
+
+// Trailing segment of an absolute server path — the display name of a root folder in the picker.
+function baseName(p: string): string {
+  const parts = p.split(/[/\\]+/).filter(Boolean);
+  return parts[parts.length - 1] ?? p;
+}
+
+// Whether two absolute server paths name the same folder. Compared loosely (case- and
+// trailing-separator-insensitive) because a path can arrive from the server, storage or a picker.
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string) => p.replace(/[/\\]+$/, "").replace(/\\/g, "/").toLowerCase();
+  return !!a && !!b && norm(a) === norm(b);
 }
 
 // The chain of ancestor folder paths of a file/dir path ("a/b/c.txt" -> ["a", "a/b"]). Used to
@@ -185,60 +200,73 @@ export const FileBrowser = forwardRef<
       return next;
     });
   }, [sessionId]);
-  // Switch into the changes view (used by the header's branch badge). Idempotent if already there.
-  const openChanges = useCallback(() => {
-    setShowChanges(true);
-    saveSessionUi(sessionId, { changes: true });
-  }, [sessionId]);
-  // The whole browser (Files tree, search, changes, preview) can be pointed at another worktree of
-  // the session's repo. "" = the session's own working dir. Another worktree's files live outside
-  // the session's dir, so browsing one is read-only — the write/rename/delete/upload endpoints stay
-  // confined to the session's own working directory.
-  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
-  // Restored per session (and across reloads); "" until proven otherwise by the list below.
-  const [worktreeDir, setWorktreeDir] = useState(() => loadSessionUi(sessionId).worktree ?? "");
+  // The whole browser (Files tree, search, changes, preview) can be pointed at another root: either
+  // another worktree of the session's repo, or a folder the user has linked to the session. "" = the
+  // session's own working dir. A worktree is browsed read-only (the mutating endpoints refuse it); a
+  // linked folder was chosen deliberately, so it stays fully editable.
+  const [worktrees, setWorktrees] = useState<GitWorktree[] | null>(null); // null = not loaded yet
+  const [linked, setLinked] = useState<string[] | null>(null); // linked folders; null = not loaded yet
+  // Restored per session (and across reloads); validated against both lists once they've loaded.
+  const [rootDir, setRootDir] = useState(() => loadSessionUi(sessionId).worktree ?? "");
   const [altStatus, setAltStatus] = useState<GitStatus | null>(null);
-  const readOnly = !!worktreeDir;
+  const isLinkedRoot = !!rootDir && (linked ?? []).some((f) => samePath(f, rootDir));
+  const readOnly = !!rootDir && !isLinkedRoot; // browsing another worktree
+  // Root that writes (upload / rename / delete / new folder / save) target; undefined = the
+  // session's own working dir.
+  const writeDir = isLinkedRoot ? rootDir : undefined;
 
-  const pickWorktree = useCallback(
+  // Point the browser at a root, without disturbing anything else. Used when code — not the user —
+  // moves it: revealing a working-dir file, or dropping a root that has gone away.
+  const setRoot = useCallback(
     (dir: string) => {
-      setWorktreeDir(dir);
+      setRootDir(dir);
       saveSessionUi(sessionId, { worktree: dir });
     },
     [sessionId]
   );
 
-  // Per session: restore its saved worktree pick and (re)load the repo's worktree list. A stale
-  // response landing after a quick session switch must be dropped — validating the restored pick
-  // against another session's list would wrongly wipe it.
+  // Per session: restore its saved root and (re)load the repo's worktrees plus the linked folders. A
+  // stale response landing after a quick session switch must be dropped — validating the restored
+  // pick against another session's lists would wrongly wipe it.
   useEffect(() => {
-    setWorktreeDir(loadSessionUi(sessionId).worktree ?? "");
+    setRootDir(loadSessionUi(sessionId).worktree ?? "");
     setAltStatus(null);
-    setWorktrees([]);
+    setWorktrees(null);
+    setLinked(null);
     let cancelled = false;
-    api.gitWorktrees(sessionId).then((list) => !cancelled && setWorktrees(list)).catch(() => {});
+    api.gitWorktrees(sessionId)
+      .then((list) => !cancelled && setWorktrees(list))
+      .catch(() => !cancelled && setWorktrees([]));
+    api.linkedFolders(sessionId)
+      .then((list) => !cancelled && setLinked(list))
+      .catch(() => !cancelled && setLinked([]));
     return () => {
       cancelled = true;
     };
   }, [sessionId]);
 
-  // Drop a restored pick that's no longer one of the repo's worktrees (removed since it was saved);
-  // a pick that became the session's own dir also falls back to "". Skipped until this session's
-  // list has actually loaded (a repo always lists at least its main worktree).
+  // Drop a restored pick that's gone: a worktree removed since it was saved, or a folder unlinked
+  // (possibly from another browser). Waits for both lists so a slow response can't wipe a valid pick.
   useEffect(() => {
-    if (!worktreeDir || !worktrees.length) return;
-    if (!worktrees.some((w) => !w.isCurrent && w.path === worktreeDir)) pickWorktree("");
-  }, [worktrees, worktreeDir, pickWorktree]);
+    if (!rootDir || worktrees === null || linked === null) return;
+    const known =
+      worktrees.some((w) => !w.isCurrent && samePath(w.path, rootDir)) ||
+      linked.some((f) => samePath(f, rootDir));
+    if (!known) setRoot("");
+  }, [worktrees, linked, rootDir, setRoot]);
 
-  // Fetch the selected (non-current) worktree's status; the current one uses the passed gitFiles.
+  // Fetch the selected worktree's status; the session's own uses the passed gitFiles, and a linked
+  // folder is a different tree altogether (no git view — see gitAvailable below).
   useEffect(() => {
-    if (!worktreeDir) return void setAltStatus(null);
+    // Waits for the linked list: until it lands a restored linked folder still looks like a worktree,
+    // and asking git about it would only earn a rejection.
+    if (!rootDir || isLinkedRoot || linked === null) return void setAltStatus(null);
     let cancelled = false;
-    api.gitStatus(sessionId, worktreeDir).then((s) => !cancelled && setAltStatus(s)).catch(() => !cancelled && setAltStatus(null));
+    api.gitStatus(sessionId, rootDir).then((s) => !cancelled && setAltStatus(s)).catch(() => !cancelled && setAltStatus(null));
     return () => {
       cancelled = true;
     };
-  }, [worktreeDir, sessionId, refreshToken]);
+  }, [rootDir, isLinkedRoot, linked, sessionId, refreshToken]);
 
   // In the changes view, group changed files under collapsible folders instead of a flat list.
   const [changesTree, setChangesTree] = useState(() => loadSessionUi(sessionId).changesTree ?? false);
@@ -314,7 +342,7 @@ export const FileBrowser = forwardRef<
       setUploading(true);
       setUploadError(null);
       try {
-        await api.uploadSessionFiles(sessionId, uploadDir, Array.from(files));
+        await api.uploadSessionFiles(sessionId, uploadDir, Array.from(files), writeDir);
         onRefresh?.();
       } catch {
         setUploadError("Upload failed");
@@ -322,7 +350,7 @@ export const FileBrowser = forwardRef<
         setUploading(false);
       }
     },
-    [sessionId, uploadDir, onRefresh]
+    [sessionId, uploadDir, writeDir, onRefresh]
   );
 
   // New-folder inline creator. The name may be nested ("a/b/c" or "a\b\c") and is created under
@@ -339,7 +367,7 @@ export const FileBrowser = forwardRef<
     setFolderBusy(true);
     setFolderError(null);
     try {
-      const r = await api.createSessionFolder(sessionId, rel);
+      const r = await api.createSessionFolder(sessionId, rel, writeDir);
       setUploadDir(r.path); // target the folder we just made
       setCreatingFolder(false);
       setNewFolder("");
@@ -349,7 +377,7 @@ export const FileBrowser = forwardRef<
     } finally {
       setFolderBusy(false);
     }
-  }, [newFolder, uploadDir, sessionId, onRefresh]);
+  }, [newFolder, uploadDir, sessionId, writeDir, onRefresh]);
 
   // Drag the divider between the tree and the preview to resize the tree; persist the result.
   const startResize = useCallback((e: React.PointerEvent) => {
@@ -411,6 +439,78 @@ export const FileBrowser = forwardRef<
     closeGuardResolve.current = null;
     setCloseGuard(null);
   }, []);
+
+  // A user-driven root switch (the picker, or linking/unlinking a folder). Open tabs and the upload
+  // target are paths *inside* the current root: worktrees of one repo share a layout so they carry
+  // over, but a linked folder is an unrelated tree, so switching to or from one closes the open
+  // files. `folders` overrides the linked list for a folder that was linked moments ago (state
+  // hasn't settled yet). Returns false if the user cancelled at the unsaved-changes prompt.
+  const pickRoot = useCallback(
+    async (dir: string, folders: string[] = linked ?? []): Promise<boolean> => {
+      if (dir === rootDir) return true;
+      const unrelated = isLinkedRoot || (!!dir && folders.some((f) => samePath(f, dir)));
+      if (unrelated) {
+        if (!(await guardActiveEdits())) return false;
+        setTabs([]);
+        setActivePath(null);
+        setPreviewPath(null);
+        persistTabs([], null, null);
+        setCommitSel(null);
+        setUploadDir("");
+        setCreatingFolder(false);
+        setQuery("");
+      }
+      setRoot(dir);
+      return true;
+    },
+    [rootDir, linked, isLinkedRoot, guardActiveEdits, persistTabs, setRoot]
+  );
+
+  // Switch into the changes view (used by the header's branch badge). Idempotent if already there.
+  // The changes are the session repo's, so a linked folder is left behind first.
+  const openChanges = useCallback(() => {
+    setShowChanges(true);
+    saveSessionUi(sessionId, { changes: true });
+    if (isLinkedRoot) pickRoot("");
+  }, [sessionId, isLinkedRoot, pickRoot]);
+
+  // ---- Linked folders: extra folders attached to this session, browsable in place of its own tree.
+  // The list lives on the server (keyed by the session's working folder) so it survives a restart.
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkPath, setLinkPath] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  const linkFolder = useCallback(async () => {
+    const path = linkPath.trim();
+    if (!path) return;
+    setLinking(true);
+    setLinkError(null);
+    try {
+      const folders = await api.linkFolder(sessionId, path);
+      setLinked(folders);
+      setLinkOpen(false);
+      // Show it right away — looking at the folder is the point of linking it.
+      await pickRoot(folders.find((f) => samePath(f, path)) ?? path, folders);
+    } catch (e) {
+      setLinkError(e instanceof ApiError ? e.message : "Could not link that folder.");
+    } finally {
+      setLinking(false);
+    }
+  }, [linkPath, sessionId, pickRoot]);
+
+  const unlinkFolder = useCallback(
+    async (path: string) => {
+      // Leave the folder before unlinking it, so the panel doesn't sit on a root it may no longer read.
+      if (samePath(path, rootDir) && !(await pickRoot(""))) return;
+      try {
+        setLinked(await api.unlinkFolder(sessionId, path));
+      } catch {
+        /* ignore — best effort */
+      }
+    },
+    [rootDir, sessionId, pickRoot]
+  );
 
   // Open a file and activate it. `pin` decides the tab model:
   //  - pin=false (single click): reuse the one transient preview slot — replace the current preview
@@ -513,7 +613,7 @@ export const FileBrowser = forwardRef<
       const clean = newName.trim();
       if (!clean || clean === path.split("/").pop()) return;
       try {
-        await api.renameSessionFile(sessionId, path, clean);
+        await api.renameSessionFile(sessionId, path, clean, writeDir);
         // Follow any open tab whose file (or ancestor folder) was renamed.
         const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
         const newPath = parent ? `${parent}/${clean}` : clean;
@@ -535,7 +635,7 @@ export const FileBrowser = forwardRef<
         /* ignore — best effort */
       }
     },
-    [sessionId, tabs, activePath, previewPath, persistTabs, onRefresh]
+    [sessionId, writeDir, tabs, activePath, previewPath, persistTabs, onRefresh]
   );
 
   const doDelete = useCallback(
@@ -552,7 +652,7 @@ export const FileBrowser = forwardRef<
       });
       if (!ok) return;
       try {
-        await api.deleteSessionFile(sessionId, entry.path);
+        await api.deleteSessionFile(sessionId, entry.path, writeDir);
         // Drop any tab for the deleted file (or files under a deleted folder).
         const affected = (p: string) => p === entry.path || p.startsWith(entry.path + "/");
         if (tabs.some((t) => affected(t.path))) {
@@ -570,7 +670,7 @@ export const FileBrowser = forwardRef<
         /* ignore — best effort */
       }
     },
-    [sessionId, tabs, activePath, previewPath, persistTabs, confirm, onRefresh]
+    [sessionId, writeDir, tabs, activePath, previewPath, persistTabs, confirm, onRefresh]
   );
 
   // Open the new-folder creator targeting a specific directory ("" = repo root).
@@ -594,13 +694,30 @@ export const FileBrowser = forwardRef<
   // Reveal a file in the working-tree Files pane (from a commit preview): leave the changes/commit
   // view, select it, and expand the tree down to it.
   const revealFile = useCallback(
-    (path: string) => {
+    async (path: string) => {
+      // Leaving a linked folder closes its tabs, so check for unsaved edits the same way a switch
+      // through the picker would. (The plain path guards inside openFile.)
+      if (isLinkedRoot && !(await guardActiveEdits())) return;
       setShowChanges(false);
       setQuery("");
       expandFilesTo(path);
+      // The path is relative to the session's own working dir, so step out of any linked folder
+      // first. Its tabs belong to that other tree: replace them outright (rather than going through
+      // pickRoot, whose clearing would then race this open) so the revealed file is what's left.
+      if (isLinkedRoot) {
+        setRoot("");
+        const f = fileEntryFromPath(path);
+        setTabs([f]);
+        setActivePath(path);
+        setPreviewPath(path);
+        persistTabs([f], path, path);
+        setCommitSel(null);
+        setUploadDir("");
+        return;
+      }
       openFile(fileEntryFromPath(path), false);
     },
-    [openFile, expandFilesTo]
+    [openFile, expandFilesTo, isLinkedRoot, guardActiveEdits, setRoot, persistTabs]
   );
 
   // Let SessionView open a file here (from a terminal file-link click) or switch to the changes view.
@@ -635,7 +752,12 @@ export const FileBrowser = forwardRef<
   }, [sessionId]);
 
   // Which repo's changes to show: the session's own (gitFiles) or the picked worktree's (altStatus).
-  const effectiveGitFiles = worktreeDir ? altStatus?.files : gitFiles;
+  // A linked folder is an unrelated tree, so it has none — the changes view and history hide there,
+  // and `changesView` (not the raw `showChanges`) drives the render so a remembered changes view
+  // simply comes back when the session's own folder is selected again.
+  const effectiveGitFiles = isLinkedRoot ? undefined : rootDir ? altStatus?.files : gitFiles;
+  const gitAvailable = !!gitFiles && !isLinkedRoot;
+  const changesView = showChanges && gitAvailable;
 
   const changeCount = effectiveGitFiles ? Object.keys(effectiveGitFiles).length : 0;
   const changeEntries = useMemo<FileEntry[]>(
@@ -675,7 +797,7 @@ export const FileBrowser = forwardRef<
   // Debounced recursive search — only for the all-files tree; the changes view filters locally.
   useEffect(() => {
     const q = query.trim();
-    if (!q || showChanges) {
+    if (!q || changesView) {
       setResults(null);
       setSearching(false);
       return;
@@ -683,13 +805,13 @@ export const FileBrowser = forwardRef<
     setSearching(true);
     const t = setTimeout(() => {
       api
-        .searchSessionFiles(sessionId, q, worktreeDir || undefined)
+        .searchSessionFiles(sessionId, q, rootDir || undefined)
         .then((r) => setResults(r.entries))
         .catch(() => setResults([]))
         .finally(() => setSearching(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [query, sessionId, refreshToken, showChanges, worktreeDir]);
+  }, [query, sessionId, refreshToken, changesView, rootDir]);
 
   return (
     <div className="flex h-full flex-col md:flex-row">
@@ -698,22 +820,22 @@ export const FileBrowser = forwardRef<
         className="flex max-h-64 w-full flex-col border-b md:max-h-none md:w-[var(--tree-w)] md:shrink-0 md:border-b-0"
       >
         <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground">
-          <span>{showChanges ? "Changes" : "Files"}</span>
+          <span>{changesView ? "Changes" : "Files"}</span>
           <div className="flex items-center gap-1.5">
-            {gitFiles && (
+            {gitAvailable && (
               <button
-                title={showChanges ? "Show all files" : "Show git changes only"}
+                title={changesView ? "Show all files" : "Show git changes only"}
                 onClick={toggleChanges}
                 className={cn(
                   "flex items-center gap-1 rounded px-1 py-0.5 hover:text-foreground",
-                  showChanges ? "bg-amber-500/15 text-amber-500" : ""
+                  changesView ? "bg-amber-500/15 text-amber-500" : ""
                 )}
               >
                 <GitCompare className="size-3.5" />
                 {changeCount > 0 && <span className="text-[10px] font-semibold">{changeCount}</span>}
               </button>
             )}
-            {gitFiles && showChanges && (
+            {changesView && (
               <button
                 title={changesTree ? "Show as a flat list" : "Group by folders"}
                 onClick={toggleChangesTree}
@@ -725,7 +847,7 @@ export const FileBrowser = forwardRef<
                 <ListTree className="size-3.5" />
               </button>
             )}
-            {gitFiles && showChanges && changesTree && allChangeDirPaths.length > 0 && (
+            {changesView && changesTree && allChangeDirPaths.length > 0 && (
               <button
                 title={allChangesExpanded ? "Collapse all folders" : "Expand all folders"}
                 onClick={allChangesExpanded ? collapseAllChanges : expandAllChanges}
@@ -774,12 +896,23 @@ export const FileBrowser = forwardRef<
                 )}
               </button>
             )}
+            <button
+              title="Link another folder to this session"
+              onClick={() => {
+                setLinkPath("");
+                setLinkError(null);
+                setLinkOpen(true);
+              }}
+              className="hover:text-foreground"
+            >
+              <FolderSymlink className="size-3.5" />
+            </button>
             <button title="Refresh" onClick={() => onRefresh?.()} className="hover:text-foreground">
               <RefreshCw className="size-3.5" />
             </button>
           </div>
         </div>
-        {!showChanges && !readOnly && !query.trim() && (
+        {!changesView && !readOnly && !query.trim() && (
           <div className="flex items-center gap-1 px-3 pb-1 text-[10px] text-muted-foreground">
             <span className="shrink-0">Upload target:</span>
             <span className="truncate font-medium text-foreground">{uploadDir || "root"}</span>
@@ -794,24 +927,49 @@ export const FileBrowser = forwardRef<
             )}
           </div>
         )}
-        {/* Pick which worktree of the repo to browse (Files tree, search, changes and preview). */}
-        {worktrees.length > 1 && (
+        {/* Which root the panel browses (Files tree, search, changes and preview): the session's own
+            folder, another worktree of its repo, or one of the folders linked to it. */}
+        {((worktrees?.length ?? 0) > 1 || (linked?.length ?? 0) > 0) && (
           <div className="flex items-center gap-1 px-3 pb-1 text-[10px] text-muted-foreground">
-            <span className="shrink-0">Worktree:</span>
+            <span className="shrink-0">Folder:</span>
             <select
-              value={worktreeDir}
-              onChange={(e) => pickWorktree(e.target.value)}
-              title="Browse another worktree of this repo (read-only)"
+              value={rootDir}
+              onChange={(e) => pickRoot(e.target.value)}
+              title={rootDir || workingDirectory}
               className="min-w-0 flex-1 truncate rounded border bg-background px-1 py-0.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
             >
-              {worktrees.map((w) => (
-                <option key={w.path} value={w.isCurrent ? "" : w.path}>
-                  {w.path.split(/[/\\]+/).filter(Boolean).pop()}
-                  {w.branch ? ` · ${w.branch}` : ""}
-                  {w.isCurrent ? " (this session)" : ""}
+              {worktrees && worktrees.length > 1 ? (
+                worktrees.map((w) => (
+                  <option key={w.path} value={w.isCurrent ? "" : w.path} title={w.path}>
+                    {baseName(w.path)}
+                    {w.branch ? ` · ${w.branch}` : ""}
+                    {w.isCurrent ? " (this session)" : ""}
+                  </option>
+                ))
+              ) : (
+                <option value="" title={workingDirectory}>
+                  {baseName(workingDirectory)} (this session)
                 </option>
-              ))}
+              )}
+              {linked && linked.length > 0 && (
+                <optgroup label="Linked folders">
+                  {linked.map((f) => (
+                    <option key={f} value={f} title={f}>
+                      {baseName(f)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
+            {isLinkedRoot && (
+              <button
+                onClick={() => unlinkFolder(rootDir)}
+                title={`Unlink ${rootDir}`}
+                className="shrink-0 hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            )}
           </div>
         )}
 
@@ -845,7 +1003,7 @@ export const FileBrowser = forwardRef<
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={showChanges ? "Search changes…" : "Search files…"}
+              placeholder={changesView ? "Search changes…" : "Search files…"}
               className="h-8 pl-7 pr-7 text-xs"
               spellCheck={false}
             />
@@ -862,7 +1020,7 @@ export const FileBrowser = forwardRef<
         </div>
 
         <div className="flex-1 overflow-auto px-1 pb-2">
-          {showChanges ? (
+          {changesView ? (
             changesTree ? (
               <ChangesTree
                 root={changeTreeRoot}
@@ -898,7 +1056,7 @@ export const FileBrowser = forwardRef<
           ) : (
             <TreeLevel
               sessionId={sessionId}
-              dir={worktreeDir || undefined}
+              dir={rootDir || undefined}
               path=""
               depth={0}
               refreshToken={refreshToken}
@@ -915,7 +1073,7 @@ export const FileBrowser = forwardRef<
         </div>
 
         {/* Commit history, collapsible, shown only in the changes view. */}
-        {gitFiles && showChanges && (
+        {changesView && (
           <GitHistory
             sessionId={sessionId}
             refreshToken={refreshToken}
@@ -974,7 +1132,8 @@ export const FileBrowser = forwardRef<
                 workingDirectory={workingDirectory}
                 file={selected}
                 gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
-                gitDir={worktreeDir || undefined}
+                dir={rootDir || undefined}
+                readOnly={readOnly}
                 refreshToken={refreshToken}
                 onSaved={onRefresh}
                 guard={previewGuard}
@@ -983,6 +1142,29 @@ export const FileBrowser = forwardRef<
           </>
         )}
       </div>
+
+      {/* Link an extra folder to this session, chosen anywhere on the server's filesystem. */}
+      <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Link a folder</DialogTitle>
+            <DialogDescription>
+              Browse and edit another folder from this session's Files panel. Links are saved on the
+              server against this session's working folder, so they come back after a restart.
+            </DialogDescription>
+          </DialogHeader>
+          <FolderPicker value={linkPath} onChange={setLinkPath} />
+          {linkError && <p className="text-xs text-destructive">{linkError}</p>}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setLinkOpen(false)} disabled={linking}>
+              Cancel
+            </Button>
+            <Button onClick={linkFolder} disabled={linking || !linkPath.trim()}>
+              {linking ? <Loader2 className="size-4 animate-spin" /> : "Link folder"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Save-changes prompt shown when a tab with unsaved edits is about to close. */}
       <Dialog open={!!closeGuard} onOpenChange={(o) => !o && settleCloseGuard("cancel")}>
@@ -1720,7 +1902,8 @@ function FilePreview({
   workingDirectory,
   file,
   gitStatus,
-  gitDir,
+  dir,
+  readOnly,
   refreshToken,
   onSaved,
   guard,
@@ -1730,9 +1913,11 @@ function FilePreview({
   workingDirectory: string;
   file: FileEntry | null;
   gitStatus?: string;
-  // When set, changes come from another worktree of the repo. Its files live outside the session's
-  // working dir, so every read is scoped to that dir; editing stays disabled there.
-  gitDir?: string;
+  // The root the file lives in when it isn't the session's own working dir — another worktree of
+  // its repo, or a folder linked to it. Every read (and any save) is scoped to it.
+  dir?: string;
+  // Whether that root refuses writes (true for another worktree; a linked folder is editable).
+  readOnly?: boolean;
   refreshToken: number;
   onSaved?: () => void;
   // Lets the parent read this preview's unsaved-edit state (and trigger a save) when closing a tab.
@@ -1781,23 +1966,23 @@ function FilePreview({
   const kind = file ? fileKind(file.name) : "binary";
   const isMarkdown = !!file && ["md", "markdown"].includes(fileExt(file.name));
   const isHtml = !!file && ["html", "htm"].includes(fileExt(file.name));
-  // Another worktree's files are read-only here: the write endpoint is confined to the session's dir.
-  const canEdit = kind === "text" && status === "idle" && text !== null && !gitDir;
+  // Another worktree's files are read-only here: the write endpoint refuses them.
+  const canEdit = kind === "text" && status === "idle" && text !== null && !readOnly;
   const rawUrl = useCallback(
     (download = false) => {
       if (!file) return "";
-      const url = sessionFileUrl(sessionId, file.path, download, gitDir);
+      const url = sessionFileUrl(sessionId, file.path, download, dir);
       // Cache-buster so URL-sourced previews (image, video, PDF, office) re-fetch on manual reload.
       return reload > 0 && !download ? `${url}&r=${reload}` : url;
     },
-    [sessionId, file, gitDir, reload]
+    [sessionId, file, dir, reload]
   );
 
   // Absolute server path of the previewed file, for the standalone new-tab preview: session file
   // paths are relative to the working dir (or the browsed worktree), but that page reads through
   // the server-wide file API, which takes absolute paths. Mixed separators are fine on Windows.
   const absPath = file
-    ? `${(gitDir || workingDirectory).replace(/[/\\]+$/, "")}/${file.path}`
+    ? `${(dir || workingDirectory).replace(/[/\\]+$/, "")}/${file.path}`
     : "";
 
   // Syntax-highlighted HTML for the plain-text view (null for unsupported languages).
@@ -1824,13 +2009,13 @@ function FilePreview({
     let cancelled = false;
     setStatus("loading");
     api
-      .fetchSessionFileText(sessionId, file.path, gitDir)
+      .fetchSessionFileText(sessionId, file.path, dir)
       .then((t) => !cancelled && (setText(t), setStatus("idle")))
       .catch(() => !cancelled && setStatus("error"));
     return () => {
       cancelled = true;
     };
-  }, [sessionId, file, kind, gitDir]);
+  }, [sessionId, file, kind, dir]);
 
   // Auto-refresh: when the working dir changes, re-fetch the current file's content and
   // invalidate the cached diff — but never clobber an in-progress edit.
@@ -1857,7 +2042,7 @@ function FilePreview({
       // so the pane doesn't flash to empty/loading on every tick. (Nulling it here is what caused the
       // flicker.) Not toggling diffLoading keeps the current diff visible until the new one lands.
       api
-        .gitDiff(sessionId, file.path, gitDir)
+        .gitDiff(sessionId, file.path, dir)
         .then((d) => {
           if (cancelled) return;
           const next = d.diff || "";
@@ -1868,7 +2053,7 @@ function FilePreview({
       setDiff(null); // diff not visible — drop the cached one so it reloads fresh when next viewed
       if (fileKind(file.name) === "text" && file.size <= MAX_TEXT_PREVIEW) {
         api
-          .fetchSessionFileText(sessionId, file.path, gitDir)
+          .fetchSessionFileText(sessionId, file.path, dir)
           .then((t) => !cancelled && !selectingInPreview() && setText(t))
           .catch(() => {});
       }
@@ -1884,14 +2069,14 @@ function FilePreview({
     let cancelled = false;
     setDiffLoading(true);
     api
-      .gitDiff(sessionId, file.path, gitDir)
+      .gitDiff(sessionId, file.path, dir)
       .then((d) => !cancelled && setDiff(d.diff || ""))
       .catch(() => !cancelled && setDiff(""))
       .finally(() => !cancelled && setDiffLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [view, sessionId, file, diff, gitDir]);
+  }, [view, sessionId, file, diff, dir]);
 
   // Manual reload from the header: re-fetch the text/diff, and bump the cache-buster so
   // URL-sourced previews (image, video, PDF, office) re-fetch too.
@@ -1905,11 +2090,11 @@ function FilePreview({
     if (fileKind(file.name) === "text" && file.size <= MAX_TEXT_PREVIEW) {
       setStatus("loading");
       api
-        .fetchSessionFileText(sessionId, file.path, gitDir)
+        .fetchSessionFileText(sessionId, file.path, dir)
         .then((t) => (setText(t), setStatus("idle")))
         .catch(() => setStatus("error"));
     }
-  }, [file, view, sessionId, gitDir]);
+  }, [file, view, sessionId, dir]);
 
   // Esc leaves the full-page popup (but not while editing — Esc there could drop unsaved text).
   // Capture phase + focusing the popup on entry so the key still lands here after clicks inside
@@ -1932,7 +2117,7 @@ function FilePreview({
     setSaving(true);
     setSaveError(null);
     try {
-      await api.writeSessionFile(sessionId, file.path, draft);
+      await api.writeSessionFile(sessionId, file.path, draft, dir);
       setText(draft);
       setEditing(false);
       onSaved?.(); // refresh git status (file may now be modified)

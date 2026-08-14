@@ -31,6 +31,9 @@ The web UI is a **launcher / session manager**, not a terminal:
     **marked** (M/A/U/D) in the tree, and each changed file has a **Diff** view.
   - **Search** the whole tree, **download** any file, and the tree **auto-refreshes** as files
     change on disk (via a filesystem watcher) while preserving expanded folders.
+  - **Linked folders** — attach extra folders to a session and browse/edit them from the same panel
+    via the root picker. Saved server-side against the session's working folder, so they survive a
+    restart (and a resumed session's new id).
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile.
 - **Light / dark** theme toggle.
 - **Start / stop** — stop kills the process; the app just manages lifecycle.

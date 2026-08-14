@@ -138,6 +138,8 @@ internal static class Program
         builder.Services.AddSingleton(watchdogOptions);
         builder.Services.AddHostedService<WatchdogService>();
         builder.Services.AddSingleton<RecentsStore>();
+        // Extra folders attached to a session's working directory, browsable from its Files panel.
+        builder.Services.AddSingleton<LinkedFolderStore>();
         // Web Push: the VAPID keypair, the subscription store, and the notifier that fires a push on
         // the same attention/waiting transitions the UI shows — so alerts arrive with every tab closed.
         builder.Services.AddSingleton<VapidKeyStore>();
@@ -396,26 +398,53 @@ internal static class Program
         app.MapPost("/api/fs/delete", (FsPathRequest body) =>
             ServerFileBrowser.Delete(body.Path) ? Results.Ok() : Results.BadRequest(new { error = "could not delete" }));
 
-        // ---- Per-session file browsing (confined to the session's working directory, or another
-        //      worktree of the same repo via `dir` — validated against the repo's worktree list) ----
-        app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, string? dir, SessionManager mgr) =>
+        // ---- Folders linked to a session (persisted per working directory, so they survive a restart
+        //      and a resumed session's new id). Each mutation returns the updated list. --------------
+        app.MapGet("/api/sessions/{id}/linked-folders", (string id, SessionManager mgr, LinkedFolderStore links) =>
+        {
+            var info = mgr.Get(id);
+            return info is null
+                ? Results.NotFound()
+                : Results.Ok(new { folders = links.Get(info.WorkingDirectory) });
+        });
+
+        app.MapPost("/api/sessions/{id}/linked-folders", (string id, FolderRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
-            if (root is null) return Results.BadRequest(new { error = "invalid worktree" });
+            var folders = links.Add(info.WorkingDirectory, body.Path);
+            return folders is null
+                ? Results.BadRequest(new { error = "not a folder, or already this session's own folder" })
+                : Results.Ok(new { folders });
+        });
+
+        app.MapPost("/api/sessions/{id}/linked-folders/remove", (string id, FolderRequest body, SessionManager mgr, LinkedFolderStore links) =>
+        {
+            var info = mgr.Get(id);
+            return info is null
+                ? Results.NotFound()
+                : Results.Ok(new { folders = links.Remove(info.WorkingDirectory, body.Path) });
+        });
+
+        // ---- Per-session file browsing. `dir` picks the root: empty = the session's working directory,
+        //      otherwise another worktree of the same repo (read-only) or one of its linked folders.
+        //      Anything else is rejected, so a client can't point the API at an arbitrary folder. ----
+        app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, string? dir, SessionManager mgr, LinkedFolderStore links) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            var root = BrowseRoot(info, dir, links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
             var listing = SessionFileBrowser.List(root, path);
             return listing is null ? Results.NotFound() : Results.Ok(listing);
         });
 
-        // `dir` optionally reads from another worktree of the same repo (the changes view can inspect
-        // one) — validated against the repo's worktree list, same as the git endpoints below.
-        app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, string? dir, SessionManager mgr, HttpContext http) =>
+        app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, string? dir, SessionManager mgr, LinkedFolderStore links, HttpContext http) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
-            if (root is null) return Results.BadRequest(new { error = "invalid worktree" });
+            var root = BrowseRoot(info, dir, links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
             var full = SessionFileBrowser.ResolveSafe(root, path);
             if (full is null || !File.Exists(full)) return Results.NotFound();
 
@@ -430,20 +459,22 @@ internal static class Program
                 : Results.File(full, contentType, enableRangeProcessing: true);
         });
 
-        app.MapGet("/api/sessions/{id}/fs/search", (string id, string q, string? dir, SessionManager mgr) =>
+        app.MapGet("/api/sessions/{id}/fs/search", (string id, string q, string? dir, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
-            if (root is null) return Results.BadRequest(new { error = "invalid worktree" });
+            var root = BrowseRoot(info, dir, links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
             return Results.Ok(new { entries = SessionFileBrowser.Search(root, q) });
         });
 
-        app.MapPost("/api/sessions/{id}/fs/write", (string id, FileWriteRequest body, SessionManager mgr) =>
+        app.MapPost("/api/sessions/{id}/fs/write", (string id, FileWriteRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            return SessionFileBrowser.Write(info.WorkingDirectory, body.Path, body.Content ?? "")
+            var root = WriteRoot(info, body.Dir, links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
+            return SessionFileBrowser.Write(root, body.Path, body.Content ?? "")
                 ? Results.Ok()
                 : Results.BadRequest(new { error = "invalid path" });
         });
@@ -472,9 +503,10 @@ internal static class Program
                 : Results.Ok(new { path = rel, fullPath = full });
         });
 
-        // Upload one or more arbitrary files into a folder under the working dir (multipart form:
-        // a "path" field for the target folder — empty means the root — and one or more "files").
-        app.MapPost("/api/sessions/{id}/fs/upload", async (string id, HttpRequest req, SessionManager mgr) =>
+        // Upload one or more arbitrary files into a folder under the write root (multipart form:
+        // a "path" field for the target folder — empty means the root — an optional "dir" naming a
+        // linked folder to write into, and one or more "files").
+        app.MapPost("/api/sessions/{id}/fs/upload", async (string id, HttpRequest req, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
@@ -482,45 +514,53 @@ internal static class Program
 
             var form = await req.ReadFormAsync();
             var folder = form["path"].ToString();
+            var root = WriteRoot(info, form["dir"].ToString(), links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
             if (form.Files.Count == 0) return Results.BadRequest(new { error = "no files" });
 
             var paths = new List<string>();
             foreach (var file in form.Files)
             {
                 await using var stream = file.OpenReadStream();
-                var rel = await SessionFileBrowser.SaveUpload(info.WorkingDirectory, folder, file.FileName, stream);
+                var rel = await SessionFileBrowser.SaveUpload(root, folder, file.FileName, stream);
                 if (rel is null) return Results.BadRequest(new { error = "invalid folder" });
                 paths.Add(rel);
             }
             return Results.Ok(new { paths });
         });
 
-        // Rename a file/folder within the working dir (bare new name, same parent).
-        app.MapPost("/api/sessions/{id}/fs/rename", (string id, FileRenameRequest body, SessionManager mgr) =>
+        // Rename a file/folder within the write root (bare new name, same parent).
+        app.MapPost("/api/sessions/{id}/fs/rename", (string id, FileRenameRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            return SessionFileBrowser.Rename(info.WorkingDirectory, body.Path, body.NewName)
+            var root = WriteRoot(info, body.Dir, links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
+            return SessionFileBrowser.Rename(root, body.Path, body.NewName)
                 ? Results.Ok()
                 : Results.BadRequest(new { error = "could not rename" });
         });
 
-        // Delete a file/folder (recursively) within the working dir.
-        app.MapPost("/api/sessions/{id}/fs/delete", (string id, FolderRequest body, SessionManager mgr) =>
+        // Delete a file/folder (recursively) within the write root.
+        app.MapPost("/api/sessions/{id}/fs/delete", (string id, FolderRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            return !string.IsNullOrEmpty(body.Path) && SessionFileBrowser.Delete(info.WorkingDirectory, body.Path)
+            var root = WriteRoot(info, body.Dir, links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
+            return !string.IsNullOrEmpty(body.Path) && SessionFileBrowser.Delete(root, body.Path)
                 ? Results.Ok()
                 : Results.BadRequest(new { error = "could not delete" });
         });
 
-        // Create a folder (possibly nested, e.g. "a/b/c") under the working dir.
-        app.MapPost("/api/sessions/{id}/fs/mkdir", (string id, FolderCreateRequest body, SessionManager mgr) =>
+        // Create a folder (possibly nested, e.g. "a/b/c") under the write root.
+        app.MapPost("/api/sessions/{id}/fs/mkdir", (string id, FolderCreateRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.Get(id);
             if (info is null) return Results.NotFound();
-            var rel = SessionFileBrowser.CreateDir(info.WorkingDirectory, body.Path ?? "");
+            var root = WriteRoot(info, body.Dir, links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
+            var rel = SessionFileBrowser.CreateDir(root, body.Path ?? "");
             return rel is null
                 ? Results.BadRequest(new { error = "invalid path" })
                 : Results.Ok(new { path = rel });
@@ -637,6 +677,22 @@ internal static class Program
         });
     }
 
+    /// <summary>
+    /// The folder a session may READ through its file API for a requested <paramref name="dir"/>: its own
+    /// working directory (empty <paramref name="dir"/>), another worktree of the same repo, or a folder
+    /// linked to it. Null when the request names anything else.
+    /// </summary>
+    private static string? BrowseRoot(SessionInfo info, string? dir, LinkedFolderStore links) =>
+        GitService.ResolveWorktree(info.WorkingDirectory, dir) ?? links.Resolve(info.WorkingDirectory, dir);
+
+    /// <summary>
+    /// The folder a session may WRITE to for a requested <paramref name="dir"/>: its own working directory
+    /// or a folder the user has deliberately linked to it. Other worktrees stay read-only, so a stray
+    /// <c>dir</c> can never turn a browse into an edit of the repo's other checkouts.
+    /// </summary>
+    private static string? WriteRoot(SessionInfo info, string? dir, LinkedFolderStore links) =>
+        string.IsNullOrWhiteSpace(dir) ? info.WorkingDirectory : links.Resolve(info.WorkingDirectory, dir);
+
     // A git object name is hex (full or abbreviated SHA). Reject anything else before handing it to git.
     private static bool IsCommitHash(string? hash) =>
         !string.IsNullOrEmpty(hash) && hash.Length is >= 4 and <= 64 && hash.All(Uri.IsHexDigit);
@@ -697,10 +753,12 @@ internal static class Program
 internal record LoginRequest(string? Password);
 internal record WatchdogRequest(bool Enabled);
 internal record RenameRequest(string Name);
-internal record FileWriteRequest(string Path, string? Content);
-internal record FileRenameRequest(string Path, string NewName);
-internal record FolderRequest(string? Path);
-internal record FolderCreateRequest(string? Path);
+// `Dir` on the session file-mutation payloads names the write root: empty (the default) is the
+// session's own working directory, otherwise one of its linked folders.
+internal record FileWriteRequest(string Path, string? Content, string? Dir = null);
+internal record FileRenameRequest(string Path, string NewName, string? Dir = null);
+internal record FolderRequest(string? Path, string? Dir = null);
+internal record FolderCreateRequest(string? Path, string? Dir = null);
 internal record FsWriteRequest(string Path, string? Content);
 internal record FsPathRequest(string Path);
 internal record FsRenameRequest(string Path, string NewName);

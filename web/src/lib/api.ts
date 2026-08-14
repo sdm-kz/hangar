@@ -206,8 +206,30 @@ export const api = {
     return request("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) });
   },
 
+  // ---- Folders linked to a session (server-backed, keyed by its working directory so they survive
+  // a restart and a resumed session's new id). Each mutation returns the updated list. ----
+  async linkedFolders(id: string): Promise<string[]> {
+    const r = await request<{ folders: string[] }>(`/api/sessions/${id}/linked-folders`);
+    return r.folders;
+  },
+  async linkFolder(id: string, path: string): Promise<string[]> {
+    const r = await request<{ folders: string[] }>(`/api/sessions/${id}/linked-folders`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+    return r.folders;
+  },
+  async unlinkFolder(id: string, path: string): Promise<string[]> {
+    const r = await request<{ folders: string[] }>(`/api/sessions/${id}/linked-folders/remove`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
+    return r.folders;
+  },
+
   // ---- Per-session files ----
-  // `dir` lists from another worktree of the session's repo instead of its working dir.
+  // Throughout, `dir` selects the root: omitted = the session's working dir, otherwise another
+  // worktree of its repo (read-only) or one of its linked folders.
   listSessionFiles(id: string, path?: string, dir?: string): Promise<FileListing> {
     const q = new URLSearchParams();
     if (path) q.set("path", path);
@@ -257,10 +279,10 @@ export const api = {
       `/api/sessions/${id}/git/commit-file?hash=${encodeURIComponent(hash)}&path=${encodeURIComponent(path)}`
     );
   },
-  writeSessionFile(id: string, path: string, content: string): Promise<void> {
+  writeSessionFile(id: string, path: string, content: string, dir?: string): Promise<void> {
     return request(`/api/sessions/${id}/fs/write`, {
       method: "POST",
-      body: JSON.stringify({ path, content }),
+      body: JSON.stringify({ path, content, dir }),
     });
   },
   // Save a pasted image under .claudeweb/uploads/ in the working dir; returns its path so we can
@@ -271,11 +293,12 @@ export const api = {
       body: JSON.stringify({ dataBase64, ext }),
     });
   },
-  // Upload arbitrary files into a folder under the working dir ("" = root). Sent as multipart so
+  // Upload arbitrary files into a folder under the write root ("" = its root). Sent as multipart so
   // the browser sets the boundary; returns the paths written (de-duplicated server-side).
-  async uploadSessionFiles(id: string, folder: string, files: File[]): Promise<{ paths: string[] }> {
+  async uploadSessionFiles(id: string, folder: string, files: File[], dir?: string): Promise<{ paths: string[] }> {
     const form = new FormData();
     form.append("path", folder);
+    if (dir) form.append("dir", dir);
     for (const f of files) form.append("files", f);
     const headers = new Headers();
     const token = getToken();
@@ -292,25 +315,25 @@ export const api = {
     }
     return res.json();
   },
-  // Create a folder (may be nested, e.g. "a/b/c") under the working dir; returns its rel path.
-  createSessionFolder(id: string, path: string): Promise<{ path: string }> {
+  // Create a folder (may be nested, e.g. "a/b/c") under the write root; returns its rel path.
+  createSessionFolder(id: string, path: string, dir?: string): Promise<{ path: string }> {
     return request(`/api/sessions/${id}/fs/mkdir`, {
       method: "POST",
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, dir }),
     });
   },
-  // Rename a file/folder within a session's working dir (bare new name, same parent).
-  renameSessionFile(id: string, path: string, newName: string): Promise<void> {
+  // Rename a file/folder within the write root (bare new name, same parent).
+  renameSessionFile(id: string, path: string, newName: string, dir?: string): Promise<void> {
     return request(`/api/sessions/${id}/fs/rename`, {
       method: "POST",
-      body: JSON.stringify({ path, newName }),
+      body: JSON.stringify({ path, newName, dir }),
     });
   },
-  // Delete a file/folder (recursively) within a session's working dir.
-  deleteSessionFile(id: string, path: string): Promise<void> {
+  // Delete a file/folder (recursively) within the write root.
+  deleteSessionFile(id: string, path: string, dir?: string): Promise<void> {
     return request(`/api/sessions/${id}/fs/delete`, {
       method: "POST",
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, dir }),
     });
   },
   searchSessionFiles(id: string, q: string, dir?: string): Promise<FileListing> {
@@ -346,7 +369,8 @@ export function serverFileUrl(path: string, download = false): string {
 
 /**
  * URL for a session file's raw bytes; token is passed in the query so it works in <img>/<a>.
- * `dir` reads the file from another worktree of the same repo instead of the session's own dir.
+ * `dir` reads the file from another root of the session — a worktree of the same repo, or one of
+ * its linked folders — instead of the session's own working dir.
  */
 export function sessionFileUrl(id: string, path: string, download = false, dir?: string): string {
   const token = getToken() ?? "";
