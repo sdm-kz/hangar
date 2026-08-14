@@ -63,7 +63,12 @@ import {
 } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 import { CopyPathButton } from "./CopyPathButton";
-import { ScrollJumpButtons, ZoomControls, usePersistentZoom } from "./ZoomControls";
+import {
+  ScrollJumpButtons,
+  ZoomControls,
+  usePersistentReadingWidth,
+  usePersistentZoom,
+} from "./ZoomControls";
 
 // Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
 interface RowActions {
@@ -1934,6 +1939,10 @@ function FilePreview({
   const [reload, setReload] = useState(0); // cache-buster bumped by the header's refresh button
   // Text/markdown preview zoom; kept while switching files and across reloads so a chosen size sticks.
   const [zoom, setZoom] = usePersistentZoom("text");
+  // Optional left/right margins for the text previews — mainly for the full-screen popup on a wide
+  // monitor, where full-width lines get hard to read. Shared (and persisted) with the standalone
+  // preview tab's viewer.
+  const [readingWidth, setReadingWidth] = usePersistentReadingWidth("text");
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -2287,7 +2296,13 @@ function FilePreview({
             sandboxed HTML iframe is excluded — CSS zoom would scale the frame, not its document. */}
         {!editing && view === "preview" && kind === "text" && status === "idle" && text !== null &&
           !(isHtml && mdView === "rendered") && (
-            <ZoomControls zoom={zoom} onChange={setZoom} className="bottom-3 right-3" />
+            <ZoomControls
+              zoom={zoom}
+              onChange={setZoom}
+              width={readingWidth}
+              onWidthChange={setReadingWidth}
+              className="bottom-3 right-3"
+            />
           )}
         {!editing && view === "preview" && status === "idle" && text !== null &&
           isMarkdown && mdView === "rendered" && (
@@ -2346,7 +2361,12 @@ function FilePreview({
             )}
             {kind === "text" && status === "idle" && text !== null &&
               (isMarkdown && mdView === "rendered" ? (
-                <div style={{ zoom }} className="prose prose-sm max-w-none p-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
+                // maxWidth sits on the zoomed box on purpose: `zoom` scales it along with the text,
+                // so a line keeps the same character count as you zoom (see READING_WIDTHS).
+                <div
+                  style={{ zoom, maxWidth: readingWidth ?? undefined }}
+                  className="prose prose-sm mx-auto max-w-none p-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground"
+                >
                   <Markdown text={text} />
                 </div>
               ) : isHtml && mdView === "rendered" ? (
@@ -2360,14 +2380,14 @@ function FilePreview({
                   className="h-full w-full border-0 bg-white"
                 />
               ) : highlighted !== null ? (
-                <pre style={{ zoom }} className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
+                <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
                   <code
                     className="hljs bg-transparent p-0"
                     dangerouslySetInnerHTML={{ __html: highlighted }}
                   />
                 </pre>
               ) : (
-                <pre style={{ zoom }} className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
+                <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
               ))}
 
             {kind === "office" && file.size <= MAX_OFFICE_PREVIEW && (

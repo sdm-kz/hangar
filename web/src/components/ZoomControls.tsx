@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type RefObject } from "react";
-import { ArrowDown, ArrowUp, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowDown, ArrowUp, FoldHorizontal, UnfoldHorizontal, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +33,47 @@ export function usePersistentZoom(key: string): [number, (zoom: number) => void]
     [storageKey]
   );
   return [zoom, set];
+}
+
+/**
+ * Reading-width stops for text previews: `null` fills the viewer (the default), the numbers cap the
+ * content and center it, so a full-page preview on a wide screen gets symmetric left/right margins
+ * instead of lines running the whole monitor. Measured *inside* the zoomed content box, so a line
+ * keeps the same character count at any zoom level.
+ */
+export const READING_WIDTHS: (number | null)[] = [null, 1200, 960, 760];
+const READING_WIDTH_LABELS = ["full width", "wide", "medium", "narrow"];
+
+/**
+ * Reading width persisted in localStorage under `claudeweb.readingWidth:<key>` — same key space as
+ * usePersistentZoom, so the text previews across the app share one chosen width and it survives a
+ * reload (and the standalone preview tab picks up what was set in the app).
+ */
+export function usePersistentReadingWidth(key: string): [number | null, (width: number | null) => void] {
+  const storageKey = `claudeweb.readingWidth:${key}`;
+  const [width, setWidth] = useState<number | null>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw === null) return null;
+      const v = Number(raw);
+      return READING_WIDTHS.includes(v) ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  const set = useCallback(
+    (w: number | null) => {
+      setWidth(w);
+      try {
+        if (w === null) localStorage.removeItem(storageKey);
+        else localStorage.setItem(storageKey, String(w));
+      } catch {
+        /* storage unavailable — persistence is best-effort */
+      }
+    },
+    [storageKey]
+  );
+  return [width, set];
 }
 
 // Hide the jump buttons this close to the respective end — a jump that saves less than half a
@@ -120,14 +161,23 @@ export function ScrollJumpButtons({
  * relative ancestor). Clicking the percentage resets to 100%. The value is applied by the caller
  * via CSS `zoom`, which (unlike `transform: scale`) participates in layout so scrollbars stay
  * correct at any level.
+ *
+ * Pass `width`/`onWidthChange` to prepend the reading-width toggle (see READING_WIDTHS): one button
+ * that cycles full width → wide → medium → narrow, applied by the caller as a `maxWidth` on the
+ * centered content. Hidden on phones, where nothing is wide enough to need margins.
  */
 export function ZoomControls({
   zoom,
   onChange,
+  width,
+  onWidthChange,
   className = "right-3 top-3",
 }: {
   zoom: number;
   onChange: (zoom: number) => void;
+  /** Current reading width; pass together with onWidthChange to show the margins toggle. */
+  width?: number | null;
+  onWidthChange?: (width: number | null) => void;
   /** Position within the nearest relative ancestor, e.g. "bottom-3 right-3". */
   className?: string;
 }) {
@@ -135,8 +185,36 @@ export function ZoomControls({
     const i = ZOOM_LEVELS.indexOf(zoom) + dir;
     onChange(ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, i))]);
   };
+  const widthIndex = Math.max(0, READING_WIDTHS.indexOf(width ?? null));
+  const nextWidthIndex = (widthIndex + 1) % READING_WIDTHS.length;
   return (
     <div className={cn("absolute z-10 flex items-center rounded-md border bg-background/90 p-0.5 shadow-sm backdrop-blur", className)}>
+      {onWidthChange && (
+        <div className="hidden items-center sm:flex">
+          <Button
+            variant="ghost"
+            size="icon"
+            // Each stop has to be tellable apart at a glance: full width is a plain unfold icon,
+            // while a capped width folds the icon, highlights the button and spells out the cap.
+            className={cn(
+              "h-7 w-7 text-muted-foreground",
+              width != null && "w-auto gap-1 bg-accent px-1.5 text-foreground"
+            )}
+            title={`Reading width: ${READING_WIDTH_LABELS[widthIndex]} — click for ${READING_WIDTH_LABELS[nextWidthIndex]}`}
+            onClick={() => onWidthChange(READING_WIDTHS[nextWidthIndex])}
+          >
+            {width == null ? (
+              <UnfoldHorizontal className="size-4" />
+            ) : (
+              <>
+                <FoldHorizontal className="size-4" />
+                <span className="text-[10px] tabular-nums">{width}</span>
+              </>
+            )}
+          </Button>
+          <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
+        </div>
+      )}
       <Button
         variant="ghost"
         size="icon"

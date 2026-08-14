@@ -8,7 +8,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
-import { ScrollJumpButtons, ZoomControls, usePersistentZoom } from "./ZoomControls";
+import {
+  ScrollJumpButtons,
+  ZoomControls,
+  usePersistentReadingWidth,
+  usePersistentZoom,
+} from "./ZoomControls";
 import { CopyPathButton } from "./CopyPathButton";
 import { previewUrl } from "@/lib/urlState";
 import { writeToClipboard } from "@/lib/clipboard";
@@ -83,6 +88,10 @@ export function ServerFileViewer({
   const [rendered, setRendered] = useState(true); // markdown/HTML: rendered preview vs raw source
   // Text/markdown preview zoom; kept while switching files and across reloads so a chosen size sticks.
   const [zoom, setZoom] = usePersistentZoom("text");
+  // Optional left/right margins for the text previews: caps the line length and centers the
+  // content, which is what makes a full-page preview readable on a wide monitor. Persisted like
+  // zoom, so the choice sticks across files, reloads and preview tabs.
+  const [readingWidth, setReadingWidth] = usePersistentReadingWidth("text");
   // Bumped by the header refresh button: re-runs the text fetch and cache-busts media URLs.
   const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -303,7 +312,13 @@ export function ServerFileViewer({
         {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. The
             sandboxed HTML iframe is excluded — CSS zoom would scale the frame, not its document. */}
         {kind === "text" && !tooLarge && !editing && text !== null && !(isHtml && rendered) && (
-          <ZoomControls zoom={zoom} onChange={setZoom} className="bottom-3 right-3" />
+          <ZoomControls
+            zoom={zoom}
+            onChange={setZoom}
+            width={readingWidth}
+            onWidthChange={setReadingWidth}
+            className="bottom-3 right-3"
+          />
         )}
         {isMarkdown && rendered && !editing && !tooLarge && text !== null && (
           <MarkdownToc containerRef={scrollRef} text={text} />
@@ -359,7 +374,12 @@ export function ServerFileViewer({
             className="h-full w-full resize-none rounded-none border-0 font-mono text-xs leading-relaxed focus-visible:ring-0"
           />
         ) : isMarkdown && rendered ? (
-          <div style={{ zoom }} className="prose prose-sm dark:prose-invert max-w-none p-4">
+          // maxWidth sits on the zoomed box on purpose: `zoom` scales it along with the text, so a
+          // line keeps the same character count as you zoom (see READING_WIDTHS).
+          <div
+            style={{ zoom, maxWidth: readingWidth ?? undefined }}
+            className="prose prose-sm dark:prose-invert mx-auto max-w-none p-4"
+          >
             <Markdown text={text ?? ""} />
           </div>
         ) : isHtml && rendered ? (
@@ -373,11 +393,11 @@ export function ServerFileViewer({
             className="h-full w-full border-0 bg-white"
           />
         ) : highlighted ? (
-          <pre style={{ zoom }} className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
+          <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
             <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted }} />
           </pre>
         ) : (
-          <pre style={{ zoom }} className="overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
+          <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
         )}
         </div>
       </div>
