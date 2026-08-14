@@ -163,6 +163,39 @@
   color: #7ee787;
 }
 
+/* Word preview: table-of-contents entries we made clickable ourselves, in documents that carry the
+   formatting of a TOC but no real hyperlinks (see lib/docxLinks.ts). The blue underline is the
+   document's own — all we add is the affordance. */
+.docx-synth-link {
+  cursor: pointer;
+}
+.docx-synth-link:hover {
+  text-decoration-thickness: 2px;
+}
+.docx-synth-link:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* Leave a little air above a section we jump to, instead of pinning it to the pane's top edge. */
+[data-docx-anchor] {
+  scroll-margin-top: 1rem;
+}
+
+/* Brief highlight on the paragraph a jump landed on, so the eye can find it after the scroll. */
+.docx-jump-flash {
+  border-radius: 3px;
+  animation: docx-jump-flash 1.2s ease-out;
+}
+@keyframes docx-jump-flash {
+  from {
+    background-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
 /* Read-only Excel preview (SheetJS sheet_to_html emits a bare <table>). */
 .xlsx-host table {
   border-collapse: collapse;

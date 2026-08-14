@@ -11,10 +11,9 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { Element, ElementContent, Root, RootContent } from "hast";
-import { Loader2, TableOfContents, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
 import { getTheme, subscribeTheme } from "@/lib/theme";
-import { cn } from "@/lib/utils";
+import { TocPanel, type TocItem } from "./TocPanel";
 
 /**
  * Shared markdown renderer for file previews (FileBrowser + ServerFileViewer): GFM plus inline
@@ -122,17 +121,13 @@ export function Markdown({ text }: { text: string }) {
   );
 }
 
-type TocEntry = { id: string; label: string; level: number; el: HTMLElement };
-
 // Whether the TOC panel is open; a preference, so it sticks across files and reloads.
 const TOC_OPEN_KEY = "claudeweb.mdTocOpen";
 
 /**
- * Floating table-of-contents overlay for a rendered-markdown preview. Position it inside a
- * `relative` ancestor; `containerRef` is the scrollable element holding the `<Markdown>` output.
- * It scans the rendered headings (which already carry their slug ids), so its entries always match
- * what deep links address. Clicking an entry anchors the URL hash and scrolls to the section;
- * while scrolling, the section currently at the top of the view is highlighted.
+ * Table of contents for a rendered-markdown preview. It scans the rendered headings (which already
+ * carry their slug ids), so its entries always match what deep links address; clicking one anchors
+ * the URL hash and scrolls to the section. The panel itself is {@link TocPanel}.
  */
 export function MarkdownToc({
   containerRef,
@@ -144,34 +139,11 @@ export function MarkdownToc({
   text: string;
   className?: string;
 }) {
-  const [entries, setEntries] = useState<TocEntry[]>([]);
-  const [open, setOpen] = useState(() => {
-    try {
-      return localStorage.getItem(TOC_OPEN_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const listRef = useRef<HTMLElement | null>(null);
-
-  const toggle = () => {
-    setOpen((o) => {
-      try {
-        localStorage.setItem(TOC_OPEN_KEY, o ? "0" : "1");
-      } catch {
-        /* preference only */
-      }
-      return !o;
-    });
-  };
+  const [entries, setEntries] = useState<TocItem[]>([]);
 
   // Collect the rendered headings once the markdown is in the DOM (they render synchronously,
-  // unlike mermaid diagrams, so one pass after each text change is enough). A leftover filter
-  // belongs to the previous document, so drop it.
+  // unlike mermaid diagrams, so one pass after each text change is enough).
   useEffect(() => {
-    setQuery("");
     const root = containerRef.current;
     if (!root) return;
     const heads = Array.from(
@@ -192,110 +164,14 @@ export function MarkdownToc({
     );
   }, [containerRef, text]);
 
-  // Scroll spy: the active section is the last heading at or above the top of the container
-  // (with a little slack so a just-anchored heading counts as its own section).
-  useEffect(() => {
-    const root = containerRef.current;
-    if (!root || entries.length === 0) {
-      setActiveId(null);
-      return;
-    }
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      const top = root.getBoundingClientRect().top + 24;
-      let current = entries[0].id;
-      for (const e of entries) {
-        if (e.el.getBoundingClientRect().top <= top) current = e.id;
-        else break;
-      }
-      setActiveId(current);
-    };
-    const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-    update();
-    root.addEventListener("scroll", schedule, { passive: true });
-    // Late layout shifts (mermaid diagrams, images, zoom changes) move the headings without a
-    // scroll event — watch the content's size so the highlight stays honest.
-    const ro = new ResizeObserver(schedule);
-    if (root.firstElementChild) ro.observe(root.firstElementChild);
-    return () => {
-      root.removeEventListener("scroll", schedule);
-      ro.disconnect();
-      cancelAnimationFrame(raf);
-    };
-  }, [containerRef, entries]);
-
-  // Keep the highlighted entry visible inside the (scrollable) panel as reading progresses.
-  useEffect(() => {
-    if (!open) return;
-    listRef.current
-      ?.querySelector('[data-active="true"]')
-      ?.scrollIntoView({ block: "nearest" });
-  }, [open, activeId]);
-
-  if (entries.length === 0) return null;
-  const minLevel = Math.min(...entries.map((e) => e.level));
-  const q = query.trim().toLowerCase();
-  const visible = q ? entries.filter((e) => e.label.toLowerCase().includes(q)) : entries;
-
   return (
-    <div className={cn("absolute right-3 top-3 z-10 flex flex-col items-end", className)}>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-7 rounded-md border bg-background/90 shadow-sm backdrop-blur"
-        title={open ? "Hide table of contents" : "Table of contents"}
-        onClick={toggle}
-      >
-        {open ? <X className="size-4" /> : <TableOfContents className="size-4" />}
-      </Button>
-      {open && (
-        <nav
-          ref={listRef}
-          className="mt-2 max-h-[min(24rem,60vh)] w-60 max-w-[70vw] overflow-y-auto rounded-md border bg-background/95 pb-1 shadow-md backdrop-blur"
-        >
-          {/* Sticky so the filter stays reachable while the section list scrolls under it. */}
-          <div className="sticky top-0 border-b bg-background/95 p-1 backdrop-blur">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter sections…"
-              autoFocus
-              className="h-6 w-full rounded-sm bg-muted/50 px-1.5 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
-              onKeyDown={(e) => {
-                // Enter jumps to the first match; Esc clears the filter before anything
-                // else (like a dialog) gets to act on it.
-                if (e.key === "Enter" && visible[0]) anchorTo(visible[0].id, visible[0].el);
-                if (e.key === "Escape" && query) {
-                  e.stopPropagation();
-                  setQuery("");
-                }
-              }}
-            />
-          </div>
-          {visible.length === 0 && (
-            <div className="px-2.5 py-2 text-xs text-muted-foreground">No matching sections.</div>
-          )}
-          {visible.map((e) => (
-            <button
-              key={e.id}
-              data-active={e.id === activeId || undefined}
-              title={e.label}
-              onClick={() => anchorTo(e.id, e.el)}
-              className={cn(
-                "block w-full truncate px-2.5 py-1 text-left text-xs hover:bg-accent",
-                e.id === activeId ? "bg-accent font-medium text-foreground" : "text-muted-foreground"
-              )}
-              style={{ paddingLeft: `${0.625 + (e.level - minLevel) * 0.75}rem` }}
-            >
-              {e.label}
-            </button>
-          ))}
-        </nav>
-      )}
-    </div>
+    <TocPanel
+      containerRef={containerRef}
+      entries={entries}
+      onSelect={(e) => anchorTo(e.id, e.el)}
+      storageKey={TOC_OPEN_KEY}
+      className={className}
+    />
   );
 }
 

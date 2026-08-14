@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { MAX_OFFICE_PREVIEW, officeKind } from "@/lib/fileKind";
+import {
+  collectDocxOutline,
+  jumpToDocxSection,
+  wireDocxLinks,
+  type DocxOutlineEntry,
+} from "@/lib/docxLinks";
+import { TocPanel } from "@/components/TocPanel";
 import { ZoomControls, usePersistentZoom } from "@/components/ZoomControls";
 import { cn } from "@/lib/utils";
 
@@ -34,11 +41,15 @@ async function fetchBytes(url: string, signal: AbortSignal): Promise<ArrayBuffer
 function DocxViewer({ url }: { url: string }) {
   const [status, setStatus] = useState<Status>("loading");
   const [zoom, setZoom] = usePersistentZoom("docx");
+  const [outline, setOutline] = useState<DocxOutlineEntry[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
+    let unwireLinks: (() => void) | undefined;
     setStatus("loading");
+    setOutline([]);
     (async () => {
       try {
         const [buffer, { renderAsync }] = await Promise.all([
@@ -46,17 +57,25 @@ function DocxViewer({ url }: { url: string }) {
           import("docx-preview"),
         ]);
         if (ctrl.signal.aborted || !containerRef.current) return;
-        containerRef.current.innerHTML = "";
+        containerRef.current.replaceChildren();
         await renderAsync(buffer, containerRef.current, undefined, {
           inWrapper: true,
           ignoreLastRenderedPageBreak: true,
         });
-        if (!ctrl.signal.aborted) setStatus("ready");
+        if (ctrl.signal.aborted) return;
+        // Make the rendered document's links work inside the viewer, and rebuild a table of contents
+        // for files that carry only its formatting — see lib/docxLinks.ts.
+        unwireLinks = wireDocxLinks(containerRef.current);
+        setOutline(collectDocxOutline(containerRef.current));
+        setStatus("ready");
       } catch (e) {
         if (!ctrl.signal.aborted) setStatus(failure(e));
       }
     })();
-    return () => ctrl.abort();
+    return () => {
+      ctrl.abort();
+      unwireLinks?.();
+    };
   }, [url]);
 
   return (
@@ -65,8 +84,18 @@ function DocxViewer({ url }: { url: string }) {
       {status === "toolarge" && <Centered>This document is too large to preview.</Centered>}
       {status === "error" && <Centered className="text-destructive">Failed to render document.</Centered>}
       {status === "ready" && <ZoomControls zoom={zoom} onChange={setZoom} />}
+      {/* Top-left: the zoom controls already own the right corner. */}
+      {status === "ready" && (
+        <TocPanel
+          containerRef={scrollRef}
+          entries={outline}
+          onSelect={(e) => jumpToDocxSection(e.el)}
+          storageKey="claudeweb.docxTocOpen"
+          align="start"
+        />
+      )}
       {/* The scroll area wraps the host so the zoom controls stay put while the pages scroll. */}
-      <div className={cn("h-full overflow-auto p-4", status !== "ready" && "hidden")}>
+      <div ref={scrollRef} className={cn("h-full overflow-auto p-4", status !== "ready" && "hidden")}>
         {/* docx-preview injects its own page-styled DOM; keep it light-on-white for fidelity. */}
         <div ref={containerRef} className="docx-host mx-auto" style={{ zoom }} />
       </div>
