@@ -136,15 +136,37 @@ export function ComposerDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <Textarea
-            autoFocus
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onPaste={onPaste}
-            onKeyDown={onKeyDown}
-            placeholder="Write your message — Enter for a newline, Ctrl+Enter to send, paste an image to attach it"
-            className="min-h-[35vh] flex-1 resize-none leading-6"
-          />
+          {/* Attach sits above the editor, not in the footer: the text area is tall (and the footer
+              ends up under the keyboard on a phone), so the button — and the thumbnails it produces
+              — stay in sight next to the header. Same order as the inline composer in the panel. */}
+          <div className="flex shrink-0 items-center gap-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                addImageFiles(Array.from(e.target.files ?? []));
+                e.target.value = ""; // allow re-picking the same file
+              }}
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-10 shrink-0 sm:size-9"
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach an image (photo library or camera)"
+              aria-label="Attach an image"
+            >
+              <ImagePlus className="size-4" />
+            </Button>
+            {text.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                {text.length} chars · {text.split("\n").length} lines
+              </span>
+            )}
+          </div>
 
           {images.length > 0 && (
             <div className="flex shrink-0 flex-wrap gap-1.5">
@@ -179,36 +201,19 @@ export function ComposerDialog({
             </div>
           )}
 
-          {error && <p className="shrink-0 text-xs text-destructive">{error}</p>}
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              addImageFiles(Array.from(e.target.files ?? []));
-              e.target.value = ""; // allow re-picking the same file
-            }}
+          <Textarea
+            autoFocus
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onPaste={onPaste}
+            onKeyDown={onKeyDown}
+            placeholder="Write your message — Enter for a newline, Ctrl+Enter to send, paste an image to attach it"
+            className="min-h-[35vh] flex-1 resize-none leading-6"
           />
 
-          <DialogFooter className="shrink-0 sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => fileInputRef.current?.click()}
-                title="Attach an image (photo library or camera)"
-              >
-                <ImagePlus className="size-4" />
-              </Button>
-              {text.length > 0 && (
-                <span className="hidden text-xs text-muted-foreground sm:inline">
-                  {text.length} chars · {text.split("\n").length} lines
-                </span>
-              )}
-            </div>
+          {error && <p className="shrink-0 text-xs text-destructive">{error}</p>}
+
+          <DialogFooter className="shrink-0">
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={onClose} disabled={sending}>
                 Cancel

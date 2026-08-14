@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { sessionColor } from "@/lib/sessionColors";
-import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, Info, Loader2, Menu, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
@@ -337,9 +337,11 @@ export function SessionView({
           />
         )}
         {/* Row 1: session name + badges on the left, uptime/info/RC and session actions on the
-            right — h-14 so it lines up with the sidebar's app header. */}
-        <div className="flex h-10 min-w-0 shrink-0 items-center gap-2 border-b px-3">
-        <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleSidebar}>
+            right — h-14 so it lines up with the sidebar's app header. On a phone the width goes to
+            the name instead: the folder and branch drop to a second line and the right-hand cluster
+            collapses into a "⋯" menu. */}
+        <div className="flex min-h-10 min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1 md:h-10 md:py-0">
+        <Button variant="ghost" size="icon" className="size-9 shrink-0 md:hidden" onClick={onToggleSidebar}>
           <Menu className="size-5" />
         </Button>
         {collapsed && (
@@ -353,77 +355,87 @@ export function SessionView({
             <PanelLeftOpen className="size-5" />
           </Button>
         )}
-          {/* No overflow-hidden here — it would clip the info popup; children truncate themselves. */}
-          <div className="group flex min-w-0 flex-1 items-center gap-2">
-            {renaming ? (
-              <RenameField
-                value={session.name}
-                onSubmit={(name) => {
-                  onRename(session.id, name);
-                  setRenaming(false);
-                }}
-                onCancel={() => setRenaming(false)}
-                className="max-w-[16rem] font-semibold"
-              />
-            ) : (
-              <h2
-                className="min-w-0 cursor-text truncate font-semibold"
-                title="Double-click to rename"
-                onDoubleClick={() => setRenaming(true)}
-              >
-                {session.name}
-              </h2>
-            )}
-            {!renaming && (
-              <button
-                onClick={() => setRenaming(true)}
-                title="Rename session"
-                className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-              >
-                <Pencil className="size-3.5" />
-              </button>
-            )}
-            <StateBadge state={session.state} />
-            {session.state === "Running" && session.watchdogStatus === "recovering" && (
-              <Badge variant="warning" title="Watchdog detected an error and is auto-continuing">
-                Auto-recovering
-              </Badge>
-            )}
-            {session.state === "Running" && session.watchdogStatus === "attention" && (
-              <Badge variant="destructive" title="Watchdog gave up after repeated errors — needs you">
-                Needs attention
-              </Badge>
-            )}
-            {git?.isRepo && git.branch && (
+          {/* No overflow-hidden here — it would clip the info popup; children truncate themselves.
+              Two stacked lines on a phone (name, then folder/branch), one line from md up. */}
+          <div className="group flex min-w-0 flex-1 flex-col gap-0.5 md:flex-row md:items-center md:gap-2">
+            <div className="flex min-w-0 items-center gap-2">
+              {renaming ? (
+                <RenameField
+                  value={session.name}
+                  onSubmit={(name) => {
+                    onRename(session.id, name);
+                    setRenaming(false);
+                  }}
+                  onCancel={() => setRenaming(false)}
+                  className="max-w-[16rem] font-semibold"
+                />
+              ) : (
+                <h2
+                  className="min-w-0 cursor-text truncate font-semibold"
+                  title="Double-click to rename"
+                  onDoubleClick={() => setRenaming(true)}
+                >
+                  {session.name}
+                </h2>
+              )}
+              {!renaming && (
+                <button
+                  onClick={() => setRenaming(true)}
+                  title="Rename session"
+                  className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+              )}
+              <StateBadge state={session.state} />
+              {session.state === "Running" && session.watchdogStatus === "recovering" && (
+                <Badge variant="warning" title="Watchdog detected an error and is auto-continuing">
+                  Auto-recovering
+                </Badge>
+              )}
+              {session.state === "Running" && session.watchdogStatus === "attention" && (
+                <Badge variant="destructive" title="Watchdog gave up after repeated errors — needs you">
+                  Needs attention
+                </Badge>
+              )}
+            </div>
+
+            {/* Second line on a phone, same line from md up: where the session lives. */}
+            <div className="flex min-w-0 items-center gap-2 md:flex-1">
+              {git?.isRepo && git.branch && (
+                <button
+                  type="button"
+                  onClick={openChanges}
+                  className={cn(
+                    badgeVariants({ variant: "outline" }),
+                    "min-w-0 shrink gap-1 transition-colors hover:bg-accent"
+                  )}
+                  title="Show git changes"
+                >
+                  <GitBranch className="size-3 shrink-0" />
+                  <span className="max-w-[6rem] truncate sm:max-w-[10rem]">{git.branch}</span>
+                  {changeCount > 0 && <span className="shrink-0 text-amber-500">·{changeCount}</span>}
+                </button>
+              )}
               <button
                 type="button"
-                onClick={openChanges}
-                className={cn(
-                  badgeVariants({ variant: "outline" }),
-                  "min-w-0 shrink gap-1 transition-colors hover:bg-accent"
-                )}
-                title="Show git changes"
+                onClick={copyPath}
+                title="Copy working directory"
+                className="group/path flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
               >
-                <GitBranch className="size-3 shrink-0" />
-                <span className="max-w-[6rem] truncate sm:max-w-[10rem]">{git.branch}</span>
-                {changeCount > 0 && <span className="shrink-0 text-amber-500">·{changeCount}</span>}
+                <span className="truncate">{session.workingDirectory}</span>
+                {copiedPath ? (
+                  <Check className="size-3 shrink-0 text-emerald-500" />
+                ) : (
+                  <Copy className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100" />
+                )}
               </button>
-            )}
-            <button
-              type="button"
-              onClick={copyPath}
-              title="Copy working directory"
-              className="group/path flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              <span className="truncate">{session.workingDirectory}</span>
-              {copiedPath ? (
-                <Check className="size-3 shrink-0 text-emerald-500" />
-              ) : (
-                <Copy className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100" />
-              )}
-            </button>
-            {/* Right side of the title row: uptime · info popup · RC badge. */}
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            </div>
+          </div>
+
+          {/* Right side of the title row: uptime · info popup · RC badge — desktop only; the phone
+              gets the same set through the "⋯" menu below. */}
+          <div className="ml-auto hidden shrink-0 items-center gap-2 md:flex">
               {session.state === "Running" && (
                 <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
                   up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
@@ -494,8 +506,17 @@ export function SessionView({
               >
                 {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
               </Button>
-            </div>
           </div>
+
+          <SessionActionsMenu
+            session={session}
+            nowTick={nowTick}
+            wdEnabled={wdEnabled}
+            onToggleWatchdog={toggleWatchdog}
+            onContinue={sendContinue}
+            onStop={stop}
+            stopping={stopping}
+          />
         </div>
 
         {/* Row 2: view tabs resting on the header's bottom border, styled like the sidebar tabs.
@@ -597,18 +618,19 @@ export function SessionView({
   );
 }
 
-// The "i" popup holding the session details that used to crowd the header line (pid, model, …).
-function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTick: number }) {
-  const [open, setOpen] = useState(false);
+/**
+ * Dismiss-on-outside-click/Escape for the header's little popups. Returns the ref to put on the
+ * popup's root — anything inside it (including the trigger) counts as "inside".
+ */
+function useDismissable(open: boolean, close: () => void) {
   const ref = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      if (!ref.current?.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") close();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -616,7 +638,14 @@ function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTic
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, close]);
+  return ref;
+}
+
+// The "i" popup holding the session details that used to crowd the header line (pid, model, …).
+function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTick: number }) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismissable(open, useCallback(() => setOpen(false), []));
 
   return (
     <div ref={ref} className="relative flex shrink-0 items-center">
@@ -634,25 +663,158 @@ function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTic
       </button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-3 text-popover-foreground shadow-md">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-            <InfoRow label="State">{session.state}</InfoRow>
-            <InfoRow label="PID">{session.processId}</InfoRow>
-            {session.model && <InfoRow label="Model">{session.model}</InfoRow>}
-            {session.permissionMode && <InfoRow label="Permissions">{session.permissionMode}</InfoRow>}
-            <InfoRow label="Remote Control">{session.remoteControl ? "on" : "off"}</InfoRow>
-            <InfoRow label="Watchdog">{session.watchdogEnabled ? "on" : "off"}</InfoRow>
-            <InfoRow label="Started">{new Date(session.createdAt).toLocaleString()}</InfoRow>
-            {session.state === "Running" && (
-              <InfoRow label="Uptime">
-                {formatUptime(nowTick - new Date(session.createdAt).getTime())}
-              </InfoRow>
-            )}
-            <InfoRow label="Folder">{session.workingDirectory}</InfoRow>
-            <InfoRow label="Session id">{session.id}</InfoRow>
-          </dl>
+          <SessionInfoList session={session} nowTick={nowTick} />
         </div>
       )}
     </div>
+  );
+}
+
+function SessionInfoList({ session, nowTick }: { session: SessionInfo; nowTick: number }) {
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+      <InfoRow label="State">{session.state}</InfoRow>
+      <InfoRow label="PID">{session.processId}</InfoRow>
+      {session.model && <InfoRow label="Model">{session.model}</InfoRow>}
+      {session.permissionMode && <InfoRow label="Permissions">{session.permissionMode}</InfoRow>}
+      <InfoRow label="Remote Control">{session.remoteControl ? "on" : "off"}</InfoRow>
+      <InfoRow label="Watchdog">{session.watchdogEnabled ? "on" : "off"}</InfoRow>
+      <InfoRow label="Started">{new Date(session.createdAt).toLocaleString()}</InfoRow>
+      {session.state === "Running" && (
+        <InfoRow label="Uptime">{formatUptime(nowTick - new Date(session.createdAt).getTime())}</InfoRow>
+      )}
+      <InfoRow label="Folder">{session.workingDirectory}</InfoRow>
+      <InfoRow label="Session id">{session.id}</InfoRow>
+    </dl>
+  );
+}
+
+/**
+ * Phone-sized replacement for the header's right-hand cluster: one "⋯" button holding uptime, the
+ * RC link, the watchdog toggle, continue, stop and the full info list. Everything the wide header
+ * shows inline lives here, so the title row can spend its width on the session name and folder.
+ */
+function SessionActionsMenu({
+  session,
+  nowTick,
+  wdEnabled,
+  onToggleWatchdog,
+  onContinue,
+  onStop,
+  stopping,
+}: {
+  session: SessionInfo;
+  nowTick: number;
+  wdEnabled: boolean;
+  onToggleWatchdog: () => void;
+  onContinue: () => void;
+  onStop: () => void;
+  stopping: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismissable(open, useCallback(() => setOpen(false), []));
+  const running = session.state === "Running";
+
+  return (
+    <div ref={ref} className="relative flex shrink-0 items-center md:hidden">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-8"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title="Session actions"
+      >
+        <MoreVertical className="size-5" />
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md">
+          {running && (
+            <div className="border-b px-3 py-2 font-mono text-[11px] text-muted-foreground">
+              up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
+            </div>
+          )}
+          <div className="flex flex-col py-1">
+            {session.remoteControl && running && (
+              <a
+                href={session.remoteUrl ?? "https://claude.ai/code"}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-emerald-600 hover:bg-accent dark:text-emerald-500"
+              >
+                <Radio className="size-4" /> Open in Claude Code app
+              </a>
+            )}
+            {running && (
+              <>
+                <MenuItem
+                  onClick={() => {
+                    onToggleWatchdog();
+                    setOpen(false);
+                  }}
+                >
+                  {wdEnabled ? (
+                    <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-500" />
+                  ) : (
+                    <ShieldOff className="size-4 text-muted-foreground" />
+                  )}
+                  Hang watchdog: {wdEnabled ? "on" : "off"}
+                </MenuItem>
+                <MenuItem
+                  onClick={() => {
+                    onContinue();
+                    setOpen(false);
+                  }}
+                >
+                  <Play className="size-4" /> Send “continue”
+                </MenuItem>
+              </>
+            )}
+            <MenuItem
+              destructive
+              disabled={stopping}
+              onClick={() => {
+                onStop();
+                setOpen(false);
+              }}
+            >
+              {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
+              {running ? "Stop session" : "Remove session"}
+            </MenuItem>
+          </div>
+          <div className="max-h-64 overflow-auto border-t p-3">
+            <SessionInfoList session={session} nowTick={nowTick} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({
+  onClick,
+  destructive,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  destructive?: boolean;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent disabled:opacity-50",
+        destructive && "text-destructive"
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

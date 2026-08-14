@@ -245,6 +245,19 @@ export function PostponedPool({
   return (
     <>
     <div data-postponed-pool className="shrink-0 border-t bg-background">
+      {/* One picker for both attach buttons (the bar's and the composer's), mounted outside the
+          collapsible body so the bar can open it while the panel is still collapsed. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          addImageFiles(Array.from(e.target.files ?? []));
+          e.target.value = ""; // allow re-picking the same file
+        }}
+      />
       {/* Header: the whole bar toggles expand/collapse; the flush-all action stops propagation. */}
       <div
         role="button"
@@ -274,15 +287,34 @@ export function PostponedPool({
           {idle && (
             <span className="text-xs font-medium text-emerald-600 dark:text-emerald-500">Claude is idle</span>
           )}
-          {/* Always reachable, collapsed or not — the way in for anything longer than a line. */}
+          {/* Always reachable, collapsed or not — the way in for anything longer than a line, and
+              (next to it) for a photo; this replaces the button that used to float over the
+              terminal. Attaching leaves the panel exactly as it was: the image joins the draft
+              either way, and expanding under someone's thumb is more disruptive than helpful. */}
           <Button
             size="sm"
             variant="outline"
+            className="size-9 px-0 sm:size-8"
+            onClick={(e) => {
+              e.stopPropagation();
+              fileInputRef.current?.click();
+            }}
+            title="Attach an image (photo library or camera)"
+            aria-label="Attach an image"
+          >
+            <ImagePlus className="size-4" />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            // Square icon button on a phone (matching attach), label back from sm up.
+            className="size-9 px-0 sm:size-8 sm:w-auto sm:px-3"
             onClick={(e) => {
               e.stopPropagation();
               openComposer();
             }}
             title="Write a message in a full-size window — send it now or postpone it"
+            aria-label="Compose a message"
           >
             <PenLine className="size-4" />
             <span className="hidden sm:inline">Compose</span>
@@ -416,36 +448,39 @@ export function PostponedPool({
               onKeyDown={onKeyDown}
               rows={1}
               placeholder="Postpone a message — Enter to stash, Shift+Enter or Ctrl+J for a newline, paste an image"
-              className="max-h-20 min-h-10 resize-none py-2.5 leading-5"
+              // min-w-0 flex-1: the Textarea's own w-full would otherwise set a flex base of 100%
+              // and, on a narrow screen, soak up the row by shrinking the buttons next to it.
+              className="max-h-20 min-h-10 min-w-0 flex-1 resize-none py-2.5 leading-5"
             />
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                addImageFiles(Array.from(e.target.files ?? []));
-                e.target.value = ""; // allow re-picking the same file
-              }}
-            />
+            {/* Desktop-only: on a phone these two would eat the width the message needs, and the
+                bar right above already carries both (attach, and Compose for the full-size window).
+                shrink-0 keeps them hittable next to the growing textarea. */}
             <Button
               variant="outline"
               size="icon"
+              className="hidden shrink-0 sm:inline-flex sm:size-9"
               onClick={() => fileInputRef.current?.click()}
               title="Attach an image (photo library or camera)"
+              aria-label="Attach an image"
             >
               <ImagePlus className="size-4" />
             </Button>
             <Button
               variant="outline"
               size="icon"
+              className="hidden shrink-0 sm:inline-flex sm:size-9"
               onClick={openComposer}
               title="Expand into the full-size composer"
+              aria-label="Expand into the full-size composer"
             >
               <Maximize2 className="size-4" />
             </Button>
-            <Button onClick={stash} disabled={!canStash} title="Add to the postponed pool">
+            <Button
+              className="h-10 shrink-0 sm:h-9"
+              onClick={stash}
+              disabled={!canStash}
+              title="Add to the postponed pool"
+            >
               Stash
             </Button>
           </div>
