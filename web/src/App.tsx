@@ -43,7 +43,8 @@ export function App() {
     readUrlState().panel === "files" ? "files" : "sessions"
   );
   const [listTab, setListTab] = useState<SessionListTab>("sessions"); // Sessions vs Recent list
-  const [openFile, setOpenFile] = useState<string | null>(null); // server file open in the main area
+  // Server file open in the main area, restored from the URL so a refresh comes back to it.
+  const [openFile, setOpenFile] = useState<string | null>(() => readUrlState().open ?? null);
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
@@ -170,6 +171,12 @@ export function App() {
   useEffect(() => {
     patchUrlState({ panel: sidebarTab === "files" ? "files" : undefined });
   }, [sidebarTab]);
+
+  // Mirror the server file open in the main area, so a refresh reopens it (and keeps it highlighted
+  // in the Files tree). Per-tab state, hence the URL rather than localStorage.
+  useEffect(() => {
+    patchUrlState({ open: openFile ?? undefined });
+  }, [openFile]);
 
   // Reflect the active session in the page title so browser tabs are tellable apart.
   useEffect(() => {

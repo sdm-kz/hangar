@@ -13,6 +13,9 @@ export interface UrlState {
   tab?: TabName;
   file?: string;
   panel?: PanelName;
+  /** Absolute server path opened from the Files tree into the main area (distinct from `file`,
+   *  which is a session-relative path in that session's own file browser). */
+  open?: string;
 }
 
 /**
@@ -40,12 +43,14 @@ export function filesUrl(): string {
 
 /**
  * Deep-link URL for a session, used to open it in a new browser tab. Keeps the current
- * layout params (e.g. `tab`) but drops `file`, which belongs to the previously-open session.
+ * layout params (e.g. `tab`) but drops `file`, which belongs to the previously-open session,
+ * and `open`, since the session — not a server file — takes over the main area.
  */
 export function sessionUrl(id: string): string {
   const p = new URLSearchParams(window.location.search);
   p.set("session", id);
   p.delete("file");
+  p.delete("open");
   const qs = p.toString();
   return qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
 }
@@ -59,6 +64,7 @@ export function readUrlState(): UrlState {
     tab: tab === "files" || tab === "terminal" || tab === "split" ? tab : undefined,
     file: p.get("file") || undefined,
     panel: panel === "files" || panel === "sessions" ? panel : undefined,
+    open: p.get("open") || undefined,
   };
 }
 
@@ -76,6 +82,7 @@ export function patchUrlState(patch: UrlState): void {
   if ("tab" in patch) apply("tab", patch.tab);
   if ("file" in patch) apply("file", patch.file);
   if ("panel" in patch) apply("panel", patch.panel);
+  if ("open" in patch) apply("open", patch.open);
   const qs = p.toString();
   window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
 }

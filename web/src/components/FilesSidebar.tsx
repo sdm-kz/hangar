@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
 import { api } from "@/lib/api";
 import type { DirEntry, FsNode } from "@/types";
 import { fileKind } from "@/lib/fileKind";
@@ -41,6 +41,27 @@ function loadExpanded(): Set<string> {
 function saveExpanded(set: Set<string>) {
   try {
     localStorage.setItem(EXPANDED_KEY, JSON.stringify([...set]));
+  } catch {
+    /* storage disabled — preference is best-effort */
+  }
+}
+
+// The rest of the tree's view state, remembered the same way: which folder the toolbar actions target,
+// and how far the tree is scrolled. The panel unmounts whenever the sidebar switches to Sessions, so
+// without this every trip back to Files (and every refresh) would drop you at the top of the tree.
+const SELECTED_KEY = "claudeweb.filesSelectedDir";
+const SCROLL_KEY = "claudeweb.filesScroll";
+function readStored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeStored(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
   } catch {
     /* storage disabled — preference is best-effort */
   }
@@ -95,14 +116,18 @@ export function FilesSidebar({
   const [children, setChildren] = useState<Map<string, FsNode[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [loading, setLoading] = useState<Set<string>>(new Set());
-  const [selectedDir, setSelectedDir] = useState<string | null>(null); // target for toolbar actions
+  // Target for toolbar actions; restored from the last visit so the toolbar isn't disabled on arrival.
+  const [selectedDir, setSelectedDir] = useState<string | null>(() => readStored(SELECTED_KEY));
   const [renaming, setRenaming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState(false); // has the initial batch of folder listings landed?
   const uploadRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null); // tree scroll container, for scroll-into-view
   const openPathRef = useRef(openPath);
   openPathRef.current = openPath;
   const scrolledRef = useRef<string | null>(null); // last openPath we scrolled to
+  const restoredScrollRef = useRef(false); // have we replayed the remembered scroll offset yet?
+  const saveScrollRef = useRef<number | undefined>(undefined); // debounce timer for scroll writes
 
   const listDir = useCallback(async (path: string) => {
     setLoading((s) => new Set(s).add(path));
@@ -144,6 +169,44 @@ export function FilesSidebar({
     saveExpanded(expanded);
   }, [expanded]);
 
+  // ...and the selected folder alongside it.
+  useEffect(() => {
+    writeStored(SELECTED_KEY, selectedDir);
+  }, [selectedDir]);
+
+  // Replay the remembered scroll offset, but only once the restored folders have finished listing.
+  // Scrolling earlier is worse than not scrolling at all: rows keep arriving above the viewport, and
+  // the browser's scroll anchoring drags the offset along with them, landing somewhere arbitrary.
+  // Staying at the top until the tree is complete keeps anchoring inert (it doesn't act at offset 0).
+  const settled = ready && loading.size === 0; // no listing still in flight, so no more rows coming
+  useEffect(() => {
+    if (restoredScrollRef.current || !settled) return;
+    const box = scrollRef.current;
+    if (!box) return;
+    const target = Number(readStored(SCROLL_KEY) ?? 0);
+    if (!(target > 0)) {
+      restoredScrollRef.current = true;
+      return;
+    }
+    if (box.scrollHeight - box.clientHeight < target) return; // a listing is still outstanding
+    box.scrollTop = target;
+    restoredScrollRef.current = true;
+  }, [settled, drives, children]);
+
+  // Remember where the tree is scrolled to, debounced so a flick doesn't hammer localStorage. Scrolls
+  // that happen while the tree is still filling in aren't the user's doing (anchoring again), so they
+  // neither overwrite the remembered offset nor cancel the pending restore.
+  const onScroll = useCallback(
+    (e: UIEvent<HTMLDivElement>) => {
+      if (!restoredScrollRef.current && !settled) return;
+      restoredScrollRef.current = true; // the view is where it's wanted now; don't jump it later
+      const top = Math.round(e.currentTarget.scrollTop);
+      window.clearTimeout(saveScrollRef.current);
+      saveScrollRef.current = window.setTimeout(() => writeStored(SCROLL_KEY, String(top)), 150);
+    },
+    [settled]
+  );
+
   // Initial load: drive roots plus a useful starting point. Priority: (1) restore the folders the user
   // had expanded last time, (2) reveal the open file, (3) fall back to the default start folder so the
   // tree doesn't land on bare drive letters.
@@ -155,7 +218,8 @@ export function FilesSidebar({
         // Restore the remembered tree: load every persisted-expanded folder so its rows render.
         const persisted = loadExpanded();
         if (persisted.size > 0) {
-          if (res.current) setSelectedDir(res.current);
+          // Keep the folder that was selected last time; only fall back to the default start folder.
+          if (res.current && !readStored(SELECTED_KEY)) setSelectedDir(res.current);
           await Promise.all([...persisted].map(listDir));
           return;
         }
@@ -175,6 +239,8 @@ export function FilesSidebar({
         }
       } catch {
         setError("Could not read the filesystem.");
+      } finally {
+        setReady(true); // the tree is as complete as it's going to get — safe to replay the scroll
       }
     })();
   }, [listDir]);
@@ -354,7 +420,7 @@ export function FilesSidebar({
         </div>
       )}
 
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto py-1">
+      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-auto py-1">
         {drives.map((d) => (
           <TreeNode
             key={d.path}
