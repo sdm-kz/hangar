@@ -624,6 +624,7 @@ export function App() {
         <AppSidebar
           tab={sidebarTab}
           onTabChange={setSidebarTab}
+          onNew={() => openNew()}
           onCollapse={toggleCollapsed}
           sessions={
             <SessionSidebar
@@ -632,7 +633,6 @@ export function App() {
               waitingIds={waitingIds}
               activeId={activeId}
               onSelect={selectSession}
-              onNew={() => openNew()}
               onNewInFolder={newSessionInFolder}
               onClose={onClose}
               onClone={cloneSession}
@@ -670,6 +670,10 @@ export function App() {
             <AppSidebar
               tab={sidebarTab}
               onTabChange={setSidebarTab}
+              onNew={() => {
+                openNew();
+                setSidebarOpen(false);
+              }}
               sessions={
                 <SessionSidebar
                   sessions={sessions}
@@ -678,10 +682,6 @@ export function App() {
                   activeId={activeId}
                   onSelect={(id) => {
                     selectSession(id);
-                    setSidebarOpen(false);
-                  }}
-                  onNew={() => {
-                    openNew();
                     setSidebarOpen(false);
                   }}
                   onNewInFolder={newSessionInFolder}

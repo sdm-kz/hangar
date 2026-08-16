@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { filesUrl } from "@/lib/urlState";
 import { Button } from "@/components/ui/button";
-import { Bot, FolderTree, MessagesSquare, PanelLeftClose } from "lucide-react";
+import { Bot, FolderTree, MessagesSquare, PanelLeftClose, Plus } from "lucide-react";
 
 export type SidebarTab = "sessions" | "files";
 
@@ -14,12 +14,14 @@ export type SidebarTab = "sessions" | "files";
 export function AppSidebar({
   tab,
   onTabChange,
+  onNew,
   onCollapse,
   sessions,
   files,
 }: {
   tab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
+  onNew: () => void;
   onCollapse?: () => void; // desktop only: hide the sidebar
   sessions: ReactNode;
   files: ReactNode;
@@ -31,18 +33,31 @@ export function AppSidebar({
         <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <Bot className="size-4" />
         </div>
-        <span className="font-semibold">Claude Web</span>
-        {onCollapse && (
+        <span className="min-w-0 truncate font-semibold">Claude Web</span>
+        {/* New session lives here rather than in the session list: it applies to both tabs, and the
+            header has room the list header doesn't. */}
+        <div className="ml-auto flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="ml-auto hidden size-7 text-muted-foreground md:inline-flex"
-            title="Hide sidebar"
-            onClick={onCollapse}
+            className="size-7 text-muted-foreground"
+            title="New session"
+            onClick={onNew}
           >
-            <PanelLeftClose className="size-4" />
+            <Plus className="size-4" />
           </Button>
-        )}
+          {onCollapse && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden size-7 text-muted-foreground md:inline-flex"
+              title="Hide sidebar"
+              onClick={onCollapse}
+            >
+              <PanelLeftClose className="size-4" />
+            </Button>
+          )}
+        </div>
       </div>
       <div className="flex h-10 shrink-0 border-b">
         <TabButton active={tab === "sessions"} onClick={() => onTabChange("sessions")}>

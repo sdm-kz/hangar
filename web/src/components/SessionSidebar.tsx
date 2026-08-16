@@ -258,7 +258,6 @@ export function SessionSidebar({
   waitingIds,
   activeId,
   onSelect,
-  onNew,
   onNewInFolder,
   onClose,
   onClone,
@@ -279,7 +278,6 @@ export function SessionSidebar({
   waitingIds: Set<string>; // sessions where Claude is waiting on a prompt/dialog
   activeId: string | null;
   onSelect: (id: string) => void;
-  onNew: () => void;
   onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
   onClose: (id: string) => void;
   onClone: (s: SessionInfo) => void;
@@ -499,15 +497,9 @@ export function SessionSidebar({
 
   return (
     <div className="flex h-full flex-col bg-card">
-      <div className="p-2">
-        <Button onClick={onNew} className="w-full justify-start" size="sm">
-          <Plus className="size-4" /> New session
-        </Button>
-      </div>
-
       {/* Tab switcher: active sessions vs. reusable recent presets. The row is tight on purpose —
           at the narrow end of the sidebar the labels have to survive next to four icon buttons. */}
-      <div className="flex items-center gap-0.5 px-2 pb-2">
+      <div className="flex items-center gap-0.5 p-2">
         <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")} count={sessions.length}>
           Sessions
         </TabButton>
