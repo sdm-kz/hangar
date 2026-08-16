@@ -505,30 +505,31 @@ export function SessionSidebar({
         </Button>
       </div>
 
-      {/* Tab switcher: active sessions vs. reusable recent presets. */}
-      <div className="flex items-center gap-1 px-2 pb-2">
-        <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")}>
-          Sessions{sessions.length > 0 && ` (${sessions.length})`}
+      {/* Tab switcher: active sessions vs. reusable recent presets. The row is tight on purpose —
+          at the narrow end of the sidebar the labels have to survive next to four icon buttons. */}
+      <div className="flex items-center gap-0.5 px-2 pb-2">
+        <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")} count={sessions.length}>
+          Sessions
         </TabButton>
-        <TabButton active={tab === "recent"} onClick={() => setTab("recent")}>
-          Recent{recents.length > 0 && ` (${recents.length})`}
+        <TabButton active={tab === "recent"} onClick={() => setTab("recent")} count={recents.length}>
+          Recent
         </TabButton>
         {(sessions.length > 0 || recents.length > 0) && (
           <Button
             variant="ghost"
             size="icon"
-            className="size-7 shrink-0 text-muted-foreground"
+            className="size-6 shrink-0 text-muted-foreground"
             title="Search sessions and recents (Ctrl+Shift+F)"
             onClick={onSearch}
           >
-            <Search className="size-4" />
+            <Search className="size-3.5" />
           </Button>
         )}
         {tab === "sessions" && sessions.length > 0 && (
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 w-7 shrink-0 px-0 text-muted-foreground"
+            className="size-6 shrink-0 px-0 text-muted-foreground"
             title={
               filter === "active"
                 ? `Showing ${activeCount} running session${activeCount === 1 ? "" : "s"} — click to show all`
@@ -545,26 +546,26 @@ export function SessionSidebar({
           <Button
             variant="ghost"
             size="icon"
-            className="size-7 shrink-0 text-muted-foreground"
+            className="size-6 shrink-0 text-muted-foreground"
             title={grouped ? "Show as a flat list" : "Group by folder"}
             aria-pressed={grouped}
             onClick={toggleGrouped}
           >
-            {grouped ? <List className="size-4" /> : <FolderTree className="size-4" />}
+            {grouped ? <List className="size-3.5" /> : <FolderTree className="size-3.5" />}
           </Button>
         )}
         {grouped && visibleDirs.length > 0 && (
           <Button
             variant="ghost"
             size="icon"
-            className="size-7 shrink-0 text-muted-foreground"
+            className="size-6 shrink-0 text-muted-foreground"
             title={allCollapsed ? "Expand all folders" : "Collapse all folders"}
             onClick={toggleAllGroups}
           >
             {allCollapsed ? (
-              <ChevronsUpDown className="size-4" />
+              <ChevronsUpDown className="size-3.5" />
             ) : (
-              <ChevronsDownUp className="size-4" />
+              <ChevronsDownUp className="size-3.5" />
             )}
           </Button>
         )}
@@ -718,10 +719,12 @@ function FolderRemoveDialog({
 function TabButton({
   active,
   onClick,
+  count,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  count?: number;
   children: ReactNode;
 }) {
   return (
@@ -729,11 +732,15 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+        "flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium transition-colors",
         active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
       )}
     >
-      {children}
+      {/* Label truncates before the count does: a clipped word still reads, a clipped number lies. */}
+      <span className="truncate">{children}</span>
+      {count !== undefined && count > 0 && (
+        <span className="shrink-0 text-[10px] tabular-nums opacity-70">{count}</span>
+      )}
     </button>
   );
 }
