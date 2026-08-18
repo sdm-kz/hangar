@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type UIEvent } from "react";
 import { ApiError, api, sessionFileUrl } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
@@ -799,6 +799,74 @@ export const FileBrowser = forwardRef<
     saveSessionUi(sessionId, { changesExpanded: [] });
   }, [sessionId]);
 
+  // Where the tree pane is scrolled to, remembered per session and per view so switching sessions (or
+  // reloading) comes back to the same place rather than the top of the tree.
+  const treeScrollRef = useRef<HTMLDivElement>(null);
+  const restoredScrollRef = useRef(false);
+  const saveScrollRef = useRef<number | undefined>(undefined);
+  const searchActive = !changesView && !!query.trim(); // results are transient — no offset kept
+
+  // Re-arm the restore whenever the pane switches to showing something else.
+  useEffect(() => {
+    restoredScrollRef.current = false;
+  }, [sessionId, changesView, searchActive]);
+
+  // Replay the remembered offset, but only once the tree has stopped growing: folder levels each
+  // fetch on their own, and scrolling while rows are still arriving above the viewport lets the
+  // browser's scroll anchoring drag the offset somewhere else entirely. A quiet DOM means every level
+  // that was going to render has; if the tree ends up shorter than it was (folders collapsed since),
+  // go as far as it allows instead of waiting forever.
+  useEffect(() => {
+    if (searchActive) return;
+    const box = treeScrollRef.current;
+    if (!box) return;
+    const ui = loadSessionUi(sessionId);
+    const target = (changesView ? ui.changesScroll : ui.filesScroll) ?? 0;
+    if (!(target > 0)) {
+      restoredScrollRef.current = true;
+      return;
+    }
+    const deadline = Date.now() + 3000;
+    let timer = 0;
+    const apply = () => {
+      if (restoredScrollRef.current) return;
+      const max = Math.max(0, box.scrollHeight - box.clientHeight);
+      if (max < target && Date.now() < deadline) {
+        timer = window.setTimeout(apply, 200); // a level is probably still fetching — look again
+        return;
+      }
+      box.scrollTop = Math.min(target, max);
+      restoredScrollRef.current = true;
+      obs.disconnect();
+    };
+    const settle = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(apply, 120);
+    };
+    const obs = new MutationObserver(settle);
+    obs.observe(box, { childList: true, subtree: true });
+    settle(); // the tree may already be complete
+    return () => {
+      obs.disconnect();
+      window.clearTimeout(timer);
+    };
+  }, [sessionId, changesView, searchActive]);
+
+  // Save it back, debounced. Scrolls that land before the restore are the browser shifting rows
+  // around as they load, not the user, so they mustn't overwrite the remembered offset.
+  const onTreeScroll = useCallback(
+    (e: UIEvent<HTMLDivElement>) => {
+      if (!restoredScrollRef.current || searchActive) return;
+      const top = Math.round(e.currentTarget.scrollTop);
+      window.clearTimeout(saveScrollRef.current);
+      saveScrollRef.current = window.setTimeout(
+        () => saveSessionUi(sessionId, changesView ? { changesScroll: top } : { filesScroll: top }),
+        200
+      );
+    },
+    [sessionId, changesView, searchActive]
+  );
+
   // Debounced recursive search — only for the all-files tree; the changes view filters locally.
   useEffect(() => {
     const q = query.trim();
@@ -1024,7 +1092,7 @@ export const FileBrowser = forwardRef<
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto px-1 pb-2">
+        <div ref={treeScrollRef} onScroll={onTreeScroll} className="flex-1 overflow-auto px-1 pb-2">
           {changesView ? (
             changesTree ? (
               <ChangesTree

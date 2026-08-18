@@ -19,6 +19,10 @@ export interface SessionUi {
   changesTree?: boolean; // in the changes view, group files by folder (tree) instead of a flat list
   filesExpanded?: string[]; // Files tree: folder paths the user has expanded (all collapsed by default)
   changesExpanded?: string[]; // changes tree (grouped mode): folder paths expanded (all collapsed by default)
+  // Scroll offset (px) of the tree pane. The two views share the pane but not their position, so each
+  // remembers its own; search results are transient and keep neither.
+  filesScroll?: number;
+  changesScroll?: number;
 }
 
 type Store = Record<string, SessionUi>;
