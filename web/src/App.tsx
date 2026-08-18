@@ -4,6 +4,7 @@ import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { move } from "@/lib/sessionOrder";
+import { setFaviconStatus } from "@/lib/favicon";
 import type { SessionInfo } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar, type SessionListTab } from "@/components/SessionSidebar";
@@ -183,6 +184,13 @@ export function App() {
     const name = sessions.find((s) => s.id === activeId)?.name;
     document.title = name ? `${name} - Claude Web` : "Claude Web";
   }, [activeId, sessions]);
+
+  // Badge the favicon with the busiest state across *all* sessions, so a backgrounded tab shows at a
+  // glance that something is happening. Waiting-on-you (amber) outranks working (green) here — unlike
+  // the per-session sidebar dot — because it's the one asking for you to come back.
+  useEffect(() => {
+    setFaviconStatus(waitingIds.size > 0 ? "waiting" : busyIds.size > 0 ? "busy" : "idle");
+  }, [busyIds, waitingIds]);
 
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
   // (new/renamed/exited sessions, Claude going active/idle, watchdog status), so the UI stays current
