@@ -89,6 +89,11 @@ export const api = {
   restoreSession(id: string): Promise<SessionInfo> {
     return request(`/api/sessions/${id}/restore`, { method: "POST" });
   },
+  // Forks a session: a new session in the same folder branching its conversation (--fork-session),
+  // leaving the original untouched. A blank name falls back to "<parent> (fork)" server-side.
+  forkSession(id: string, name: string): Promise<SessionInfo> {
+    return request(`/api/sessions/${id}/fork`, { method: "POST", body: JSON.stringify({ name }) });
+  },
   // Stops the claude process and forgets the session.
   deleteSession(id: string): Promise<void> {
     return request(`/api/sessions/${id}`, { method: "DELETE" });

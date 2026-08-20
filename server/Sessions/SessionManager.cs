@@ -103,11 +103,19 @@ public sealed class SessionManager : IDisposable
     public IReadOnlyCollection<SessionInfo> List()
     {
         foreach (var s in _sessions.Values) s.Refresh();
-        return _sessions.Values.Select(s => s.ToInfo())
+        return _sessions.Values.Select(s => s.ToInfo(ConversationId(s)))
             .Concat(_restorable.Values.Select(ClaudeSession.RestorableInfo))
             .OrderBy(i => i.CreatedAt)
             .ToArray();
     }
+
+    /// <summary>
+    /// Claude's own conversation id for a live session: the one its hooks reported, or — for a session
+    /// that resumed an existing conversation and hasn't produced a hook yet — the id it resumed. Null
+    /// while a fresh (or freshly forked) session is still starting up. This is what a reopen resumes
+    /// and what a fork branches from.
+    /// </summary>
+    private string? ConversationId(ClaudeSession s) => _hooks.ClaudeSessionId(s.Id) ?? s.OwnConversationId;
 
     /// <summary>Ids of live sessions where Claude is currently generating output (for the "active" dot).</summary>
     public IReadOnlyCollection<string> BusySessionIds() =>
@@ -188,7 +196,7 @@ public sealed class SessionManager : IDisposable
     {
         if (!_sessions.TryGetValue(id, out var s)) return null;
         s.Refresh();
-        return s.ToInfo();
+        return s.ToInfo(ConversationId(s));
     }
 
     /// <summary>Filesystem change counter for a session's working directory (null if unknown).</summary>
@@ -292,7 +300,89 @@ public sealed class SessionManager : IDisposable
         session.Start();
         SavePersisted();
         RaiseChanged();
-        return session.ToInfo();
+        return session.ToInfo(ConversationId(session));
+    }
+
+    /// <summary>
+    /// Branch a session's conversation into a new one: relaunch <c>claude</c> in the same folder with
+    /// the same settings, resuming the session's conversation under <c>--fork-session</c> so Claude
+    /// replays its history into a fresh conversation id. The original is left running and untouched;
+    /// the fork records its parent so the UI can nest it underneath.
+    /// Works for a live session and for a Restorable entry from a previous run. Returns null when the
+    /// id is unknown; throws when we don't (yet) know a conversation id to branch from.
+    /// </summary>
+    public SessionInfo? Fork(string id, string? name)
+    {
+        string workingDirectory, parentName, conversationId, permissionMode;
+        bool remoteControl;
+        string? model;
+        bool watchdogEnabled;
+
+        if (_sessions.TryGetValue(id, out var live))
+        {
+            conversationId = ConversationId(live)
+                ?? throw new InvalidOperationException(
+                    "This session hasn't reported its conversation id yet — give it a moment and try again.");
+            workingDirectory = live.WorkingDirectory;
+            parentName = live.Name;
+            remoteControl = live.RemoteControl;
+            model = live.Model;
+            permissionMode = live.PermissionMode;
+            watchdogEnabled = live.WatchdogEnabled;
+        }
+        else if (_restorable.TryGetValue(id, out var p))
+        {
+            conversationId = p.ClaudeSessionId
+                ?? throw new InvalidOperationException(
+                    "This session's conversation id was never captured, so there's nothing to fork from.");
+            workingDirectory = p.WorkingDirectory;
+            parentName = p.Name;
+            remoteControl = p.RemoteControl;
+            model = p.Model;
+            permissionMode = p.PermissionMode ?? "";
+            watchdogEnabled = p.WatchdogEnabled;
+        }
+        else return null;
+
+        var forkName = ClaudeSession.SanitizeName(name);
+        if (forkName.Length == 0) forkName = DefaultForkName(parentName);
+
+        return Create(new CreateSessionRequest(
+            WorkingDirectory: workingDirectory,
+            Name: forkName,
+            RemoteControl: remoteControl,
+            Model: model,
+            InitialPrompt: null, // the fork inherits the conversation; there's no fresh prompt to fire
+            PermissionMode: permissionMode,
+            Continue: false,
+            ResumeSessionId: conversationId,
+            Color: null, // a distinct branch — let it get its own /color rather than mirroring the parent
+            WatchdogEnabled: watchdogEnabled,
+            ForkSession: true,
+            ParentSessionId: id,
+            ParentName: parentName));
+    }
+
+    /// <summary>
+    /// A "(fork)" / "(fork 3)" suffix this scheme added earlier, stripped before naming the next one so
+    /// forking a fork numbers off the original ("a (fork 2)") instead of stacking suffixes.
+    /// </summary>
+    private static readonly Regex ForkSuffix =
+        new(@"\s*\(fork(?:\s+\d+)?\)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Name used when the fork dialog's name field is left blank: "parent (fork)", "… (fork 2)", …</summary>
+    private string DefaultForkName(string parentName)
+    {
+        var taken = _sessions.Values.Select(s => s.Name)
+            .Concat(_restorable.Values.Select(p => p.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Fall back to the full name if it's nothing *but* a suffix, so we never name a session "(fork)".
+        var stripped = ForkSuffix.Replace(parentName, "").Trim();
+        var b = stripped.Length == 0 ? parentName : stripped;
+        var candidate = ClaudeSession.SanitizeName($"{b} (fork)");
+        for (int n = 2; taken.Contains(candidate); n++)
+            candidate = ClaudeSession.SanitizeName($"{b} (fork {n})");
+        return candidate;
     }
 
     /// <summary>
@@ -339,7 +429,7 @@ public sealed class SessionManager : IDisposable
         if (!_restorable.TryRemove(id, out var p)) return null;
         try
         {
-            return Create(new CreateSessionRequest(
+            var info = Create(new CreateSessionRequest(
                 WorkingDirectory: p.WorkingDirectory,
                 Name: p.Name,
                 RemoteControl: p.RemoteControl,
@@ -349,7 +439,16 @@ public sealed class SessionManager : IDisposable
                 Continue: true, // fallback when we never captured the Claude session id
                 ResumeSessionId: p.ClaudeSessionId, // reopen the EXACT conversation when known
                 Color: p.Color,
-                WatchdogEnabled: p.WatchdogEnabled));
+                WatchdogEnabled: p.WatchdogEnabled,
+                // Reopening resumes the conversation as-is — it is NOT a fork, whatever this entry once
+                // was — but it keeps its place in the fork tree.
+                ForkSession: false,
+                ParentSessionId: p.ParentSessionId,
+                ParentName: p.ParentName));
+            // The reopened session has a brand-new id, so anything forked from the old one would be
+            // orphaned. Move those links over to the replacement.
+            Reparent(id, info.Id);
+            return info;
         }
         catch
         {
@@ -357,6 +456,31 @@ public sealed class SessionManager : IDisposable
             SavePersisted();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Point every fork of <paramref name="oldParentId"/> at <paramref name="newParentId"/> — the session
+    /// that replaced it after a reopen. Without this the fork tree would flatten out on every restore
+    /// (and on the auto-resume that runs at startup), since a relaunch always gets a fresh id.
+    /// </summary>
+    private void Reparent(string oldParentId, string newParentId)
+    {
+        var changed = false;
+        foreach (var s in _sessions.Values)
+        {
+            if (s.ParentSessionId != oldParentId || s.Id == newParentId) continue;
+            s.ParentSessionId = newParentId;
+            changed = true;
+        }
+        foreach (var (key, p) in _restorable)
+        {
+            if (p.ParentSessionId != oldParentId) continue;
+            _restorable[key] = p with { ParentSessionId = newParentId };
+            changed = true;
+        }
+        if (!changed) return;
+        SavePersisted();
+        RaiseChanged();
     }
 
     /// <summary>
@@ -463,7 +587,7 @@ public sealed class SessionManager : IDisposable
             s.RemoteControl,
             s.PermissionMode,
             // Stamp the conversation id so reusing the preset resumes this exact conversation.
-            _hooks.ClaudeSessionId(s.Id) ?? s.ResumeSessionId), launchedFrom);
+            ConversationId(s)), launchedFrom);
     }
 
     /// <summary>Same, for a Restorable entry from a previous run (no live process or hook state).</summary>
@@ -551,7 +675,7 @@ public sealed class SessionManager : IDisposable
                 var live = _sessions.Values.Select(s =>
                 {
                     s.Refresh();
-                    return s.ToPersisted() with { ClaudeSessionId = _hooks.ClaudeSessionId(s.Id) ?? s.ResumeSessionId };
+                    return s.ToPersisted() with { ClaudeSessionId = ConversationId(s) };
                 });
                 var liveIds = _sessions.Keys.ToHashSet();
                 // Carried-over Restorable entries were NOT running this run, so clear WasRunning — only

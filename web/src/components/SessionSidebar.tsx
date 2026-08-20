@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
+import { forkTree } from "@/lib/sessionTree";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
 import {
   Copy,
   Filter,
+  GitFork,
   Inbox,
   Plus,
   Radio,
@@ -261,6 +263,7 @@ export function SessionSidebar({
   onNewInFolder,
   onClose,
   onClone,
+  onFork,
   onRestore,
   onRename,
   onRemoveSessions,
@@ -281,6 +284,7 @@ export function SessionSidebar({
   onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
   onClose: (id: string) => void;
   onClone: (s: SessionInfo) => void;
+  onFork: (s: SessionInfo) => void; // branch this session's conversation into a new one
   onRestore: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onRemoveSessions: (ids: string[]) => void;
@@ -335,16 +339,21 @@ export function SessionSidebar({
     });
 
   // A single session row. Sessions are ordered newest-first (by creation time); `showPath` is
-  // dropped in grouped mode where the folder is already in the header.
-  const renderRow = (s: SessionInfo, showPath: boolean) => {
+  // dropped in grouped mode where the folder is already in the header. `depth` nests forks under the
+  // session they branched from — indented, with a small elbow so the relationship reads at a glance.
+  const renderRow = (s: SessionInfo, showPath: boolean, depth = 0) => {
     const restorable = s.state === "Restorable";
     // Color set via `/color` in the terminal, shown as a left accent stripe on the row.
     const color = sessionColor(s.color);
     // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
+    // Stop indenting past a few levels: a fork of a fork of a fork would otherwise squeeze the name
+    // out of a narrow sidebar entirely.
+    const indent = Math.min(depth, 4) * 12;
     return (
       <div
         key={s.id}
+        style={depth > 0 ? { marginLeft: indent } : undefined}
         onClick={
           restorable
             ? undefined
@@ -371,6 +380,16 @@ export function SessionSidebar({
         )}
         <div className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 flex-1 items-center gap-1">
+            {/* Nested fork: mark the row as a branch of the one above it. The parent's name is right
+                there in the list, so the tooltip carries it rather than the row spending width on it. */}
+            {depth > 0 && (
+              <span
+                className="flex shrink-0 items-center text-muted-foreground"
+                title={s.parentName ? `Forked from “${s.parentName}”` : "Forked session"}
+              >
+                <GitFork className="size-3" aria-label="forked session" />
+              </span>
+            )}
             {/* Fixed-width gutter so the title never shifts when the activity dot appears. Busy
                 (emerald) wins; then waiting-on-you (amber, solid); otherwise the watchdog surfaces
                 recovering (amber pulse) / attention (red). */}
@@ -450,6 +469,18 @@ export function SessionSidebar({
                 className="hidden hover:text-foreground group-hover:inline-flex"
               >
                 <Copy className="size-3.5" />
+              </button>
+            )}
+            {editingId !== s.id && s.canFork && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFork(s);
+                }}
+                title="Fork — branch this conversation into a new session"
+                className="hidden hover:text-foreground group-hover:inline-flex"
+              >
+                <GitFork className="size-3.5" />
               </button>
             )}
             {restorable && (
@@ -596,7 +627,11 @@ export function SessionSidebar({
                   />
                   {!isCollapsed && (
                     <div className="mt-1 space-y-1 pl-1">
-                      {g.items.map(({ item }) => renderRow(item, false))}
+                      {/* A fork always shares its parent's folder, so nesting inside the group is
+                          the same tree the flat list shows — just scoped to this folder. */}
+                      {forkTree(g.items.map(({ item }) => item)).map((n) =>
+                        renderRow(n.session, false, n.depth)
+                      )}
                     </div>
                   )}
                 </div>
@@ -604,7 +639,9 @@ export function SessionSidebar({
             })}
           </div>
         ) : (
-          <div className="space-y-1">{visibleSessions.map((s) => renderRow(s, true))}</div>
+          <div className="space-y-1">
+            {forkTree(visibleSessions).map((n) => renderRow(n.session, true, n.depth))}
+          </div>
         )}
       </div>
       )}

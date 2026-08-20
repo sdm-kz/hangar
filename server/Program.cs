@@ -287,6 +287,22 @@ internal static class Program
             }
         });
 
+        // Fork a session: launch a new one in the same folder that branches this session's conversation
+        // (claude --resume <convo> --fork-session), leaving the original untouched. The new session
+        // records its parent so the UI can nest it underneath.
+        app.MapPost("/api/sessions/{id}/fork", (string id, ForkRequest body, SessionManager mgr) =>
+        {
+            try
+            {
+                var info = mgr.Fork(id, body.Name);
+                return info is null ? Results.NotFound() : Results.Created($"/api/sessions/{info.Id}", info);
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
         // Stop the claude process and forget the session (also forgets a Restorable entry).
         app.MapDelete("/api/sessions/{id}", (string id, SessionManager mgr) =>
             mgr.Remove(id, stopProcess: true) ? Results.Ok() : Results.NotFound());
@@ -763,6 +779,8 @@ internal static class Program
 internal record LoginRequest(string? Password);
 internal record WatchdogRequest(bool Enabled);
 internal record RenameRequest(string Name);
+// Name for a forked session; blank/absent falls back to a "<parent> (fork)" default server-side.
+internal record ForkRequest(string? Name);
 // `Dir` on the session file-mutation payloads names the write root: empty (the default) is the
 // session's own working directory, otherwise one of its linked folders.
 internal record FileWriteRequest(string Path, string? Content, string? Dir = null);

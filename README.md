@@ -21,6 +21,10 @@ The web UI is a **launcher / session manager**, not a terminal:
   working folder of your choice.
 - **Control from the Claude Code app** — launched sessions register for Remote Control and appear
   by name in the app's session list (computer icon + green dot). All interaction happens there.
+- **Fork a session** — branch a conversation in two from the sessions list or the session header:
+  name the fork, and it launches beside the original with the same folder and settings, picking up
+  its history (`claude --resume <id> --fork-session`). The original keeps running, untouched. Forks
+  nest under their parent in the sessions list, and each one's header links back to it.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:

@@ -32,7 +32,23 @@ public sealed record CreateSessionRequest(
     /// <summary>Session color (a color name set via <c>/color</c>); carried across a restore. Null = none.</summary>
     string? Color = null,
     /// <summary>Whether the hang watchdog may auto-continue this session. Off by default.</summary>
-    bool WatchdogEnabled = false);
+    bool WatchdogEnabled = false,
+    /// <summary>
+    /// Branch the resumed conversation instead of continuing it (<c>--fork-session</c>): Claude replays
+    /// <see cref="ResumeSessionId"/>'s history into a NEW conversation id, so the original is untouched
+    /// and the two diverge from that point. Only meaningful together with a resume.
+    /// </summary>
+    bool ForkSession = false,
+    /// <summary>
+    /// Our id of the session this one was forked from, so the UI can nest it under its parent. Null for
+    /// an ordinary session.
+    /// </summary>
+    string? ParentSessionId = null,
+    /// <summary>
+    /// The parent's display name at fork time. Kept alongside the id so a fork can still say where it
+    /// came from after the parent is closed and forgotten.
+    /// </summary>
+    string? ParentName = null);
 
 /// <summary>
 /// On-disk record of a launched session, used to re-attach to still-running Remote Control
@@ -68,7 +84,11 @@ public sealed record PersistedSession(
     /// Whether the hang watchdog was enabled for this session, so an auto-resumed session comes back
     /// with the same unattended-recovery setting instead of silently reverting to off.
     /// </summary>
-    bool WatchdogEnabled = false);
+    bool WatchdogEnabled = false,
+    /// <summary>Our id of the session this one was forked from (null when not a fork).</summary>
+    string? ParentSessionId = null,
+    /// <summary>The parent's display name at fork time, so the link survives the parent's removal.</summary>
+    string? ParentName = null);
 
 /// <summary>Serializable snapshot of a session, sent to the browser.</summary>
 public sealed record SessionInfo(
@@ -104,4 +124,20 @@ public sealed record SessionInfo(
     /// dialog (adjusting the model/prompt first) and still resume that exact conversation. Null for live
     /// sessions, which are opened rather than relaunched.
     /// </summary>
-    string? ClaudeSessionId = null);
+    string? ClaudeSessionId = null,
+    /// <summary>
+    /// Whether this session's conversation id is known — i.e. it can be forked (<c>--fork-session</c>
+    /// needs something to resume from). False for the first seconds of a fresh session, until Claude's
+    /// first hook reports its id.
+    /// </summary>
+    bool CanFork = false,
+    /// <summary>
+    /// Our id of the session this one was forked from, so the sessions list can nest it under its
+    /// parent. Null for an ordinary session.
+    /// </summary>
+    string? ParentSessionId = null,
+    /// <summary>
+    /// The parent's display name at fork time — shown in the fork's header even once the parent itself
+    /// has been closed and forgotten (in which case there's nothing left to link to).
+    /// </summary>
+    string? ParentName = null);

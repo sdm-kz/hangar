@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { sessionColor } from "@/lib/sessionColors";
-import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, GitFork, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
@@ -67,6 +67,9 @@ function StateBadge({ state }: { state: SessionInfo["state"] }) {
 export function SessionView({
   session,
   busy,
+  parent,
+  onFork,
+  onSelectSession,
   onToggleSidebar,
   collapsed,
   onToggleCollapsed,
@@ -78,6 +81,11 @@ export function SessionView({
   session: SessionInfo;
   // Whether Claude is currently working in this session (from the live /hub/events busy set).
   busy?: boolean;
+  // The session this one was forked from, when it's still around — null once it's been closed and
+  // forgotten, in which case the header falls back to the name recorded at fork time.
+  parent?: SessionInfo | null;
+  onFork: (s: SessionInfo) => void;
+  onSelectSession: (id: string) => void; // used by the "forked from" link to jump to the parent
   onToggleSidebar: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -402,6 +410,7 @@ export function SessionView({
 
             {/* Second line on a phone, same line from md up: where the session lives. */}
             <div className="flex min-w-0 items-center gap-2 md:flex-1">
+              {session.parentSessionId && <ForkedFrom parent={parent} name={session.parentName} onOpen={onSelectSession} />}
               {git?.isRepo && git.branch && (
                 <button
                   type="button"
@@ -465,6 +474,17 @@ export function SessionView({
                     <Radio className="size-3" /> RC
                   </Badge>
                 ))}
+              {session.canFork && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-[30px]"
+                  onClick={() => onFork(session)}
+                  title="Fork — branch this conversation into a new session"
+                >
+                  <GitFork className="size-4" />
+                </Button>
+              )}
               {session.state === "Running" && (
                 <>
                   <Button
@@ -514,6 +534,7 @@ export function SessionView({
             wdEnabled={wdEnabled}
             onToggleWatchdog={toggleWatchdog}
             onContinue={sendContinue}
+            onFork={() => onFork(session)}
             onStop={stop}
             stopping={stopping}
           />
@@ -619,6 +640,52 @@ export function SessionView({
 }
 
 /**
+ * "Forked from <parent>" badge for a session that branched another one's conversation. Clickable
+ * while the parent is still listed; once it's closed and forgotten there's nothing to navigate to,
+ * so it degrades to the plain name recorded at fork time.
+ */
+function ForkedFrom({
+  parent,
+  name,
+  onOpen,
+}: {
+  parent?: SessionInfo | null;
+  name: string | null;
+  onOpen: (id: string) => void;
+}) {
+  const label = parent?.name ?? name;
+  if (!label) return null;
+
+  const content = (
+    <>
+      <GitFork className="size-3 shrink-0" />
+      <span className="max-w-[8rem] truncate sm:max-w-[12rem]">{label}</span>
+    </>
+  );
+
+  if (!parent)
+    return (
+      <span
+        className={cn(badgeVariants({ variant: "outline" }), "min-w-0 shrink gap-1 text-muted-foreground")}
+        title={`Forked from “${label}”, which is no longer in the session list`}
+      >
+        {content}
+      </span>
+    );
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(parent.id)}
+      className={cn(badgeVariants({ variant: "outline" }), "min-w-0 shrink gap-1 transition-colors hover:bg-accent")}
+      title={`Forked from “${label}” — click to open it`}
+    >
+      {content}
+    </button>
+  );
+}
+
+/**
  * Dismiss-on-outside-click/Escape for the header's little popups. Returns the ref to put on the
  * popup's root — anything inside it (including the trigger) counts as "inside".
  */
@@ -700,6 +767,7 @@ function SessionActionsMenu({
   wdEnabled,
   onToggleWatchdog,
   onContinue,
+  onFork,
   onStop,
   stopping,
 }: {
@@ -708,6 +776,7 @@ function SessionActionsMenu({
   wdEnabled: boolean;
   onToggleWatchdog: () => void;
   onContinue: () => void;
+  onFork: () => void;
   onStop: () => void;
   stopping: boolean;
 }) {
@@ -770,6 +839,16 @@ function SessionActionsMenu({
                   <Play className="size-4" /> Send “continue”
                 </MenuItem>
               </>
+            )}
+            {session.canFork && (
+              <MenuItem
+                onClick={() => {
+                  onFork();
+                  setOpen(false);
+                }}
+              >
+                <GitFork className="size-4" /> Fork session…
+              </MenuItem>
             )}
             <MenuItem
               destructive

@@ -39,6 +39,23 @@ public sealed class ClaudeSession : IDisposable
     public bool Continue { get; }
     /// <summary>When set, reopen resumes this exact Claude conversation (<c>--resume &lt;id&gt;</c>) instead of <c>--continue</c>.</summary>
     public string? ResumeSessionId { get; }
+    /// <summary>
+    /// Branch the resumed conversation rather than continuing it (<c>--fork-session</c>), so the
+    /// original keeps running untouched and this one diverges from its history.
+    /// </summary>
+    public bool ForkSession { get; }
+    /// <summary>Our id of the session this one was forked from; null when it isn't a fork.</summary>
+    public string? ParentSessionId { get; internal set; }
+    /// <summary>The parent's display name at fork time (kept so a fork can name a parent that's gone).</summary>
+    public string? ParentName { get; internal set; }
+
+    /// <summary>
+    /// This session's own conversation id as best we know it before any hook has reported one — used as
+    /// the fallback for a later reopen/fork. An ordinary resumed session kept the id it resumed; a
+    /// <em>fork</em> deliberately got a new one, so its <see cref="ResumeSessionId"/> names the PARENT's
+    /// conversation and must never stand in for its own (resuming it would rejoin the parent).
+    /// </summary>
+    public string? OwnConversationId => ForkSession ? null : ResumeSessionId;
     public SessionState State { get; private set; } = SessionState.Running;
     public int ProcessId { get; private set; }
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
@@ -120,6 +137,11 @@ public sealed class ClaudeSession : IDisposable
         PermissionMode = NormalizeMode(req.PermissionMode);
         Continue = req.Continue;
         ResumeSessionId = string.IsNullOrWhiteSpace(req.ResumeSessionId) ? null : req.ResumeSessionId;
+        // Forking only means anything with a conversation to branch from; without one it would silently
+        // become an ordinary fresh session, so drop the flag rather than pass a no-op to the CLI.
+        ForkSession = req.ForkSession && (ResumeSessionId is not null || req.Continue);
+        ParentSessionId = string.IsNullOrWhiteSpace(req.ParentSessionId) ? null : req.ParentSessionId;
+        ParentName = string.IsNullOrWhiteSpace(req.ParentName) ? null : SanitizeName(req.ParentName);
         WatchdogEnabled = req.WatchdogEnabled;
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
@@ -135,15 +157,26 @@ public sealed class ClaudeSession : IDisposable
         SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color,
         ResumeExact: p.ClaudeSessionId is not null,
         PostponedCount: PostponedStore.Count(p.WorkingDirectory, p.Id),
-        ClaudeSessionId: p.ClaudeSessionId);
+        ClaudeSessionId: p.ClaudeSessionId,
+        CanFork: p.ClaudeSessionId is not null,
+        ParentSessionId: p.ParentSessionId,
+        ParentName: p.ParentName);
 
-    public SessionInfo ToInfo() => new(
+    /// <summary>
+    /// Snapshot for the UI. <paramref name="claudeSessionId"/> is the conversation id the manager holds
+    /// for this session (from hooks, or the id it resumed with) — passed in because only the manager
+    /// sees the hook store, and it's what decides whether the session can be forked.
+    /// </summary>
+    public SessionInfo ToInfo(string? claudeSessionId = null) => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, PermissionMode, State, ProcessId, CreatedAt,
         RemoteUrl: _terminal?.RemoteUrl,
         WatchdogEnabled: WatchdogEnabled,
         WatchdogStatus: WatchdogStatus,
         Color: Color,
-        PostponedCount: PostponedStore.Count(WorkingDirectory, Id));
+        PostponedCount: PostponedStore.Count(WorkingDirectory, Id),
+        CanFork: (claudeSessionId ?? OwnConversationId) is not null,
+        ParentSessionId: ParentSessionId,
+        ParentName: ParentName);
 
     public PersistedSession ToPersisted() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt, Color,
@@ -151,7 +184,9 @@ public sealed class ClaudeSession : IDisposable
         // is what auto-resume relaunches on the next start, and a session that already exited on its
         // own shouldn't be resurrected. (SessionManager refreshes state before saving.)
         WasRunning: State == SessionState.Running,
-        WatchdogEnabled: WatchdogEnabled);
+        WatchdogEnabled: WatchdogEnabled,
+        ParentSessionId: ParentSessionId,
+        ParentName: ParentName);
 
     /// <summary>Coerce an incoming/persisted mode string to a known value; anything unknown → "default".</summary>
     public static string NormalizeMode(string? mode) => mode switch
@@ -226,6 +261,11 @@ public sealed class ClaudeSession : IDisposable
         }
         else if (Continue)
             args.Add("--continue");
+        // A fork replays the resumed conversation into a NEW Claude session id, so the session we
+        // branched from keeps its own history and the two diverge from here. Only valid alongside a
+        // resume, which the constructor already guarantees.
+        if (ForkSession)
+            args.Add("--fork-session");
         // Permission mode controls how much the session runs unattended (there's no human at the
         // pseudo-terminal to answer prompts). "default" leaves decisions to the interactive Claude
         // Code app. "bypassPermissions" skips ALL checks via --dangerously-skip-permissions; its

@@ -13,6 +13,7 @@ import { FilesSidebar } from "@/components/FilesSidebar";
 import { ServerFileViewer } from "@/components/ServerFileViewer";
 import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
+import { ForkSessionDialog } from "@/components/ForkSessionDialog";
 import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
@@ -54,6 +55,8 @@ export function App() {
   // Restorable session the create dialog was opened from (see reopenAsNew): once the replacement
   // launches, that stale entry is forgotten so the same conversation isn't listed twice.
   const [newFromId, setNewFromId] = useState<string | null>(null);
+  // Id of the session the fork popup is open for (it asks for a name, then branches its conversation).
+  const [forkFromId, setForkFromId] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentSession[]>([]);
   // Search popup over sessions + recents. Owned here (not by the sidebar) so the hotkey below works
   // with the sidebar collapsed, and so the two sidebar instances don't each mount a dialog.
@@ -424,6 +427,13 @@ export function App() {
 
   // A Restorable entry has no live terminal, so never treat it as the active view.
   const active = sessions.find((s) => s.id === activeId && s.state !== "Restorable") ?? null;
+  // The session the fork popup is open for, and — for the active session's header link — the one it
+  // was forked from. Both resolved from the live list, so they stay current (or drop to null once the
+  // session is gone).
+  const forkFrom = sessions.find((s) => s.id === forkFromId) ?? null;
+  const activeParent = active?.parentSessionId
+    ? sessions.find((s) => s.id === active.parentSessionId) ?? null
+    : null;
 
   function openNew(preset: RecentSession | null = null) {
     setNewPreset(preset);
@@ -475,6 +485,13 @@ export function App() {
     // (or fork) the live session's one.
     setNewDefaultContinue(false);
     setNewOpen(true);
+    setSidebarOpen(false);
+  }, []);
+
+  // Fork a session: open the popup that asks what to call the branch. Tracked by id (not the object)
+  // so the popup keeps seeing the session as the live stream updates it.
+  const forkSession = useCallback((s: SessionInfo) => {
+    setForkFromId(s.id);
     setSidebarOpen(false);
   }, []);
 
@@ -651,6 +668,7 @@ export function App() {
               onNewInFolder={newSessionInFolder}
               onClose={onClose}
               onClone={cloneSession}
+              onFork={forkSession}
               onRestore={onRestore}
               onRename={onRename}
               onRemoveSessions={onRemoveSessions}
@@ -702,6 +720,7 @@ export function App() {
                   onNewInFolder={newSessionInFolder}
                   onClose={onClose}
                   onClone={cloneSession}
+                  onFork={forkSession}
                   onRestore={onRestore}
                   onRename={onRename}
                   onRemoveSessions={onRemoveSessions}
@@ -735,6 +754,9 @@ export function App() {
           <SessionView
             session={active}
             busy={busyIds.has(active.id)}
+            parent={activeParent}
+            onFork={forkSession}
+            onSelectSession={selectSession}
             onToggleSidebar={() => setSidebarOpen(true)}
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}
@@ -768,6 +790,15 @@ export function App() {
           onReopen={reopenAsNew}
           onReuse={reuseRecent}
           onClose={() => setSearching(false)}
+        />
+      )}
+
+      {forkFrom && (
+        <ForkSessionDialog
+          parent={forkFrom}
+          sessions={sessions}
+          onForked={onCreated}
+          onClose={() => setForkFromId(null)}
         />
       )}
 

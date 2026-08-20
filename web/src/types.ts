@@ -17,6 +17,9 @@ export interface SessionInfo {
   resumeExact: boolean; // Restorable: reopen can --resume the exact conversation (vs --continue fallback)
   postponedCount: number; // number of "postponed" messages stashed for this session (0 = none)
   claudeSessionId: string | null; // Restorable: the conversation id behind resumeExact; null when live
+  canFork: boolean; // its conversation id is known, so it can be forked (false for the first seconds)
+  parentSessionId: string | null; // the session this one was forked from; null for an ordinary session
+  parentName: string | null; // the parent's name at fork time — shown even once the parent is gone
 }
 
 export interface CreateSessionRequest {
