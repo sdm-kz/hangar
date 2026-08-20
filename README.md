@@ -147,6 +147,16 @@ The same exe detects it's running under the service manager and skips the tray, 
   `~/.claude.json` (it backs the file up once to `~/.claude.json.claudeweb-backup`, writes
   atomically, and only adds entries for folders not already present). Set it to `false` to disable
   and accept the prompt manually from the Claude Code app instead.
+- **Auto-resume across restarts.** A launched `claude` runs on a pseudoconsole this app owns, so it
+  dies with the app — a PC shutdown, a redeploy or tray **Exit** takes every session down. Their
+  launch metadata is persisted, and on the next start the app **relaunches the ones that were
+  running**, each resuming its own conversation (`--resume <id>` when Claude's session id was
+  captured from a hook, else `--continue`). The original prompt is not re-fired and the watchdog
+  setting is carried over; a resumed session gets a **new id** in the UI. Sessions that had already
+  exited on their own are not resurrected, and a folder that's gone (or a failed launch) just stays
+  a manual **Reopen** entry. Turn it off with `Sessions:ResumeOnStart=false`, or per launch with
+  `--no-resume-sessions`. Pair it with **Start on login** above and a reboot restores your working
+  set by itself.
 - **Keep the process alive.** Remote Control lives in the launched `claude` process; stopping it
   (or the machine going offline for ~10 min) ends the session in the app. The service keeps
   processes running across web-UI restarts (stopping the service does not kill launched sessions).
@@ -162,6 +172,9 @@ The same exe detects it's running under the service manager and skips the tray, 
 | `Auth:ApiKey`               | API key for `POST /api/external/sessions`. Empty = off| `""`                 |
 | `Sessions:ClaudeExecutable` | Path or command for the CLI (pin a full path here)   | `claude`             |
 | `Sessions:AutoTrustFolders` | Pre-accept Claude's workspace-trust prompt per folder| `true`               |
+| `Sessions:ResumeOnStart`    | On start, relaunch the sessions that were running at the last exit | `true` |
+| `Sessions:ResumeDelayMs`    | Settling delay before auto-resume starts (lets a booting PC come up)| `5000`  |
+| `Sessions:ResumeStaggerMs`  | Pause between consecutive auto-resumed launches      | `2000`               |
 | `FileSystem:DefaultFolder`  | Folder the picker opens at when creating a session   | `C:\Git`             |
 
 ## Programmatic session creation (API)

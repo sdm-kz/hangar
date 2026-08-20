@@ -21,6 +21,22 @@ public sealed class SessionManagerOptions
     /// Defaults to %LocalAppData%\ClaudeWeb\sessions.json when null/empty.
     /// </summary>
     public string? StateFile { get; set; }
+
+    /// <summary>
+    /// Relaunch every session that was running when the app last closed (PC shutdown, redeploy, tray
+    /// Exit) as soon as the app starts again, resuming each conversation. On by default; set false to
+    /// have them wait as manual "Reopen" entries instead.
+    /// </summary>
+    public bool ResumeOnStart { get; set; } = true;
+
+    /// <summary>
+    /// How long to wait after startup before auto-resuming. Gives the machine a moment after a boot
+    /// (networking, credential store) so the relaunched sessions don't come up to a dead API.
+    /// </summary>
+    public int ResumeDelayMs { get; set; } = 5000;
+
+    /// <summary>Pause between consecutive auto-resumed launches, so a large working set starts gently.</summary>
+    public int ResumeStaggerMs { get; set; } = 2000;
 }
 
 /// <summary>Launches and tracks Remote-Control Claude sessions.</summary>
@@ -42,6 +58,11 @@ public sealed class SessionManager : IDisposable
     private readonly ConcurrentDictionary<string, RecentSession> _launchedFrom = new();
     private readonly string _stateFile;
     private readonly object _saveLock = new();
+    // Set once the host is tearing down. Disposing kills every session's process, which fires their
+    // exit handlers — without this, those handlers would rewrite the state file with WasRunning=false
+    // and the sessions that were running at exit would never auto-resume. The last save before
+    // shutdown already holds the truth, so freeze the file here.
+    private volatile bool _shuttingDown;
     // Same prompt patterns the watchdog uses to avoid auto-answering a dialog — reused here to
     // surface "Claude is waiting for you" as a first-class signal (a permission/selection prompt on
     // screen while Claude isn't emitting).
@@ -263,6 +284,9 @@ public sealed class SessionManager : IDisposable
 
         // Re-persist and push whenever a persisted field changes (a rename or a `/color` in the terminal).
         session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
+        // Same when the process ends by itself: the saved entry must stop claiming it was running, or
+        // the next start would auto-resume a session the user had already let finish.
+        session.ProcessExited += _ => { SavePersisted(); RaiseChanged(); };
         _launchedFrom[session.Id] = PresetOf(req);
         _sessions[session.Id] = session;
         session.Start();
@@ -324,7 +348,8 @@ public sealed class SessionManager : IDisposable
                 PermissionMode: p.PermissionMode,
                 Continue: true, // fallback when we never captured the Claude session id
                 ResumeSessionId: p.ClaudeSessionId, // reopen the EXACT conversation when known
-                Color: p.Color));
+                Color: p.Color,
+                WatchdogEnabled: p.WatchdogEnabled));
         }
         catch
         {
@@ -335,21 +360,61 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
-    /// Relaunch every persisted session that was running at the previous exit (<see cref="PersistedSession.WasRunning"/>),
-    /// resuming its conversation with <c>--continue</c>. Called once at startup when the app is launched
-    /// with <c>--resume-sessions</c> (deploy.ps1 passes it by default), so a restart/redeploy brings the
-    /// working sessions back instead of leaving them as manual "Reopen" entries. Best-effort: a session
-    /// whose folder is gone or that fails to launch simply stays a Restorable entry.
+    /// Relaunch every persisted session that was running at the previous exit
+    /// (<see cref="PersistedSession.WasRunning"/>), resuming each conversation with
+    /// <c>--resume &lt;id&gt;</c> (or <c>--continue</c>). Called once at startup unless
+    /// <see cref="SessionManagerOptions.ResumeOnStart"/> is off, so a PC shutdown/boot, a redeploy or a
+    /// tray Exit brings the working set back by itself instead of leaving manual "Reopen" entries.
+    /// Best-effort: a session whose folder is gone or that fails to launch simply stays Restorable.
+    /// Launches are staggered, so run this off the startup path.
     /// </summary>
-    public void ResumePersisted()
+    public async Task ResumePersistedAsync(CancellationToken ct = default)
     {
-        var ids = _restorable.Values.Where(p => p.WasRunning).Select(p => p.Id).ToArray();
-        if (ids.Length == 0) return;
-        _log.LogInformation("Resuming {Count} session(s) that were running at the last exit", ids.Length);
-        foreach (var id in ids)
+        // Oldest first, so the relaunched sessions keep the order the user had them in.
+        var pending = _restorable.Values.Where(p => p.WasRunning).OrderBy(p => p.CreatedAt).ToArray();
+        if (pending.Length == 0) return;
+
+        _log.LogInformation("Auto-resuming {Count} session(s) that were running at the last exit", pending.Length);
+        if (_options.ResumeDelayMs > 0)
+            await Task.Delay(_options.ResumeDelayMs, ct);
+
+        for (int i = 0; i < pending.Length; i++)
         {
-            try { Restore(id); }
-            catch (Exception ex) { _log.LogWarning(ex, "Could not resume session {Id}", id); }
+            if (ct.IsCancellationRequested) return;
+            var p = pending[i];
+            // The app usually takes its sessions down with it (a ConPTY child can't outlive its host),
+            // but a crash — or a service restart — can leave the original alive. Resuming then would put
+            // a second claude on the same conversation, so leave that one alone and keep the entry
+            // Restorable for the user to decide.
+            if (OriginalProcessAlive(p))
+            {
+                _log.LogInformation("Not auto-resuming session {Id} ('{Name}'): its process (pid {Pid}) is still running",
+                    p.Id, p.Name, p.ProcessId);
+                continue;
+            }
+            try { Restore(p.Id); }
+            catch (Exception ex) { _log.LogWarning(ex, "Could not auto-resume session {Id} ('{Name}')", p.Id, p.Name); }
+            if (i < pending.Length - 1 && _options.ResumeStaggerMs > 0)
+                await Task.Delay(_options.ResumeStaggerMs, ct);
+        }
+    }
+
+    /// <summary>
+    /// Whether the exact process a persisted entry was launched as is still alive. PIDs are recycled
+    /// (heavily so after a reboot), so a match only counts when the start time matches too; an entry
+    /// with no recorded start time is treated as gone rather than risk skipping a legitimate resume.
+    /// </summary>
+    private static bool OriginalProcessAlive(PersistedSession p)
+    {
+        if (p.ProcessId <= 0 || p.ProcessStartTicks == 0) return false;
+        try
+        {
+            using var proc = System.Diagnostics.Process.GetProcessById(p.ProcessId);
+            return !proc.HasExited && proc.StartTime.ToUniversalTime().Ticks == p.ProcessStartTicks;
+        }
+        catch
+        {
+            return false; // no such process (or we can't inspect it) — treat as gone
         }
     }
 
@@ -472,6 +537,7 @@ public sealed class SessionManager : IDisposable
 
     private void SavePersisted()
     {
+        if (_shuttingDown) return;
         lock (_saveLock)
         {
             try
@@ -479,10 +545,14 @@ public sealed class SessionManager : IDisposable
                 Directory.CreateDirectory(Path.GetDirectoryName(_stateFile)!);
                 // Persist live sessions plus any still-unrestored entries from prior runs, so they
                 // survive further restarts. Live entries win if an id somehow appears in both.
-                // WasRunning=true; stamp each with Claude's own session id (from hooks, or the id we
-                // resumed with) so a future reopen can --resume the exact conversation.
+                // Stamp each with Claude's own session id (from hooks, or the id we resumed with) so a
+                // future reopen can --resume the exact conversation. Refresh liveness first: WasRunning
+                // drives auto-resume, so it has to reflect the process as it is at this moment.
                 var live = _sessions.Values.Select(s =>
-                    s.ToPersisted() with { ClaudeSessionId = _hooks.ClaudeSessionId(s.Id) ?? s.ResumeSessionId });
+                {
+                    s.Refresh();
+                    return s.ToPersisted() with { ClaudeSessionId = _hooks.ClaudeSessionId(s.Id) ?? s.ResumeSessionId };
+                });
                 var liveIds = _sessions.Keys.ToHashSet();
                 // Carried-over Restorable entries were NOT running this run, so clear WasRunning — only
                 // sessions live at the last save auto-resume, not stale leftovers from earlier runs.
@@ -499,6 +569,9 @@ public sealed class SessionManager : IDisposable
 
     public void Dispose()
     {
+        // Freeze the state file BEFORE killing anything, so the entries stay marked as running and come
+        // back on the next start (see _shuttingDown).
+        _shuttingDown = true;
         _hooks.ClaudeSessionIdCaptured -= OnClaudeSessionIdCaptured;
         // A ConPTY child can't outlive the host, so disposing ends each claude process. Their launch
         // metadata is already on disk (written on create), so they come back as Restorable next start.

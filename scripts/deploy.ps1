@@ -7,9 +7,10 @@
   wwwroot is mirrored so stale hashed assets from previous builds are pruned.
 
   The running instance (Windows service "ClaudeWeb" or the tray ClaudeWeb.exe) is stopped so
-  its files unlock, then restarted the same way it was running. By default the tray relaunch passes
-  --resume-sessions so the sessions that were running before the restart come back (relaunched with
-  --continue); pass -ResumeSessions:$false to leave them as manual "Reopen" entries instead.
+  its files unlock, then restarted the same way it was running. The app resumes the sessions that
+  were running before the restart on its own (Sessions:ResumeOnStart, on by default); pass
+  -ResumeSessions:$false to launch with --no-resume-sessions and leave them as manual "Reopen"
+  entries for this deploy instead.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1
@@ -85,14 +86,15 @@ if (-not $NoRestart) {
     Write-Host "==> Starting ClaudeWeb service" -ForegroundColor Cyan
     Start-Service -Name "ClaudeWeb"
   } else {
-    # --resume-sessions relaunches the sessions that were running before the stop (with --continue).
+    # The app auto-resumes the sessions that were running before the stop; --no-resume-sessions
+    # opts this launch out of that.
     $exe = Join-Path $Target "ClaudeWeb.exe"
     if ($ResumeSessions) {
       Write-Host "==> Launching ClaudeWeb.exe (system tray, resuming sessions)" -ForegroundColor Cyan
       Start-Process $exe -ArgumentList "--resume-sessions"
     } else {
-      Write-Host "==> Launching ClaudeWeb.exe (system tray)" -ForegroundColor Cyan
-      Start-Process $exe
+      Write-Host "==> Launching ClaudeWeb.exe (system tray, not resuming sessions)" -ForegroundColor Cyan
+      Start-Process $exe -ArgumentList "--no-resume-sessions"
     }
   }
 } else {

@@ -59,11 +59,16 @@ public sealed record PersistedSession(
     string? ClaudeSessionId = null,
     /// <summary>
     /// Whether this session was live (running) at the most recent save — i.e. it was running when the
-    /// app exited. Used by <c>--resume-sessions</c> to auto-relaunch (with <c>--continue</c>) only the
-    /// sessions that were actually running, not stale Restorable leftovers. Legacy state files without
-    /// this key load as false. See <see cref="SessionManager.ResumePersisted"/>.
+    /// app exited. Auto-resume (on by default) relaunches only these, not stale Restorable leftovers
+    /// or sessions that had already exited. Legacy state files without this key load as false.
+    /// See <see cref="SessionManager.ResumePersistedAsync"/>.
     /// </summary>
-    bool WasRunning = false);
+    bool WasRunning = false,
+    /// <summary>
+    /// Whether the hang watchdog was enabled for this session, so an auto-resumed session comes back
+    /// with the same unattended-recovery setting instead of silently reverting to off.
+    /// </summary>
+    bool WatchdogEnabled = false);
 
 /// <summary>Serializable snapshot of a session, sent to the browser.</summary>
 public sealed record SessionInfo(

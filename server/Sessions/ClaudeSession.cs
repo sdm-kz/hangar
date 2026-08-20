@@ -61,6 +61,12 @@ public sealed class ClaudeSession : IDisposable
     public event Action<ClaudeSession>? MetadataChanged;
 
     /// <summary>
+    /// Raised when the claude process ends on its own. The manager re-persists so the session is no
+    /// longer marked as running — otherwise auto-resume would relaunch it on the next app start.
+    /// </summary>
+    public event Action<ClaudeSession>? ProcessExited;
+
+    /// <summary>
     /// Change the session's display name (from a UI rename or a <c>/rename</c> typed in the terminal).
     /// Strips control characters and caps length. Returns false when the name is empty or unchanged.
     /// </summary>
@@ -141,7 +147,11 @@ public sealed class ClaudeSession : IDisposable
 
     public PersistedSession ToPersisted() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt, Color,
-        WasRunning: true); // a live session is, by definition, running when persisted
+        // Only a session whose process is actually alive right now counts as "was running" — that flag
+        // is what auto-resume relaunches on the next start, and a session that already exited on its
+        // own shouldn't be resurrected. (SessionManager refreshes state before saving.)
+        WasRunning: State == SessionState.Running,
+        WatchdogEnabled: WatchdogEnabled);
 
     /// <summary>Coerce an incoming/persisted mode string to a known value; anything unknown → "default".</summary>
     public static string NormalizeMode(string? mode) => mode switch
@@ -265,6 +275,7 @@ public sealed class ClaudeSession : IDisposable
             {
                 State = SessionState.Exited;
                 _log.LogInformation("Claude session {Id} (pid {Pid}) exited", Id, ProcessId);
+                ProcessExited?.Invoke(this);
             }
             catch { /* never let a session's exit notification crash the host */ }
         };

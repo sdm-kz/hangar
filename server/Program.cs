@@ -52,18 +52,28 @@ internal static class Program
             Sessions.ClaudeHookStore.EnsureConfigured(port, hookLog);
         }
 
-        // --resume-sessions: once the host is up, relaunch (with --continue) the sessions that were
-        // running at the previous exit. deploy.ps1 passes this by default so a redeploy restores them.
-        if (args.Contains("--resume-sessions", StringComparer.OrdinalIgnoreCase))
+        // Auto-resume: once the host is up, relaunch the sessions that were running at the previous exit,
+        // each resuming its own conversation. On by default, so a PC shutdown/boot (or a redeploy, or a
+        // tray Exit) brings the working set back without anyone clicking "Reopen". Turn it off with
+        // Sessions:ResumeOnStart=false or --no-resume-sessions; --resume-sessions forces it on for one
+        // launch (deploy.ps1 still passes it).
+        var resumeSessions = app.Configuration.GetValue("Sessions:ResumeOnStart", true);
+        if (args.Contains("--resume-sessions", StringComparer.OrdinalIgnoreCase)) resumeSessions = true;
+        if (args.Contains("--no-resume-sessions", StringComparer.OrdinalIgnoreCase)) resumeSessions = false;
+        if (resumeSessions)
         {
             app.Lifetime.ApplicationStarted.Register(() =>
             {
-                try { app.Services.GetRequiredService<SessionManager>().ResumePersisted(); }
-                catch (Exception ex)
+                var manager = app.Services.GetRequiredService<SessionManager>();
+                var startupLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+                // Off the startup path: resuming waits out a settling delay and staggers its launches,
+                // which must not hold up the tray message loop (or the service's start handshake).
+                _ = Task.Run(async () =>
                 {
-                    app.Services.GetRequiredService<ILoggerFactory>()
-                        .CreateLogger("Startup").LogWarning(ex, "Could not resume sessions");
-                }
+                    try { await manager.ResumePersistedAsync(app.Lifetime.ApplicationStopping); }
+                    catch (OperationCanceledException) { /* app is shutting down */ }
+                    catch (Exception ex) { startupLog.LogWarning(ex, "Could not resume sessions"); }
+                });
             });
         }
 
