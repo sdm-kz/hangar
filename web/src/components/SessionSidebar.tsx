@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
-import { forkTree } from "@/lib/sessionTree";
+import { forkTree, type ForkNode } from "@/lib/sessionTree";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
@@ -218,6 +218,26 @@ function useCollapsedGroups() {
   return { collapsed, toggle, setAll };
 }
 
+// Which sessions have their forks folded away. Per-browser like the folder-group collapse, but keyed
+// by session id — and ids are minted fresh on every reopen/auto-resume, so the set is pruned against
+// the live list on each write to stop it accumulating entries for sessions that no longer exist.
+const COLLAPSED_FORKS_KEY = "claudeweb.collapsedForks";
+function loadCollapsedForks(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_FORKS_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveCollapsedForks(set: Set<string>) {
+  try {
+    localStorage.setItem(COLLAPSED_FORKS_KEY, JSON.stringify([...set]));
+  } catch {
+    /* storage disabled — preference is best-effort */
+  }
+}
+
 /**
  * Native drag-to-reorder for a vertical list. Returns props to spread on each row; a row initiates
  * the drag and is also a drop target. `overIndex` is the row currently hovered during a drag (for a
@@ -309,12 +329,29 @@ export function SessionSidebar({
   // Folder whose bulk-remove popup is open (its normalized dirKey), or null.
   const [removeDir, setRemoveDir] = useState<string | null>(null);
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
+  // Sessions whose forks are folded away (by session id).
+  const [collapsedForks, setCollapsedForks] = useState<Set<string>>(loadCollapsedForks);
+
+  const toggleForks = (id: string) =>
+    setCollapsedForks((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      // Drop ids that aren't in the list any more, so a long-lived browser doesn't keep collapse
+      // state for every session it has ever seen.
+      const alive = new Set(sessions.map((s) => s.id));
+      for (const kept of next) if (!alive.has(kept)) next.delete(kept);
+      saveCollapsedForks(next);
+      return next;
+    });
 
   // Sessions shown after applying the active/all filter ("active" = running only). Recents aren't
   // filtered (they're presets, not live sessions).
   const visibleSessions =
     filter === "active" ? sessions.filter((s) => s.state === "Running") : sessions;
   const activeCount = sessions.filter((s) => s.state === "Running").length;
+  // Whether anything on show is a fork — if not, the rows skip the tree gutter entirely.
+  const anyForks = visibleSessions.some((s) => s.parentSessionId);
 
   // Dirs of the groups currently shown, and whether every one is collapsed — drives the
   // collapse/expand-all toggle so it flips to "expand" once nothing is left open.
@@ -341,7 +378,7 @@ export function SessionSidebar({
   // A single session row. Sessions are ordered newest-first (by creation time); `showPath` is
   // dropped in grouped mode where the folder is already in the header. `depth` nests forks under the
   // session they branched from — indented, with a small elbow so the relationship reads at a glance.
-  const renderRow = (s: SessionInfo, showPath: boolean, depth = 0) => {
+  const renderRow = ({ session: s, depth, hasChildren, hiddenCount }: ForkNode, showPath: boolean) => {
     const restorable = s.state === "Restorable";
     // Color set via `/color` in the terminal, shown as a left accent stripe on the row.
     const color = sessionColor(s.color);
@@ -380,6 +417,39 @@ export function SessionSidebar({
         )}
         <div className="flex items-center justify-between gap-2">
           <span className="flex min-w-0 flex-1 items-center gap-1">
+            {/* Fold this session's forks away. Once anything in the list is forked the slot is
+                reserved on every row (empty where nothing hangs off it) so names stay aligned; a list
+                with no forks at all doesn't pay for the gutter. */}
+            <span className={cn("flex shrink-0 items-center justify-center", anyForks && "w-3.5")}>
+              {hasChildren && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleForks(s.id);
+                  }}
+                  aria-expanded={hiddenCount === 0}
+                  title={
+                    hiddenCount > 0
+                      ? `Show ${hiddenCount} fork${hiddenCount === 1 ? "" : "s"}`
+                      : "Hide this session's forks"
+                  }
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  {hiddenCount > 0 ? (
+                    <ChevronRight className="size-3.5" />
+                  ) : (
+                    <ChevronDown className="size-3.5" />
+                  )}
+                </button>
+              )}
+            </span>
+            {/* Count of what's folded away, so a collapsed parent still says how much it's hiding. */}
+            {hiddenCount > 0 && (
+              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                {hiddenCount}
+              </span>
+            )}
             {/* Nested fork: mark the row as a branch of the one above it. The parent's name is right
                 there in the list, so the tooltip carries it rather than the row spending width on it. */}
             {depth > 0 && (
@@ -629,9 +699,10 @@ export function SessionSidebar({
                     <div className="mt-1 space-y-1 pl-1">
                       {/* A fork always shares its parent's folder, so nesting inside the group is
                           the same tree the flat list shows — just scoped to this folder. */}
-                      {forkTree(g.items.map(({ item }) => item)).map((n) =>
-                        renderRow(n.session, false, n.depth)
-                      )}
+                      {forkTree(
+                        g.items.map(({ item }) => item),
+                        collapsedForks
+                      ).map((n) => renderRow(n, false))}
                     </div>
                   )}
                 </div>
@@ -640,7 +711,7 @@ export function SessionSidebar({
           </div>
         ) : (
           <div className="space-y-1">
-            {forkTree(visibleSessions).map((n) => renderRow(n.session, true, n.depth))}
+            {forkTree(visibleSessions, collapsedForks).map((n) => renderRow(n, true))}
           </div>
         )}
       </div>
