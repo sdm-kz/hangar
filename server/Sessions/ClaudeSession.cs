@@ -60,6 +60,14 @@ public sealed class ClaudeSession : IDisposable
     public int ProcessId { get; private set; }
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
 
+    /// <summary>
+    /// When we first observed the process to be gone (UTC), or null while it's alive. Read by
+    /// <see cref="SessionManager"/>'s auto-resume bookkeeping, which can't take a fresh exit at face
+    /// value: a Windows shutdown kills these children before the app learns it's going down, and those
+    /// deaths must not be mistaken for the session ending on its own.
+    /// </summary>
+    public DateTime? ExitedAt { get; private set; }
+
     // ---- Watchdog (auto-recover from a hung API/streaming error) -------------------------------
     /// <summary>Whether the hang watchdog may auto-continue this session (user-toggleable). Off by
     /// default; the launch request opts in, and it can be toggled later per session.</summary>
@@ -180,9 +188,9 @@ public sealed class ClaudeSession : IDisposable
 
     public PersistedSession ToPersisted() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt, Color,
-        // Only a session whose process is actually alive right now counts as "was running" — that flag
-        // is what auto-resume relaunches on the next start, and a session that already exited on its
-        // own shouldn't be resurrected. (SessionManager refreshes state before saving.)
+        // Base value only: the manager overwrites this when it saves, because a process that died
+        // seconds ago may well have been killed by a machine shutdown rather than have ended on its
+        // own. See SessionManager.ShouldResume.
         WasRunning: State == SessionState.Running,
         WatchdogEnabled: WatchdogEnabled,
         ParentSessionId: ParentSessionId,
@@ -313,12 +321,19 @@ public sealed class ClaudeSession : IDisposable
         {
             try
             {
-                State = SessionState.Exited;
+                MarkExited();
                 _log.LogInformation("Claude session {Id} (pid {Pid}) exited", Id, ProcessId);
                 ProcessExited?.Invoke(this);
             }
             catch { /* never let a session's exit notification crash the host */ }
         };
+    }
+
+    /// <summary>Move to <see cref="SessionState.Exited"/>, stamping the moment we first noticed.</summary>
+    private void MarkExited()
+    {
+        State = SessionState.Exited;
+        ExitedAt ??= DateTime.UtcNow;
     }
 
     // Watch the working directory so the browser can auto-refresh when files change.
@@ -353,9 +368,9 @@ public sealed class ClaudeSession : IDisposable
         if (State != SessionState.Running) return;
         try
         {
-            if (_process is null || _process.HasExited) State = SessionState.Exited;
+            if (_process is null || _process.HasExited) MarkExited();
         }
-        catch { State = SessionState.Exited; }
+        catch { MarkExited(); }
     }
 
     public void Stop()
@@ -367,7 +382,7 @@ public sealed class ClaudeSession : IDisposable
         KillProcessTree();
         try { _terminal?.Kill(); }
         catch (Exception ex) { _log.LogWarning(ex, "Error stopping session {Id}", Id); }
-        State = SessionState.Exited;
+        MarkExited();
     }
 
     // Kill the captured root process (cmd.exe) and every descendant (claude.exe) in one shot.

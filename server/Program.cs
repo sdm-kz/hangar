@@ -57,6 +57,18 @@ internal static class Program
         // tray Exit) brings the working set back without anyone clicking "Reopen". Turn it off with
         // Sessions:ResumeOnStart=false or --no-resume-sessions; --resume-sessions forces it on for one
         // launch (deploy.ps1 still passes it).
+        // Freeze the session state file the moment anything says we're going down, so the entries stay
+        // marked as running and auto-resume brings them back. SessionManager.Dispose does this too, but
+        // a Windows shutdown kills our claude children BEFORE we get there — and each of those deaths
+        // would otherwise persist "not running" and silently drop the session from the next start.
+        // ApplicationStopping covers the service stop and Ctrl+C; SessionEnding covers shutdown/logoff.
+        {
+            var sessionManager = app.Services.GetRequiredService<SessionManager>();
+            app.Lifetime.ApplicationStopping.Register(sessionManager.BeginShutdown);
+            if (!isService)
+                Microsoft.Win32.SystemEvents.SessionEnding += (_, _) => sessionManager.BeginShutdown();
+        }
+
         var resumeSessions = app.Configuration.GetValue("Sessions:ResumeOnStart", true);
         if (args.Contains("--resume-sessions", StringComparer.OrdinalIgnoreCase)) resumeSessions = true;
         if (args.Contains("--no-resume-sessions", StringComparer.OrdinalIgnoreCase)) resumeSessions = false;

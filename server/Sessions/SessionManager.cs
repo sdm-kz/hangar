@@ -63,6 +63,19 @@ public sealed class SessionManager : IDisposable
     // and the sessions that were running at exit would never auto-resume. The last save before
     // shutdown already holds the truth, so freeze the file here.
     private volatile bool _shuttingDown;
+    // How long after a session's process dies we keep persisting it as "was running".
+    //
+    // A Windows shutdown terminates the claude children first and can take this app down before it
+    // ever learns it's shutting down, so _shuttingDown alone doesn't cover it: each of those deaths
+    // fires ProcessExited, which used to persist WasRunning=false and quietly opt the session out of
+    // the next start's auto-resume. That is exactly what happened — nine sessions died within ~2s of
+    // a shutdown and only the one whose exit handler never ran came back. Inside this window a save
+    // still records the session as running; a scheduled re-save just past it corrects the record for a
+    // session that genuinely ended on its own, so only a shutdown lands in the window.
+    private static readonly TimeSpan ExitGrace = TimeSpan.FromSeconds(30);
+    // One-shot timer for that corrective re-save; created idle and rescheduled (never stacked), so a
+    // burst of exits costs a single timer.
+    private readonly System.Threading.Timer _exitRecheck;
     // Same prompt patterns the watchdog uses to avoid auto-answering a dialog — reused here to
     // surface "Claude is waiting for you" as a first-class signal (a permission/selection prompt on
     // screen while Claude isn't emitting).
@@ -90,6 +103,8 @@ public sealed class SessionManager : IDisposable
         _exe = ClaudeExecutableResolver.Resolve(options.ClaudeExecutable);
         _log.LogInformation("Resolved claude executable: {File} {Prefix}", _exe.FileName, string.Join(' ', _exe.Prefix));
         _inputPrompts = CompilePatterns(watchdog.PromptGuardPatterns);
+        // Idle until a session exit books it; see ScheduleExitRecheck.
+        _exitRecheck = new System.Threading.Timer(_ => OnExitRecheck(), null, Timeout.Infinite, Timeout.Infinite);
 
         _stateFile = string.IsNullOrWhiteSpace(options.StateFile)
             ? Path.Combine(
@@ -659,6 +674,61 @@ public sealed class SessionManager : IDisposable
         _log.LogInformation("Loaded {Count} restorable session(s) from a previous run", _restorable.Count);
     }
 
+    /// <summary>
+    /// Whether auto-resume should bring this session back on the next start: its process is alive, or
+    /// died recently enough that a machine shutdown is the likelier explanation (see <see cref="ExitGrace"/>).
+    /// </summary>
+    private static bool ShouldResume(ClaudeSession s) =>
+        s.State == SessionState.Running
+        || (s.ExitedAt is { } at && DateTime.UtcNow - at < ExitGrace);
+
+    /// <summary>Longest grace still to run across exited-but-not-yet-removed sessions; zero when none.</summary>
+    private TimeSpan GraceRemaining()
+    {
+        var now = DateTime.UtcNow;
+        var longest = TimeSpan.Zero;
+        foreach (var s in _sessions.Values)
+        {
+            if (s.ExitedAt is not { } at) continue;
+            var left = ExitGrace - (now - at);
+            if (left > longest) longest = left;
+        }
+        return longest;
+    }
+
+    /// <summary>
+    /// Arrange a re-save once every recently-exited session has aged out of its grace, so a session
+    /// that really did end on its own stops being recorded as running. Called after each save, which
+    /// makes the correction self-healing: any save that writes an in-grace session as running also
+    /// books the follow-up that will write it as exited.
+    /// </summary>
+    private void ScheduleExitRecheck()
+    {
+        var due = GraceRemaining();
+        if (due <= TimeSpan.Zero || _shuttingDown) return;
+        try { _exitRecheck.Change(due + TimeSpan.FromSeconds(1), Timeout.InfiniteTimeSpan); }
+        catch (ObjectDisposedException) { /* shutting down — the frozen file is already correct */ }
+    }
+
+    private void OnExitRecheck()
+    {
+        // Re-arms itself through SavePersisted -> ScheduleExitRecheck while anything is still in grace.
+        try { SavePersisted(); }
+        catch (Exception ex)
+        {
+            // Runs on a threadpool thread — never let bookkeeping take the host down.
+            _log.LogWarning(ex, "Could not re-check exited sessions");
+        }
+    }
+
+    /// <summary>
+    /// Freeze the state file: the last save already holds the truth, and anything that happens from
+    /// here (the OS killing our claude children, our own Dispose doing it) would only overwrite it with
+    /// "nothing was running". Called on every shutdown signal we get — the host stopping, and the
+    /// Windows session ending — as well as from <see cref="Dispose"/>.
+    /// </summary>
+    public void BeginShutdown() => _shuttingDown = true;
+
     private void SavePersisted()
     {
         if (_shuttingDown) return;
@@ -671,11 +741,16 @@ public sealed class SessionManager : IDisposable
                 // survive further restarts. Live entries win if an id somehow appears in both.
                 // Stamp each with Claude's own session id (from hooks, or the id we resumed with) so a
                 // future reopen can --resume the exact conversation. Refresh liveness first: WasRunning
-                // drives auto-resume, so it has to reflect the process as it is at this moment.
+                // drives auto-resume, so it has to reflect the process as it is at this moment — via
+                // ShouldResume, which also holds a just-exited session as running for its grace window.
                 var live = _sessions.Values.Select(s =>
                 {
                     s.Refresh();
-                    return s.ToPersisted() with { ClaudeSessionId = ConversationId(s) };
+                    return s.ToPersisted() with
+                    {
+                        ClaudeSessionId = ConversationId(s),
+                        WasRunning = ShouldResume(s),
+                    };
                 });
                 var liveIds = _sessions.Keys.ToHashSet();
                 // Carried-over Restorable entries were NOT running this run, so clear WasRunning — only
@@ -689,13 +764,16 @@ public sealed class SessionManager : IDisposable
                 _log.LogWarning(ex, "Could not persist sessions to {File}", _stateFile);
             }
         }
+        // Outside the lock: book the follow-up save that ages any just-exited session out of its grace.
+        ScheduleExitRecheck();
     }
 
     public void Dispose()
     {
         // Freeze the state file BEFORE killing anything, so the entries stay marked as running and come
         // back on the next start (see _shuttingDown).
-        _shuttingDown = true;
+        BeginShutdown();
+        try { _exitRecheck.Dispose(); } catch { }
         _hooks.ClaudeSessionIdCaptured -= OnClaudeSessionIdCaptured;
         // A ConPTY child can't outlive the host, so disposing ends each claude process. Their launch
         // metadata is already on disk (written on create), so they come back as Restorable next start.
