@@ -380,7 +380,7 @@ export function ServerFileViewer({
             style={{ zoom, maxWidth: readingWidth ?? undefined }}
             className="prose prose-sm dark:prose-invert mx-auto max-w-none p-4"
           >
-            <Markdown text={text ?? ""} />
+            <Markdown text={text ?? ""} docPath={path} />
           </div>
         ) : isHtml && rendered ? (
           // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an opaque origin,

@@ -2435,7 +2435,7 @@ function FilePreview({
                   style={{ zoom, maxWidth: readingWidth ?? undefined }}
                   className="prose prose-sm mx-auto max-w-none p-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground"
                 >
-                  <Markdown text={text} />
+                  <Markdown text={text} docPath={absPath} />
                 </div>
               ) : isHtml && mdView === "rendered" ? (
                 // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an

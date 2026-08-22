@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentProps,
@@ -11,8 +12,10 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { Element, ElementContent, Root, RootContent } from "hast";
+import type { PluggableList } from "unified";
 import { Loader2 } from "lucide-react";
 import { getTheme, subscribeTheme } from "@/lib/theme";
+import { mdAssetUrl } from "@/lib/mdAssets";
 import { TocPanel, type TocItem } from "./TocPanel";
 
 /**
@@ -23,6 +26,9 @@ import { TocPanel, type TocItem } from "./TocPanel";
  * Headings get GitHub-style id slugs and clicking one puts `#slug` in the URL, so a section can
  * be deep-linked and survives a reload: on mount this component scrolls to the section named by
  * the current hash.
+ *
+ * Pass `docPath` (the document's absolute path on the server) to make its own images render —
+ * without it, a relative `![](img/x.png)` resolves against the app's URL and 404s.
  */
 // GitHub's sanitize schema minus the `user-content-` id clamp: documents place explicit
 // `<a id="…"></a>` anchors and link to them as `[§2.4](#s-2-4)`, so ids must survive verbatim
@@ -37,7 +43,7 @@ const sanitizeSchema = {
   },
 };
 
-export function Markdown({ text }: { text: string }) {
+export function Markdown({ text, docPath }: { text: string; docPath?: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
   // Restore the section named by the URL hash once the content is in the DOM. The layout keeps
@@ -106,13 +112,24 @@ export function Markdown({ text }: { text: string }) {
     };
   }, [text]);
 
+  // Order matters: parse raw HTML first (so its <img> tags are elements too), point image sources
+  // at the file API, then sanitize, then add heading ids (after sanitize so they aren't stripped).
+  const rehypePlugins = useMemo(
+    () =>
+      [
+        rehypeRaw,
+        [rehypeAssetUrls, { docPath }],
+        [rehypeSanitize, sanitizeSchema],
+        rehypeHeadingIds,
+      ] as PluggableList,
+    [docPath]
+  );
+
   return (
     <div ref={ref}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        // Order matters: parse raw HTML first, sanitize it, then add heading ids (after
-        // sanitize so the generated ids aren't stripped).
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeHeadingIds]}
+        rehypePlugins={rehypePlugins}
         components={components}
       >
         {text}
@@ -182,6 +199,32 @@ function slugify(text: string): string {
     .trim()
     .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .replace(/\s+/g, "-");
+}
+
+/**
+ * rehype plugin: rewrite the document's own images (a relative or local-absolute src) to the raw
+ * file API, so they load from the server's disk instead of 404-ing against the app's own URL.
+ *
+ * Runs *before* rehype-sanitize on purpose: a Windows absolute src ("G:\pics\x.png") looks like an
+ * unknown URL protocol to the sanitizer, which would strip it before we ever got to see it. What
+ * this produces is a same-origin relative URL, which sanitize is happy with.
+ */
+function rehypeAssetUrls({ docPath }: { docPath?: string }) {
+  return (tree: Root) => {
+    if (!docPath) return;
+    const visit = (node: Root | RootContent) => {
+      if (node.type !== "root" && node.type !== "element") return;
+      if (node.type === "element" && node.tagName === "img") {
+        const src = node.properties?.src;
+        if (typeof src === "string") {
+          const url = mdAssetUrl(src, docPath);
+          if (url) node.properties = { ...node.properties, src: url };
+        }
+      }
+      node.children.forEach(visit);
+    };
+    visit(tree);
+  };
 }
 
 // rehype plugin: give every h1–h6 an id slug derived from its text, deduped GitHub-style with
