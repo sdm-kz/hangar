@@ -401,7 +401,7 @@ export function SessionSidebar({
         onAuxClick={restorable ? undefined : (e) => e.button === 1 && openInNewTab()}
         title={restorable ? undefined : "Middle-click or Ctrl/⌘-click to open in a new tab"}
         className={cn(
-          "group relative flex flex-col gap-1 rounded-md border border-transparent px-2.5 py-1 text-sm hover:bg-accent",
+          "group relative flex flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-0.5 text-sm hover:bg-accent",
           restorable ? "opacity-80" : "cursor-pointer",
           activeId === s.id && !restorable && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
@@ -415,8 +415,8 @@ export function SessionSidebar({
             style={{ backgroundColor: color }}
           />
         )}
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex min-w-0 flex-1 items-center gap-1">
+        <div className="flex items-center justify-between gap-1">
+          <span className="flex min-w-0 flex-1 items-center gap-0.5">
             {/* Fold this session's forks away. Once anything in the list is forked the slot is
                 reserved on every row (empty where nothing hangs off it) so names stay aligned; a list
                 with no forks at all doesn't pay for the gutter. */}
@@ -680,7 +680,7 @@ export function SessionSidebar({
           onReorder={onReorderRecent}
         />
       ) : (
-      <div className="flex-1 overflow-auto px-2 pb-2">
+      <div className="flex-1 overflow-auto pb-2 pl-2 pr-1">
         {sessions.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
         ) : visibleSessions.length === 0 ? (
@@ -701,7 +701,7 @@ export function SessionSidebar({
                     onRemove={() => setRemoveDir(dirKey(g.dir))}
                   />
                   {!isCollapsed && (
-                    <div className="mt-0.5 space-y-0.5 pl-1">
+                    <div className="mt-0.5 space-y-0.5">
                       {/* A fork always shares its parent's folder, so nesting inside the group is
                           the same tree the flat list shows — just scoped to this folder. */}
                       {forkTree(
