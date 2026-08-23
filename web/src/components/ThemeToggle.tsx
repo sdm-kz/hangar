@@ -10,7 +10,7 @@ export function ThemeToggle() {
     <Button
       variant="ghost"
       size="icon"
-      className="text-muted-foreground"
+      className="size-8 text-muted-foreground"
       title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
       onClick={() => setTheme(toggleTheme())}
     >

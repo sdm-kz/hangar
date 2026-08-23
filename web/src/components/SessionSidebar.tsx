@@ -717,7 +717,8 @@ export function SessionSidebar({
       </div>
       )}
 
-      <div className="flex items-center gap-1 border-t p-2">
+      {/* Padding and control size match the Postponed bar's header, so the two footers line up. */}
+      <div className="flex items-center gap-1 border-t px-2 py-1.5">
         <Button variant="ghost" size="sm" className="flex-1 justify-start text-muted-foreground" onClick={onLogout}>
           <LogOut className="size-4" /> Sign out
         </Button>
