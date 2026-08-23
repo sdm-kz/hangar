@@ -386,7 +386,7 @@ export function SessionSidebar({
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Stop indenting past a few levels: a fork of a fork of a fork would otherwise squeeze the name
     // out of a narrow sidebar entirely.
-    const indent = Math.min(depth, 4) * 12;
+    const indent = Math.min(depth, 4) * 7;
     return (
       <div
         key={s.id}
@@ -401,7 +401,7 @@ export function SessionSidebar({
         onAuxClick={restorable ? undefined : (e) => e.button === 1 && openInNewTab()}
         title={restorable ? undefined : "Middle-click or Ctrl/⌘-click to open in a new tab"}
         className={cn(
-          "group relative flex flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
+          "group relative flex flex-col gap-1 rounded-md border border-transparent px-2.5 py-1 text-sm hover:bg-accent",
           restorable ? "opacity-80" : "cursor-pointer",
           activeId === s.id && !restorable && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
@@ -501,15 +501,20 @@ export function SessionSidebar({
               <span
                 className={cn(
                   "truncate font-medium",
+                  // A fork's name starts with its parent's, so cutting the tail would leave every
+                  // row in a branch looking identical. Lay the text out right-to-left instead so the
+                  // ellipsis eats the shared head and the distinguishing tail survives; the inner
+                  // bdi keeps the name itself reading left-to-right.
+                  depth > 0 && "text-left [direction:rtl]",
                   s.state !== "Running" && "text-muted-foreground"
                 )}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   setEditingId(s.id);
                 }}
-                title="Double-click to rename"
+                title={depth > 0 ? `${s.name} — double-click to rename` : "Double-click to rename"}
               >
-                {s.name}
+                {depth > 0 ? <bdi dir="ltr">{s.name}</bdi> : s.name}
               </span>
             )}
             {s.remoteControl && editingId !== s.id && (
@@ -696,7 +701,7 @@ export function SessionSidebar({
                     onRemove={() => setRemoveDir(dirKey(g.dir))}
                   />
                   {!isCollapsed && (
-                    <div className="mt-1 space-y-1 pl-1">
+                    <div className="mt-0.5 space-y-0.5 pl-1">
                       {/* A fork always shares its parent's folder, so nesting inside the group is
                           the same tree the flat list shows — just scoped to this folder. */}
                       {forkTree(
@@ -710,7 +715,7 @@ export function SessionSidebar({
             })}
           </div>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-0.5">
             {forkTree(visibleSessions, collapsedForks).map((n) => renderRow(n, true))}
           </div>
         )}
