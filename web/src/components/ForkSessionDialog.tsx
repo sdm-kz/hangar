@@ -95,13 +95,16 @@ export function ForkSessionDialog({
             e.preventDefault();
             fork();
           }}
-          className="flex flex-col gap-4"
+          className="flex min-w-0 flex-col gap-4"
         >
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">Forked from</Label>
             <div className="flex min-w-0 flex-col gap-0.5 rounded-md border bg-muted/40 px-3 py-2">
               <span className="truncate text-sm font-medium">{parent.name}</span>
-              <span className="truncate font-mono text-[11px] text-muted-foreground">
+              <span
+                className="truncate font-mono text-[11px] text-muted-foreground"
+                title={parent.workingDirectory}
+              >
                 {parent.workingDirectory}
               </span>
             </div>

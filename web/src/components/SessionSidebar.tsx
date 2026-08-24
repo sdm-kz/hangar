@@ -403,7 +403,7 @@ export function SessionSidebar({
         onAuxClick={restorable ? undefined : (e) => e.button === 1 && openInNewTab()}
         title={restorable ? undefined : "Middle-click or Ctrl/⌘-click to open in a new tab"}
         className={cn(
-          "group relative flex flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-0.5 text-sm hover:bg-accent",
+          "group relative flex flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-2 text-sm hover:bg-accent",
           restorable ? "opacity-80" : "cursor-pointer",
           activeId === s.id && !restorable && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
