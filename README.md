@@ -179,6 +179,7 @@ The same exe detects it's running under the service manager and skips the tray, 
 | `Sessions:ResumeOnStart`    | On start, relaunch the sessions that were running at the last exit | `true` |
 | `Sessions:ResumeDelayMs`    | Settling delay before auto-resume starts (lets a booting PC come up)| `5000`  |
 | `Sessions:ResumeStaggerMs`  | Pause between consecutive auto-resumed launches      | `2000`               |
+| `Sessions:SelfUrl`          | URL a session calls back on (`CLAUDEWEB_URL`); empty = derived from the bound port | `""` |
 | `FileSystem:DefaultFolder`  | Folder the picker opens at when creating a session   | `C:\Git`             |
 
 ## Programmatic session creation (API)
@@ -207,6 +208,41 @@ Only `workingDirectory` is required. `model` is `opus`/`sonnet`/`haiku` (or omit
 `201` with the session JSON (same shape the UI uses); the session then appears in the web UI and,
 if `remoteControl` is true, in the Claude Code app. The key authorizes this endpoint only — the
 rest of `/api/*` still requires the browser bearer token.
+
+## Renaming a session from inside it (API)
+
+A running session can rename **itself**, so a `claude` command (or a hook, or any script the session
+runs) can name the session after the work it turns out to be doing. `POST /api/self/name` needs no
+browser login and no API key: every session ClaudeWeb launches already carries its own credentials in
+its environment, and they are all the call takes.
+
+| Env var                | What it is                                                       |
+| ---------------------- | ---------------------------------------------------------------- |
+| `CLAUDEWEB_URL`        | Base URL of the app, on loopback (e.g. `http://127.0.0.1:5099`)  |
+| `CLAUDEWEB_SESSION_ID` | This session's id — also the session the call renames             |
+| `CLAUDEWEB_HOOK_TOKEN` | Per-app-run secret that authorizes the call                       |
+
+```bash
+curl -s -X POST "$CLAUDEWEB_URL/api/self/name" \
+  -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
+  -H "X-Hook-Token: $CLAUDEWEB_HOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"refactor auth middleware"}'
+# {"id":"664d6618…","name":"refactor auth middleware"}
+```
+
+The name is stripped of control characters, trimmed, and capped at 100 characters. Responses are
+`200` with the applied name, `400` when the name is empty, `401` when the headers are missing or
+wrong, and `404` when the id names no session.
+
+The effect is exactly the sidebar rename: the display name changes everywhere and `/rename <name>`
+is injected into the session's terminal so Claude's own conversation title follows. A session that
+renames itself *mid-turn* has that `/rename` land in its own input queue, so Claude runs it once the
+current turn finishes.
+
+The session id comes from the header we injected at launch, so a session can only ever rename
+itself — the endpoint can't be aimed at another session, and it stays shut to anything that can't
+read that session's environment. Same trust boundary as the `/api/hooks` callback.
 
 ## Security notes
 

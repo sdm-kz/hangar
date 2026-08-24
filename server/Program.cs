@@ -146,6 +146,12 @@ internal static class Program
         var sessionOptions = builder.Configuration.GetSection("Sessions").Get<SessionManagerOptions>() ?? new SessionManagerOptions();
         var watchdogOptions = builder.Configuration.GetSection("Watchdog").Get<WatchdogOptions>() ?? new WatchdogOptions();
 
+        // The URL a launched session calls back on (CLAUDEWEB_URL in its environment). Derived from the
+        // bound port unless the operator pinned Sessions:SelfUrl; always loopback, since the session's
+        // process runs on this machine.
+        if (string.IsNullOrWhiteSpace(sessionOptions.SelfUrl))
+            sessionOptions.SelfUrl = $"http://127.0.0.1:{PortFromUrls(urls)}";
+
         builder.Services.AddSingleton(authOptions);
         builder.Services.AddSingleton<TokenStore>();
         builder.Services.AddSingleton(sessionOptions);
@@ -326,6 +332,27 @@ internal static class Program
         // Rename a session; also injects `/rename <name>` into a live session's terminal so Claude follows.
         app.MapPost("/api/sessions/{id}/name", (string id, RenameRequest body, SessionManager mgr) =>
             mgr.Rename(id, body.Name) ? Results.NoContent() : Results.NotFound());
+
+        // Self-rename from inside a running session: a command the session itself runs (typically
+        // `claude` calling curl) POSTs its own new name. It authenticates with the very credentials we
+        // injected into its environment at launch — X-Session-Id (CLAUDEWEB_SESSION_ID, which also
+        // names the session to rename) and X-Hook-Token (CLAUDEWEB_HOOK_TOKEN, minted per app run) —
+        // so no browser token or API key is involved and a session can only ever rename itself.
+        // Beyond the id, this is exactly the UI rename: the display name changes and `/rename <name>`
+        // is injected into the terminal so Claude's own conversation title follows.
+        app.MapPost("/api/self/name", (HttpContext ctx, RenameRequest body, TokenStore tokens, SessionManager mgr) =>
+        {
+            if (!tokens.IsValidHookToken(ctx.Request.Headers["X-Hook-Token"].ToString()))
+                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            var id = ctx.Request.Headers["X-Session-Id"].ToString();
+            if (string.IsNullOrEmpty(id))
+                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            // Sanitize up front so an all-whitespace/control-character name is a clear 400 rather than
+            // being indistinguishable from an unknown session.
+            var clean = ClaudeSession.SanitizeName(body.Name);
+            if (clean.Length == 0) return Results.BadRequest(new { error = "name is empty" });
+            return mgr.Rename(id, clean) ? Results.Ok(new { id, name = clean }) : Results.NotFound();
+        });
 
         // Enable/disable the hang watchdog for a session.
         app.MapPost("/api/sessions/{id}/watchdog", (string id, WatchdogRequest body, SessionManager mgr) =>
@@ -776,7 +803,17 @@ internal static class Program
                 .AddJsonFile("appsettings.json", optional: true)
                 .AddEnvironmentVariables()
                 .Build();
-            var first = (config["Server:Urls"] ?? "http://0.0.0.0:5099").Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+            return PortFromUrls(config["Server:Urls"]);
+        }
+        catch { return 5099; }
+    }
+
+    /// <summary>The port from the first entry of a Kestrel bind list ("http://0.0.0.0:5099;...").</summary>
+    private static int PortFromUrls(string? urls)
+    {
+        try
+        {
+            var first = (urls ?? "http://0.0.0.0:5099").Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
             return new Uri(first.Replace("0.0.0.0", "localhost").Replace("+", "localhost").Replace("*", "localhost")).Port;
         }
         catch { return 5099; }

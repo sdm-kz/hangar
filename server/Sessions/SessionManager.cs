@@ -37,6 +37,13 @@ public sealed class SessionManagerOptions
 
     /// <summary>Pause between consecutive auto-resumed launches, so a large working set starts gently.</summary>
     public int ResumeStaggerMs { get; set; } = 2000;
+
+    /// <summary>
+    /// Base URL a launched session uses to call back into this app (<c>CLAUDEWEB_URL</c> in its
+    /// environment, used by <c>POST /api/self/name</c>). Left empty in config: the host fills it in
+    /// from the bound port at startup. Set it explicitly only to override that.
+    /// </summary>
+    public string SelfUrl { get; set; } = "";
 }
 
 /// <summary>Launches and tracks Remote-Control Claude sessions.</summary>
@@ -225,11 +232,12 @@ public sealed class SessionManager : IDisposable
     internal IEnumerable<ClaudeSession> LiveSessions() => _sessions.Values;
 
     /// <summary>
-    /// Rename a session from the UI. For a live session this updates the display name and injects a
-    /// <c>/rename &lt;name&gt;</c> into its terminal so Claude renames its own session too; for a
-    /// Restorable entry it just updates the persisted name. Returns false if the id is unknown or the
-    /// name is empty. (A <c>/rename</c> typed in the terminal is handled directly on the session and
-    /// doesn't come through here, so there's no echo loop.)
+    /// Rename a session from the UI (or from the session itself via <c>POST /api/self/name</c>). For a
+    /// live session this updates the display name and injects a <c>/rename &lt;name&gt;</c> into its
+    /// terminal so Claude renames its own session too; for a Restorable entry it just updates the
+    /// persisted name. Returns false if the id is unknown or the name is empty. (A <c>/rename</c> typed
+    /// in the terminal is handled directly on the session and doesn't come through here, so there's no
+    /// echo loop.)
     /// </summary>
     public bool Rename(string id, string newName)
     {
@@ -303,7 +311,8 @@ public sealed class SessionManager : IDisposable
             req with { WorkingDirectory = fullDir },
             _exe,
             _loggerFactory.CreateLogger<ClaudeSession>(),
-            _tokens.HookToken);
+            _tokens.HookToken,
+            _options.SelfUrl);
 
         // Re-persist and push whenever a persisted field changes (a rename or a `/color` in the terminal).
         session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };

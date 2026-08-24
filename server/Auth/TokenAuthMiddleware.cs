@@ -18,7 +18,11 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
             || path.StartsWithSegments("/api/auth/config")
             // The VAPID public key is not secret and the browser needs it before it can subscribe.
             || path.StartsWithSegments("/api/push/config")
-            || path.StartsWithSegments("/api/hooks");
+            || path.StartsWithSegments("/api/hooks")
+            // Self-service endpoints for a launched session acting on itself (e.g. renaming). Same
+            // deal as the hooks: no browser token, authenticated inside the endpoint by the
+            // X-Session-Id / X-Hook-Token pair we injected into that session's environment.
+            || path.StartsWithSegments("/api/self");
 
         if (!isProtected || isPublic)
         {

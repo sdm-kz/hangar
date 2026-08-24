@@ -17,6 +17,7 @@ public sealed class ClaudeSession : IDisposable
     private readonly ExecutableSpec _exe;
     private readonly ILogger _log;
     private readonly string? _hookToken; // injected into the child's env so its hooks can authenticate back
+    private readonly string? _selfUrl;   // ditto: the base URL the child calls back on (/api/self/*)
     private Process? _process;
     private TerminalChannel? _terminal;
     private FileSystemWatcher? _watcher;
@@ -134,9 +135,10 @@ public sealed class ClaudeSession : IDisposable
         return clean.Length > 100 ? clean[..100] : clean;
     }
 
-    public ClaudeSession(CreateSessionRequest req, ExecutableSpec exe, ILogger log, string? hookToken = null)
+    public ClaudeSession(CreateSessionRequest req, ExecutableSpec exe, ILogger log, string? hookToken = null, string? selfUrl = null)
     {
         _hookToken = hookToken;
+        _selfUrl = selfUrl;
         Id = Guid.NewGuid().ToString("n");
         WorkingDirectory = req.WorkingDirectory;
         RemoteControl = req.RemoteControl;
@@ -223,6 +225,11 @@ public sealed class ClaudeSession : IDisposable
         var extraEnv = new Dictionary<string, string> { ["CLAUDEWEB_SESSION_ID"] = Id };
         if (!string.IsNullOrEmpty(_hookToken))
             extraEnv["CLAUDEWEB_HOOK_TOKEN"] = _hookToken;
+        // Where the session can reach us: the same pair of correlation headers also authorizes the
+        // self-service endpoints (POST /api/self/name), so a command run *inside* the session can
+        // rename it with a one-line curl. Loopback — a session always runs on this machine.
+        if (!string.IsNullOrEmpty(_selfUrl))
+            extraEnv["CLAUDEWEB_URL"] = _selfUrl;
 
         try
         {
