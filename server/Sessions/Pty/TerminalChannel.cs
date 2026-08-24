@@ -92,11 +92,13 @@ public sealed partial class TerminalChannel : IDisposable
     // Two Latin1 wrinkles on the server: the PTY bytes are decoded Latin1, so a UTF-8 marker like "⎿"
     // arrives as several 0x80-0xFF chars — hence we accept a run of them around the marker; and .NET's
     // \w is Unicode-aware (it would match those marker bytes), so we spell the word class out in ASCII
-    // ([^A-Za-z0-9_\r\n]) to keep the marker inside the "non-word leading run". Names can contain spaces,
-    // so the name is captured as a lazy run of printable ASCII; it stops at a 2+ space run or the input
+    // ([^A-Za-z0-9_\r\n]) to keep the marker inside the "non-word leading run". Names can contain spaces
+    // AND non-ASCII text, so the name is a lazy run of printable bytes INCLUDING the 0x80-0xFF halves of
+    // UTF-8 sequences — capturing printable ASCII alone cut "AB-6463 подписание" down to "AB-6463" at the
+    // first Cyrillic byte. It stops at a control byte (the line's own CR/LF), a 2+ space run, or the input
     // prompt ">", which the TUI positions on the next line via cursor moves (stripping ANSI drops that,
-    // so the prompt can abut the name, e.g. "main>"). Trailing padding spaces are trimmed by the caller.
-    [GeneratedRegex(@"(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,12}/rename\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)")]
+    // so the prompt can abut the name, e.g. "main>"). The caller turns those bytes back into text.
+    [GeneratedRegex(@"(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,12}/rename\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}Session renamed to:[ \t]*([\x20-\x7e\x80-\xff]{1,300}?)(?=[\x00-\x1f]|[ \t]{2,}|[ \t]*>|$)")]
     private static partial Regex RenameConfirmRegex();
 
     // ---- /color sniffing: watch the OUTPUT for Claude's "Session color set to: <color>" confirmation.
@@ -141,7 +143,7 @@ public sealed partial class TerminalChannel : IDisposable
         var text = Vt.Strip(_renameScanTail + Encoding.Latin1.GetString(buf, 0, n));
         string? name = null;
         foreach (Match m in RenameConfirmRegex().Matches(text))
-            name = m.Groups[1].Value.TrimEnd(); // last (most recent) confirmation wins; drop pad spaces
+            name = DecodeUtf8(m.Groups[1].Value); // last (most recent) confirmation wins
         // Keep a generous tail: the "/rename …" command and its confirmation can span reads, and the
         // regex allows a few hundred chars between them.
         _renameScanTail = text.Length > 2048 ? text[^2048..] : text;
@@ -152,6 +154,15 @@ public sealed partial class TerminalChannel : IDisposable
         }
         return null;
     }
+
+    /// <summary>
+    /// Turn a capture from the Latin1-decoded stream back into text. Each char there is one PTY byte and
+    /// the stream is UTF-8, so re-encoding to bytes and decoding as UTF-8 restores a non-ASCII name.
+    /// Drops the TUI's trailing pad spaces, and any replacement char left by a multi-byte sequence that
+    /// a read boundary cut in half — the next read re-scans the retained tail and reports the whole name.
+    /// </summary>
+    private static string DecodeUtf8(string latin1) =>
+        Encoding.UTF8.GetString(Encoding.Latin1.GetBytes(latin1)).TrimEnd(' ', '\t', '\uFFFD');
 
     public int ProcessId => _pty.ProcessId;
     public short Cols { get; private set; } = 120;
