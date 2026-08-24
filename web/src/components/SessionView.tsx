@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { useDismissable } from "@/lib/useDismissable";
 import { sessionColor } from "@/lib/sessionColors";
 import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, GitFork, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
@@ -683,30 +684,6 @@ function ForkedFrom({
       {content}
     </button>
   );
-}
-
-/**
- * Dismiss-on-outside-click/Escape for the header's little popups. Returns the ref to put on the
- * popup's root — anything inside it (including the trigger) counts as "inside".
- */
-function useDismissable(open: boolean, close: () => void) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, close]);
-  return ref;
 }
 
 // The "i" popup holding the session details that used to crowd the header line (pid, model, …).

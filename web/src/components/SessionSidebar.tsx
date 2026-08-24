@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
 import { forkTree, type ForkNode } from "@/lib/sessionTree";
@@ -19,9 +19,11 @@ import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { NotificationToggle } from "./NotificationToggle";
 import { cn } from "@/lib/utils";
+import { useDismissable } from "@/lib/useDismissable";
 import {
   Copy,
   Filter,
+  MoreVertical,
   GitFork,
   Inbox,
   Plus,
@@ -523,63 +525,16 @@ export function SessionSidebar({
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {editingId !== s.id && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditingId(s.id);
-                }}
-                title="Rename session"
-                className="hidden hover:text-foreground group-hover:inline-flex"
-              >
-                <Pencil className="size-3.5" />
-              </button>
+              <RowActionsMenu
+                canFork={s.canFork}
+                restorable={restorable}
+                onRename={() => setEditingId(s.id)}
+                onClone={() => onClone(s)}
+                onFork={() => onFork(s)}
+                onRestore={() => onRestore(s.id)}
+                onClose={() => onClose(s.id)}
+              />
             )}
-            {editingId !== s.id && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClone(s);
-                }}
-                title="Clone — new session with the same settings"
-                className="hidden hover:text-foreground group-hover:inline-flex"
-              >
-                <Copy className="size-3.5" />
-              </button>
-            )}
-            {editingId !== s.id && s.canFork && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onFork(s);
-                }}
-                title="Fork — branch this conversation into a new session"
-                className="hidden hover:text-foreground group-hover:inline-flex"
-              >
-                <GitFork className="size-3.5" />
-              </button>
-            )}
-            {restorable && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRestore(s.id);
-                }}
-                title="Reopen — relaunch and resume this session's conversation"
-                className="hidden rounded p-0.5 text-muted-foreground hover:text-foreground group-hover:inline-flex"
-              >
-                <RotateCcw className="size-3.5" />
-              </button>
-            )}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClose(s.id);
-              }}
-              className="hidden hover:text-destructive group-hover:inline-flex"
-              title={restorable ? "Forget" : "Close session"}
-            >
-              <X className="size-3.5" />
-            </button>
             {/* Postponed-message counter: always visible (unlike the hover-only actions) so a stashed
                 pool is discoverable from the list. Pinned last so the action buttons expand to its left. */}
             {s.postponedCount > 0 && (
@@ -724,11 +679,19 @@ export function SessionSidebar({
 
       {/* Padding and control size match the Postponed bar's header, so the two footers line up. */}
       <div className="flex items-center gap-1 border-t px-2 py-1.5">
-        <Button variant="ghost" size="sm" className="flex-1 justify-start text-muted-foreground" onClick={onLogout}>
-          <LogOut className="size-4" /> Sign out
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground"
+          title="Sign out"
+          onClick={onLogout}
+        >
+          <LogOut className="size-4" />
         </Button>
-        <NotificationToggle />
-        <ThemeToggle />
+        <div className="ml-auto flex items-center gap-1">
+          <NotificationToggle />
+          <ThemeToggle />
+        </div>
       </div>
 
       {removeDir && (
@@ -743,6 +706,97 @@ export function SessionSidebar({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Per-row action menu. The row is only as wide as the sidebar, so the actions live behind one
+ * three-dot button instead of a strip of icons competing with the session name.
+ */
+function RowActionsMenu({
+  canFork,
+  restorable,
+  onRename,
+  onClone,
+  onFork,
+  onRestore,
+  onClose,
+}: {
+  canFork: boolean;
+  restorable: boolean;
+  onRename: () => void;
+  onClone: () => void;
+  onFork: () => void;
+  onRestore: () => void;
+  onClose: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
+  const ref = useDismissable<HTMLSpanElement>(open, useCallback(() => setOpen(false), []));
+
+  // Rows near the bottom of the list would push the menu past the viewport, so flip it upwards.
+  const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const box = e.currentTarget.getBoundingClientRect();
+    setDropUp(window.innerHeight - box.bottom < 200);
+    setOpen((o) => !o);
+  };
+
+  const item = (label: string, icon: ReactNode, run: () => void, destructive = false) => (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpen(false);
+        run();
+      }}
+      className={cn(
+        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent",
+        destructive && "text-destructive"
+      )}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+
+  return (
+    <span ref={ref} className="relative flex items-center" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        title="Session actions"
+        className={cn(
+          "rounded text-muted-foreground hover:text-foreground",
+          // Touch devices never fire hover, so the strip's only entry point has to stay on screen.
+          open
+            ? "inline-flex text-foreground"
+            : "hidden group-hover:inline-flex [@media(hover:none)]:inline-flex"
+        )}
+      >
+        <MoreVertical className="size-3.5" />
+      </button>
+      {open && (
+        <div
+          className={cn(
+            "absolute right-0 z-50 w-48 overflow-hidden rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
+            dropUp ? "bottom-full mb-1" : "top-full mt-1"
+          )}
+        >
+          {item("Rename", <Pencil className="size-3.5" />, onRename)}
+          {item("Clone", <Copy className="size-3.5" />, onClone)}
+          {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
+          {restorable && item("Reopen", <RotateCcw className="size-3.5" />, onRestore)}
+          {item(
+            restorable ? "Forget" : "Close session",
+            <X className="size-3.5" />,
+            onClose,
+            true
+          )}
+        </div>
+      )}
+    </span>
   );
 }
 
