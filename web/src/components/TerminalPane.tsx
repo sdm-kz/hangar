@@ -1,5 +1,5 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { ArrowDown } from "lucide-react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { ArrowDown, RefreshCw } from "lucide-react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
@@ -10,6 +10,7 @@ import { getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
 import { writeToClipboard } from "@/lib/clipboard";
 import { uploadImageFile } from "@/lib/upload";
+import { cn } from "@/lib/utils";
 
 // Reading the clipboard (OSC 52 "?" report) is a paste-injection risk, so we never expose it —
 // only writes are honored.
@@ -111,6 +112,12 @@ function resolveTerminalPath(workingDir: string, matched: string): string {
 // sits unsent in the input box. Wait this long between the image paste(s) and the submit.
 const IMAGE_SETTLE_MS = 600;
 
+// Backoff for automatically re-attaching after the terminal socket drops (a laptop sleeping, a phone
+// backgrounding the tab, a proxy cutting an idle connection). Attempt N waits DELAYS[N]; once the
+// list runs out we stop and leave the manual Reconnect button — a session whose PTY is gone fails
+// the handshake with a 404, and retrying that forever would just spin.
+const RECONNECT_DELAYS_MS = [300, 1000, 2000, 4000, 8000, 8000, 8000, 8000];
+
 export interface TerminalPaneHandle {
   // True while the terminal socket is open and can accept input.
   isReady: () => boolean;
@@ -155,6 +162,27 @@ export const TerminalPane = forwardRef<
   const termRef = useRef<Terminal | null>(null);
   // True while the viewport sits above the live tail — gates the jump-to-bottom button.
   const [scrolledUp, setScrolledUp] = useState(false);
+  // Socket state, driving the reconnect chip. "connecting" is the first attach — no chip then, the
+  // terminal is just blank for a moment; the chip only appears once a live socket has dropped.
+  const [connection, setConnection] = useState<"connecting" | "open" | "closed" | "reconnecting">(
+    "connecting"
+  );
+  // Bumped to tear this terminal down and attach a fresh one, which is exactly what reloading the
+  // page used to do. The server replays the session's scrollback on attach, so the new xterm comes
+  // back with the current screen.
+  const [generation, setGeneration] = useState(0);
+  // How many automatic retries the current drop has spent; reset whenever a socket opens.
+  const retryRef = useRef(0);
+  const retryTimerRef = useRef<number | null>(null);
+  const reattach = useCallback((manual: boolean) => {
+    if (retryTimerRef.current !== null) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    if (manual) retryRef.current = 0; // a click earns a fresh budget of automatic retries
+    setConnection("reconnecting");
+    setGeneration((g) => g + 1);
+  }, []);
   useImperativeHandle(
     ref,
     (): TerminalPaneHandle => ({
@@ -298,6 +326,9 @@ export const TerminalPane = forwardRef<
     const url = `${proto}://${location.host}/hub/sessions/${sessionId}/terminal?access_token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
+    // Set by the cleanup below so a close we caused (unmount, session switch, our own re-attach)
+    // isn't mistaken for a drop and answered with yet another reconnect.
+    let closedByUs = false;
     wsRef.current = ws; // expose to the imperative handle (sendMessage)
 
     const sendResize = () => {
@@ -336,6 +367,8 @@ export const TerminalPane = forwardRef<
     };
 
     ws.onopen = () => {
+      retryRef.current = 0;
+      setConnection("open");
       // The flex layout may still be settling on open; refit across a few frames so the size we
       // send matches what's actually displayed (otherwise Claude renders at a stale row count).
       sendResize();
@@ -382,7 +415,18 @@ export const TerminalPane = forwardRef<
         }
       }
     };
-    ws.onclose = () => term.write("\r\n\x1b[90m[terminal disconnected]\x1b[0m\r\n");
+    ws.onclose = () => {
+      if (closedByUs) return;
+      term.write("\r\n\x1b[90m[terminal disconnected]\x1b[0m\r\n");
+      setConnection("closed");
+      const delay = RECONNECT_DELAYS_MS[retryRef.current];
+      if (delay === undefined) return; // budget spent — the manual Reconnect button takes over
+      retryRef.current += 1;
+      retryTimerRef.current = window.setTimeout(() => {
+        retryTimerRef.current = null;
+        reattach(false);
+      }, delay);
+    };
 
     const dataSub = term.onData((d) => {
       if (ws.readyState === WebSocket.OPEN)
@@ -530,6 +574,12 @@ export const TerminalPane = forwardRef<
     // couple frames whenever we become visible again (also covers OS-level tab/app switches).
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
+      // A phone suspends the tab and the socket dies with it — often without the close event
+      // landing until we're back. Re-attach right away instead of sitting out the backoff.
+      if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        reattach(true);
+        return;
+      }
       // The socket stayed open across the tab switch, so xterm's buffer is intact — just refit and
       // repaint the existing cells. No size nudge here: forcing Claude to reflow would jump the
       // scroll position. The nudge only belongs on a fresh reattach (see ws.onopen).
@@ -538,6 +588,12 @@ export const TerminalPane = forwardRef<
       setTimeout(sendResize, 150);
     };
     document.addEventListener("visibilitychange", onVisible);
+
+    // Back on the network after a drop: don't wait out the remaining backoff either.
+    const onOnline = () => {
+      if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) reattach(true);
+    };
+    window.addEventListener("online", onOnline);
 
     return () => {
       ro.disconnect();
@@ -549,10 +605,18 @@ export const TerminalPane = forwardRef<
       host.removeEventListener("touchend", onTouchEnd);
       host.removeEventListener("touchcancel", stopMomentum);
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onOnline);
+      // Safe unconditionally: a pending retry is always cleared before it bumps the generation, so
+      // nothing scheduled can be lost here — this only kills a timer orphaned by unmount.
+      if (retryTimerRef.current !== null) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
       document.removeEventListener("paste", onPaste, true);
       themeSub();
       dataSub.dispose();
       wsRef.current = null;
+      closedByUs = true;
       try {
         ws.close();
       } catch {
@@ -575,7 +639,7 @@ export const TerminalPane = forwardRef<
         /* nothing left to salvage at unmount */
       }
     };
-  }, [sessionId]);
+  }, [sessionId, generation, reattach]);
 
   // Padding lives on the outer wrapper, not the host: FitAddon measures the host (the xterm's
   // parent) and only discounts padding on the .xterm element itself, so any padding here would make
@@ -583,9 +647,26 @@ export const TerminalPane = forwardRef<
   return (
     <div className="relative h-full w-full bg-white p-2 dark:bg-[#0a0a0a]">
       <div ref={hostRef} className="h-full w-full overscroll-contain overflow-hidden" />
+      {/* The socket dropped (sleep, a backgrounded tab, a network blip). Automatic re-attach is
+          already backing off behind this chip; the button is the escape hatch for when it gave up
+          or you'd rather not wait — the same effect as the page reload people did by hand. */}
+      {(connection === "closed" || connection === "reconnecting") && (
+        <div className="absolute inset-x-0 bottom-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => reattach(true)}
+            disabled={connection === "reconnecting"}
+            title="Reattach this terminal to the session"
+            className="flex items-center gap-2 rounded-full border bg-background/90 px-4 py-2 text-sm text-muted-foreground shadow-md backdrop-blur transition hover:text-foreground disabled:opacity-70"
+          >
+            <RefreshCw className={cn("size-4", connection === "reconnecting" && "animate-spin")} />
+            {connection === "reconnecting" ? "Reconnecting…" : "Reconnect"}
+          </button>
+        </div>
+      )}
       {/* Scrolled off the live tail: one tap back to the bottom, instead of flicking through
-          scrollback. The only thing floating over the terminal now — image attach lives in the
-          postponed panel's bar, next to Compose. */}
+          scrollback. Sits in the corner, clear of the centered reconnect chip — image attach lives
+          in the postponed panel's bar, next to Compose. */}
       {scrolledUp && (
         <button
           type="button"
