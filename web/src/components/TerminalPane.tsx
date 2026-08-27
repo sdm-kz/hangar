@@ -715,9 +715,18 @@ export const TerminalPane = forwardRef<
   // Padding lives on the outer wrapper, not the host: FitAddon measures the host (the xterm's
   // parent) and only discounts padding on the .xterm element itself, so any padding here would make
   // it overcount rows and clip the last line. The host stays padding-free and edge-to-edge.
+  //
+  // The bottom is kept tight (the last TUI row sits just above the Postponed bar) in two ways: barely
+  // any bottom padding, and `justify-end` on the host. FitAddon can only fit whole rows, so up to one
+  // row of height is always left over; xterm renders top-aligned, which parked that slack right under
+  // the status line. Bottom-aligning moves it to the top edge, where it reads as breathing room under
+  // the header instead of a gap in the middle of the layout.
   return (
-    <div className="relative h-full w-full bg-white p-2 dark:bg-[#0a0a0a]">
-      <div ref={hostRef} className="h-full w-full overscroll-contain overflow-hidden" />
+    <div className="relative h-full w-full bg-white px-2 pt-2 pb-0.5 dark:bg-[#0a0a0a]">
+      <div
+        ref={hostRef}
+        className="flex h-full w-full flex-col justify-end overscroll-contain overflow-hidden"
+      />
       {/* The socket dropped (sleep, a backgrounded tab, a network blip). Automatic re-attach is
           already backing off behind this chip; the button is the escape hatch for when it gave up
           or you'd rather not wait — the same effect as the page reload people did by hand. */}
