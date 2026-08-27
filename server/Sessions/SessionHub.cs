@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
+using ClaudeWeb.Server.Update;
 
 namespace ClaudeWeb.Server.Sessions;
 
@@ -45,6 +46,7 @@ public sealed class SessionHub : BackgroundService
 
     private readonly SessionManager _mgr;
     private readonly HookEventStore _hooks;
+    private readonly UpdateService _updates;
     private readonly ILogger<SessionHub> _log;
     private readonly ConcurrentDictionary<Guid, Client> _clients = new();
     // Released by Poke and awaited (with a timeout) by the broadcast loop, so we wake on either an
@@ -52,15 +54,19 @@ public sealed class SessionHub : BackgroundService
     private readonly SemaphoreSlim _wake = new(0, 1);
     private string? _last;
 
-    public SessionHub(SessionManager mgr, HookEventStore hooks, ILogger<SessionHub> log)
+    public SessionHub(SessionManager mgr, HookEventStore hooks, UpdateService updates, ILogger<SessionHub> log)
     {
         _mgr = mgr;
         _hooks = hooks;
+        _updates = updates;
         _log = log;
         _mgr.Changed += Poke;
         // A hook event (busy/idle/waiting transition) should push to the browser at once, not wait
         // for the next periodic tick.
         _hooks.Changed += Poke;
+        // A newly staged build should light the "Update available" button up straight away — and the
+        // "updating..." state has to reach the browser before the app stops to install it.
+        _updates.Changed += Poke;
     }
 
     /// <summary>Request an immediate recompute + broadcast (coalesced with any pending wake).</summary>
@@ -98,7 +104,13 @@ public sealed class SessionHub : BackgroundService
 
     private string Serialize() =>
         JsonSerializer.Serialize(
-            new { sessions = _mgr.List(), busy = _mgr.BusySessionIds(), waiting = _mgr.AwaitingInputIds() },
+            new
+            {
+                sessions = _mgr.List(),
+                busy = _mgr.BusySessionIds(),
+                waiting = _mgr.AwaitingInputIds(),
+                update = _updates.Status,
+            },
             JsonOpts);
 
     /// <summary>Register a browser socket: seed it with the current snapshot, then pump updates until it closes.</summary>
@@ -151,6 +163,7 @@ public sealed class SessionHub : BackgroundService
     {
         _mgr.Changed -= Poke;
         _hooks.Changed -= Poke;
+        _updates.Changed -= Poke;
         base.Dispose();
     }
 }

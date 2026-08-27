@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
 import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { move } from "@/lib/sessionOrder";
 import { setFaviconStatus } from "@/lib/favicon";
-import type { SessionInfo } from "@/types";
+import type { SessionInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar, type SessionListTab } from "@/components/SessionSidebar";
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
+import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
 import { FilesSidebar } from "@/components/FilesSidebar";
 import { ServerFileViewer } from "@/components/ServerFileViewer";
 import { SessionView } from "@/components/SessionView";
@@ -41,6 +42,11 @@ export function App() {
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
   const [waitingIds, setWaitingIds] = useState<Set<string>>(() => new Set()); // waiting on a prompt
   const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
+  // The updater's view of itself, from the hub snapshot (or the poll below when it's down).
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  // Latched once an update starts installing, so the overlay survives the server going away — the
+  // hub and the polls both fail while it's down, and this is what says "that's expected, wait".
+  const [installing, setInstalling] = useState<string | null>(null); // build id being installed
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() =>
     readUrlState().panel === "files" ? "files" : "sessions"
   );
@@ -220,10 +226,18 @@ export function App() {
             sessions: SessionInfo[];
             busy: string[];
             waiting?: string[];
+            update?: UpdateStatus;
           };
           applySessions(msg.sessions);
           setBusyIds(new Set(msg.busy));
           setWaitingIds(new Set(msg.waiting ?? []));
+          if (msg.update) {
+            setUpdate(msg.update);
+            // Another tab (or the tray) started the install: show the overlay here too rather than
+            // letting this tab sit on a server that's about to disappear.
+            if (msg.update.state === "Applying" && msg.update.staged)
+              setInstalling(msg.update.staged.buildId);
+          }
         } catch {
           /* ignore a malformed frame (e.g. a keepalive ping) */
         }
@@ -304,6 +318,29 @@ export function App() {
       clearInterval(t);
     };
   }, [auth, streamUp]);
+
+  // Updater status normally rides the hub snapshot. Read it once for a fast first paint, and keep a
+  // slow poll going while the stream is down so a build staged meanwhile still surfaces. Stands down
+  // once an install starts: the overlay owns the polling from there (and the server is going away).
+  useEffect(() => {
+    if (auth !== "authed" || installing) return;
+    let alive = true;
+    const load = async () => {
+      try {
+        const status = await api.getUpdate();
+        if (alive) setUpdate(status);
+      } catch {
+        /* ignore — the button is non-critical */
+      }
+    };
+    load();
+    if (streamUp) return () => { alive = false; };
+    const t = setInterval(load, 15000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [auth, streamUp, installing]);
 
   // Raise a browser (OS) notification when a session newly flips to "attention" (the watchdog gave
   // up auto-recovering it). Compare against the previous poll so we only notify on the transition,
@@ -648,6 +685,8 @@ export function App() {
 
   return (
     <div className="flex h-full overflow-hidden">
+      {/* Covers the app while the server is replaced and restarted; reloads once the new build answers. */}
+      {installing && <UpdatingOverlay targetBuildId={installing} />}
       {/* Sidebar: static column on desktop (collapsible + resizable), slide-over drawer on mobile. */}
       <aside
         className={cn("relative hidden shrink-0 border-r md:block", collapsed && "md:hidden")}
@@ -658,6 +697,7 @@ export function App() {
           onTabChange={setSidebarTab}
           onNew={() => openNew()}
           onCollapse={toggleCollapsed}
+          update={<UpdateButton status={update} onApplying={setInstalling} />}
           sessions={
             <SessionSidebar
               sessions={sessions}
@@ -707,6 +747,7 @@ export function App() {
                 openNew();
                 setSidebarOpen(false);
               }}
+              update={<UpdateButton status={update} onApplying={setInstalling} />}
               sessions={
                 <SessionSidebar
                   sessions={sessions}
@@ -771,6 +812,7 @@ export function App() {
             onOpenSidebar={() => setSidebarOpen(true)}
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}
+            update={<UpdateButton status={update} onApplying={setInstalling} />}
           />
         )}
       </main>
@@ -825,11 +867,13 @@ function EmptyState({
   onOpenSidebar,
   collapsed,
   onToggleCollapsed,
+  update,
 }: {
   onNew: () => void;
   onOpenSidebar: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  update?: ReactNode; // "Update available" button; renders nothing unless a build is staged
 }) {
   return (
     <div className={cn("flex h-full flex-col")}>
@@ -849,6 +893,7 @@ function EmptyState({
           </Button>
         )}
         <span className="font-semibold">Claude Web</span>
+        {update}
       </header>
       <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
         <div className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">

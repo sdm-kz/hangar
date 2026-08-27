@@ -20,5 +20,21 @@ dotnet publish -c Release -r win-x64 --self-contained true `
   -o $publish
 Pop-Location
 
+# --- Build stamp ------------------------------------------------------------------------------
+# Names this exact build so a running app can tell a staged update apart from itself. deploy.ps1
+# copies it next to the exe; the app reads its own from there and the staged one from the update
+# folder (see scripts\stage-update.ps1 and server\Update\UpdateService.cs).
+$commit  = try { (git -C $root rev-parse --short HEAD 2>$null) } catch { $null }
+$branch  = try { (git -C $root rev-parse --abbrev-ref HEAD 2>$null) } catch { $null }
+$builtAt = (Get-Date).ToUniversalTime()
+$stamp = [ordered]@{
+  buildId    = "{0}-{1}" -f $builtAt.ToString("yyyyMMdd'T'HHmmss'Z'"), $(if ($commit) { $commit } else { "nogit" })
+  commit     = $commit
+  branch     = $branch
+  builtAtUtc = $builtAt.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+}
+$stamp | ConvertTo-Json | Set-Content (Join-Path $publish "build.json") -Encoding UTF8
+
 Write-Host "==> Done. Published to: $publish" -ForegroundColor Green
+Write-Host "    Build stamp: $($stamp.buildId)" -ForegroundColor DarkGray
 Write-Host "    Run the desktop app:  $publish\ClaudeWeb.exe   (starts in the system tray)"

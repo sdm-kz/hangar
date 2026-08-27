@@ -143,6 +143,40 @@ powershell -ExecutionPolicy Bypass -File scripts\uninstall-service.ps1
 
 The same exe detects it's running under the service manager and skips the tray, running headless.
 
+## Updating from inside the app
+
+`scripts\deploy.ps1` builds and installs in one shot, which means it stops the app from the machine
+it runs on. The in-app updater splits that in two, so a new build can be published from anywhere and
+installed with a click in the UI:
+
+```powershell
+# Build and publish a pending update. Does NOT touch the running app.
+powershell -ExecutionPolicy Bypass -File scripts\stage-update.ps1
+```
+
+That drops the published build into `C:\apps\claude-web-updates\payload` (override with `-Staging`).
+The running app watches that folder, compares the staged `build.json` with its own, and puts an
+**Update** button next to the "Claude Web" title in the sidebar as soon as they differ. Clicking it
+shows both build stamps and, on confirmation:
+
+1. the app answers the request, then stops itself — gracefully, so each session's process tree goes
+   down with it rather than being orphaned;
+2. a detached `apply-update.ps1` (embedded in the exe, extracted to `%LocalAppData%\ClaudeWeb\update`)
+   waits for the process to exit, mirrors the payload over the install folder and restarts the app the
+   same way it was running — the service if there is one, otherwise the tray exe;
+3. the sessions that were running come back on their own, exactly as after a `deploy.ps1` redeploy
+   (see `Sessions:ResumeOnStart`);
+4. the browser sits behind an "Installing the update…" overlay until the new build answers, then
+   reloads so it picks up the new frontend assets too.
+
+`appsettings*.json` in the install folder are preserved, never overwritten by the payload. The
+updater logs every step to `%LocalAppData%\ClaudeWeb\logs\update.log`, and on any failure it restarts
+the app rather than leaving the machine with nothing running.
+
+Staging is safe at any time — it only writes to the staging folder, and the payload is swapped into
+place at the end so the app never reads a half-copied build. Set `Update:Enabled` to `false` to turn
+the whole thing off and go back to `deploy.ps1` only.
+
 ## Notes & gotchas
 
 - **Workspace trust.** A brand-new folder normally triggers Claude's one-time trust prompt, which
@@ -180,6 +214,11 @@ The same exe detects it's running under the service manager and skips the tray, 
 | `Sessions:ResumeDelayMs`    | Settling delay before auto-resume starts (lets a booting PC come up)| `5000`  |
 | `Sessions:ResumeStaggerMs`  | Pause between consecutive auto-resumed launches      | `2000`               |
 | `Sessions:SelfUrl`          | URL a session calls back on (`CLAUDEWEB_URL`); empty = derived from the bound port | `""` |
+| `Update:Enabled`            | Offer in-app updates staged by `scripts\stage-update.ps1` | `true`           |
+| `Update:StagingPath`        | Folder updates are staged into (the build lands in its `payload` subfolder) | `C:\apps\claude-web-updates` |
+| `Update:PollSeconds`        | Re-read the staged build this often (a watcher already catches it sooner) | `30` |
+| `Update:InstallPath`        | Install folder to update; empty = the folder the running exe is in | `""`   |
+| `Update:ShutdownWaitSeconds`| How long the updater lets the app close before forcing it down | `45`       |
 | `FileSystem:DefaultFolder`  | Folder the picker opens at when creating a session   | `C:\Git`             |
 
 ## Programmatic session creation (API)
@@ -255,7 +294,8 @@ read that session's environment. Same trust boundary as the `/api/hooks` callbac
 ## Layout
 
 ```
-server/   .NET 10 tray app + Minimal API host (Program.cs, Tray/, Sessions/, Auth/, FileSystem/, Logging/)
+server/   .NET 10 tray app + Minimal API host (Program.cs, Tray/, Sessions/, Auth/, FileSystem/, Logging/, Update/)
 web/      React + Vite + TS + Tailwind + shadcn/ui launcher UI
-scripts/  dev.ps1, run.ps1, build.ps1, install-service.ps1, uninstall-service.ps1
+scripts/  dev.ps1, run.ps1, build.ps1, install-service.ps1, uninstall-service.ps1,
+          stage-update.ps1 + apply-update.ps1 (the two halves of the in-app updater)
 ```

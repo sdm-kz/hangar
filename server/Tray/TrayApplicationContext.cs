@@ -41,6 +41,32 @@ public sealed class TrayApplicationContext : ApplicationContext
         _icon.BalloonTipTitle = "Claude Web is running";
         _icon.BalloonTipText = $"Click the tray icon to open ({_url}). Right-click for sessions.";
         _icon.ShowBalloonTip(4000);
+
+        // Something inside the app asked the host to stop — today that's the in-app updater, which
+        // has already handed the install off to a detached script and needs this process gone so its
+        // exe unlocks. Stopping the web host alone would leave the message loop (and the process)
+        // running, so mirror the stop into a tray Exit. Marshalled onto the UI thread: the request
+        // arrives on a request/background thread, and ExitThread belongs to the loop's own thread.
+        _ = _sync.Handle; // force the handle now, on this thread — BeginInvoke needs one to post to
+        _stopping = app.Lifetime.ApplicationStopping.Register(() =>
+        {
+            try { _sync.BeginInvoke(ExitFromHost); }
+            catch { /* the loop is already going down */ }
+        });
+    }
+
+    // A handle owned by the UI thread, purely to marshal onto it. Created here, in the constructor,
+    // which still runs on that thread — the tray icon itself has no handle to borrow.
+    private readonly Control _sync = new() { Visible = false };
+
+    // Kept so the registration is released when the tray is disposed on the ordinary Exit path.
+    private readonly IDisposable _stopping;
+
+    /// <summary>Exit the message loop for a stop the host initiated (so it isn't asked to stop again).</summary>
+    private void ExitFromHost()
+    {
+        _icon.Visible = false;
+        ExitThread();
     }
 
     /// <summary>How many closed sessions the "Recent" submenu lists before it stops.</summary>
@@ -164,6 +190,8 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (disposing)
         {
+            _stopping.Dispose();
+            _sync.Dispose();
             _icon.Dispose();
             _drawnIcon.Dispose();
         }

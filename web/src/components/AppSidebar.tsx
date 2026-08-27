@@ -18,6 +18,7 @@ export function AppSidebar({
   onCollapse,
   sessions,
   files,
+  update,
 }: {
   tab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
@@ -25,6 +26,7 @@ export function AppSidebar({
   onCollapse?: () => void; // desktop only: hide the sidebar
   sessions: ReactNode;
   files: ReactNode;
+  update?: ReactNode; // "Update available" button; renders nothing unless a build is staged
 }) {
   return (
     <div className="flex h-full flex-col bg-card">
@@ -34,6 +36,9 @@ export function AppSidebar({
           <Bot className="size-4" />
         </div>
         <span className="min-w-0 truncate font-semibold">Claude Web</span>
+        {/* Directly after the title so a staged build is the first thing you see, and so it pushes
+            the icon buttons rather than hiding behind them when the sidebar is narrow. */}
+        {update}
         {/* New session lives here rather than in the session list: it applies to both tabs, and the
             header has room the list header doesn't. */}
         <div className="ml-auto flex items-center gap-1">

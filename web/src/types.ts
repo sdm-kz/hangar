@@ -144,3 +144,21 @@ export interface BrowseResult {
   directories: DirEntry[];
   drives: DirEntry[];
 }
+
+/** Identity of one build of the app, written by scripts\build.ps1 as build.json next to the exe. */
+export interface BuildStamp {
+  buildId: string; // UTC build timestamp + short commit; two builds are the same iff this matches
+  commit: string | null;
+  branch: string | null;
+  builtAtUtc: string | null;
+}
+
+/** The updater's view of itself: what's running, what's staged, and whether one is being installed. */
+export interface UpdateStatus {
+  enabled: boolean; // the updater is switched on server-side (Update:Enabled)
+  available: boolean; // a build is staged and it isn't the one running
+  current: BuildStamp | null; // null when the app wasn't built by scripts\build.ps1
+  staged: BuildStamp | null;
+  state: "Idle" | "Applying" | "Failed";
+  error: string | null; // why the last apply attempt failed, when state is Failed
+}

@@ -19,6 +19,12 @@
     <PackageReference Include="WebPush" Version="1.0.13" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The in-app updater runs this after the app stops (a running exe can't overwrite itself), so it
+         has to travel inside the exe rather than sit in the install folder it's about to mirror over. -->
+    <EmbeddedResource Include="..\scripts\apply-update.ps1" LogicalName="ClaudeWeb.Server.apply-update.ps1" />
+  </ItemGroup>
+
   <!-- The built React app lives in wwwroot; the Web SDK includes and publishes it automatically. -->
 
 </Project>

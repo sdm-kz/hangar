@@ -11,6 +11,7 @@ import type {
   GitStatus,
   GitWorktree,
   SessionInfo,
+  UpdateStatus,
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
 
@@ -197,6 +198,21 @@ export const api = {
   },
   removeRecentFolder(path: string): Promise<Recents> {
     return request("/api/recents/folders/remove", { method: "POST", body: JSON.stringify({ path }) });
+  },
+
+  // ---- In-app update (a build staged by scripts\stage-update.ps1) ----
+  // Normally the status arrives on the /hub/events snapshot; this is the first read and the fallback
+  // for when the stream is down.
+  getUpdate(): Promise<UpdateStatus> {
+    return request("/api/update");
+  },
+  /**
+   * Install the staged build. The server answers, then stops itself and hands the install off to a
+   * detached script — so this is the last thing this build says. Wait for the new one to answer
+   * /api/update with the staged build id, then reload to pick up its assets.
+   */
+  applyUpdate(): Promise<UpdateStatus> {
+    return request("/api/update/apply", { method: "POST" });
   },
 
   // ---- Web Push (background notifications) ----

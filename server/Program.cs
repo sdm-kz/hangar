@@ -145,6 +145,7 @@ internal static class Program
         var authOptions = builder.Configuration.GetSection("Auth").Get<AuthOptions>() ?? new AuthOptions();
         var sessionOptions = builder.Configuration.GetSection("Sessions").Get<SessionManagerOptions>() ?? new SessionManagerOptions();
         var watchdogOptions = builder.Configuration.GetSection("Watchdog").Get<WatchdogOptions>() ?? new WatchdogOptions();
+        var updateOptions = builder.Configuration.GetSection("Update").Get<Update.UpdateOptions>() ?? new Update.UpdateOptions();
 
         // The URL a launched session calls back on (CLAUDEWEB_URL in its environment). Derived from the
         // bound port unless the operator pinned Sessions:SelfUrl; always loopback, since the session's
@@ -165,6 +166,12 @@ internal static class Program
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SessionHub>());
         builder.Services.AddSingleton(watchdogOptions);
         builder.Services.AddHostedService<WatchdogService>();
+        // Watches the update staging folder and, on request, hands off to the external updater. One
+        // instance shared as a singleton (the endpoints and the hub read its status) and as a hosted
+        // service (its watch loop runs for the app's lifetime).
+        builder.Services.AddSingleton(updateOptions);
+        builder.Services.AddSingleton<Update.UpdateService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<Update.UpdateService>());
         builder.Services.AddSingleton<RecentsStore>();
         // Extra folders attached to a session's working directory, browsable from its Files panel.
         builder.Services.AddSingleton<LinkedFolderStore>();
@@ -394,6 +401,22 @@ internal static class Program
         {
             if (!string.IsNullOrWhiteSpace(body.Endpoint)) store.Remove(body.Endpoint);
             return Results.Ok();
+        });
+
+        // ---- In-app update (staged by scripts\stage-update.ps1, applied by scripts\apply-update.ps1) ----
+        // The running build, the staged one, and whether they differ. Also carried on the /hub/events
+        // snapshot, so the button appears the moment a build is staged; this is the initial read.
+        app.MapGet("/api/update", (Update.UpdateService updates) => Results.Ok(updates.Status));
+
+        // Apply the staged build: hand off to the detached updater and start shutting down. The reply
+        // is the last thing this build says — the browser reconnects to the new one a few seconds later,
+        // by which time the sessions that were running have been resumed.
+        app.MapPost("/api/update/apply", (Update.UpdateService updates) =>
+        {
+            var status = updates.Apply();
+            return status.State == Update.UpdateState.Applying
+                ? Results.Accepted("/api/update", status)
+                : Results.BadRequest(new { error = status.Error ?? "could not apply the update", status });
         });
 
         var defaultFolder = app.Configuration["FileSystem:DefaultFolder"];
