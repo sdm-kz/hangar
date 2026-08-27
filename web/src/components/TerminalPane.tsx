@@ -118,6 +118,29 @@ const IMAGE_SETTLE_MS = 600;
 // the handshake with a 404, and retrying that forever would just spin.
 const RECONNECT_DELAYS_MS = [300, 1000, 2000, 4000, 8000, 8000, 8000, 8000];
 
+// Heartbeat for the terminal socket. A half-open connection — a phone losing signal, a NAT or proxy
+// dropping the flow — never fires onclose: the socket still reads as OPEN while the terminal is
+// silently dead, which is the case no amount of close-handling catches. A browser can't send a
+// protocol-level ping, so we poll the server's control channel instead and treat a long silence
+// (no pong, no PTY output) as a drop. Only ever enforced after one pong has proved the server
+// answers these, so a server without the ping handler is left alone rather than falsely declared
+// dead every idle window.
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const HEARTBEAT_DEAD_MS = 45_000;
+
+// Control frames arrive as text; PTY output is always binary, so a text frame is never terminal
+// content. Returns the frame's type, or null when it isn't one (then it's output after all).
+function controlFrameType(data: string): string | null {
+  if (!data.startsWith("{")) return null;
+  try {
+    const msg: unknown = JSON.parse(data);
+    const type = (msg as { type?: unknown } | null)?.type;
+    return typeof type === "string" ? type : null;
+  } catch {
+    return null; // not JSON — let xterm have it
+  }
+}
+
 export interface TerminalPaneHandle {
   // True while the terminal socket is open and can accept input.
   isReady: () => boolean;
@@ -329,6 +352,17 @@ export const TerminalPane = forwardRef<
     // Set by the cleanup below so a close we caused (unmount, session switch, our own re-attach)
     // isn't mistaken for a drop and answered with yet another reconnect.
     let closedByUs = false;
+    // Liveness clock for the heartbeat: when anything last arrived from the server. Only consulted
+    // once a pong has shown the server answers probes at all.
+    let lastInbound = Date.now();
+    let pongSeen = false;
+    const ping = () => {
+      try {
+        ws.send(JSON.stringify({ type: "ping" }));
+      } catch {
+        /* socket already going away — handleDrop covers it */
+      }
+    };
     wsRef.current = ws; // expose to the imperative handle (sendMessage)
 
     const sendResize = () => {
@@ -368,6 +402,7 @@ export const TerminalPane = forwardRef<
 
     ws.onopen = () => {
       retryRef.current = 0;
+      lastInbound = Date.now();
       setConnection("open");
       // The flex layout may still be settling on open; refit across a few frames so the size we
       // send matches what's actually displayed (otherwise Claude renders at a stale row count).
@@ -381,8 +416,16 @@ export const TerminalPane = forwardRef<
     };
     const decoder = new TextDecoder();
     ws.onmessage = (e) => {
+      lastInbound = Date.now(); // any frame proves the socket is still carrying traffic
       let text: string;
       if (typeof e.data === "string") {
+        const control = controlFrameType(e.data);
+        if (control) {
+          // The pong answering our heartbeat: it never belongs on screen, and seeing one is what
+          // arms the silence check (this server speaks heartbeats).
+          if (control === "pong") pongSeen = true;
+          return;
+        }
         term.write(e.data);
         text = e.data;
       } else {
@@ -415,8 +458,12 @@ export const TerminalPane = forwardRef<
         }
       }
     };
-    ws.onclose = () => {
-      if (closedByUs) return;
+    // A drop: the socket closed on us, or the heartbeat below caught it half-open. Runs once —
+    // a closed socket that later fires onclose must not schedule a second reconnect.
+    let dropped = false;
+    const handleDrop = () => {
+      if (closedByUs || dropped) return;
+      dropped = true;
       term.write("\r\n\x1b[90m[terminal disconnected]\x1b[0m\r\n");
       setConnection("closed");
       const delay = RECONNECT_DELAYS_MS[retryRef.current];
@@ -427,6 +474,24 @@ export const TerminalPane = forwardRef<
         reattach(false);
       }, delay);
     };
+    ws.onclose = handleDrop;
+
+    const heartbeat = window.setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      if (pongSeen && Date.now() - lastInbound > HEARTBEAT_DEAD_MS) {
+        // Silent across three probes: the connection is half-open. close() on a dead socket can sit
+        // in CLOSING until the OS gives up on the TCP connection, so drive the reconnect ourselves
+        // instead of waiting for onclose to arrive.
+        try {
+          ws.close();
+        } catch {
+          /* nothing to close */
+        }
+        handleDrop();
+        return;
+      }
+      ping();
+    }, HEARTBEAT_INTERVAL_MS);
 
     const dataSub = term.onData((d) => {
       if (ws.readyState === WebSocket.OPEN)
@@ -580,6 +645,11 @@ export const TerminalPane = forwardRef<
         reattach(true);
         return;
       }
+      // Coming back from a suspended tab is exactly when a socket turns out to be half-open, and
+      // the liveness clock is stale from the time away. Probe now and allow one interval for the
+      // answer, so a dead socket surfaces in ~15s rather than after the full silence window.
+      lastInbound = Date.now() - (HEARTBEAT_DEAD_MS - HEARTBEAT_INTERVAL_MS);
+      ping();
       // The socket stayed open across the tab switch, so xterm's buffer is intact — just refit and
       // repaint the existing cells. No size nudge here: forcing Claude to reflow would jump the
       // scroll position. The nudge only belongs on a fresh reattach (see ws.onopen).
@@ -606,6 +676,7 @@ export const TerminalPane = forwardRef<
       host.removeEventListener("touchcancel", stopMomentum);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", onOnline);
+      clearInterval(heartbeat);
       // Safe unconditionally: a pending retry is always cleared before it bumps the generation, so
       // nothing scheduled can be lost here — this only kills a timer orphaned by unmount.
       if (retryTimerRef.current !== null) {

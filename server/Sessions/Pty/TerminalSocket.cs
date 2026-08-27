@@ -8,7 +8,8 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 /// <list type="bullet">
 ///   <item>server → client: <b>Binary</b> = raw VT output (fed straight to xterm.js).</item>
 ///   <item>client → server: <b>Binary</b> = raw keystroke/paste bytes → PTY stdin;
-///         <b>Text</b> = JSON control, e.g. <c>{"type":"resize","cols":120,"rows":40}</c>.</item>
+///         <b>Text</b> = JSON control, e.g. <c>{"type":"resize","cols":120,"rows":40}</c> or
+///         <c>{"type":"ping"}</c>, answered with a <c>{"type":"pong"}</c> text frame.</item>
 /// </list>
 /// </summary>
 public static class TerminalSocket
@@ -17,11 +18,16 @@ public static class TerminalSocket
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(hostCt);
         using var sub = term.Subscribe();
+        // A WebSocket allows one outstanding send at a time, and two places send here: the write
+        // loop streaming PTY output, and the read loop answering a heartbeat ping. Both go through
+        // this gate. Deliberately not disposed — a faulted read loop can leave the write loop mid-
+        // send, and disposing under it would turn a client hang-up into an ObjectDisposedException.
+        var sendGate = new SemaphoreSlim(1, 1);
         try
         {
             // 1) Replay recent scrollback so a reconnecting viewer sees current screen state.
             if (sub.Replay.Length > 0)
-                await ws.SendAsync(sub.Replay, WebSocketMessageType.Binary, true, cts.Token);
+                await SendAsync(ws, sendGate, sub.Replay, WebSocketMessageType.Binary, cts.Token);
 
             // WRITE loop: live PTY output → WS. Swallow every fault (a dropped socket throws various
             // WebSocket/IO exceptions) — this task is awaited below, and a client disconnect must tear
@@ -31,7 +37,7 @@ public static class TerminalSocket
                 try
                 {
                     await foreach (var chunk in sub.Reader.ReadAllAsync(cts.Token))
-                        await ws.SendAsync(chunk, WebSocketMessageType.Binary, true, cts.Token);
+                        await SendAsync(ws, sendGate, chunk, WebSocketMessageType.Binary, cts.Token);
                 }
                 catch { /* cancelled or socket gone — the read loop below handles teardown */ }
             }, cts.Token);
@@ -49,7 +55,7 @@ public static class TerminalSocket
                 if (r.MessageType == WebSocketMessageType.Binary)
                     await term.WriteAsync(buf.AsMemory(0, r.Count), cts.Token);
                 else
-                    HandleControl(buf.AsSpan(0, r.Count), term);
+                    await HandleControlAsync(buf.AsMemory(0, r.Count), term, ws, sendGate, cts.Token);
             }
 
             cts.Cancel();
@@ -66,15 +72,37 @@ public static class TerminalSocket
 
     private static readonly JsonSerializerOptions ControlJson = new() { PropertyNameCaseInsensitive = true };
 
-    private static void HandleControl(ReadOnlySpan<byte> json, TerminalChannel term)
+    private static readonly byte[] PongFrame = "{\"type\":\"pong\"}"u8.ToArray();
+
+    /// <summary>Serializes every send on the socket (see the gate's note in PumpAsync).</summary>
+    private static async Task SendAsync(
+        WebSocket ws, SemaphoreSlim gate, ReadOnlyMemory<byte> data, WebSocketMessageType type, CancellationToken ct)
     {
-        try
+        await gate.WaitAsync(ct);
+        try { await ws.SendAsync(data, type, true, ct); }
+        finally { gate.Release(); }
+    }
+
+    private static async Task HandleControlAsync(
+        ReadOnlyMemory<byte> json, TerminalChannel term, WebSocket ws, SemaphoreSlim gate, CancellationToken ct)
+    {
+        ControlMessage? msg;
+        try { msg = JsonSerializer.Deserialize<ControlMessage>(json.Span, ControlJson); }
+        catch { return; /* ignore malformed control frames */ }
+
+        switch (msg)
         {
-            var msg = JsonSerializer.Deserialize<ControlMessage>(json, ControlJson);
-            if (msg is { Type: "resize" })
+            case { Type: "resize" }:
                 term.Resize((short)msg.Cols, (short)msg.Rows);
+                break;
+            // Liveness probe. A browser can't send a protocol-level ping, so viewers poll with this
+            // one and drop the socket once the answers stop — a half-open connection (a phone losing
+            // signal, a NAT dropping the flow) otherwise stays "open" forever with a dead terminal.
+            case { Type: "ping" }:
+                try { await SendAsync(ws, gate, PongFrame, WebSocketMessageType.Text, ct); }
+                catch { /* socket gone — the read loop will see it next */ }
+                break;
         }
-        catch { /* ignore malformed control frames */ }
     }
 
     private sealed record ControlMessage(string Type, int Cols, int Rows);
