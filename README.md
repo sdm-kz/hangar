@@ -15,7 +15,7 @@ Run `ClaudeWeb.exe` and it starts the web host in-process and drops an icon in t
 - Runs as a single instance; launching it again just reopens the UI.
 - The same exe also runs headless as a **Windows service** (auto-detected) if you prefer.
 
-The web UI is a **launcher / session manager**, not a terminal:
+The web UI is a **session manager with a full terminal**:
 
 - **Create / select sessions** — each session is a live `claude --remote-control` process in a
   working folder of your choice.
@@ -42,11 +42,13 @@ The web UI is a **launcher / session manager**, not a terminal:
 - **Light / dark** theme toggle.
 - **Start / stop** — stop kills the process; the app just manages lifecycle.
 
-## Why a launcher (and not a chat/terminal)
+## How a session is launched
 
-Remote Control requires an **interactive** `claude` session attached to a real console — it then
-registers with the Anthropic API and is driven from the Claude Code app. So this app's job is to
-**start those sessions headlessly and manage them**; the actual conversation lives in the app.
+`claude` insists on an **interactive** terminal: without one it falls back to non-interactive
+`--print` mode, the TUI never renders, and Remote Control never registers. So every session is
+attached to a Windows **pseudoconsole** (ConPTY) — a real terminal as far as the child is concerned,
+whose VT stream we pipe out and render in the browser with xterm.js. The same session can also be
+driven from the Claude Code app over Remote Control; both are views of one process.
 
 Each session is launched as:
 
@@ -54,30 +56,41 @@ Each session is launched as:
 claude --remote-control <name> --name <name> [--model <m>]
 ```
 
-in its own new console (`CREATE_NEW_CONSOLE`). Under a Windows service (session 0) that console is
-invisible, so sessions are effectively headless. Notably we do **not** pass
-`--permission-mode bypassPermissions` — that shows a blocking startup prompt and is unsafe;
-permission decisions are made in the Claude Code app instead.
+The pseudoconsole is owned by a per-session `ClaudeWeb.PtyHost.exe` rather than by the app itself,
+which is what lets a session outlive an app restart — see **Architecture** above.
+
+Permission mode is chosen per session at launch. The default leaves decisions to the Claude Code app;
+`bypassPermissions` passes `--dangerously-skip-permissions`, whose one-time acceptance screen would
+otherwise block startup, so the app pre-accepts it.
 
 ## Architecture
 
 ```
 ClaudeWeb.exe  (Windows tray app — WinForms NotifyIcon + in-process web host)
-   │
+   │                                        ↑ restarts, updates and crashes freely
    ├─ system tray: left-click → open UI · right-click → sessions + Exit
    │
    ▼
 Browser (React + Vite + TS + Tailwind + shadcn/ui)
-   │  REST /api/*  ──►  auth, session create/list/stop, filesystem browse
+   │  REST /api/*     ──►  auth, session create/list/stop, filesystem browse
+   │  WS /hub/events  ──►  live session list · WS /hub/sessions/{id}/terminal ──► xterm.js
    ▼
 .NET 10 (ASP.NET Core Minimal API, in-process)   ← also runnable as a Windows service
-   │  one child process per session (new console, no stdio redirect):
+   │  named pipe \\.\pipe\claudeweb-pty-<instance>-<sessionId>
+   ▼
+ClaudeWeb.PtyHost.exe   (one per session, detached — owns the pseudoconsole)
+   │  ConPTY + 512 KB scrollback ring + fan-out + the hang watchdog
    ▼
 claude --remote-control <name> --name <name>
    │  registers with api.anthropic.com  ──►  appears in the Claude Code app
    ▼
-You drive it from claude.ai/code or the Claude mobile app
+You drive it from the in-app terminal, claude.ai/code, or the Claude mobile app
 ```
+
+The pty host is the reason a session **survives a restart of the app**. A pseudoconsole (`HPCON`)
+cannot be handed to another process, and its `conhost` is bound to whoever created it — so the only
+way to keep a session alive across an update is for the process that owns the pseudoconsole not to be
+the process that restarts. The app attaches and detaches; the host holds the session.
 
 ## Prerequisites
 
@@ -185,19 +198,34 @@ the whole thing off and go back to `deploy.ps1` only.
   `~/.claude.json` (it backs the file up once to `~/.claude.json.claudeweb-backup`, writes
   atomically, and only adds entries for folders not already present). Set it to `false` to disable
   and accept the prompt manually from the Claude Code app instead.
-- **Auto-resume across restarts.** A launched `claude` runs on a pseudoconsole this app owns, so it
-  dies with the app — a PC shutdown, a redeploy or tray **Exit** takes every session down. Their
-  launch metadata is persisted, and on the next start the app **relaunches the ones that were
-  running**, each resuming its own conversation (`--resume <id>` when Claude's session id was
-  captured from a hook, else `--continue`). The original prompt is not re-fired and the watchdog
-  setting is carried over; a resumed session gets a **new id** in the UI. Sessions that had already
-  exited on their own are not resurrected, and a folder that's gone (or a failed launch) just stays
-  a manual **Reopen** entry. Turn it off with `Sessions:ResumeOnStart=false`, or per launch with
-  `--no-resume-sessions`. Pair it with **Start on login** above and a reboot restores your working
-  set by itself.
+- **Sessions survive an app restart.** Each session's pseudoconsole lives in its own detached
+  `ClaudeWeb.PtyHost.exe`, so an in-app update, a `deploy.ps1`, tray **Exit** or even a crash leaves
+  the session running. On the next start the app **re-attaches** to it: same session id, scrollback
+  replayed into the terminal, and a conversation that was mid-turn simply carries on. Nothing is
+  relaunched and no `--resume` is issued. What ends a session is **Stop** in the UI, `claude` exiting
+  on its own, or the machine rebooting.
+- **Auto-resume after a reboot.** A ConPTY child cannot survive a reboot, so for that case the
+  persisted launch metadata still does the work: on the next start the app **relaunches the sessions
+  that were running**, each resuming its own conversation (`--resume <id>` when Claude's session id
+  was captured from a hook, else `--continue`). The original prompt is not re-fired and the watchdog
+  setting is carried over; a relaunched session gets a **new id** in the UI. Sessions that had
+  already exited on their own are not resurrected, and a folder that's gone (or a failed launch)
+  just stays a manual **Reopen** entry. Turn it off with `Sessions:ResumeOnStart=false`, or per
+  launch with `--no-resume-sessions`. Pair it with **Start on login** above and a reboot restores
+  your working set by itself.
+- **Hang watchdog.** Claude Code sometimes stalls on an API or streaming error and sits there. When
+  a session opts in, the watchdog notices the error banner on screen and writes `continue` for it. It
+  never acts while Claude is emitting (that covers Claude's own retry) or while a permission prompt
+  is on screen, waits out `Watchdog:CooldownMs` between attempts, and after `Watchdog:MaxConsecutive`
+  tries gives up and flags the session for **attention** in the sidebar instead. Toggle it per
+  session in the UI; a manual **Continue** clears the give-up flag.
+
+  It runs **inside each session's pty host**, not in the web app — so a session that stalls overnight,
+  or during an in-app update, is recovered whether or not the app is running, and you see what
+  happened when the browser reconnects. A host keeps the options it was launched with, so a change
+  under `Watchdog:` in `appsettings.json` applies to sessions started after it.
 - **Keep the process alive.** Remote Control lives in the launched `claude` process; stopping it
-  (or the machine going offline for ~10 min) ends the session in the app. The service keeps
-  processes running across web-UI restarts (stopping the service does not kill launched sessions).
+  (or the machine going offline for ~10 min) ends the session in the app.
 - **`ANTHROPIC_BASE_URL`** must be unset / pointed at `api.anthropic.com`, or Remote Control is
   disabled (Claude Code v2.1.196+).
 
@@ -214,6 +242,18 @@ the whole thing off and go back to `deploy.ps1` only.
 | `Sessions:ResumeDelayMs`    | Settling delay before auto-resume starts (lets a booting PC come up)| `5000`  |
 | `Sessions:ResumeStaggerMs`  | Pause between consecutive auto-resumed launches      | `2000`               |
 | `Sessions:SelfUrl`          | URL a session calls back on (`CLAUDEWEB_URL`); empty = derived from the bound port | `""` |
+| `Pty:InstanceKey`           | Namespaces this instance's pty pipes and state dir; empty = the bound port. Keeps a dev instance from adopting the live app's sessions | `""` |
+| `Pty:HostExecutable`        | Path to `ClaudeWeb.PtyHost.exe`; empty = beside the app | `""`                 |
+| `Pty:AttachTimeoutMs`       | How long a host has to answer its pipe before its state file is called stale | `3000` |
+| `Pty:StartTimeoutMs`        | How long a freshly launched host has to come up and accept a connection | `20000` |
+| `Pty:OrphanMaxAgeHours`     | Auto-stop untracked sessions older than this; `0` never does (they are listed in the sidebar and tray instead) | `0` |
+| `Watchdog:Enabled`          | Master switch for auto-recovery; off means no host ever auto-continues | `true` |
+| `Watchdog:PollIntervalMs`   | How often a host re-examines its own session      | `2000`               |
+| `Watchdog:CooldownMs`       | Minimum gap between auto-continues for one session| `20000`              |
+| `Watchdog:MaxConsecutive`   | Attempts before giving up and flagging for attention | `3`               |
+| `Watchdog:SendSequence`     | What is typed to recover, and by the manual **Continue** button | `continue\r` |
+| `Watchdog:ErrorPatterns`    | Case-insensitive regexes that mean "this session looks hung" | (API/stream errors) |
+| `Watchdog:PromptGuardPatterns` | Regexes for an on-screen prompt; any match and the watchdog stays silent | (dialog wording) |
 | `Update:Enabled`            | Offer in-app updates staged by `scripts\stage-update.ps1` | `true`           |
 | `Update:StagingPath`        | Folder updates are staged into (the build lands in its `payload` subfolder) | `C:\apps\claude-web-updates` |
 | `Update:PollSeconds`        | Re-read the staged build this often (a watcher already catches it sooner) | `30` |

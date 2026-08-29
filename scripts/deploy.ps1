@@ -7,10 +7,12 @@
   wwwroot is mirrored so stale hashed assets from previous builds are pruned.
 
   The running instance (Windows service "ClaudeWeb" or the tray ClaudeWeb.exe) is stopped so
-  its files unlock, then restarted the same way it was running. The app resumes the sessions that
-  were running before the restart on its own (Sessions:ResumeOnStart, on by default); pass
-  -ResumeSessions:$false to launch with --no-resume-sessions and leave them as manual "Reopen"
-  entries for this deploy instead.
+  its files unlock, then restarted the same way it was running. Running sessions survive this: each
+  one's pseudoconsole lives in its own ClaudeWeb.PtyHost.exe, which is left alone (the process match
+  below is by exact name and does not catch "ClaudeWeb.PtyHost"), so the restarted app re-attaches to
+  them rather than relaunching them. A session that genuinely died still comes back by resuming its
+  conversation (Sessions:ResumeOnStart, on by default); pass -ResumeSessions:$false to launch with
+  --no-resume-sessions and leave those as manual "Reopen" entries for this deploy instead.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\deploy.ps1

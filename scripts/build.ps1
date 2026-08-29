@@ -20,6 +20,28 @@ dotnet publish -c Release -r win-x64 --self-contained true `
   -o $publish
 Pop-Location
 
+# The per-session pty host. It owns each session's pseudoconsole, which is what lets a claude session
+# outlive this app -- so it ships alongside ClaudeWeb.exe and the app refuses to launch a session
+# without it. Self-contained for the same reason the app is (no .NET runtime assumed), but a much
+# smaller image: no ASP.NET, no WinForms.
+Write-Host "==> Publishing pty host (ptyhost)" -ForegroundColor Cyan
+$ptyOut = Join-Path $root "publish-ptyhost"
+if (Test-Path $ptyOut) { Remove-Item $ptyOut -Recurse -Force }
+Push-Location (Join-Path $root "ptyhost")
+# Trimmed, unlike the app: it is a tiny console program, and trimming takes it from ~70 MB to ~14 MB.
+# Safe because everything crossing the pipe goes through a source-generated JSON context
+# (shared\Pty\PtyJson.cs) rather than reflection -- if you add a wire type, add it there too.
+dotnet publish -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true `
+  -p:PublishTrimmed=true `
+  -p:IncludeNativeLibrariesForSelfExtract=true `
+  -o $ptyOut
+Pop-Location
+# Staged separately, then copied in: publishing both projects straight into ./publish would let the
+# second one's runtime files land on top of the first's.
+Copy-Item (Join-Path $ptyOut "*") $publish -Recurse -Force
+Remove-Item $ptyOut -Recurse -Force
+
 # --- Build stamp ------------------------------------------------------------------------------
 # Names this exact build so a running app can tell a staged update apart from itself. deploy.ps1
 # copies it next to the exe; the app reads its own from there and the staged one from the update
@@ -37,4 +59,7 @@ $stamp | ConvertTo-Json | Set-Content (Join-Path $publish "build.json") -Encodin
 
 Write-Host "==> Done. Published to: $publish" -ForegroundColor Green
 Write-Host "    Build stamp: $($stamp.buildId)" -ForegroundColor DarkGray
+if (-not (Test-Path (Join-Path $publish "ClaudeWeb.PtyHost.exe"))) {
+  throw "ClaudeWeb.PtyHost.exe is missing from '$publish'. The app cannot launch a session without it."
+}
 Write-Host "    Run the desktop app:  $publish\ClaudeWeb.exe   (starts in the system tray)"

@@ -20,6 +20,17 @@ export interface SessionInfo {
   canFork: boolean; // its conversation id is known, so it can be forked (false for the first seconds)
   parentSessionId: string | null; // the session this one was forked from; null for an ordinary session
   parentName: string | null; // the parent's name at fork time — shown even once the parent is gone
+  adopted: boolean; // the app re-attached to this session at startup instead of launching it
+}
+
+/** A pty host still running for a session the app no longer tracks (see PtyOrphanInfo server-side). */
+export interface PtyOrphan {
+  sessionId: string;
+  hostPid: number;
+  childPid: number;
+  workingDirectory: string;
+  createdAt: string;
+  ageHours: number;
 }
 
 export interface CreateSessionRequest {

@@ -134,8 +134,62 @@ public sealed class TrayApplicationContext : ApplicationContext
             menu.Items.Add(recent);
         }
 
+        AddOrphansItem(menu);
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => ExitApp()));
+    }
+
+    /// <summary>
+    /// Offer to stop pty hosts still running for sessions the app no longer knows about (see
+    /// <see cref="PtyOrphanInfo"/>). Only shown when there are any — most of the time there are none,
+    /// and a permanently greyed-out entry would just be clutter.
+    /// </summary>
+    private void AddOrphansItem(ContextMenuStrip menu)
+    {
+        IReadOnlyCollection<PtyOrphanInfo> orphans;
+        try { orphans = _app.Services.GetRequiredService<SessionManager>().ListOrphans(); }
+        catch { return; }
+        if (orphans.Count == 0) return;
+
+        menu.Items.Add(new ToolStripSeparator());
+        var item = new ToolStripMenuItem($"Stop {orphans.Count} orphaned session(s)…", null, (_, _) => StopOrphans(orphans))
+        {
+            ToolTipText = "Sessions still running that this app no longer tracks:\n"
+                + string.Join('\n', orphans.Take(8).Select(o => $"  claude pid {o.ChildPid} — {o.WorkingDirectory}")),
+        };
+        menu.Items.Add(item);
+    }
+
+    /// <summary>
+    /// Confirm, then stop every orphaned host. Each one is a live conversation, so this asks first —
+    /// the whole point of the pty host is that sessions are not casually disposable.
+    /// </summary>
+    private void StopOrphans(IReadOnlyCollection<PtyOrphanInfo> orphans)
+    {
+        var detail = string.Join(Environment.NewLine, orphans.Take(10).Select(o => $"  •  {o.WorkingDirectory}  (claude pid {o.ChildPid})"));
+        if (orphans.Count > 10) detail += $"{Environment.NewLine}  …and {orphans.Count - 10} more";
+
+        var answer = MessageBox.Show(
+            $"Stop {orphans.Count} session(s) this app no longer tracks?{Environment.NewLine}{Environment.NewLine}{detail}"
+            + $"{Environment.NewLine}{Environment.NewLine}Each is a running claude process. This ends them and cannot be undone.",
+            "Stop orphaned sessions",
+            MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes) return;
+
+        try
+        {
+            var mgr = _app.Services.GetRequiredService<SessionManager>();
+            var stopped = mgr.StopOrphansAsync().GetAwaiter().GetResult();
+            _icon.BalloonTipTitle = "Orphaned sessions stopped";
+            _icon.BalloonTipText = $"Stopped {stopped} of {orphans.Count}.";
+            _icon.ShowBalloonTip(3000);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not stop them: {ex.Message}", "Stop orphaned sessions",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private ToolStripMenuItem SessionItem(SessionInfo s, string glyph, ISet<string> duplicated)

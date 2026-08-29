@@ -14,9 +14,14 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
-    <PackageReference Include="Porta.Pty" Version="1.0.7" />
     <!-- Web Push (VAPID) so the server can notify a subscribed browser/PWA even when its tab is closed. -->
     <PackageReference Include="WebPush" Version="1.0.13" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The wire types, the VT stripper and the ring buffer are compiled into both this project and
+         ClaudeWeb.PtyHost: they are the contract between the two processes, so they must not drift. -->
+    <Compile Include="..\shared\Pty\*.cs" LinkBase="Sessions\Pty\Shared" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,5 +31,21 @@
   </ItemGroup>
 
   <!-- The built React app lives in wwwroot; the Web SDK includes and publishes it automatically. -->
+
+  <!-- Local runs (scripts\dev.ps1, scripts\run.ps1, F5) need the pty host beside the app, or no session
+       can launch: build it and drop its output in a "ptyhost" subfolder, which PtyHostLauncher looks in
+       after the published layout. A released build never takes this path - scripts\build.ps1 publishes
+       the host as a single trimmed exe straight into ./publish. -->
+  <ItemGroup>
+    <ProjectReference Include="..\ptyhost\ClaudeWeb.PtyHost.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <Target Name="CopyPtyHostForLocalRun" AfterTargets="Build" Condition="'$(PublishSingleFile)' != 'true'">
+    <ItemGroup>
+      <PtyHostBuildOutput Include="..\ptyhost\bin\$(Configuration)\net10.0\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PtyHostBuildOutput)" DestinationFolder="$(OutDir)ptyhost\%(RecursiveDir)"
+          SkipUnchangedFiles="true" Condition="'@(PtyHostBuildOutput)' != ''" />
+  </Target>
 
 </Project>

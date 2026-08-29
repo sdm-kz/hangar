@@ -10,9 +10,18 @@
     2. mirror <Staging> over <Target>, preserving the installed appsettings*.json
     3. start the app again the same way it was running (service or tray exe)
 
-  Sessions that were running come back on their own: the app freezes its session state as it goes
-  down and resumes those conversations on the next start (Sessions:ResumeOnStart, or the explicit
+  Running sessions are NOT interrupted. Each one's pseudoconsole lives in its own
+  ClaudeWeb.PtyHost.exe, which this script never touches: the app detaches on the way down, the hosts
+  and their claude processes keep running throughout, and the restarted app re-attaches to them with
+  their scrollback and their in-flight conversations intact. Only a session that genuinely died comes
+  back the old way, by resuming its conversation (Sessions:ResumeOnStart, or the explicit
   --resume-sessions this script passes to the tray exe).
+
+  Two details make that work, and both must be preserved if this script is edited:
+    * The process matching below is by exact name ("ClaudeWeb"), which does not catch
+      "ClaudeWeb.PtyHost" -- stopping the hosts would kill the very sessions we are protecting.
+    * The app launches each host from a per-build copy under %LocalAppData%\ClaudeWeb\ptyhost, so
+      the ClaudeWeb.PtyHost.exe this script mirrors into <Target> is never a running, locked file.
 
   Everything is logged to -LogPath, since nobody is watching a detached window. On any failure the
   script still tries to start the old build back up rather than leaving the machine with no app.
