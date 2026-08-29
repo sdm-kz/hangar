@@ -481,7 +481,9 @@ export function SessionSidebar({
         title={restorable ? undefined : "Middle-click or Ctrl/⌘-click to open in a new tab"}
         className={cn(
           "group relative flex flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-2 text-sm hover:bg-accent",
-          restorable ? "opacity-80" : "cursor-pointer",
+          // Dim a closed session by colour, not opacity: opacity on the row would make its
+          // actions menu translucent too, letting the rows underneath show through it.
+          restorable ? "text-muted-foreground" : "cursor-pointer",
           activeId === s.id && !restorable && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
           !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
