@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace ClaudeWeb.Server.Sessions.Pty;
+namespace ClaudeWeb.Pty;
 
 /// <summary>
 /// Minimal VT/ANSI stripping so on-screen <i>text</i> can be pattern-matched (e.g. by the watchdog).

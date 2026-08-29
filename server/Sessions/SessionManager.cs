@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ClaudeWeb.Pty;
 using ClaudeWeb.Server.Auth;
 
 namespace ClaudeWeb.Server.Sessions;
@@ -56,6 +57,7 @@ public sealed class SessionManager : IDisposable
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<SessionManager> _log;
     private readonly ExecutableSpec _exe;
+    private readonly Pty.PtyHostLauncher _hosts;
     private readonly SessionManagerOptions _options;
     private readonly TokenStore _tokens;
     private readonly HookEventStore _hooks;
@@ -86,7 +88,9 @@ public sealed class SessionManager : IDisposable
     // Same prompt patterns the watchdog uses to avoid auto-answering a dialog — reused here to
     // surface "Claude is waiting for you" as a first-class signal (a permission/selection prompt on
     // screen while Claude isn't emitting).
-    private readonly Regex[] _inputPrompts;
+    // Handed to every pty host at spawn: the watchdog that uses them runs there, not here.
+    private readonly WatchdogOptions _watchdog;
+    private readonly Pty.PtyHostOptions _ptyHost;
 
     /// <summary>
     /// Raised whenever the session set or a session's metadata changes (create, rename, remove,
@@ -98,9 +102,13 @@ public sealed class SessionManager : IDisposable
 
     private void RaiseChanged() => Changed?.Invoke();
 
-    public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, TokenStore tokens, HookEventStore hooks, RecentsStore recents, ILoggerFactory loggerFactory)
+    public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, Pty.PtyHostOptions ptyHost,
+        TokenStore tokens, HookEventStore hooks, RecentsStore recents, ILoggerFactory loggerFactory)
     {
         _options = options;
+        _watchdog = watchdog;
+        _ptyHost = ptyHost;
+        _hosts = new Pty.PtyHostLauncher(ptyHost, loggerFactory.CreateLogger<Pty.PtyHostLauncher>());
         _tokens = tokens;
         _hooks = hooks;
         _recents = recents;
@@ -109,7 +117,6 @@ public sealed class SessionManager : IDisposable
         _log = loggerFactory.CreateLogger<SessionManager>();
         _exe = ClaudeExecutableResolver.Resolve(options.ClaudeExecutable);
         _log.LogInformation("Resolved claude executable: {File} {Prefix}", _exe.FileName, string.Join(' ', _exe.Prefix));
-        _inputPrompts = CompilePatterns(watchdog.PromptGuardPatterns);
         // Idle until a session exit books it; see ScheduleExitRecheck.
         _exitRecheck = new System.Threading.Timer(_ => OnExitRecheck(), null, Timeout.Infinite, Timeout.Infinite);
 
@@ -148,8 +155,9 @@ public sealed class SessionManager : IDisposable
 
     /// <summary>
     /// Whether Claude is generating in a session. Prefers the authoritative hook-derived status (exact
-    /// UserPromptSubmit→Stop transitions); falls back to the terminal-output heuristic for sessions that
-    /// haven't produced a hook event yet (e.g. hooks disabled, or the brief window before SessionStart).
+    /// UserPromptSubmit→Stop transitions); falls back to the terminal-output heuristic — computed in
+    /// the pty host and pushed to us — for sessions that haven't produced a hook event yet (e.g. hooks
+    /// disabled, or the brief window before SessionStart).
     /// </summary>
     private bool IsBusy(ClaudeSession s) =>
         _hooks.TryGetStatus(s.Id, out var st) ? st.Busy : s.Terminal?.IsBusy == true;
@@ -169,50 +177,13 @@ public sealed class SessionManager : IDisposable
     /// <summary>
     /// Whether a session is waiting on the user. Prefers the hook-derived status (a
     /// Notification/PermissionRequest fired with no answer yet); falls back to the on-screen prompt
-    /// heuristic for sessions without hook data.
+    /// heuristic for sessions without hook data. That heuristic is evaluated in the pty host, which is
+    /// the only process that still sees the screen text, and pushed here.
     /// </summary>
     private bool IsAwaitingInput(ClaudeSession s) =>
         _hooks.TryGetStatus(s.Id, out var st)
             ? st.Waiting
-            : s.Terminal is { IsBusy: false } t && IsAwaitingInput(t);
-
-    // Shown by Claude Code throughout generation (including the thinking phase, when no PTY output
-    // flows and IsBusy can read false) — a reliable "still working, not waiting" signal.
-    private static readonly Regex WorkingHint =
-        new(@"esc to interrupt", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private bool IsAwaitingInput(Pty.TerminalChannel term)
-    {
-        // Only the last handful of lines: a live prompt is the most recent output, so once the answer
-        // and Claude's reply append after it the menu scrolls out of this window and stops counting.
-        // (RecentText is the stripped output stream and RETAINS overwritten menus — Claude Code redraws
-        // via cursor moves, which stripping drops — so a wide window keeps matching an already-answered
-        // prompt, which flagged sessions as waiting long after the user replied.)
-        var text = Tail(term.RecentText, 15);
-        if (WorkingHint.IsMatch(text)) return false; // actively generating — not waiting
-        return _inputPrompts.Any(r => r.IsMatch(text));
-    }
-
-    /// <summary>Return the last <paramref name="maxLines"/> lines of <paramref name="text"/> (whole string if fewer).</summary>
-    private static string Tail(string text, int maxLines)
-    {
-        int newlines = 0;
-        for (int i = text.Length - 1; i >= 0; i--)
-            if (text[i] == '\n' && ++newlines == maxLines)
-                return text[(i + 1)..];
-        return text;
-    }
-
-    private Regex[] CompilePatterns(IEnumerable<string> patterns)
-    {
-        var list = new List<Regex>();
-        foreach (var p in patterns)
-        {
-            try { list.Add(new Regex(p, RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant)); }
-            catch (Exception ex) { _log.LogWarning(ex, "Ignoring invalid input-prompt pattern: {Pattern}", p); }
-        }
-        return list.ToArray();
-    }
+            : s.Terminal is { IsAwaitingInput: true };
 
     public SessionInfo? Get(string id)
     {
@@ -225,7 +196,7 @@ public sealed class SessionManager : IDisposable
     public long? FsVersion(string id) => _sessions.TryGetValue(id, out var s) ? s.FsVersion : null;
 
     /// <summary>The live terminal stream for a session (null if unknown or no longer running).</summary>
-    public Pty.TerminalChannel? GetTerminal(string id) =>
+    public Pty.ITerminal? GetTerminal(string id) =>
         _sessions.TryGetValue(id, out var s) ? s.Terminal : null;
 
     /// <summary>Live sessions, for the watchdog to sweep.</summary>
@@ -263,34 +234,36 @@ public sealed class SessionManager : IDisposable
         return false;
     }
 
-    /// <summary>Toggle the watchdog for one session; disabling also clears any pending state.</summary>
-    public bool SetWatchdogEnabled(string id, bool enabled)
+    /// <summary>
+    /// Toggle the watchdog for one session; disabling also clears any pending state. The setting is
+    /// ours to persist, but the watchdog acting on it lives in the pty host, so this pushes it down.
+    /// </summary>
+    public async Task<bool> SetWatchdogEnabledAsync(string id, bool enabled)
     {
         if (!_sessions.TryGetValue(id, out var s)) return false;
-        s.WatchdogEnabled = enabled;
-        if (!enabled)
-        {
-            s.WatchdogStatus = "healthy";
-            s.WatchdogConsecutive = 0;
-        }
+        await s.SetWatchdogAsync(enabled);
+        SavePersisted(); // the opt-in survives a restart, and is re-sent to the host on re-attach
         RaiseChanged();
         return true;
     }
 
     /// <summary>
     /// Reset a session's watchdog state (e.g. after a manual "Continue"): clears the give-up flag and
-    /// the consecutive-attempt counter so auto-recovery can resume from a clean slate.
+    /// the consecutive-attempt counter, host-side, so auto-recovery resumes from a clean slate.
     /// </summary>
-    public void ResetWatchdog(string id)
+    public async Task ResetWatchdogAsync(string id)
     {
         if (!_sessions.TryGetValue(id, out var s)) return;
-        s.WatchdogStatus = "healthy";
-        s.WatchdogConsecutive = 0;
-        s.WatchdogLastContinueTick = 0;
+        await s.SetWatchdogAsync(enabled: null, reset: true);
         RaiseChanged();
     }
 
-    public SessionInfo Create(CreateSessionRequest req)
+    /// <summary>
+    /// Launch a new session: spawn its pty host, then attach to it over the host's pipe. Genuinely
+    /// asynchronous — there is a process start and a handshake to wait for — so every caller awaits
+    /// rather than blocking a thread on it.
+    /// </summary>
+    public async Task<SessionInfo> CreateAsync(CreateSessionRequest req, CancellationToken ct = default)
     {
         var dir = (req.WorkingDirectory ?? "").Trim();
         if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
@@ -310,18 +283,26 @@ public sealed class SessionManager : IDisposable
         var session = new ClaudeSession(
             req with { WorkingDirectory = fullDir },
             _exe,
+            _hosts,
+            _watchdog,
             _loggerFactory.CreateLogger<ClaudeSession>(),
             _tokens.HookToken,
             _options.SelfUrl);
 
-        // Re-persist and push whenever a persisted field changes (a rename or a `/color` in the terminal).
-        session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
-        // Same when the process ends by itself: the saved entry must stop claiming it was running, or
-        // the next start would auto-resume a session the user had already let finish.
-        session.ProcessExited += _ => { SavePersisted(); RaiseChanged(); };
+        // Re-persist and push whenever a persisted field changes (a rename or a `/color` in the
+        // terminal), and when the process ends by itself — the saved entry must stop claiming it was
+        // running, or the next start would auto-resume a session the user had already let finish.
+        Track(session);
         _launchedFrom[session.Id] = PresetOf(req);
         _sessions[session.Id] = session;
-        session.Start();
+        try { await session.StartAsync(ct); }
+        catch
+        {
+            // A session that never started must not linger in the live set claiming to be running.
+            _sessions.TryRemove(session.Id, out _);
+            _launchedFrom.TryRemove(session.Id, out _);
+            throw;
+        }
         SavePersisted();
         RaiseChanged();
         return session.ToInfo(ConversationId(session));
@@ -335,7 +316,7 @@ public sealed class SessionManager : IDisposable
     /// Works for a live session and for a Restorable entry from a previous run. Returns null when the
     /// id is unknown; throws when we don't (yet) know a conversation id to branch from.
     /// </summary>
-    public SessionInfo? Fork(string id, string? name)
+    public async Task<SessionInfo?> ForkAsync(string id, string? name, CancellationToken ct = default)
     {
         string workingDirectory, parentName, conversationId, permissionMode;
         bool remoteControl;
@@ -371,7 +352,7 @@ public sealed class SessionManager : IDisposable
         var forkName = ClaudeSession.SanitizeName(name);
         if (forkName.Length == 0) forkName = DefaultForkName(parentName);
 
-        return Create(new CreateSessionRequest(
+        return await CreateAsync(new CreateSessionRequest(
             WorkingDirectory: workingDirectory,
             Name: forkName,
             RemoteControl: remoteControl,
@@ -448,12 +429,12 @@ public sealed class SessionManager : IDisposable
     /// with <c>--continue</c> so it resumes the folder's most recent conversation. Returns null if
     /// the id isn't a known restorable entry.
     /// </summary>
-    public SessionInfo? Restore(string id)
+    public async Task<SessionInfo?> RestoreAsync(string id, CancellationToken ct = default)
     {
         if (!_restorable.TryRemove(id, out var p)) return null;
         try
         {
-            var info = Create(new CreateSessionRequest(
+            var info = await CreateAsync(new CreateSessionRequest(
                 WorkingDirectory: p.WorkingDirectory,
                 Name: p.Name,
                 RemoteControl: p.RemoteControl,
@@ -468,7 +449,7 @@ public sealed class SessionManager : IDisposable
                 // was — but it keeps its place in the fork tree.
                 ForkSession: false,
                 ParentSessionId: p.ParentSessionId,
-                ParentName: p.ParentName));
+                ParentName: p.ParentName), ct);
             // The reopened session has a brand-new id, so anything forked from the old one would be
             // orphaned. Move those links over to the replacement.
             Reparent(id, info.Id);
@@ -508,6 +489,203 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
+    /// Re-attach to every session whose pty host is still running. <b>This is the payoff of the whole
+    /// design</b>, and it must run BEFORE <see cref="ResumePersistedAsync"/>: a session adopted here
+    /// is live, with its scrollback and its in-flight conversation intact, and must not then be
+    /// relaunched with <c>--resume</c> on top of itself.
+    /// </summary>
+    /// <remarks>
+    /// <para><c>sessions.json</c> stays the source of truth for metadata (name, colour, model, parent,
+    /// watchdog). The pty state directory only answers "is it still alive, and where do I reach it?" —
+    /// so a state file with no matching persisted entry is an orphan we can't identify and is left for
+    /// the user to deal with rather than resurrected half-formed.</para>
+    /// <para>A state file whose host doesn't answer is stale (the machine rebooted, or the host was
+    /// killed directly). It's deleted, and the session falls through to today's Restorable /
+    /// auto-resume behaviour unchanged.</para>
+    /// </remarks>
+    public async Task AdoptRunningHostsAsync(CancellationToken ct = default)
+    {
+        var states = PtyStateStore.ReadAll(_hosts.InstanceKey).ToArray();
+        if (states.Length == 0) return;
+
+        _log.LogInformation("Found {Count} pty host state file(s) for instance '{Instance}'; checking which are still live.",
+            states.Length, _hosts.InstanceKey);
+
+        foreach (var (path, state) in states)
+        {
+            if (ct.IsCancellationRequested) return;
+
+            if (!PtyStateStore.HostAlive(state))
+            {
+                _log.LogInformation("Pty host for session {Id} (pid {Pid}) is gone; discarding its stale state file.",
+                    state.SessionId, state.HostPid);
+                PtyStateStore.Delete(path);
+                continue;
+            }
+
+            if (!_restorable.TryGetValue(state.SessionId, out var persisted))
+            {
+                // A live host we have no metadata for. Leave both alone: killing it would take a
+                // working claude session down, and adopting it would invent a session out of nothing.
+                _log.LogWarning("Pty host pid {Pid} is running for unknown session {Id}; leaving it alone.",
+                    state.HostPid, state.SessionId);
+                continue;
+            }
+
+            ClaudeSession session;
+            try { session = Rehydrate(persisted); }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Could not rebuild session {Id} to adopt its host", state.SessionId);
+                continue;
+            }
+
+            bool attached;
+            try { attached = await session.AttachAsync(state, ct); }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Could not re-attach to the pty host for session {Id}", state.SessionId);
+                attached = false;
+            }
+
+            if (!attached)
+            {
+                // The host is alive but won't talk to us — an incompatible build, or a wedged process.
+                // Don't delete its state file: it names a live process, and a later attempt may work.
+                _log.LogWarning("Pty host pid {Pid} for session {Id} did not answer; leaving it for the user.",
+                    state.HostPid, state.SessionId);
+                session.Dispose();
+                continue;
+            }
+
+            _restorable.TryRemove(state.SessionId, out _);
+            Track(session);
+            _sessions[session.Id] = session;
+        }
+
+        if (!_sessions.IsEmpty)
+        {
+            SavePersisted();
+            RaiseChanged();
+        }
+
+        // Anything still running that we couldn't claim is an orphan. Report them once at startup so
+        // they aren't invisible, and let the (opt-in) age sweep deal with the stale ones.
+        var orphans = ListOrphans();
+        if (orphans.Count > 0)
+            _log.LogWarning("{Count} orphaned pty host(s) are running for sessions this app doesn't know about. " +
+                "They keep running until stopped from the UI or the tray menu.", orphans.Count);
+        await SweepAgedOrphansAsync(ct);
+    }
+
+    // ---- Orphaned pty hosts ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Pty hosts still running for sessions this app doesn't know about. See <see cref="PtyOrphanInfo"/>
+    /// for how one comes about; a state file whose host is gone is stale rather than orphaned, and is
+    /// cleaned up here as a side effect of looking.
+    /// </summary>
+    public IReadOnlyCollection<PtyOrphanInfo> ListOrphans()
+    {
+        var now = DateTimeOffset.Now;
+        var orphans = new List<PtyOrphanInfo>();
+        foreach (var (path, state) in PtyStateStore.ReadAll(_hosts.InstanceKey))
+        {
+            if (_sessions.ContainsKey(state.SessionId) || _restorable.ContainsKey(state.SessionId)) continue;
+            if (!PtyStateStore.HostAlive(state)) { PtyStateStore.Delete(path); continue; }
+            orphans.Add(new PtyOrphanInfo(
+                state.SessionId, state.HostPid, state.ChildPid, state.WorkingDirectory, state.CreatedAt,
+                Math.Round((now - state.CreatedAt).TotalHours, 2)));
+        }
+        return orphans.OrderBy(o => o.CreatedAt).ToArray();
+    }
+
+    /// <summary>
+    /// Stop orphaned hosts and the <c>claude</c> processes under them. With no id, stops every orphan;
+    /// with one, just that host. Returns how many were stopped.
+    /// </summary>
+    /// <remarks>
+    /// Destructive and irreversible — each one is a live conversation — so nothing calls this on its
+    /// own initiative except the <see cref="Pty.PtyHostOptions.OrphanMaxAgeHours"/> sweep, which is off
+    /// by default.
+    /// </remarks>
+    public async Task<int> StopOrphansAsync(string? sessionId = null, CancellationToken ct = default)
+    {
+        var targets = ListOrphans();
+        if (sessionId is not null)
+            targets = targets.Where(o => o.SessionId == sessionId).ToArray();
+
+        var stopped = 0;
+        foreach (var o in targets)
+        {
+            if (ct.IsCancellationRequested) break;
+            try
+            {
+                await _hosts.StopHostAsync(o.SessionId, ClaudeSession.ShutdownGrace, ct);
+                _log.LogInformation("Stopped orphaned pty host pid {Pid} (session {Id}, {Cwd}).",
+                    o.HostPid, o.SessionId, o.WorkingDirectory);
+                stopped++;
+            }
+            catch (Exception ex) { _log.LogWarning(ex, "Could not stop orphaned pty host for session {Id}", o.SessionId); }
+        }
+        if (stopped > 0) RaiseChanged();
+        return stopped;
+    }
+
+    /// <summary>
+    /// Optional unattended cleanup: stop orphans older than <c>Pty:OrphanMaxAgeHours</c>. Off unless
+    /// that is set, because an orphan is a working session someone may still want.
+    /// </summary>
+    private async Task SweepAgedOrphansAsync(CancellationToken ct)
+    {
+        var maxAge = _ptyHost.OrphanMaxAgeHours;
+        if (maxAge <= 0) return;
+        foreach (var o in ListOrphans().Where(o => o.AgeHours >= maxAge))
+        {
+            _log.LogInformation("Orphaned pty host pid {Pid} (session {Id}) is {Age:0.0}h old, past Pty:OrphanMaxAgeHours={Max}; stopping it.",
+                o.HostPid, o.SessionId, o.AgeHours, maxAge);
+            await StopOrphansAsync(o.SessionId, ct);
+        }
+    }
+
+    /// <summary>
+    /// Rebuild a <see cref="ClaudeSession"/> from its persisted entry, keeping its id — every fork
+    /// link, hook correlation and postponed message points at that id, so a new one would orphan them.
+    /// Used for adoption only; a reopen deliberately gets a fresh id because it is a new process.
+    /// </summary>
+    private ClaudeSession Rehydrate(PersistedSession p) => new(
+        new CreateSessionRequest(
+            WorkingDirectory: p.WorkingDirectory,
+            Name: p.Name,
+            RemoteControl: p.RemoteControl,
+            Model: p.Model,
+            InitialPrompt: p.InitialPrompt,
+            PermissionMode: p.PermissionMode,
+            Continue: false,
+            ResumeSessionId: p.ClaudeSessionId,
+            Color: p.Color,
+            WatchdogEnabled: p.WatchdogEnabled,
+            ForkSession: false,
+            ParentSessionId: p.ParentSessionId,
+            ParentName: p.ParentName),
+        _exe,
+        _hosts,
+        _watchdog,
+        _loggerFactory.CreateLogger<ClaudeSession>(),
+        _tokens.HookToken,
+        _options.SelfUrl,
+        id: p.Id);
+
+    /// <summary>Subscribe to a session's bookkeeping events (shared by Create and adoption).</summary>
+    private void Track(ClaudeSession session)
+    {
+        session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
+        session.ProcessExited += _ => { SavePersisted(); RaiseChanged(); };
+        // Busy/waiting/watchdog changes are not persisted — they just need to reach the browser.
+        session.StateChanged += _ => RaiseChanged();
+    }
+
+    /// <summary>
     /// Relaunch every persisted session that was running at the previous exit
     /// (<see cref="PersistedSession.WasRunning"/>), resuming each conversation with
     /// <c>--resume &lt;id&gt;</c> (or <c>--continue</c>). Called once at startup unless
@@ -530,17 +708,18 @@ public sealed class SessionManager : IDisposable
         {
             if (ct.IsCancellationRequested) return;
             var p = pending[i];
-            // The app usually takes its sessions down with it (a ConPTY child can't outlive its host),
-            // but a crash — or a service restart — can leave the original alive. Resuming then would put
-            // a second claude on the same conversation, so leave that one alone and keep the entry
-            // Restorable for the user to decide.
+            // Sessions no longer die with the app — AdoptRunningHostsAsync has already re-attached to
+            // every one whose pty host is still up, so anything reaching here should genuinely be gone.
+            // This stays as the belt-and-braces check it always was: if the original process is somehow
+            // still alive, resuming would put a second claude on the same conversation, so leave it
+            // alone and keep the entry Restorable for the user to decide.
             if (OriginalProcessAlive(p))
             {
                 _log.LogInformation("Not auto-resuming session {Id} ('{Name}'): its process (pid {Pid}) is still running",
                     p.Id, p.Name, p.ProcessId);
                 continue;
             }
-            try { Restore(p.Id); }
+            try { await RestoreAsync(p.Id, ct); }
             catch (Exception ex) { _log.LogWarning(ex, "Could not auto-resume session {Id} ('{Name}')", p.Id, p.Name); }
             if (i < pending.Length - 1 && _options.ResumeStaggerMs > 0)
                 await Task.Delay(_options.ResumeStaggerMs, ct);
@@ -567,10 +746,13 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
-    /// Remove a session. <paramref name="stopProcess"/> also kills the claude process. Also forgets
-    /// a Restorable entry from a previous run (nothing to stop in that case). Either way the session
-    /// is saved as a launch preset first, so a removed session lands in the "recent" list instead of
-    /// disappearing — see <see cref="RememberAsRecent(ClaudeSession)"/>.
+    /// Remove a session. <paramref name="stopProcess"/> also ends it — the pty host is asked to shut
+    /// down and its claude process goes with it. Without that flag the session is merely <b>detached</b>:
+    /// we forget it, but its host keeps running and it can be adopted again later (that is what
+    /// <c>POST /api/sessions/{id}/detach</c> is for). Also forgets a Restorable entry from a previous
+    /// run (nothing to stop in that case). Either way the session is saved as a launch preset first, so
+    /// a removed session lands in the "recent" list instead of disappearing — see
+    /// <see cref="RememberAsRecent(ClaudeSession)"/>.
     /// </summary>
     public bool Remove(string id, bool stopProcess)
     {
@@ -578,6 +760,13 @@ public sealed class SessionManager : IDisposable
         {
             RememberAsRecent(s); // before Forget/TryRemove below — it reads the hook + launch bookkeeping
             if (stopProcess) s.Stop();
+            else if (s.IsAttached)
+                // Detaching now genuinely orphans the host: it used to die with the app on the next
+                // restart, and no longer does. Its state file is deliberately left in place so the
+                // process can still be found — adoption sees a live host with no metadata and leaves
+                // it alone rather than resurrecting or killing it.
+                _log.LogInformation("Detached from session {Id} ('{Name}'); its pty host and claude process (pid {Pid}) stay running.",
+                    s.Id, s.Name, s.ProcessId);
             s.Dispose();
             _hooks.Forget(id);
             _launchedFrom.TryRemove(id, out _);
@@ -659,10 +848,12 @@ public sealed class SessionManager : IDisposable
         }
     }
 
-    // ---- Persistence: remember launched sessions so they can be reopened across app restarts -----
-    // A ConPTY child dies with the host, so we can't re-attach to the live process. Instead we keep
-    // each session's launch metadata and offer it as "Restorable" — reopened with --continue, which
-    // relaunches a fresh process that resumes the folder's most recent conversation.
+    // ---- Persistence: the metadata behind both re-attaching and reopening -------------------------
+    // A session's pseudoconsole lives in its own pty host now, so it usually survives an app restart
+    // and AdoptRunningHostsAsync re-attaches to it — this file supplies the name, colour, model, fork
+    // links and watchdog setting that the pty state file deliberately doesn't carry. When the host is
+    // genuinely gone (a reboot: a ConPTY child can't survive one), the same entry is offered as
+    // "Restorable" and reopened with --resume/--continue, exactly as before.
 
     private void LoadPersisted()
     {
@@ -777,16 +968,24 @@ public sealed class SessionManager : IDisposable
         ScheduleExitRecheck();
     }
 
+    /// <summary>
+    /// Shut down the manager <b>without</b> touching the sessions. Each session's Dispose now only
+    /// closes its pipe: the pty hosts and their claude processes keep running, and the next start
+    /// re-attaches to them via <see cref="AdoptRunningHostsAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// This used to kill every session, which is what made an update, a redeploy or tray Exit lose
+    /// whatever turn was in flight. If you are tempted to "clean up" here: that cleanup is the bug
+    /// this whole change exists to remove.
+    /// </remarks>
     public void Dispose()
     {
-        // Freeze the state file BEFORE killing anything, so the entries stay marked as running and come
-        // back on the next start (see _shuttingDown).
+        // Freeze the state file first, so the entries stay marked as running (see _shuttingDown) and
+        // are there to be matched against the live hosts on the next start.
         BeginShutdown();
         try { _exitRecheck.Dispose(); } catch { }
         _hooks.ClaudeSessionIdCaptured -= OnClaudeSessionIdCaptured;
-        // A ConPTY child can't outlive the host, so disposing ends each claude process. Their launch
-        // metadata is already on disk (written on create), so they come back as Restorable next start.
-        foreach (var s in _sessions.Values) s.Dispose();
+        foreach (var s in _sessions.Values) s.Dispose(); // detach only — never Stop()
         _sessions.Clear();
     }
 }

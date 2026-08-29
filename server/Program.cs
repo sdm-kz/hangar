@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Windows.Forms;
+using ClaudeWeb.Pty;
 using ClaudeWeb.Server.Auth;
 using ClaudeWeb.Server.FileSystem;
 using ClaudeWeb.Server.Logging;
@@ -52,16 +53,11 @@ internal static class Program
             Sessions.ClaudeHookStore.EnsureConfigured(port, hookLog);
         }
 
-        // Auto-resume: once the host is up, relaunch the sessions that were running at the previous exit,
-        // each resuming its own conversation. On by default, so a PC shutdown/boot (or a redeploy, or a
-        // tray Exit) brings the working set back without anyone clicking "Reopen". Turn it off with
-        // Sessions:ResumeOnStart=false or --no-resume-sessions; --resume-sessions forces it on for one
-        // launch (deploy.ps1 still passes it).
         // Freeze the session state file the moment anything says we're going down, so the entries stay
-        // marked as running and auto-resume brings them back. SessionManager.Dispose does this too, but
-        // a Windows shutdown kills our claude children BEFORE we get there — and each of those deaths
-        // would otherwise persist "not running" and silently drop the session from the next start.
-        // ApplicationStopping covers the service stop and Ctrl+C; SessionEnding covers shutdown/logoff.
+        // marked as running and are there to be matched against the live pty hosts on the next start.
+        // ApplicationStopping covers the service stop and Ctrl+C; SessionEnding covers shutdown/logoff
+        // — the latter still matters, because a Windows shutdown kills the claude children before we
+        // get there, and each of those deaths would otherwise persist "not running".
         {
             var sessionManager = app.Services.GetRequiredService<SessionManager>();
             app.Lifetime.ApplicationStopping.Register(sessionManager.BeginShutdown);
@@ -72,22 +68,40 @@ internal static class Program
         var resumeSessions = app.Configuration.GetValue("Sessions:ResumeOnStart", true);
         if (args.Contains("--resume-sessions", StringComparer.OrdinalIgnoreCase)) resumeSessions = true;
         if (args.Contains("--no-resume-sessions", StringComparer.OrdinalIgnoreCase)) resumeSessions = false;
-        if (resumeSessions)
+
+        // Startup session recovery, in two steps that must happen in this order:
+        //
+        //   1. RE-ATTACH to every session whose pty host is still running. An in-app update, a
+        //      redeploy, tray Exit or a crash leaves those alive, and they come back with their
+        //      scrollback and their in-flight conversation intact — no relaunch, no --resume.
+        //   2. AUTO-RESUME whatever is genuinely gone (the machine rebooted: a ConPTY child can't
+        //      survive that), relaunching each with --resume/--continue. On by default; turn it off
+        //      with Sessions:ResumeOnStart=false or --no-resume-sessions, and --resume-sessions forces
+        //      it on for one launch (deploy.ps1 still passes it).
+        //
+        // Step 1 runs even when auto-resume is off: adopting a live session is not a relaunch, and a
+        // dev instance with ResumeOnStart=false still wants its own sessions back. It is also why
+        // step 2 no longer finds them — which is the entire point.
+        app.Lifetime.ApplicationStarted.Register(() =>
         {
-            app.Lifetime.ApplicationStarted.Register(() =>
+            var manager = app.Services.GetRequiredService<SessionManager>();
+            var startupLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+            // Off the startup path: adoption talks to each host over a pipe and resuming staggers its
+            // launches, neither of which may hold up the tray message loop (or the service's start
+            // handshake).
+            _ = Task.Run(async () =>
             {
-                var manager = app.Services.GetRequiredService<SessionManager>();
-                var startupLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
-                // Off the startup path: resuming waits out a settling delay and staggers its launches,
-                // which must not hold up the tray message loop (or the service's start handshake).
-                _ = Task.Run(async () =>
-                {
-                    try { await manager.ResumePersistedAsync(app.Lifetime.ApplicationStopping); }
-                    catch (OperationCanceledException) { /* app is shutting down */ }
-                    catch (Exception ex) { startupLog.LogWarning(ex, "Could not resume sessions"); }
-                });
+                var ct = app.Lifetime.ApplicationStopping;
+                try { await manager.AdoptRunningHostsAsync(ct); }
+                catch (OperationCanceledException) { return; }
+                catch (Exception ex) { startupLog.LogWarning(ex, "Could not re-attach to running pty hosts"); }
+
+                if (!resumeSessions) return;
+                try { await manager.ResumePersistedAsync(ct); }
+                catch (OperationCanceledException) { /* app is shutting down */ }
+                catch (Exception ex) { startupLog.LogWarning(ex, "Could not resume sessions"); }
             });
-        }
+        });
 
         if (isService)
         {
@@ -110,10 +124,10 @@ internal static class Program
             Application.Run(tray);
 
         try { app.StopAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult(); } catch { }
-        // Dispose the host so the DI container tears down: this runs SessionManager.Dispose(), which
-        // kills each session's process tree (cmd.exe -> claude.exe). StopAsync alone does NOT dispose
-        // the container, so without this the claude/node children are orphaned and keep running after
-        // the tray "Exit" (the headless service path is fine — RunAsync disposes the host itself).
+        // Dispose the host so the DI container tears down cleanly. This runs SessionManager.Dispose(),
+        // which now only DETACHES from each session's pty host — the claude processes are meant to keep
+        // running past a tray "Exit" and be re-attached on the next start. (It used to kill each
+        // session's process tree here, which is exactly the behaviour this app no longer wants.)
         try { (app as IDisposable)?.Dispose(); } catch { }
         mutex?.Dispose();
     }
@@ -146,6 +160,7 @@ internal static class Program
         var sessionOptions = builder.Configuration.GetSection("Sessions").Get<SessionManagerOptions>() ?? new SessionManagerOptions();
         var watchdogOptions = builder.Configuration.GetSection("Watchdog").Get<WatchdogOptions>() ?? new WatchdogOptions();
         var updateOptions = builder.Configuration.GetSection("Update").Get<Update.UpdateOptions>() ?? new Update.UpdateOptions();
+        var ptyHostOptions = builder.Configuration.GetSection("Pty").Get<Sessions.Pty.PtyHostOptions>() ?? new Sessions.Pty.PtyHostOptions();
 
         // The URL a launched session calls back on (CLAUDEWEB_URL in its environment). Derived from the
         // bound port unless the operator pinned Sessions:SelfUrl; always loopback, since the session's
@@ -153,9 +168,17 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(sessionOptions.SelfUrl))
             sessionOptions.SelfUrl = $"http://127.0.0.1:{PortFromUrls(urls)}";
 
+        // Namespace this instance's pty pipes and state directory by the bound port, matching the
+        // port-scoped single-instance mutex above. %LocalAppData%\ClaudeWeb is shared by every
+        // instance on the machine, so without this a dev instance would adopt the live app's hosts —
+        // and stopping a session there would stop a real one. Pty:InstanceKey overrides it.
+        if (string.IsNullOrWhiteSpace(ptyHostOptions.InstanceKey))
+            ptyHostOptions.InstanceKey = PortFromUrls(urls).ToString();
+
         builder.Services.AddSingleton(authOptions);
         builder.Services.AddSingleton<TokenStore>();
         builder.Services.AddSingleton(sessionOptions);
+        builder.Services.AddSingleton(ptyHostOptions);
         // Collects Claude hook callbacks and derives live busy/waiting status; consumed by SessionManager
         // and pushed by SessionHub.
         builder.Services.AddSingleton<HookEventStore>();
@@ -164,8 +187,10 @@ internal static class Program
         // reach it) and a hosted service (so its broadcast loop runs for the app's lifetime).
         builder.Services.AddSingleton<SessionHub>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SessionHub>());
+        // The watchdog itself now runs inside each session's pty host — that is what lets it recover a
+        // session that hangs while this app is stopped. These options are still bound here, handed to
+        // each host at spawn, and read by the manual "Continue" endpoint for its send sequence.
         builder.Services.AddSingleton(watchdogOptions);
-        builder.Services.AddHostedService<WatchdogService>();
         // Watches the update staging folder and, on request, hands off to the external updater. One
         // instance shared as a singleton (the endpoints and the hub read its status) and as a hosted
         // service (its watch loop runs for the app's lifetime).
@@ -270,11 +295,13 @@ internal static class Program
             return info is null ? Results.NotFound() : Results.Ok(info);
         });
 
-        app.MapPost("/api/sessions", (CreateSessionRequest req, SessionManager mgr) =>
+        // Launching is genuinely async now — it spawns the session's pty host and waits for it to
+        // answer its pipe — so the request awaits rather than blocking a thread pool thread on it.
+        app.MapPost("/api/sessions", async (CreateSessionRequest req, SessionManager mgr) =>
         {
             try
             {
-                var info = mgr.Create(req);
+                var info = await mgr.CreateAsync(req);
                 return Results.Created($"/api/sessions/{info.Id}", info);
             }
             catch (Exception ex)
@@ -285,11 +312,11 @@ internal static class Program
 
         // External automation: create a session with an API key (X-Api-Key header). Same body as
         // the UI's POST /api/sessions; auth is handled by TokenAuthMiddleware for /api/external/*.
-        app.MapPost("/api/external/sessions", (CreateSessionRequest req, SessionManager mgr) =>
+        app.MapPost("/api/external/sessions", async (CreateSessionRequest req, SessionManager mgr) =>
         {
             try
             {
-                var info = mgr.Create(req);
+                var info = await mgr.CreateAsync(req);
                 return Results.Created($"/api/sessions/{info.Id}", info);
             }
             catch (Exception ex)
@@ -299,11 +326,11 @@ internal static class Program
         });
 
         // Reopen a Restorable session from a previous run (relaunch with --continue).
-        app.MapPost("/api/sessions/{id}/restore", (string id, SessionManager mgr) =>
+        app.MapPost("/api/sessions/{id}/restore", async (string id, SessionManager mgr) =>
         {
             try
             {
-                var info = mgr.Restore(id);
+                var info = await mgr.RestoreAsync(id);
                 return info is null ? Results.NotFound() : Results.Created($"/api/sessions/{info.Id}", info);
             }
             catch (Exception ex)
@@ -315,11 +342,11 @@ internal static class Program
         // Fork a session: launch a new one in the same folder that branches this session's conversation
         // (claude --resume <convo> --fork-session), leaving the original untouched. The new session
         // records its parent so the UI can nest it underneath.
-        app.MapPost("/api/sessions/{id}/fork", (string id, ForkRequest body, SessionManager mgr) =>
+        app.MapPost("/api/sessions/{id}/fork", async (string id, ForkRequest body, SessionManager mgr) =>
         {
             try
             {
-                var info = mgr.Fork(id, body.Name);
+                var info = await mgr.ForkAsync(id, body.Name);
                 return info is null ? Results.NotFound() : Results.Created($"/api/sessions/{info.Id}", info);
             }
             catch (Exception ex)
@@ -332,7 +359,18 @@ internal static class Program
         app.MapDelete("/api/sessions/{id}", (string id, SessionManager mgr) =>
             mgr.Remove(id, stopProcess: true) ? Results.Ok() : Results.NotFound());
 
-        // Forget the session but leave its Remote Control process running.
+        // Pty hosts still running for sessions this app no longer knows about — see PtyOrphanInfo.
+        // Listing them is also what cleans up state files whose host is gone.
+        app.MapGet("/api/pty/orphans", (SessionManager mgr) => Results.Ok(mgr.ListOrphans()));
+
+        // Stop orphaned hosts, and the claude processes under them. No body (or no id) stops every
+        // orphan; {"sessionId":"..."} stops one. Destructive — each is a live conversation — so the
+        // UI confirms first and nothing here acts on its own.
+        app.MapPost("/api/pty/orphans/stop", async (StopOrphansRequest? body, SessionManager mgr) =>
+            Results.Ok(new { stopped = await mgr.StopOrphansAsync(body?.SessionId) }));
+
+        // Detach: forget the session but leave its pty host — and so its claude process — running. It
+        // can be adopted again on a later start, since its state file and sessions.json entry both stay.
         app.MapPost("/api/sessions/{id}/detach", (string id, SessionManager mgr) =>
             mgr.Remove(id, stopProcess: false) ? Results.Ok() : Results.NotFound());
 
@@ -362,8 +400,8 @@ internal static class Program
         });
 
         // Enable/disable the hang watchdog for a session.
-        app.MapPost("/api/sessions/{id}/watchdog", (string id, WatchdogRequest body, SessionManager mgr) =>
-            mgr.SetWatchdogEnabled(id, body.Enabled) ? Results.Ok() : Results.NotFound());
+        app.MapPost("/api/sessions/{id}/watchdog", async (string id, WatchdogRequest body, SessionManager mgr) =>
+            await mgr.SetWatchdogEnabledAsync(id, body.Enabled) ? Results.Ok() : Results.NotFound());
 
         // Manually send the recovery sequence ("continue") to a session and clear its watchdog state.
         app.MapPost("/api/sessions/{id}/continue", async (string id, SessionManager mgr, WatchdogOptions wd) =>
@@ -373,7 +411,7 @@ internal static class Program
             var term = mgr.GetTerminal(id);
             if (term is null) return Results.NotFound();
             await term.WriteAsync(System.Text.Encoding.UTF8.GetBytes(wd.SendSequence), CancellationToken.None);
-            mgr.ResetWatchdog(id);
+            await mgr.ResetWatchdogAsync(id);
             return Results.Ok();
         });
 
@@ -849,6 +887,9 @@ internal static class Program
 }
 
 internal record LoginRequest(string? Password);
+
+/// <summary>Body for <c>POST /api/pty/orphans/stop</c>; a null id means "all of them".</summary>
+internal record StopOrphansRequest(string? SessionId);
 internal record WatchdogRequest(bool Enabled);
 internal record RenameRequest(string Name);
 // Name for a forked session; blank/absent falls back to a "<parent> (fork)" default server-side.

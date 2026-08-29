@@ -10,6 +10,7 @@ import type {
   GitRefs,
   GitStatus,
   GitWorktree,
+  PtyOrphan,
   SessionInfo,
   UpdateStatus,
 } from "@/types";
@@ -117,6 +118,19 @@ export const api = {
   // Manually send "continue" to a session and clear its watchdog give-up state.
   continueSession(id: string): Promise<void> {
     return request(`/api/sessions/${id}/continue`, { method: "POST" });
+  },
+
+  // Sessions still running that the app no longer tracks — usually the result of a detach.
+  listOrphans(): Promise<PtyOrphan[]> {
+    return request("/api/pty/orphans");
+  },
+
+  // Ends them for real (each is a live claude process). No id = all of them.
+  stopOrphans(sessionId?: string): Promise<{ stopped: number }> {
+    return request("/api/pty/orphans/stop", {
+      method: "POST",
+      body: JSON.stringify({ sessionId: sessionId ?? null }),
+    });
   },
   browse(path?: string): Promise<BrowseResult> {
     const q = path ? `?path=${encodeURIComponent(path)}` : "";

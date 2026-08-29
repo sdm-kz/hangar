@@ -90,6 +90,26 @@ public sealed record PersistedSession(
     /// <summary>The parent's display name at fork time, so the link survives the parent's removal.</summary>
     string? ParentName = null);
 
+/// <summary>
+/// A pty host still running for a session this app no longer knows about. Its <c>claude</c> is alive
+/// and reachable, but nothing in <c>sessions.json</c> claims it — so the app can neither show it nor
+/// adopt it, and it would otherwise sit there until the machine reboots.
+/// </summary>
+/// <remarks>
+/// Two things produce one: <c>POST /api/sessions/{id}/detach</c>, which deliberately forgets a
+/// session while leaving it running, and a state file whose session metadata was lost (an edited or
+/// deleted <c>sessions.json</c>). Adoption at startup deliberately leaves these alone rather than
+/// resurrecting a half-formed session or killing a working one; this is how they are surfaced instead.
+/// </remarks>
+public sealed record PtyOrphanInfo(
+    string SessionId,
+    int HostPid,
+    int ChildPid,
+    string WorkingDirectory,
+    DateTimeOffset CreatedAt,
+    /// <summary>How long the host has been running, so the UI can lead with the stale ones.</summary>
+    double AgeHours);
+
 /// <summary>Serializable snapshot of a session, sent to the browser.</summary>
 public sealed record SessionInfo(
     string Id,
@@ -140,4 +160,10 @@ public sealed record SessionInfo(
     /// The parent's display name at fork time — shown in the fork's header even once the parent itself
     /// has been closed and forgotten (in which case there's nothing left to link to).
     /// </summary>
-    string? ParentName = null);
+    string? ParentName = null,
+    /// <summary>
+    /// Whether the app re-attached to this session at startup instead of launching it — i.e. it
+    /// survived a restart, process and conversation intact. Always false for a session this app
+    /// started itself, and for a Restorable entry.
+    /// </summary>
+    bool Adopted = false);

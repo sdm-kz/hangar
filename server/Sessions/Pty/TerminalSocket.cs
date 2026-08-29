@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace ClaudeWeb.Server.Sessions.Pty;
 
 /// <summary>
-/// Bridges a browser WebSocket to a <see cref="TerminalChannel"/>. Framing is by opcode:
+/// Bridges a browser WebSocket to an <see cref="ITerminal"/>. Framing is by opcode:
 /// <list type="bullet">
 ///   <item>server → client: <b>Binary</b> = raw VT output (fed straight to xterm.js).</item>
 ///   <item>client → server: <b>Binary</b> = raw keystroke/paste bytes → PTY stdin;
@@ -14,7 +14,7 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 /// </summary>
 public static class TerminalSocket
 {
-    public static async Task PumpAsync(WebSocket ws, TerminalChannel term, CancellationToken hostCt)
+    public static async Task PumpAsync(WebSocket ws, ITerminal term, CancellationToken hostCt)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(hostCt);
         using var sub = term.Subscribe();
@@ -84,7 +84,7 @@ public static class TerminalSocket
     }
 
     private static async Task HandleControlAsync(
-        ReadOnlyMemory<byte> json, TerminalChannel term, WebSocket ws, SemaphoreSlim gate, CancellationToken ct)
+        ReadOnlyMemory<byte> json, ITerminal term, WebSocket ws, SemaphoreSlim gate, CancellationToken ct)
     {
         ControlMessage? msg;
         try { msg = JsonSerializer.Deserialize<ControlMessage>(json.Span, ControlJson); }

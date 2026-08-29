@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { NotificationToggle } from "./NotificationToggle";
+import { OrphanBar } from "./OrphanBar";
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import {
@@ -41,6 +42,7 @@ import {
   ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
+  Link2,
 } from "lucide-react";
 
 // The two lists the session sidebar can show: live sessions, or recent launch presets.
@@ -462,6 +464,17 @@ export function SessionSidebar({
                 <GitFork className="size-3" aria-label="forked session" />
               </span>
             )}
+            {/* Survived a restart of the app: this is still the original process, re-attached rather
+                than relaunched, so whatever it was in the middle of is intact. Worth saying, because
+                the alternative it replaced — resuming into a fresh process — looked identical here. */}
+            {s.adopted && (
+              <span
+                className="flex shrink-0 items-center text-muted-foreground"
+                title={`Re-attached after an app restart — still the original process (pid ${s.processId})`}
+              >
+                <Link2 className="size-3" aria-label="re-attached session" />
+              </span>
+            )}
             {/* Fixed-width gutter so the title never shifts when the activity dot appears. Busy
                 (emerald) wins; then waiting-on-you (amber, solid); otherwise the watchdog surfaces
                 recovering (amber pulse) / attention (red). */}
@@ -676,6 +689,10 @@ export function SessionSidebar({
         )}
       </div>
       )}
+
+      {/* Sessions that outlived the app but nothing points at any more. Renders nothing when there
+          are none, which is nearly always. */}
+      <OrphanBar />
 
       {/* Padding and control size match the Postponed bar's header, so the two footers line up. */}
       <div className="flex items-center gap-1 border-t px-2 py-1.5">
