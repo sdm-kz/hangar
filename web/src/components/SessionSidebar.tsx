@@ -20,7 +20,9 @@ import { ThemeToggle } from "./ThemeToggle";
 import { NotificationToggle } from "./NotificationToggle";
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
+import { writeToClipboard } from "@/lib/clipboard";
 import {
+  Check,
   Copy,
   Filter,
   MoreVertical,
@@ -136,7 +138,7 @@ function GroupHeader({
   onToggle: () => void;
   // When provided (sessions view only), shows a plus button to start a session in this folder.
   onNewSession?: () => void;
-  // When provided (sessions view only), shows a trash button to bulk-remove the folder's sessions.
+  // When provided (sessions view only), adds a bulk-remove entry to the folder's actions menu.
   onRemove?: () => void;
 }) {
   return (
@@ -166,17 +168,90 @@ function GroupHeader({
           <Plus className="size-3.5" />
         </button>
       )}
-      {onRemove && (
-        <button
-          type="button"
-          onClick={onRemove}
-          title="Remove sessions in this folder…"
-          className="shrink-0 opacity-0 transition-opacity hover:text-destructive group-hover/gh:opacity-100"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      )}
+      <FolderMenu dir={dir} onRemove={onRemove} />
     </div>
+  );
+}
+
+/**
+ * Three-dots menu on a folder header. Holds the folder's own actions — copying its path, and (on the
+ * sessions list, where a bulk remove makes sense) removing the sessions it contains. Destructive
+ * removal lives here rather than in the header strip so it can't be hit by a stray click.
+ */
+function FolderMenu({ dir, onRemove }: { dir: string; onRemove?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const ref = useDismissable<HTMLSpanElement>(open, useCallback(() => setOpen(false), []));
+
+  // Headers near the bottom of the list would push the menu past the viewport, so flip it upwards.
+  const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const box = e.currentTarget.getBoundingClientRect();
+    setDropUp(window.innerHeight - box.bottom < 160);
+    setOpen((o) => !o);
+  };
+
+  const copyPath = async () => {
+    await writeToClipboard(dir);
+    // Keep the menu open just long enough to show the copy landed.
+    setCopied(true);
+    setTimeout(() => {
+      setCopied(false);
+      setOpen(false);
+    }, 900);
+  };
+
+  return (
+    <span ref={ref} className="relative flex items-center" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        title="Folder actions"
+        className={cn(
+          "shrink-0 rounded transition-opacity hover:text-foreground",
+          // Touch devices never fire hover, so the menu's only entry point has to stay on screen.
+          open ? "text-foreground opacity-100" : "opacity-0 group-hover/gh:opacity-100 [@media(hover:none)]:opacity-100"
+        )}
+      >
+        <MoreVertical className="size-3.5" />
+      </button>
+      {open && (
+        <div
+          className={cn(
+            "absolute right-0 z-50 w-52 overflow-hidden rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
+            dropUp ? "bottom-full mb-1" : "top-full mt-1"
+          )}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              void copyPath();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+            {copied ? "Copied!" : "Copy path"}
+          </button>
+          {onRemove && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(false);
+                onRemove();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-destructive hover:bg-accent"
+            >
+              <Trash2 className="size-3.5" />
+              Remove sessions…
+            </button>
+          )}
+        </div>
+      )}
+    </span>
   );
 }
 
