@@ -173,6 +173,51 @@ public sealed partial class TerminalChannel : IDisposable
         return null;
     }
 
+    // ---- compaction sniffing: watch the OUTPUT for Claude's "Compacting conversation…" spinner.
+    // Unlike /rename and /color — one-shot confirmations we latch onto — this is a STATE with two
+    // edges, and there is nothing to key the closing one off: Claude's hooks fire PreCompact and
+    // nothing at all when it finishes. The screen has both edges for free, because the TUI repaints
+    // that spinner line for as long as the compaction runs and stops the moment it is done. So we
+    // read it as freshness, exactly like IsBusy: stamp a tick whenever the phrase turns up in
+    // freshly-read output, and call the session compacting while that stamp is warm. Nothing to
+    // clear, and a missed frame costs a moment of the dot rather than a flag stuck on forever.
+    private const long CompactWindowMs = 3000; // spinner seen this recently ⇒ still compacting
+    private long _lastCompactTick;
+
+    /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
+    public bool IsCompacting =>
+        Environment.TickCount64 - Volatile.Read(ref _lastCompactTick) < CompactWindowMs;
+
+    // The same discriminator the rename/color detectors rely on, for the same reason: prose can quote
+    // the phrase (this comment does), so the line must also START with the TUI's spinner glyph — a
+    // non-ASCII char, which the Latin1-decoded stream spreads over several 0x80-0xFF bytes, and which
+    // plain-ASCII markdown cannot produce. The glyph cycles (✻ ✽ ✶ ✳ …) so it is matched by class,
+    // not by value. Gaps are [ \t]* because the TUI draws a word gap by moving the cursor over it as
+    // often as it writes a space, and Vt.Strip turns a cursor-forward back into those spaces.
+    [GeneratedRegex(@"(?:^|[\r\n\x1e])[ \t]*[^\x00-\x7f][^A-Za-z0-9_\r\n\x1e]{0,8}Compacting[ \t]*conversation",
+        RegexOptions.IgnoreCase)]
+    private static partial Regex CompactingRegex();
+
+    // Scan freshly-read output for the spinner line. Called under _lock. Line-aware stripping, for the
+    // anchor's sake: this line is repainted, and a repaint opens its row with a cursor move rather than
+    // a CRLF, so without CursorBreak standing in for one there is no line start here to anchor to.
+    // Unlike the rename/color sniffers we don't then care WHICH kind of break it was — a repainted
+    // spinner means the compaction is still on screen and still running, which is the whole question.
+    // No tail is carried across the read boundary, unlike the sniffers above. They have to have one:
+    // they are watching for a confirmation printed ONCE, so a read that cuts it in half would lose it
+    // for good. This line is repainted several times a second for as long as the compaction runs — the
+    // elapsed timer and the progress bar in it are what keep changing — so a frame split by a boundary
+    // is re-delivered whole a moment later, and all a tail could buy is one frame of latency on a flag
+    // that lives for three seconds. What it would cost is a standing hazard: a retained tail long
+    // enough to bridge the phrase also CONTAINS the phrase, and would re-stamp the tick on every
+    // subsequent read, leaving the session compacting forever.
+    private void SniffCompacting(byte[] buf, int n)
+    {
+        var text = Vt.Strip(Encoding.Latin1.GetString(buf, 0, n), cursorMovesEndLines: true);
+        if (CompactingRegex().IsMatch(text))
+            Volatile.Write(ref _lastCompactTick, Environment.TickCount64);
+    }
+
     // ---- repaint guard ------------------------------------------------------------------------
     // A command result is not a one-off in the byte stream: the TUI redraws whatever is on screen
     // whenever it repaints (a resize, the input box growing, the transcript scrolling), so an OLD
@@ -295,6 +340,8 @@ public sealed partial class TerminalChannel : IDisposable
                     url = SniffRemoteUrl(buf, n);
                     rename = SniffRename(buf, n);
                     color = SniffColor(buf, n);
+                    SniffCompacting(buf, n); // a state, not an event — nothing to raise
+
                 }
                 // Fire outside the lock so a handler (which pushes onto the pipe) can't deadlock us.
                 if (rename is not null) RenameCommandDetected?.Invoke(rename);

@@ -41,6 +41,7 @@ export function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
   const [waitingIds, setWaitingIds] = useState<Set<string>>(() => new Set()); // waiting on a prompt
+  const [compactingIds, setCompactingIds] = useState<Set<string>>(() => new Set()); // compacting the conversation
   const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
   // The updater's view of itself, from the hub snapshot (or the poll below when it's down).
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -197,9 +198,13 @@ export function App() {
   // Badge the favicon with the busiest state across *all* sessions, so a backgrounded tab shows at a
   // glance that something is happening. Waiting-on-you (amber) outranks working (green) here — unlike
   // the per-session sidebar dot — because it's the one asking for you to come back.
+  // Compacting counts as busy here: a manual /compact runs from an idle prompt, so the hook-derived
+  // busy set is empty throughout and the tab would otherwise claim nothing is happening.
   useEffect(() => {
-    setFaviconStatus(waitingIds.size > 0 ? "waiting" : busyIds.size > 0 ? "busy" : "idle");
-  }, [busyIds, waitingIds]);
+    setFaviconStatus(
+      waitingIds.size > 0 ? "waiting" : busyIds.size > 0 || compactingIds.size > 0 ? "busy" : "idle"
+    );
+  }, [busyIds, waitingIds, compactingIds]);
 
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
   // (new/renamed/exited sessions, Claude going active/idle, watchdog status), so the UI stays current
@@ -226,11 +231,13 @@ export function App() {
             sessions: SessionInfo[];
             busy: string[];
             waiting?: string[];
+            compacting?: string[];
             update?: UpdateStatus;
           };
           applySessions(msg.sessions);
           setBusyIds(new Set(msg.busy));
           setWaitingIds(new Set(msg.waiting ?? []));
+          setCompactingIds(new Set(msg.compacting ?? []));
           if (msg.update) {
             setUpdate(msg.update);
             // Another tab (or the tray) started the install: show the overlay here too rather than
@@ -703,6 +710,7 @@ export function App() {
               sessions={sessions}
               busyIds={busyIds}
               waitingIds={waitingIds}
+              compactingIds={compactingIds}
               activeId={activeId}
               onSelect={selectSession}
               onNewInFolder={newSessionInFolder}
@@ -753,6 +761,7 @@ export function App() {
                   sessions={sessions}
                   busyIds={busyIds}
                   waitingIds={waitingIds}
+                  compactingIds={compactingIds}
                   activeId={activeId}
                   onSelect={(id) => {
                     selectSession(id);
@@ -794,7 +803,9 @@ export function App() {
         ) : active ? (
           <SessionView
             session={active}
-            busy={busyIds.has(active.id)}
+            // Compaction is work too: the postponed pool must not flush a stashed message into the
+            // terminal mid-compact, and a manual /compact leaves the hook-derived busy set empty.
+            busy={busyIds.has(active.id) || compactingIds.has(active.id)}
             parent={activeParent}
             onFork={forkSession}
             onSelectSession={selectSession}

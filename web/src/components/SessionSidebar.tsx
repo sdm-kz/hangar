@@ -128,9 +128,15 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
  * What an activity dot can say, and how it looks — one definition, so a session row and the folder
  * header above it can never disagree about what amber means.
  */
-type Activity = "busy" | "waiting" | "attention" | "recovering";
+type Activity = "busy" | "compacting" | "waiting" | "attention" | "recovering";
 const ACTIVITY_DOT: Record<Activity, { className: string; label: string }> = {
   busy: { className: "bg-emerald-500 animate-pulse", label: "Claude is working" },
+  // A flavour of busy, so it stays in the working family — a slower pulse and a cooler green, because
+  // "still here, but not on your task" is the useful thing to read off it from across the room.
+  compacting: {
+    className: "bg-teal-400 animate-pulse [animation-duration:2s]",
+    label: "Claude is compacting the conversation",
+  },
   waiting: {
     className: "bg-amber-400 animate-pulse ring-2 ring-amber-400/40",
     label: "Claude is waiting for your input",
@@ -140,7 +146,15 @@ const ACTIVITY_DOT: Record<Activity, { className: string; label: string }> = {
 };
 
 /** A session's own dot: what it is doing right now, with the live signal (busy) winning. */
-function sessionActivity(s: SessionInfo, busy: boolean, waiting: boolean): Activity | null {
+function sessionActivity(
+  s: SessionInfo,
+  busy: boolean,
+  waiting: boolean,
+  compacting: boolean
+): Activity | null {
+  // Ahead of plain busy: it's the more specific reading of the same "working" state, and it explains
+  // a session that has gone quiet for a minute or two without having stalled.
+  if (compacting) return "compacting";
   if (busy) return "busy";
   if (waiting) return "waiting";
   if (s.watchdogStatus === "attention") return "attention";
@@ -153,12 +167,23 @@ function sessionActivity(s: SessionInfo, busy: boolean, waiting: boolean): Activ
  * session is doing. Waiting-on-you outranks merely working, so a collapsed folder can't hide a
  * prompt behind a session that happens to be generating — the whole point of surfacing it up here.
  */
-const FOLDER_URGENCY: Record<Activity, number> = { waiting: 4, attention: 3, recovering: 2, busy: 1 };
-function folderActivity(items: SessionInfo[], busyIds: Set<string>, waitingIds: Set<string>): Activity | null {
+const FOLDER_URGENCY: Record<Activity, number> = {
+  waiting: 5,
+  attention: 4,
+  recovering: 3,
+  compacting: 2,
+  busy: 1,
+};
+function folderActivity(
+  items: SessionInfo[],
+  busyIds: Set<string>,
+  waitingIds: Set<string>,
+  compactingIds: Set<string>
+): Activity | null {
   let top: Activity | null = null;
   for (const s of items) {
     if (s.state === "Restorable") continue; // a closed session isn't doing anything
-    const a = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id));
+    const a = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id), compactingIds.has(s.id));
     if (a && (!top || FOLDER_URGENCY[a] > FOLDER_URGENCY[top])) top = a;
   }
   return top;
@@ -407,6 +432,7 @@ export function SessionSidebar({
   sessions,
   busyIds,
   waitingIds,
+  compactingIds,
   activeId,
   onSelect,
   onNewInFolder,
@@ -428,6 +454,7 @@ export function SessionSidebar({
   sessions: SessionInfo[];
   busyIds: Set<string>;
   waitingIds: Set<string>; // sessions where Claude is waiting on a prompt/dialog
+  compactingIds: Set<string>; // sessions where Claude is compacting its conversation
   activeId: string | null;
   onSelect: (id: string) => void;
   onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
@@ -520,7 +547,7 @@ export function SessionSidebar({
           backgroundRepeat: "no-repeat",
         }
       : undefined;
-    const activity = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id));
+    const activity = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id), compactingIds.has(s.id));
     // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Stop indenting past a few levels: a fork of a fork of a fork would otherwise squeeze the name
@@ -772,7 +799,8 @@ export function SessionSidebar({
                     activity={folderActivity(
                       g.items.map(({ item }) => item),
                       busyIds,
-                      waitingIds
+                      waitingIds,
+                      compactingIds
                     )}
                   />
                   {!isCollapsed && (

@@ -109,6 +109,7 @@ public sealed class SessionHub : BackgroundService
                 sessions = _mgr.List(),
                 busy = _mgr.BusySessionIds(),
                 waiting = _mgr.AwaitingInputIds(),
+                compacting = _mgr.CompactingSessionIds(),
                 update = _updates.Status,
             },
             JsonOpts);

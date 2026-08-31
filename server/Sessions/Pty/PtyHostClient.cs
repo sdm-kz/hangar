@@ -14,7 +14,7 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 /// <para><b>Disposing this does not end the session.</b> It closes the pipe and nothing else — the
 /// host keeps the child running and holds the scrollback until someone attaches again. That
 /// asymmetry is the whole point of the split, so read <see cref="Dispose"/> before changing it.</para>
-/// <para>Busy / waiting / watchdog status are <b>pushed</b> by the host and cached here, never asked
+/// <para>Busy / waiting / compacting / watchdog status are <b>pushed</b> by the host and cached here, never asked
 /// for: <c>SessionHub</c> samples them about once a second per session, and a synchronous round-trip
 /// over the pipe per sample would be absurd. The host is also the only honest place to compute them,
 /// now that the watchdog lives there — it keeps watching, and keeps recovering the session, while no
@@ -42,9 +42,10 @@ public sealed class PtyHostClient : ITerminal
     private short _rows;
 
     // Last `state` push from the host. The defaults are the safe reading for a session we have not
-    // heard about yet: not busy, not waiting, healthy.
+    // heard about yet: not busy, not waiting, not compacting, healthy.
     private bool _busy;
     private bool _waiting;
+    private bool _compacting;
     private string _watchdogStatus = "healthy";
 
     /// <summary>The session's id, for log lines that have to be readable months later.</summary>
@@ -75,6 +76,9 @@ public sealed class PtyHostClient : ITerminal
 
     /// <summary>True when a permission/confirmation prompt appears to be waiting on the user.</summary>
     public bool IsAwaitingInput { get { lock (_lock) return _waiting; } }
+
+    /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
+    public bool IsCompacting { get { lock (_lock) return _compacting; } }
 
     /// <summary>The host watchdog's view of the session: "healthy" | "recovering" | "attention".</summary>
     public string WatchdogStatus { get { lock (_lock) return _watchdogStatus; } }
@@ -237,9 +241,11 @@ public sealed class PtyHostClient : ITerminal
                 lock (_lock)
                 {
                     var status = string.IsNullOrEmpty(msg.WatchdogStatus) ? _watchdogStatus : msg.WatchdogStatus!;
-                    changed = _busy != msg.Busy || _waiting != msg.Waiting || _watchdogStatus != status;
+                    changed = _busy != msg.Busy || _waiting != msg.Waiting
+                        || _compacting != msg.Compacting || _watchdogStatus != status;
                     _busy = msg.Busy;
                     _waiting = msg.Waiting;
+                    _compacting = msg.Compacting;
                     _watchdogStatus = status;
                 }
                 // Only on a real change: the heartbeat exists to keep the cache honest, and waking the

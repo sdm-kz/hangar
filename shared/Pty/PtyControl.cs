@@ -60,6 +60,8 @@ public sealed record PtyControl
     public bool Busy { get; init; }
     /// <summary>state: a prompt appears to be waiting on the user.</summary>
     public bool Waiting { get; init; }
+    /// <summary>state: the child is compacting its conversation (auto or <c>/compact</c>).</summary>
+    public bool Compacting { get; init; }
     /// <summary>state: "healthy" | "recovering" | "attention".</summary>
     public string? WatchdogStatus { get; init; }
 

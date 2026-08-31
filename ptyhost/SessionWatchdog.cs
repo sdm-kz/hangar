@@ -7,8 +7,9 @@ namespace ClaudeWeb.PtyHost;
 
 /// <summary>
 /// Watches this host's session and auto-recovers it when it hangs on an API/streaming error banner,
-/// by writing "continue" to its PTY. Also derives the on-screen <c>busy</c> / <c>waiting</c> signals
-/// and pushes all three to whoever is attached as <c>state</c> control messages.
+/// by writing "continue" to its PTY. Also derives the on-screen <c>busy</c> / <c>waiting</c> /
+/// <c>compacting</c> signals and pushes them, with its own status, to whoever is attached as
+/// <c>state</c> control messages.
 /// </summary>
 /// <remarks>
 /// <para>This used to be one <c>WatchdogService</c> in the web app sweeping every session. It lives
@@ -72,6 +73,7 @@ public sealed class SessionWatchdog
                 Type = "state",
                 Busy = _terminal.IsBusy,
                 Waiting = IsAwaitingInput(),
+                Compacting = _terminal.IsCompacting,
                 WatchdogStatus = _status,
                 Enabled = _enabled,
             };
@@ -138,7 +140,7 @@ public sealed class SessionWatchdog
     private void PushState(bool force)
     {
         var state = CurrentState();
-        var key = $"{state.Busy}|{state.Waiting}|{state.WatchdogStatus}|{state.Enabled}";
+        var key = $"{state.Busy}|{state.Waiting}|{state.Compacting}|{state.WatchdogStatus}|{state.Enabled}";
         // The tick loop and a client's `watchdog` message both land here, on different threads, so the
         // "has it changed since last time" pair is decided under the lock rather than read torn.
         lock (_pushLock)

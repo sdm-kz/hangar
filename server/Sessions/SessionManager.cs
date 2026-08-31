@@ -163,6 +163,19 @@ public sealed class SessionManager : IDisposable
         _hooks.TryGetStatus(s.Id, out var st) ? st.Busy : s.Terminal?.IsBusy == true;
 
     /// <summary>
+    /// Ids of live sessions where Claude is compacting its conversation — auto-compaction or an
+    /// explicit <c>/compact</c>. Read off the screen in the pty host, with no hook-derived
+    /// alternative to prefer: Claude fires <c>PreCompact</c> and then nothing at all when the
+    /// compaction ends, so the repainting "Compacting conversation…" spinner is the only signal
+    /// that has both edges.
+    /// </summary>
+    public IReadOnlyCollection<string> CompactingSessionIds() =>
+        _sessions.Values
+            .Where(s => s.State == SessionState.Running && s.Terminal is { IsCompacting: true })
+            .Select(s => s.Id)
+            .ToArray();
+
+    /// <summary>
     /// Ids of live sessions that appear to be waiting on the user — a permission/confirmation dialog
     /// or numbered selection menu is on screen and Claude isn't emitting. Best-effort (keys off the
     /// same on-screen prompt patterns as the watchdog guard); reliable for dialogs, not for

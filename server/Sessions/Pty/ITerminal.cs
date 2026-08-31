@@ -46,6 +46,9 @@ public interface ITerminal : IDisposable
     /// <summary>True when a permission/confirmation prompt appears to be waiting on the user.</summary>
     bool IsAwaitingInput { get; }
 
+    /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
+    bool IsCompacting { get; }
+
     /// <summary>The watchdog's view of the session: "healthy" | "recovering" | "attention".</summary>
     string WatchdogStatus { get; }
 
