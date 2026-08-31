@@ -55,16 +55,31 @@ const TERM_THEMES: Record<Theme, ITheme> = {
 };
 
 // Minimal ANSI strip (CSI/OSC/other escapes), with CR collapsed to LF — mirrors the server's Vt.Strip
-// so we can pull a clean session name out of the terminal stream.
+// (line-aware flavour) so we can pull a clean session name out of the terminal stream. Two CSI kinds
+// carry text even though they paint no characters, and dropping them ruins the match: a cursor-forward
+// stands in for the spaces the TUI skipped over ("Session color set to: red" goes out as five words
+// joined by ESC[1C), and a reposition starts a screen row the way a CRLF would — which is what the
+// line anchors below key on.
 function stripAnsi(s: string): string {
-  return s
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/\x1b[@-Z\\-_]/g, "")
-    .replace(/\r/g, "\n");
+  return (
+    s
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[([0-?]*)([ -/]*)([@-~])/g, (_all, params: string, _inter, final: string) => {
+        if (/^[?<=>]/.test(params)) return ""; // private modes and queries never paint
+        const p = (i: number) => {
+          const v = parseInt(params.split(";")[i] ?? "", 10);
+          return Number.isNaN(v) ? 1 : v;
+        };
+        if (final === "C" || final === "a") return " ".repeat(Math.min(Math.max(p(0), 1), 240));
+        if ("ABEFG`dHf".includes(final)) return "\n"; // every reposition: CUU/CUD, CNL/CPL, CHA/HPA, VPA, CUP/HVP
+        return "";
+      })
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b[@-Z\\-_]/g, "")
+      .replace(/\r/g, "\n")
+  );
 }
 
 // A real rename is the OUTPUT of a "/rename" command, not the phrase appearing in assistant prose
@@ -73,16 +88,30 @@ function stripAnsi(s: string): string {
 // prose, and we require BOTH: (1) the "/rename" echo and the confirmation each START a line (prose
 // embeds them mid-sentence); (2) the confirmation is a TUI command result, so it's prefixed by a
 // non-ASCII tree marker "⎿"/"└" ([^\x00-\x7f]) that assistant markdown never emits — the load-bearing
-// discriminator, since plain-ASCII prose can't produce it. Names can contain spaces, so the name is a
-// lazy run of printable ASCII; it stops at a 2+ space run or the input prompt ">", which the TUI puts on
-// the next line via cursor moves (stripping ANSI drops that, so the prompt can abut, e.g. "main>").
+// discriminator, since plain-ASCII prose can't produce it. Names can contain spaces AND non-ASCII text
+// (this stream is decoded UTF-8, unlike the server's Latin1 bytes), so the name is a lazy run of
+// anything printable; it stops at a control char, a 2+ space run, or the input prompt ">", which the TUI puts on
+// the next line via cursor moves (the strip above now breaks the line there, but the guard still covers
+// a move it doesn't classify, e.g. "main>").
 // Trailing spaces trimmed. Mirrors the server sniffer (TerminalChannel.cs).
-const RENAME_CONFIRM = /(?:^|[\r\n])[^\w\r\n]{0,12}\/rename\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^\w\r\n]{0,15}[^\x00-\x7f][^\w\r\n]{0,8}Session renamed to:[ \t]*([\x20-\x7e]{1,100}?)(?=[^\x20-\x7e]|[ \t]{2,}|[ \t]*>|$)/g;
+// Line-anchoring alone is no longer a guard: the strip above breaks lines on cursor moves, and an
+// inline `code span` in rendered markdown is drawn between two of them — so a sentence mentioning
+// "/rename foo" starts a line as convincingly as a real echo does. The two halves must therefore
+// AGREE: the echoed argument is captured and back-referenced in the confirmation, no second command
+// may fall between them (so the confirmation belongs to the echo directly above it), and the echo
+// must END its line, which a real command line does and prose almost never does.
+const RENAME_CONFIRM = /(?:^|[\r\n])[ \t]*[^\w\r\n]{0,12}\/rename[ \t]+([^\x00-\x1f]{1,300}?)[ \t]*(?=[\r\n])(?:(?!\/rename)[\s\S]){0,2000}?(?:^|[\r\n])[ \t]*[^\w\r\n]{0,15}[^\x00-\x7f][^\w\r\n]{0,8}[ \t]*Session[ \t]*renamed[ \t]*to:[ \t]*\1(?=[\x00-\x1f]|[ \t]|$)/g;
 
-// Same discriminators for `/color <name>` (line-anchored + a non-ASCII tree marker before the
-// confirmation), so the color only updates on genuine "/color" command output, not the phrase in prose.
-// The color is a single word (a color name). Mirrors the server sniffer.
-const COLOR_CONFIRM = /(?:^|[\r\n])[^\w\r\n]{0,12}\/color\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^\w\r\n]{0,15}[^\x00-\x7f][^\w\r\n]{0,8}Session color set to:[ \t]*([A-Za-z]{1,20})/g;
+// Same discriminators for `/color <name>`, including the echo/confirmation agreement. Case-insensitive
+// because Claude lowercases the colour it echoes back; a bare "/color" (random colour) is deliberately
+// not matched, having no argument to agree on. Mirrors the server sniffer.
+const COLOR_CONFIRM = /(?:^|[\r\n])[ \t]*[^\w\r\n]{0,12}\/color[ \t]+([A-Za-z]{1,20})[ \t]*(?=[\r\n])(?:(?!\/color)[\s\S]){0,2000}?(?:^|[\r\n])[ \t]*[^\w\r\n]{0,15}[^\x00-\x7f][^\w\r\n]{0,8}[ \t]*Session[ \t]*color[ \t]*set[ \t]*to:[ \t]*\1(?![A-Za-z])/gi;
+
+// The cheap gate that decides whether a frame is worth running the full patterns over. Loose in the
+// same places they are (the TUI can draw either phrase's word gaps as cursor moves), so the gate can
+// never be the thing that swallows a confirmation.
+const RENAME_PHRASE = /Session[ \t]*renamed[ \t]*to:/;
+const COLOR_PHRASE = /Session[ \t]*color[ \t]*set[ \t]*to:/;
 
 // File-link matcher for the terminal. Two forms:
 //  1) a PATH with a separator (optional drive `C:\`, one or more `segment/`, then `name.ext`, any
@@ -244,6 +273,15 @@ export const TerminalPane = forwardRef<
   const scanBufRef = useRef("");
   const lastNameRef = useRef<string | null>(null);
   const lastColorRef = useRef<string | null>(null);
+  // A command result is not a one-off in the stream: the TUI redraws whatever is on screen on every
+  // repaint, so an older "/color pink" block still in the visible transcript is re-emitted in full
+  // long after a newer "/color cyan" — and applying it again is what made a session's colour flip
+  // back and forth by itself. Nothing marks a block as a repaint, so we use the one fact that does:
+  // a value this session has already been given cannot be news. First sighting wins. (Same guard
+  // server-side, in TerminalChannel.) The cost is that re-picking a colour or name already used this
+  // session won't register — cheap next to a colour that changes on its own.
+  const appliedNamesRef = useRef(new Set<string>());
+  const appliedColorsRef = useRef(new Set<string>());
 
   useEffect(() => {
     const host = hostRef.current;
@@ -437,23 +475,25 @@ export const TerminalPane = forwardRef<
       // Accumulate every frame (the confirmation's phrase and name can arrive in separate frames), and
       // require a following boundary char so the newest name — which the TUI ends with a box-drawing
       // char, not a newline — is captured cleanly instead of lagging a rename behind.
-      scanBufRef.current = (scanBufRef.current + stripAnsi(text)).slice(-2048);
-      if (scanBufRef.current.includes("Session renamed to:")) {
+      scanBufRef.current = (scanBufRef.current + stripAnsi(text)).slice(-4096);
+      if (RENAME_PHRASE.test(scanBufRef.current)) {
         let name: string | null = null;
         for (const m of scanBufRef.current.matchAll(RENAME_CONFIRM)) {
           name = m[1].trimEnd(); // last (most recent) confirmation wins; drop panel pad spaces
         }
-        if (name && name !== lastNameRef.current) {
+        if (name && name !== lastNameRef.current && !appliedNamesRef.current.has(name)) {
           lastNameRef.current = name;
+          appliedNamesRef.current.add(name);
           onRenameRef.current?.(name);
         }
       }
       // Same detection for a `/color <name>` typed in the terminal.
-      if (scanBufRef.current.includes("Session color set to:")) {
+      if (COLOR_PHRASE.test(scanBufRef.current)) {
         let color: string | null = null;
-        for (const m of scanBufRef.current.matchAll(COLOR_CONFIRM)) color = m[1];
-        if (color && color !== lastColorRef.current) {
+        for (const m of scanBufRef.current.matchAll(COLOR_CONFIRM)) color = m[1].toLowerCase();
+        if (color && color !== lastColorRef.current && !appliedColorsRef.current.has(color)) {
           lastColorRef.current = color;
+          appliedColorsRef.current.add(color);
           onColorRef.current?.(color);
         }
       }

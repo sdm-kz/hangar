@@ -104,10 +104,26 @@ public sealed partial class TerminalChannel : IDisposable
     // AND non-ASCII text, so the name is a lazy run of printable bytes INCLUDING the 0x80-0xFF halves of
     // UTF-8 sequences — capturing printable ASCII alone cut "AB-6463 подписание" down to "AB-6463" at the
     // first Cyrillic byte. It stops at a control byte (the line's own CR/LF), a 2+ space run, or the input
-    // prompt ">", which the TUI positions on the next line via cursor moves (stripping ANSI drops that,
-    // so the prompt can abut the name, e.g. "main>"). The caller turns those bytes back into text.
-    [GeneratedRegex(@"(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,12}/rename\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}Session renamed to:[ \t]*([\x20-\x7e\x80-\xff]{1,300}?)(?=[\x00-\x1f]|[ \t]{2,}|[ \t]*>|$)")]
+    // prompt ">", which the TUI positions on the next line via cursor moves (the line-aware strip now
+    // breaks the line there, but the guard costs nothing and covers a move it doesn't classify, e.g.
+    // "main>"). The caller turns those bytes back into text.
+    // The gaps inside the confirmation are [ \t]* rather than a literal space on purpose: the TUI draws
+    // a word gap by moving the cursor over it (ESC[1C) about as often as it writes a space, and while
+    // Vt.Strip now puts those spaces back, this phrase must not go back to matching nothing the next
+    // time that rendering changes.
+    // Line-anchoring alone stopped being a guard once the strip learned to break lines on cursor moves:
+    // an inline `code span` in rendered markdown is drawn between two moves, so prose about this very
+    // feature ("run /rename foo") now starts a line as convincingly as a real echo. So the two halves
+    // must also AGREE: the echoed argument is captured and back-referenced in the confirmation, and no
+    // second /rename may fall between them, which pins the confirmation to its own command rather than
+    // to a stray mention several lines above it. The echo must also END the line — a real command line
+    // holds nothing but the command.
+    [GeneratedRegex(@"(?:^|[\r\n])[ \t]*[^A-Za-z0-9_\r\n]{0,12}/rename[ \t]+([\x20-\x7e\x80-\xff]{1,300}?)[ \t]*(?=[\r\n])(?:(?!/rename)[\s\S]){0,2000}?(?:^|[\r\n])[ \t]*[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}[ \t]*Session[ \t]*renamed[ \t]*to:[ \t]*\1(?=[\x00-\x1f]|[ \t]|$)")]
     private static partial Regex RenameConfirmRegex();
+
+    /// <summary>Cheap gate: only run the full pattern when the phrase is somewhere in the buffer.</summary>
+    [GeneratedRegex(@"Session[ \t]*renamed[ \t]*to:")]
+    private static partial Regex RenamePhraseRegex();
 
     // ---- /color sniffing: watch the OUTPUT for Claude's "Session color set to: <color>" confirmation.
     // Same approach as /rename above — the typed line is unreliable, so we key off the confirmation.
@@ -118,28 +134,58 @@ public sealed partial class TerminalChannel : IDisposable
     public event Action<string>? ColorCommandDetected;
 
     // Same discriminators as the rename detector above (line-anchored + a non-ASCII tree marker before
-    // the confirmation, ASCII-spelled word class for Latin1 safety), so the phrase in assistant prose
-    // can't set a bogus color — only the genuine "/color" command result does. The color is a single
-    // word (a color name), captured as a run of letters.
-    [GeneratedRegex(@"(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,12}/color\b[^\r\n]*[\s\S]{0,500}?(?:^|[\r\n])[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}Session color set to:[ \t]*([A-Za-z]{1,20})")]
+    // the confirmation, ASCII-spelled word class for Latin1 safety, echo and confirmation naming the
+    // same color), so the phrase in assistant prose can't set a bogus color — only the genuine "/color"
+    // command result does. This session watched it happen: a "/color blue" from a sentence about this
+    // feature paired with a real "Session color set to: green" further down the screen, and every
+    // repaint re-applied it. Case-insensitive because Claude lowercases the colour it echoes back.
+    // A bare "/color" (which picks a random colour) is deliberately NOT matched: with no argument to
+    // agree on, it is exactly the shape that prose produces by accident.
+    [GeneratedRegex(@"(?:^|[\r\n])[ \t]*[^A-Za-z0-9_\r\n]{0,12}/color[ \t]+([A-Za-z]{1,20})[ \t]*(?=[\r\n])(?:(?!/color)[\s\S]){0,2000}?(?:^|[\r\n])[ \t]*[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}[ \t]*Session[ \t]*color[ \t]*set[ \t]*to:[ \t]*\1(?![A-Za-z])",
+        RegexOptions.IgnoreCase)]
     private static partial Regex ColorConfirmRegex();
+
+    /// <summary>Cheap gate: only run the full pattern when the phrase is somewhere in the buffer.</summary>
+    [GeneratedRegex(@"Session[ \t]*color[ \t]*set[ \t]*to:")]
+    private static partial Regex ColorPhraseRegex();
 
     // Scan freshly-read output for Claude's color confirmation. Returns the new color, or null.
     // Mirrors SniffRename: last match wins, a generous tail is retained across reads, and the same
     // color isn't reported twice in a row (TUI repaints).
     private string? SniffColor(byte[] buf, int n)
     {
-        var text = Vt.Strip(_colorScanTail + Encoding.Latin1.GetString(buf, 0, n));
+        var text = Vt.Strip(_colorScanTail + Encoding.Latin1.GetString(buf, 0, n), cursorMovesEndLines: true);
         string? color = null;
-        foreach (Match m in ColorConfirmRegex().Matches(text))
-            color = m.Groups[1].Value;
-        _colorScanTail = text.Length > 2048 ? text[^2048..] : text;
-        if (!string.IsNullOrEmpty(color) && color != _lastColorSeen)
+        if (ColorPhraseRegex().IsMatch(text))
+            foreach (Match m in ColorConfirmRegex().Matches(text))
+                color = m.Groups[1].Value.ToLowerInvariant();
+        _colorScanTail = text.Length > 4096 ? text[^4096..] : text;
+        if (!string.IsNullOrEmpty(color) && color != _lastColorSeen && !_colorsApplied.Contains(color))
         {
             _lastColorSeen = color;
+            Remember(_colorsApplied, color);
             return color;
         }
         return null;
+    }
+
+    // ---- repaint guard ------------------------------------------------------------------------
+    // A command result is not a one-off in the byte stream: the TUI redraws whatever is on screen
+    // whenever it repaints (a resize, the input box growing, the transcript scrolling), so an OLD
+    // "/color pink" block sitting in the visible transcript is re-emitted, in full, long after a newer
+    // "/color cyan" — and the detector, seeing a perfectly well-formed pair, applies pink again. That
+    // is what made a session's colour flip back and forth on its own. Nothing in the stream marks a
+    // block as a repaint, so we use the one fact that does distinguish them: a value the session has
+    // ALREADY been given cannot be news. First sighting wins; every later re-emission is ignored.
+    // The cost is deliberate and small — re-picking a colour (or name) this session already used will
+    // not register until it restarts — and it is the price of never changing on its own.
+    private readonly List<string> _colorsApplied = new();
+    private readonly List<string> _namesApplied = new();
+
+    private static void Remember(List<string> seen, string value)
+    {
+        seen.Add(value);
+        if (seen.Count > 32) seen.RemoveAt(0); // a session that cycles this much has forgotten the old ones anyway
     }
 
     // Scan freshly-read output for Claude's rename confirmation. Returns the new name, or null.
@@ -148,16 +194,21 @@ public sealed partial class TerminalChannel : IDisposable
     private string? SniffRename(byte[] buf, int n)
     {
         // Strip ANSI so styling around the line doesn't break the match (Latin1 keeps ASCII 1:1).
-        var text = Vt.Strip(_renameScanTail + Encoding.Latin1.GetString(buf, 0, n));
+        // Line-aware: the TUI opens the echo's screen row with a cursor move, not a CRLF, and both
+        // halves of this pattern are anchored to a line start.
+        var text = Vt.Strip(_renameScanTail + Encoding.Latin1.GetString(buf, 0, n), cursorMovesEndLines: true);
         string? name = null;
-        foreach (Match m in RenameConfirmRegex().Matches(text))
-            name = DecodeUtf8(m.Groups[1].Value); // last (most recent) confirmation wins
+        if (RenamePhraseRegex().IsMatch(text))
+            foreach (Match m in RenameConfirmRegex().Matches(text))
+                name = DecodeUtf8(m.Groups[1].Value); // last (most recent) confirmation wins
         // Keep a generous tail: the "/rename …" command and its confirmation can span reads, and the
-        // regex allows a few hundred chars between them.
-        _renameScanTail = text.Length > 2048 ? text[^2048..] : text;
-        if (!string.IsNullOrEmpty(name) && name != _lastRenameSeen)
+        // regex allows a couple of thousand chars between them — a repaint that redraws the screen
+        // between the echo and the result puts that much text in the gap.
+        _renameScanTail = text.Length > 4096 ? text[^4096..] : text;
+        if (!string.IsNullOrEmpty(name) && name != _lastRenameSeen && !_namesApplied.Contains(name))
         {
             _lastRenameSeen = name;
+            Remember(_namesApplied, name);
             return name;
         }
         return null;
