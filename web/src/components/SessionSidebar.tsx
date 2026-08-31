@@ -549,13 +549,14 @@ export function SessionSidebar({
           !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
         )}
       >
-        {/* Activity dot, in the top-left corner just inside the colour line rather than sitting in
-            the name's line: an inline gutter would have to stay reserved on every idle row — most of
-            them — just so the title wouldn't shift when the dot appears. What it can say lives in
-            ACTIVITY_DOT, so this row and its folder header always mean the same thing by the same
-            colour. It rides at the very top, clear of the name's first letter below it. */}
+        {/* Activity dot, in the top-left corner rather than sitting in the name's line: an inline
+            gutter would have to stay reserved on every idle row — most of them — just so the title
+            wouldn't shift when the dot appears. What it can say lives in ACTIVITY_DOT, so this row
+            and its folder header always mean the same thing by the same colour. It sits ON the colour
+            band deliberately, with a ring of the page background around it so the two colours stay
+            legible where they meet. */}
         {!restorable && activity && (
-          <span className="pointer-events-none absolute left-[7px] top-0.5 leading-none">
+          <span className="pointer-events-none absolute left-0.5 top-0.5 rounded-full bg-background p-[2px] leading-none">
             <span
               className={cn("block size-1.5 rounded-full", ACTIVITY_DOT[activity].className)}
               aria-label={ACTIVITY_DOT[activity].label}
