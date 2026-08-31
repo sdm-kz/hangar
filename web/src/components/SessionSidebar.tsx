@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
+import { sessionColor } from "@/lib/sessionColors";
 import { forkTree, type ForkNode } from "@/lib/sessionTree";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
@@ -123,6 +124,46 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
   return groups;
 }
 
+/**
+ * What an activity dot can say, and how it looks — one definition, so a session row and the folder
+ * header above it can never disagree about what amber means.
+ */
+type Activity = "busy" | "waiting" | "attention" | "recovering";
+const ACTIVITY_DOT: Record<Activity, { className: string; label: string }> = {
+  busy: { className: "bg-emerald-500 animate-pulse", label: "Claude is working" },
+  waiting: {
+    className: "bg-amber-400 animate-pulse ring-2 ring-amber-400/40",
+    label: "Claude is waiting for your input",
+  },
+  attention: { className: "bg-red-500", label: "Session needs attention" },
+  recovering: { className: "bg-amber-500 animate-pulse", label: "Watchdog is auto-recovering this session" },
+};
+
+/** A session's own dot: what it is doing right now, with the live signal (busy) winning. */
+function sessionActivity(s: SessionInfo, busy: boolean, waiting: boolean): Activity | null {
+  if (busy) return "busy";
+  if (waiting) return "waiting";
+  if (s.watchdogStatus === "attention") return "attention";
+  if (s.watchdogStatus === "recovering") return "recovering";
+  return null;
+}
+
+/**
+ * A folder's dot: the most urgent thing inside it, which is a different question from what any one
+ * session is doing. Waiting-on-you outranks merely working, so a collapsed folder can't hide a
+ * prompt behind a session that happens to be generating — the whole point of surfacing it up here.
+ */
+const FOLDER_URGENCY: Record<Activity, number> = { waiting: 4, attention: 3, recovering: 2, busy: 1 };
+function folderActivity(items: SessionInfo[], busyIds: Set<string>, waitingIds: Set<string>): Activity | null {
+  let top: Activity | null = null;
+  for (const s of items) {
+    if (s.state === "Restorable") continue; // a closed session isn't doing anything
+    const a = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id));
+    if (a && (!top || FOLDER_URGENCY[a] > FOLDER_URGENCY[top])) top = a;
+  }
+  return top;
+}
+
 /** Collapsible folder header shared by the grouped session and recent lists. */
 function GroupHeader({
   dir,
@@ -131,6 +172,7 @@ function GroupHeader({
   onToggle,
   onNewSession,
   onRemove,
+  activity,
 }: {
   dir: string;
   count: number;
@@ -140,6 +182,9 @@ function GroupHeader({
   onNewSession?: () => void;
   // When provided (sessions view only), adds a bulk-remove entry to the folder's actions menu.
   onRemove?: () => void;
+  // The most urgent thing happening in this folder, shown as a dot — so a collapsed folder still
+  // says that something inside wants you. Sessions view only; a recent preset has no state.
+  activity?: Activity | null;
 }) {
   return (
     <div className="group/gh flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
@@ -157,6 +202,13 @@ function GroupHeader({
         <FolderTree className="size-3.5 shrink-0" />
         <span className="truncate font-mono text-[11px] font-medium">{folderLabel(dir)}</span>
       </button>
+      {activity && (
+        <span
+          className={cn("size-1.5 shrink-0 rounded-full", ACTIVITY_DOT[activity].className)}
+          aria-label={ACTIVITY_DOT[activity].label}
+          title={`${ACTIVITY_DOT[activity].label} (in this folder)`}
+        />
+      )}
       <span className="shrink-0 text-[10px]">{count}</span>
       {onNewSession && (
         <button
@@ -454,6 +506,21 @@ export function SessionSidebar({
   // session they branched from — indented, with a small elbow so the relationship reads at a glance.
   const renderRow = ({ session: s, depth, hasChildren, hiddenCount }: ForkNode, showPath: boolean) => {
     const restorable = s.state === "Restorable";
+    const color = sessionColor(s.color);
+    // Session colour (set via `/color`) as a band down the row's left edge, painted as a background
+    // rather than an absolute element: a background is clipped by the row's border-radius, so the
+    // band tapers around the top and bottom corners instead of stopping short of them or poking out
+    // (the row can't be overflow-hidden — that would clip its own actions menu). border-box origin
+    // takes it right to the outer edge; no-repeat keeps it from tiling into the 1px border ring, which
+    // is what once left a stray arc in the opposite corner.
+    const colorEdge = color
+      ? {
+          backgroundImage: `linear-gradient(to right, ${color} 0 3px, transparent 3px)`,
+          backgroundOrigin: "border-box",
+          backgroundRepeat: "no-repeat",
+        }
+      : undefined;
+    const activity = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id));
     // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Stop indenting past a few levels: a fork of a fork of a fork would otherwise squeeze the name
@@ -462,7 +529,7 @@ export function SessionSidebar({
     return (
       <div
         key={s.id}
-        style={depth > 0 ? { marginLeft: indent } : undefined}
+        style={{ ...(depth > 0 ? { marginLeft: indent } : null), ...colorEdge }}
         onClick={
           restorable
             ? undefined
@@ -482,35 +549,17 @@ export function SessionSidebar({
           !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
         )}
       >
-        {/* Activity dot, pinned to the row's top-left corner rather than sitting in the name's line:
-            an inline gutter would have to stay reserved on every idle row — most of them — just so
-            the title wouldn't shift when the dot appears. Busy (emerald) wins; then waiting-on-you
-            (amber, solid); otherwise the watchdog surfaces recovering (amber pulse) / attention (red).
-            Tucked into the corner far enough that the curve still clears it, but no further: any
-            deeper and it starts crowding the first letter of the name. */}
-        {!restorable && (
-          <span className="pointer-events-none absolute left-0.5 top-0.5 leading-none">
-            {busyIds.has(s.id) ? (
-              <span
-                className="block size-1.5 rounded-full bg-emerald-500 animate-pulse"
-                aria-label="Claude is working"
-              />
-            ) : waitingIds.has(s.id) ? (
-              <span
-                className="block size-1.5 rounded-full bg-amber-400 animate-pulse ring-2 ring-amber-400/40"
-                aria-label="Claude is waiting for your input"
-              />
-            ) : s.watchdogStatus === "attention" ? (
-              <span
-                className="block size-1.5 rounded-full bg-red-500"
-                aria-label="Session needs attention"
-              />
-            ) : s.watchdogStatus === "recovering" ? (
-              <span
-                className="block size-1.5 rounded-full bg-amber-500 animate-pulse"
-                aria-label="Watchdog is auto-recovering this session"
-              />
-            ) : null}
+        {/* Activity dot, in the top-left corner just inside the colour line rather than sitting in
+            the name's line: an inline gutter would have to stay reserved on every idle row — most of
+            them — just so the title wouldn't shift when the dot appears. What it can say lives in
+            ACTIVITY_DOT, so this row and its folder header always mean the same thing by the same
+            colour. It rides at the very top, clear of the name's first letter below it. */}
+        {!restorable && activity && (
+          <span className="pointer-events-none absolute left-[7px] top-0.5 leading-none">
+            <span
+              className={cn("block size-1.5 rounded-full", ACTIVITY_DOT[activity].className)}
+              aria-label={ACTIVITY_DOT[activity].label}
+            />
           </span>
         )}
         <div className="flex items-center justify-between gap-1">
@@ -719,6 +768,11 @@ export function SessionSidebar({
                     onToggle={() => toggleGroup(g.dir)}
                     onNewSession={() => onNewInFolder(g.dir)}
                     onRemove={() => setRemoveDir(dirKey(g.dir))}
+                    activity={folderActivity(
+                      g.items.map(({ item }) => item),
+                      busyIds,
+                      waitingIds
+                    )}
                   />
                   {!isCollapsed && (
                     <div className="mt-0.5 space-y-0.5">

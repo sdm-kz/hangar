@@ -336,20 +336,22 @@ export function SessionView({
   return (
     <div className="flex h-full flex-col">
       <header className="relative flex shrink-0 flex-col">
-        {/* Session color (set via `/color`) as a left accent border — the same color the sidebar row shows. */}
-        {sessionColor(session.color) && (
-          <span
-            aria-hidden
-            className="absolute inset-y-0 left-0 w-1"
-            style={{ backgroundColor: sessionColor(session.color)! }}
-            title={`Color: ${session.color}`}
-          />
-        )}
         {/* Row 1: session name + badges on the left, uptime/info/RC and session actions on the
             right — h-14 so it lines up with the sidebar's app header. On a phone the width goes to
             the name instead: the folder and branch drop to a second line and the right-hand cluster
             collapses into a "⋯" menu. */}
-        <div className="flex min-h-10 min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1 md:h-10 md:py-0">
+        <div className="relative flex min-h-10 min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1 md:h-10 md:py-0">
+          {/* Session color (set via `/color`) as a left accent border, the same color the sidebar row
+              shows. Scoped to this row rather than the whole header: run down the header and it lines
+              up alongside the Terminal/Split/Files tabs too, which the colour says nothing about. */}
+          {sessionColor(session.color) && (
+            <span
+              aria-hidden
+              className="absolute inset-y-0 left-0 w-1"
+              style={{ backgroundColor: sessionColor(session.color)! }}
+              title={`Color: ${session.color}`}
+            />
+          )}
         <Button variant="ghost" size="icon" className="size-9 shrink-0 md:hidden" onClick={onToggleSidebar}>
           <Menu className="size-5" />
         </Button>
