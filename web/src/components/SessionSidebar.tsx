@@ -429,9 +429,6 @@ export function SessionSidebar({
   const visibleSessions =
     filter === "active" ? sessions.filter((s) => s.state === "Running") : sessions;
   const activeCount = sessions.filter((s) => s.state === "Running").length;
-  // Whether anything on show is a fork — if not, the rows skip the tree gutter entirely.
-  const anyForks = visibleSessions.some((s) => s.parentSessionId);
-
   // Dirs of the groups currently shown, and whether every one is collapsed — drives the
   // collapse/expand-all toggle so it flips to "expand" once nothing is left open.
   const visibleDirs = (tab === "sessions"
@@ -496,40 +493,68 @@ export function SessionSidebar({
             style={{ backgroundColor: color }}
           />
         )}
+        {/* Activity dot, pinned to the row's top-left corner rather than sitting in the name's line:
+            an inline gutter would have to stay reserved on every idle row — most of them — just so
+            the title wouldn't shift when the dot appears. Busy (emerald) wins; then waiting-on-you
+            (amber, solid); otherwise the watchdog surfaces recovering (amber pulse) / attention (red).
+            Nudged clear of the colour stripe when the session has one. */}
+        {!restorable && (
+          <span
+            className={cn(
+              "pointer-events-none absolute top-0 leading-none",
+              color ? "left-1.5" : "left-0"
+            )}
+          >
+            {busyIds.has(s.id) ? (
+              <span
+                className="block size-2 rounded-full bg-emerald-500 animate-pulse"
+                aria-label="Claude is working"
+              />
+            ) : waitingIds.has(s.id) ? (
+              <span
+                className="block size-2 rounded-full bg-amber-400 animate-pulse ring-2 ring-amber-400/40"
+                aria-label="Claude is waiting for your input"
+              />
+            ) : s.watchdogStatus === "attention" ? (
+              <span
+                className="block size-2 rounded-full bg-red-500"
+                aria-label="Session needs attention"
+              />
+            ) : s.watchdogStatus === "recovering" ? (
+              <span
+                className="block size-2 rounded-full bg-amber-500 animate-pulse"
+                aria-label="Watchdog is auto-recovering this session"
+              />
+            ) : null}
+          </span>
+        )}
         <div className="flex items-center justify-between gap-1">
           <span className="flex min-w-0 flex-1 items-center gap-0.5">
-            {/* Fold this session's forks away. Once anything in the list is forked the slot is
-                reserved on every row (empty where nothing hangs off it) so names stay aligned; a list
-                with no forks at all doesn't pay for the gutter. */}
-            <span className={cn("flex shrink-0 items-center justify-center", anyForks && "w-3.5")}>
-              {hasChildren && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleForks(s.id);
-                  }}
-                  aria-expanded={hiddenCount === 0}
-                  title={
-                    hiddenCount > 0
-                      ? `Show ${hiddenCount} fork${hiddenCount === 1 ? "" : "s"}`
-                      : "Hide this session's forks"
-                  }
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  {hiddenCount > 0 ? (
-                    <ChevronRight className="size-3.5" />
-                  ) : (
-                    <ChevronDown className="size-3.5" />
-                  )}
-                </button>
-              )}
-            </span>
-            {/* Count of what's folded away, so a collapsed parent still says how much it's hiding. */}
-            {hiddenCount > 0 && (
-              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                {hiddenCount}
-              </span>
+            {/* Fold this session's forks away. Only a row that actually has forks gets the toggle —
+                no gutter is reserved elsewhere, so a childless row starts at its name. How much a
+                collapsed row is hiding rides in the tooltip rather than an inline count, which would
+                cost a reserved slot on every parent row just to keep the name from jumping. */}
+            {hasChildren && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleForks(s.id);
+                }}
+                aria-expanded={hiddenCount === 0}
+                title={
+                  hiddenCount > 0
+                    ? `Show ${hiddenCount} fork${hiddenCount === 1 ? "" : "s"}`
+                    : "Hide this session's forks"
+                }
+                className="flex shrink-0 items-center text-muted-foreground hover:text-foreground"
+              >
+                {hiddenCount > 0 ? (
+                  <ChevronRight className="size-3.5" />
+                ) : (
+                  <ChevronDown className="size-3.5" />
+                )}
+              </button>
             )}
             {/* Nested fork: mark the row as a branch of the one above it. The parent's name is right
                 there in the list, so the tooltip carries it rather than the row spending width on it. */}
@@ -552,33 +577,6 @@ export function SessionSidebar({
                 <Link2 className="size-3" aria-label="re-attached session" />
               </span>
             )}
-            {/* Fixed-width gutter so the title never shifts when the activity dot appears. Busy
-                (emerald) wins; then waiting-on-you (amber, solid); otherwise the watchdog surfaces
-                recovering (amber pulse) / attention (red). */}
-            <span className="flex w-2.5 shrink-0 items-center justify-center">
-              {!restorable &&
-                (busyIds.has(s.id) ? (
-                  <span
-                    className="size-2 rounded-full bg-emerald-500 animate-pulse"
-                    aria-label="Claude is working"
-                  />
-                ) : waitingIds.has(s.id) ? (
-                  <span
-                    className="size-2 rounded-full bg-amber-400 animate-pulse ring-2 ring-amber-400/40"
-                    aria-label="Claude is waiting for your input"
-                  />
-                ) : s.watchdogStatus === "attention" ? (
-                  <span
-                    className="size-2 rounded-full bg-red-500"
-                    aria-label="Session needs attention"
-                  />
-                ) : s.watchdogStatus === "recovering" ? (
-                  <span
-                    className="size-2 rounded-full bg-amber-500 animate-pulse"
-                    aria-label="Watchdog is auto-recovering this session"
-                  />
-                ) : null)}
-            </span>
             {editingId === s.id ? (
               <RenameField
                 value={s.name}
