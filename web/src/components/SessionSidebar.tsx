@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
-import { sessionColor } from "@/lib/sessionColors";
 import { forkTree, type ForkNode } from "@/lib/sessionTree";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
@@ -44,7 +43,6 @@ import {
   ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
-  Link2,
 } from "lucide-react";
 
 // The two lists the session sidebar can show: live sessions, or recent launch presets.
@@ -456,8 +454,6 @@ export function SessionSidebar({
   // session they branched from — indented, with a small elbow so the relationship reads at a glance.
   const renderRow = ({ session: s, depth, hasChildren, hiddenCount }: ForkNode, showPath: boolean) => {
     const restorable = s.state === "Restorable";
-    // Color set via `/color` in the terminal, shown as a left accent stripe on the row.
-    const color = sessionColor(s.color);
     // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Stop indenting past a few levels: a fork of a fork of a fork would otherwise squeeze the name
@@ -486,13 +482,6 @@ export function SessionSidebar({
           !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
         )}
       >
-        {color && (
-          <span
-            aria-hidden
-            className="absolute inset-y-1 left-0 w-1 rounded-full"
-            style={{ backgroundColor: color }}
-          />
-        )}
         {/* Activity dot, pinned to the row's top-left corner rather than sitting in the name's line:
             an inline gutter would have to stay reserved on every idle row — most of them — just so
             the title wouldn't shift when the dot appears. Busy (emerald) wins; then waiting-on-you
@@ -562,17 +551,9 @@ export function SessionSidebar({
                 <GitFork className="size-3" aria-label="forked session" />
               </span>
             )}
-            {/* Survived a restart of the app: this is still the original process, re-attached rather
-                than relaunched, so whatever it was in the middle of is intact. Worth saying, because
-                the alternative it replaced — resuming into a fresh process — looked identical here. */}
-            {s.adopted && (
-              <span
-                className="flex shrink-0 items-center text-muted-foreground"
-                title={`Re-attached after an app restart — still the original process (pid ${s.processId})`}
-              >
-                <Link2 className="size-3" aria-label="re-attached session" />
-              </span>
-            )}
+            {/* Whether a session survived a restart of the app (re-attached, not relaunched) is worth
+                knowing but not worth a badge on every row it applies to — it lives in the session
+                info panel, next to the pid it's really a statement about. */}
             {editingId === s.id ? (
               <RenameField
                 value={s.name}

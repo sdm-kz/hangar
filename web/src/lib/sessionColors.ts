@@ -1,5 +1,9 @@
 // Maps a Claude session color name (set via `/color <name>` typed in the terminal) to a concrete CSS
-// color, used for the accent stripe shown in the sessions list. Mid-tone, saturated hues that stay
+// color, used for the accent stripe down the session header (and the dot in search). Deliberately not
+// on the sidebar rows: a stripe down the row edge collided with the activity dot in the same corner,
+// and the header is where you actually need to know which session you're looking at. Claude itself
+// accepts red, blue, green, yellow, purple, orange, pink and cyan; the rest are here because an
+// unknown name costs nothing (it just yields null). Mid-tone, saturated hues that stay
 // legible on both the light and dark sidebar. An unknown/unset name yields null (no accent).
 const PALETTE: Record<string, string> = {
   red: "#ef4444",

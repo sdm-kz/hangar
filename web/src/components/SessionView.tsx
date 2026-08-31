@@ -718,7 +718,14 @@ function SessionInfoList({ session, nowTick }: { session: SessionInfo; nowTick: 
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
       <InfoRow label="State">{session.state}</InfoRow>
-      <InfoRow label="PID">{session.processId}</InfoRow>
+      <InfoRow label="PID">
+        {session.processId}
+        {/* Survived a restart of the app: still the original process, re-attached rather than
+            relaunched, so whatever it was in the middle of is intact. */}
+        {session.adopted && (
+          <span className="text-muted-foreground"> · re-attached after an app restart</span>
+        )}
+      </InfoRow>
       {session.model && <InfoRow label="Model">{session.model}</InfoRow>}
       {session.permissionMode && <InfoRow label="Permissions">{session.permissionMode}</InfoRow>}
       <InfoRow label="Remote Control">{session.remoteControl ? "on" : "off"}</InfoRow>
