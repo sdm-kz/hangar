@@ -118,7 +118,7 @@ public sealed partial class TerminalChannel : IDisposable
     // second /rename may fall between them, which pins the confirmation to its own command rather than
     // to a stray mention several lines above it. The echo must also END the line — a real command line
     // holds nothing but the command.
-    [GeneratedRegex(@"(?:^|[\r\n])[ \t]*[^A-Za-z0-9_\r\n]{0,12}/rename[ \t]+([\x20-\x7e\x80-\xff]{1,300}?)[ \t]*(?=[\r\n])(?:(?!/rename)[\s\S]){0,2000}?(?:^|[\r\n])[ \t]*[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}[ \t]*Session[ \t]*renamed[ \t]*to:[ \t]*\1(?=[\x00-\x1f]|[ \t]|$)")]
+    [GeneratedRegex(@"(?:^|[\r\n\x1e])[ \t]*[^A-Za-z0-9_\r\n\x1e]{0,12}/rename[ \t]+(?<arg>[\x20-\x7e\x80-\xff]{1,300}?)[ \t]*(?=[\r\n\x1e])(?:(?!/rename)[\s\S]){0,2000}?(?:^|(?<paint>[\r\n\x1e]))[ \t]*[^A-Za-z0-9_\r\n\x1e]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n\x1e]{0,8}[ \t]*Session[ \t]*renamed[ \t]*to:[ \t]*\k<arg>(?=[\x00-\x1f]|[ \t]|$)")]
     private static partial Regex RenameConfirmRegex();
 
     /// <summary>Cheap gate: only run the full pattern when the phrase is somewhere in the buffer.</summary>
@@ -141,7 +141,7 @@ public sealed partial class TerminalChannel : IDisposable
     // repaint re-applied it. Case-insensitive because Claude lowercases the colour it echoes back.
     // A bare "/color" (which picks a random colour) is deliberately NOT matched: with no argument to
     // agree on, it is exactly the shape that prose produces by accident.
-    [GeneratedRegex(@"(?:^|[\r\n])[ \t]*[^A-Za-z0-9_\r\n]{0,12}/color[ \t]+([A-Za-z]{1,20})[ \t]*(?=[\r\n])(?:(?!/color)[\s\S]){0,2000}?(?:^|[\r\n])[ \t]*[^A-Za-z0-9_\r\n]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n]{0,8}[ \t]*Session[ \t]*color[ \t]*set[ \t]*to:[ \t]*\1(?![A-Za-z])",
+    [GeneratedRegex(@"(?:^|[\r\n\x1e])[ \t]*[^A-Za-z0-9_\r\n\x1e]{0,12}/color[ \t]+(?<arg>[A-Za-z]{1,20})[ \t]*(?=[\r\n\x1e])(?:(?!/color)[\s\S]){0,2000}?(?:^|(?<paint>[\r\n\x1e]))[ \t]*[^A-Za-z0-9_\r\n\x1e]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n\x1e]{0,8}[ \t]*Session[ \t]*color[ \t]*set[ \t]*to:[ \t]*\k<arg>(?![A-Za-z])",
         RegexOptions.IgnoreCase)]
     private static partial Regex ColorConfirmRegex();
 
@@ -156,11 +156,15 @@ public sealed partial class TerminalChannel : IDisposable
     {
         var text = Vt.Strip(_colorScanTail + Encoding.Latin1.GetString(buf, 0, n), cursorMovesEndLines: true);
         string? color = null;
+        var repainted = true;
         if (ColorPhraseRegex().IsMatch(text))
             foreach (Match m in ColorConfirmRegex().Matches(text))
-                color = m.Groups[1].Value.ToLowerInvariant();
+            {
+                color = m.Groups["arg"].Value.ToLowerInvariant();
+                repainted = IsRepaint(m);
+            }
         _colorScanTail = text.Length > 4096 ? text[^4096..] : text;
-        if (!string.IsNullOrEmpty(color) && color != _lastColorSeen && !_colorsApplied.Contains(color))
+        if (!string.IsNullOrEmpty(color) && color != _lastColorSeen && !(repainted && _colorsApplied.Contains(color)))
         {
             _lastColorSeen = color;
             Remember(_colorsApplied, color);
@@ -174,13 +178,25 @@ public sealed partial class TerminalChannel : IDisposable
     // whenever it repaints (a resize, the input box growing, the transcript scrolling), so an OLD
     // "/color pink" block sitting in the visible transcript is re-emitted, in full, long after a newer
     // "/color cyan" — and the detector, seeing a perfectly well-formed pair, applies pink again. That
-    // is what made a session's colour flip back and forth on its own. Nothing in the stream marks a
-    // block as a repaint, so we use the one fact that does distinguish them: a value the session has
-    // ALREADY been given cannot be news. First sighting wins; every later re-emission is ignored.
-    // The cost is deliberate and small — re-picking a colour (or name) this session already used will
-    // not register until it restarts — and it is the price of never changing on its own.
+    // is what made a session's colour flip back and forth on its own.
+    //
+    // What separates the two is HOW the confirmation's line began. Output that has just been printed
+    // arrives after a CR/LF; a repaint jumps the cursor to the row it is about to redraw, which the
+    // strip records as Vt.CursorBreak. So a streamed result is always taken — re-picking a colour this
+    // session already used works, which a blanket "first sighting wins" rule got wrong — while a
+    // repainted one is only taken for a value the session has never had. The remaining gap is narrow
+    // and self-correcting: a genuine result that happens to be painted rather than streamed (the
+    // spinner was running, say) is only dropped when it names a colour already used.
     private readonly List<string> _colorsApplied = new();
     private readonly List<string> _namesApplied = new();
+
+    /// <summary>Was this confirmation drawn by a repaint (cursor jump) rather than streamed after a CR/LF?</summary>
+    private static bool IsRepaint(Match m)
+    {
+        var paint = m.Groups["paint"];
+        // No group at all means the match sat at the very start of the buffer, with nothing to judge by.
+        return !paint.Success || paint.Value[0] == Vt.CursorBreak;
+    }
 
     private static void Remember(List<string> seen, string value)
     {
@@ -198,14 +214,18 @@ public sealed partial class TerminalChannel : IDisposable
         // halves of this pattern are anchored to a line start.
         var text = Vt.Strip(_renameScanTail + Encoding.Latin1.GetString(buf, 0, n), cursorMovesEndLines: true);
         string? name = null;
+        var repainted = true;
         if (RenamePhraseRegex().IsMatch(text))
             foreach (Match m in RenameConfirmRegex().Matches(text))
-                name = DecodeUtf8(m.Groups[1].Value); // last (most recent) confirmation wins
+            {
+                name = DecodeUtf8(m.Groups["arg"].Value); // last (most recent) confirmation wins
+                repainted = IsRepaint(m);
+            }
         // Keep a generous tail: the "/rename …" command and its confirmation can span reads, and the
         // regex allows a couple of thousand chars between them — a repaint that redraws the screen
         // between the echo and the result puts that much text in the gap.
         _renameScanTail = text.Length > 4096 ? text[^4096..] : text;
-        if (!string.IsNullOrEmpty(name) && name != _lastRenameSeen && !_namesApplied.Contains(name))
+        if (!string.IsNullOrEmpty(name) && name != _lastRenameSeen && !(repainted && _namesApplied.Contains(name)))
         {
             _lastRenameSeen = name;
             Remember(_namesApplied, name);

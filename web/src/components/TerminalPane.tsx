@@ -73,7 +73,10 @@ function stripAnsi(s: string): string {
           return Number.isNaN(v) ? 1 : v;
         };
         if (final === "C" || final === "a") return " ".repeat(Math.min(Math.max(p(0), 1), 240));
-        if ("ABEFG`dHf".includes(final)) return "\n"; // every reposition: CUU/CUD, CNL/CPL, CHA/HPA, VPA, CUP/HVP
+        // Every reposition: CUU/CUD, CNL/CPL, CHA/HPA, VPA, CUP/HVP. Broken as \x1e rather than \n so
+        // the detectors below can still tell a repaint (cursor jump) from output that just arrived
+        // (CR/LF) — mirrors Vt.CursorBreak on the server.
+        if ("ABEFG`dHf".includes(final)) return "\x1e";
         return "";
       })
       // eslint-disable-next-line no-control-regex
@@ -100,12 +103,21 @@ function stripAnsi(s: string): string {
 // AGREE: the echoed argument is captured and back-referenced in the confirmation, no second command
 // may fall between them (so the confirmation belongs to the echo directly above it), and the echo
 // must END its line, which a real command line does and prose almost never does.
-const RENAME_CONFIRM = /(?:^|[\r\n])[ \t]*[^\w\r\n]{0,12}\/rename[ \t]+([^\x00-\x1f]{1,300}?)[ \t]*(?=[\r\n])(?:(?!\/rename)[\s\S]){0,2000}?(?:^|[\r\n])[ \t]*[^\w\r\n]{0,15}[^\x00-\x7f][^\w\r\n]{0,8}[ \t]*Session[ \t]*renamed[ \t]*to:[ \t]*\1(?=[\x00-\x1f]|[ \t]|$)/g;
+const RENAME_CONFIRM = /(?:^|[\r\n\x1e])[ \t]*[^\w\r\n\x1e]{0,12}\/rename[ \t]+(?<arg>[^\x00-\x1f]{1,300}?)[ \t]*(?=[\r\n\x1e])(?:(?!\/rename)[\s\S]){0,2000}?(?:^|(?<paint>[\r\n\x1e]))[ \t]*[^\w\r\n\x1e]{0,15}[^\x00-\x7f][^\w\r\n\x1e]{0,8}[ \t]*Session[ \t]*renamed[ \t]*to:[ \t]*\k<arg>(?=[\x00-\x1f]|[ \t]|$)/g;
 
 // Same discriminators for `/color <name>`, including the echo/confirmation agreement. Case-insensitive
 // because Claude lowercases the colour it echoes back; a bare "/color" (random colour) is deliberately
 // not matched, having no argument to agree on. Mirrors the server sniffer.
-const COLOR_CONFIRM = /(?:^|[\r\n])[ \t]*[^\w\r\n]{0,12}\/color[ \t]+([A-Za-z]{1,20})[ \t]*(?=[\r\n])(?:(?!\/color)[\s\S]){0,2000}?(?:^|[\r\n])[ \t]*[^\w\r\n]{0,15}[^\x00-\x7f][^\w\r\n]{0,8}[ \t]*Session[ \t]*color[ \t]*set[ \t]*to:[ \t]*\1(?![A-Za-z])/gi;
+const COLOR_CONFIRM = /(?:^|[\r\n\x1e])[ \t]*[^\w\r\n\x1e]{0,12}\/color[ \t]+(?<arg>[A-Za-z]{1,20})[ \t]*(?=[\r\n\x1e])(?:(?!\/color)[\s\S]){0,2000}?(?:^|(?<paint>[\r\n\x1e]))[ \t]*[^\w\r\n\x1e]{0,15}[^\x00-\x7f][^\w\r\n\x1e]{0,8}[ \t]*Session[ \t]*color[ \t]*set[ \t]*to:[ \t]*\k<arg>(?![A-Za-z])/gi;
+
+// Was this confirmation drawn by a repaint (the line began with a cursor jump) rather than streamed
+// after a CR/LF? A repainted block is the transcript being redrawn, so an older one must not re-apply
+// its value over a newer one; a streamed one is the command's live result and always counts. No group
+// at all means the match sat at the very start of the buffer, with nothing to judge by.
+function isRepaint(m: RegExpMatchArray): boolean {
+  const paint = m.groups?.paint;
+  return !paint || paint === "\x1e";
+}
 
 // The cheap gate that decides whether a frame is worth running the full patterns over. Loose in the
 // same places they are (the TUI can draw either phrase's word gaps as cursor moves), so the gate can
@@ -478,10 +490,12 @@ export const TerminalPane = forwardRef<
       scanBufRef.current = (scanBufRef.current + stripAnsi(text)).slice(-4096);
       if (RENAME_PHRASE.test(scanBufRef.current)) {
         let name: string | null = null;
+        let repainted = true;
         for (const m of scanBufRef.current.matchAll(RENAME_CONFIRM)) {
-          name = m[1].trimEnd(); // last (most recent) confirmation wins; drop panel pad spaces
+          name = m.groups!.arg.trimEnd(); // last (most recent) confirmation wins; drop panel pad spaces
+          repainted = isRepaint(m);
         }
-        if (name && name !== lastNameRef.current && !appliedNamesRef.current.has(name)) {
+        if (name && name !== lastNameRef.current && !(repainted && appliedNamesRef.current.has(name))) {
           lastNameRef.current = name;
           appliedNamesRef.current.add(name);
           onRenameRef.current?.(name);
@@ -490,8 +504,12 @@ export const TerminalPane = forwardRef<
       // Same detection for a `/color <name>` typed in the terminal.
       if (COLOR_PHRASE.test(scanBufRef.current)) {
         let color: string | null = null;
-        for (const m of scanBufRef.current.matchAll(COLOR_CONFIRM)) color = m[1].toLowerCase();
-        if (color && color !== lastColorRef.current && !appliedColorsRef.current.has(color)) {
+        let repainted = true;
+        for (const m of scanBufRef.current.matchAll(COLOR_CONFIRM)) {
+          color = m.groups!.arg.toLowerCase();
+          repainted = isRepaint(m);
+        }
+        if (color && color !== lastColorRef.current && !(repainted && appliedColorsRef.current.has(color))) {
           lastColorRef.current = color;
           appliedColorsRef.current.add(color);
           onColorRef.current?.(color);

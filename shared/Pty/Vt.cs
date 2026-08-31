@@ -22,9 +22,17 @@ public static partial class Vt
     private static partial Regex OtherEscape();
 
     // Leftover C0 control bytes except tab/newline; carriage returns collapse to newline so a
-    // redrawn line doesn't glue onto the previous one when we scan.
-    [GeneratedRegex(@"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")]
+    // redrawn line doesn't glue onto the previous one when we scan. \x1e survives: that is the
+    // record separator this class writes for a cursor-move line break (see CursorBreak).
+    [GeneratedRegex(@"[\x00-\x08\x0b\x0c\x0e-\x1d\x1f\x7f]")]
     private static partial Regex Controls();
+
+    /// <summary>
+    /// The line break a cursor move stands in for, kept distinct from a real CR/LF. Both start a line
+    /// on screen, but only one of them means "the program just printed this": a scanner can tell a
+    /// freshly streamed command result from the same block being repainted by which one introduced it.
+    /// </summary>
+    public const char CursorBreak = '\u001e';
 
     // A cursor-forward run stands in for spaces the TUI never actually emitted; one screen line is
     // as far as that can honestly go, and the cap also bounds a garbled parameter.
@@ -35,8 +43,9 @@ public static partial class Vt
 
     /// <summary>
     /// As <see cref="Strip(string)"/>, but with <paramref name="cursorMovesEndLines"/> a cursor
-    /// reposition also becomes a newline. Claude's TUI starts a fresh screen row that way as often as
-    /// it emits CRLF — a repaint jumps to the row it is about to draw — so a scanner that anchors on
+    /// reposition also breaks the line — as <see cref="CursorBreak"/>, not "\n", so the caller can
+    /// still tell which kind it was. Claude's TUI starts a fresh screen row that way as often as it
+    /// emits CRLF — a repaint jumps to the row it is about to draw — so a scanner that anchors on
     /// line starts (the /rename and /color sniffers) has to see those rows as separate lines. The
     /// watchdog deliberately does NOT: it counts lines to size its window, and a repaint's per-row
     /// cursor moves would shrink that window to a few characters of the screen.
@@ -75,8 +84,10 @@ public static partial class Vt
             // Every reposition: CUU/CUD, CNL/CPL, CHA/HPA, VPA, CUP/HVP. Wherever the cursor lands,
             // what it draws there belongs to a different screen row than what came before it — even a
             // jump within one row, since the TUI only makes those to skip over a gap it isn't drawing.
+            // It breaks the line as CursorBreak rather than "\n" so a scanner can still tell the two
+            // apart: a jump means the screen is being repainted, a CR/LF means output just arrived.
             case 'A' or 'B' or 'E' or 'F' or 'G' or '`' or 'd' or 'H' or 'f' when cursorMovesEndLines:
-                return "\n";
+                return CursorBreak.ToString();
 
             default:
                 return "";
