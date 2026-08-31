@@ -497,32 +497,28 @@ export function SessionSidebar({
             an inline gutter would have to stay reserved on every idle row — most of them — just so
             the title wouldn't shift when the dot appears. Busy (emerald) wins; then waiting-on-you
             (amber, solid); otherwise the watchdog surfaces recovering (amber pulse) / attention (red).
-            Nudged clear of the colour stripe when the session has one. */}
+            Tucked into the corner far enough that the curve still clears it, but no further: any
+            deeper and it starts crowding the first letter of the name. */}
         {!restorable && (
-          <span
-            className={cn(
-              "pointer-events-none absolute top-0 leading-none",
-              color ? "left-1.5" : "left-0"
-            )}
-          >
+          <span className="pointer-events-none absolute left-0.5 top-0.5 leading-none">
             {busyIds.has(s.id) ? (
               <span
-                className="block size-2 rounded-full bg-emerald-500 animate-pulse"
+                className="block size-1.5 rounded-full bg-emerald-500 animate-pulse"
                 aria-label="Claude is working"
               />
             ) : waitingIds.has(s.id) ? (
               <span
-                className="block size-2 rounded-full bg-amber-400 animate-pulse ring-2 ring-amber-400/40"
+                className="block size-1.5 rounded-full bg-amber-400 animate-pulse ring-2 ring-amber-400/40"
                 aria-label="Claude is waiting for your input"
               />
             ) : s.watchdogStatus === "attention" ? (
               <span
-                className="block size-2 rounded-full bg-red-500"
+                className="block size-1.5 rounded-full bg-red-500"
                 aria-label="Session needs attention"
               />
             ) : s.watchdogStatus === "recovering" ? (
               <span
-                className="block size-2 rounded-full bg-amber-500 animate-pulse"
+                className="block size-1.5 rounded-full bg-amber-500 animate-pulse"
                 aria-label="Watchdog is auto-recovering this session"
               />
             ) : null}
