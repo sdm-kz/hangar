@@ -234,18 +234,20 @@ function GroupHeader({
           title={`${ACTIVITY_DOT[activity].label} (in this folder)`}
         />
       )}
-      <span className="shrink-0 text-[10px]">{count}</span>
       {onNewSession && (
         <button
           type="button"
           onClick={onNewSession}
           title="New session in this folder"
-          className="shrink-0 opacity-0 transition-opacity hover:text-foreground group-hover/gh:opacity-100"
+          className="hidden shrink-0 hover:text-foreground group-hover/gh:inline-flex"
         >
           <Plus className="size-3.5" />
         </button>
       )}
       <FolderMenu dir={dir} onRemove={onRemove} />
+      {/* Session count: always visible, so it's pinned last and the hover-only actions expand to
+          its left — same anchoring as a session row's postponed badge. */}
+      <span className="shrink-0 text-[10px] tabular-nums">{count}</span>
     </div>
   );
 }
@@ -280,17 +282,23 @@ function FolderMenu({ dir, onRemove }: { dir: string; onRemove?: () => void }) {
   };
 
   return (
-    <span ref={ref} className="relative flex items-center" onClick={(e) => e.stopPropagation()}>
+    <span
+      ref={ref}
+      // Hidden rather than transparent while idle, so it takes no width and the count next to it
+      // sits flush right. Touch devices never fire hover, so the menu's only entry point has to
+      // stay on screen there.
+      className={cn(
+        "relative items-center",
+        open ? "flex" : "hidden group-hover/gh:flex [@media(hover:none)]:flex"
+      )}
+      onClick={(e) => e.stopPropagation()}
+    >
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
         title="Folder actions"
-        className={cn(
-          "shrink-0 rounded transition-opacity hover:text-foreground",
-          // Touch devices never fire hover, so the menu's only entry point has to stay on screen.
-          open ? "text-foreground opacity-100" : "opacity-0 group-hover/gh:opacity-100 [@media(hover:none)]:opacity-100"
-        )}
+        className={cn("shrink-0 rounded hover:text-foreground", open && "text-foreground")}
       >
         <MoreVertical className="size-3.5" />
       </button>
@@ -550,9 +558,10 @@ export function SessionSidebar({
     const activity = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id), compactingIds.has(s.id));
     // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
-    // Stop indenting past a few levels: a fork of a fork of a fork would otherwise squeeze the name
-    // out of a narrow sidebar entirely.
-    const indent = Math.min(depth, 4) * 7;
+    // Enough of a step that a fork reads as sitting under its parent at a glance, but capped after
+    // a few levels: a fork of a fork of a fork would otherwise squeeze the name out of a narrow
+    // sidebar entirely (it can be dragged down to 220px).
+    const indent = Math.min(depth, 4) * 14;
     return (
       <div
         key={s.id}
