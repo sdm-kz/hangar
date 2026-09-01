@@ -226,6 +226,9 @@ function GroupHeader({
         )}
         <FolderTree className="size-3.5 shrink-0" />
         <span className="truncate font-mono text-xs font-medium">{folderLabel(dir)}</span>
+        {/* Session count, right after the name rather than pinned to the row's edge: it reads as
+            part of the folder's label, and never drifts away from it on a wide sidebar. */}
+        <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
       </button>
       {activity && (
         <span
@@ -245,9 +248,6 @@ function GroupHeader({
         </button>
       )}
       <FolderMenu dir={dir} onRemove={onRemove} />
-      {/* Session count: always visible, so it's pinned last and the hover-only actions expand to
-          its left — same anchoring as a session row's postponed badge. */}
-      <span className="shrink-0 text-[10px] tabular-nums">{count}</span>
     </div>
   );
 }
