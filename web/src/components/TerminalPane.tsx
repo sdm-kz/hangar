@@ -10,7 +10,19 @@ import { getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
 import { writeToClipboard } from "@/lib/clipboard";
 import { uploadImageFile } from "@/lib/upload";
+import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "@/components/ZoomControls";
 import { cn } from "@/lib/utils";
+
+// The terminal zooms by font size rather than CSS `zoom`: the grid is measured from the font, so a
+// larger font means fewer, bigger cells (and a PTY resize), where scaling the box would just blow up
+// the same cell count into a blurry, clipped picture. 13px is the unzoomed size; the multipliers are
+// the app-wide zoom stops, so a percentage here means what it means in the file viewers.
+const BASE_FONT_SIZE = 13;
+const fontSizeFor = (zoom: number) => Math.max(6, Math.round(BASE_FONT_SIZE * zoom));
+
+// How much ctrl-wheel travel makes one zoom step. A mouse notch (~100px) steps immediately; a
+// trackpad pinch, which fires a stream of small deltas, ramps instead of shooting to either end.
+const WHEEL_ZOOM_STEP = 40;
 
 // Reading the clipboard (OSC 52 "?" report) is a paste-injection risk, so we never expose it —
 // only writes are honored.
@@ -224,6 +236,26 @@ export const TerminalPane = forwardRef<
   const wsRef = useRef<WebSocket | null>(null);
   // The live xterm instance, so a failed image paste can write its own notice.
   const termRef = useRef<Terminal | null>(null);
+  // Terminal zoom, shared by every session (one preferred reading size) and remembered across
+  // reloads. Held in a ref too so a fresh terminal — a session switch, a reattach — is built at the
+  // current size instead of flashing 100% first.
+  const [zoom, setZoom] = usePersistentZoom("terminal");
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  // Move `delta` stops along ZOOM_LEVELS from wherever we are now, clamped at both ends. Reads the
+  // live level through the ref so the wheel and key handlers can be registered once and still be
+  // right — they never close over a stale zoom.
+  const stepZoom = useCallback(
+    (delta: number) => {
+      const i = ZOOM_LEVELS.indexOf(zoomRef.current) + delta;
+      setZoom(ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, i))]);
+    },
+    [setZoom]
+  );
+  // Refit + tell the PTY about the new grid. Owned by the socket effect (it needs the fit addon and
+  // the socket); kept here so the zoom effect can trigger a resize the ResizeObserver never sees —
+  // the pane's own box doesn't change when the font does.
+  const refitRef = useRef<() => void>(() => {});
   // True while the viewport sits above the live tail — gates the jump-to-bottom button.
   const [scrolledUp, setScrolledUp] = useState(false);
   // Socket state, driving the reconnect chip. "connecting" is the first attach — no chip then, the
@@ -303,11 +335,12 @@ export const TerminalPane = forwardRef<
       cursorBlink: true,
       fontFamily:
         'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-      fontSize: 13,
+      fontSize: fontSizeFor(zoomRef.current),
       scrollback: 10000,
       theme: TERM_THEMES[getTheme()],
     });
     termRef.current = term;
+    term.attachCustomKeyEventHandler((e) => zoomKeysRef.current(e));
     // Re-theme live when the site theme is toggled.
     const themeSub = subscribeTheme((t) => {
       term.options.theme = TERM_THEMES[t];
@@ -688,6 +721,8 @@ export const TerminalPane = forwardRef<
       setScrolledUp(buf.baseY - buf.viewportY > 2);
     });
 
+    refitRef.current = sendResize;
+
     // Refit + notify the PTY whenever the pane resizes.
     const ro = new ResizeObserver(() => sendResize());
     ro.observe(host);
@@ -724,6 +759,7 @@ export const TerminalPane = forwardRef<
     window.addEventListener("online", onOnline);
 
     return () => {
+      refitRef.current = () => {};
       ro.disconnect();
       fileLinks.dispose();
       scrollSub.dispose();
@@ -770,6 +806,69 @@ export const TerminalPane = forwardRef<
     };
   }, [sessionId, generation, reattach]);
 
+  // Apply a zoom change to the live terminal. Only the font moves; the refit that follows works out
+  // how many rows and columns now fit and tells Claude, so the TUI reflows to the new grid instead
+  // of being cropped at the old one.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    const size = fontSizeFor(zoom);
+    if (term.options.fontSize === size) return;
+    term.options.fontSize = size;
+    // Once now, once after the renderer has re-measured the character cell: fitting off the old cell
+    // size would leave the grid a row or two out, and the PTY would be told a size nothing matches.
+    refitRef.current();
+    const raf = requestAnimationFrame(() => refitRef.current());
+    return () => cancelAnimationFrame(raf);
+  }, [zoom]);
+
+  // Ctrl/⌘ with +, - or 0 zooms the terminal (0 resets), the same keys a desktop terminal uses.
+  // Two things have to be talked out of these first: xterm, which would otherwise pass them to
+  // Claude, and the browser, whose own zoom would take the whole app with it — so the handler
+  // returns false (xterm stops) and calls preventDefault (the browser stops). Only while the
+  // terminal has focus, since that is what "the terminal's zoom" means. Kept in a ref because the
+  // terminal it attaches to is rebuilt on every session switch and reattach.
+  const zoomKeysRef = useRef<(e: KeyboardEvent) => boolean>(() => true);
+  zoomKeysRef.current = (e: KeyboardEvent) => {
+    if (e.type !== "keydown" || e.altKey || !(e.ctrlKey || e.metaKey)) return true;
+    // Match on both the character and the physical key: with a modifier down, layouts and the
+    // numpad disagree about what `key` should be ("+" vs "=" vs "Add").
+    const delta =
+      e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd"
+        ? 1
+        : e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract"
+          ? -1
+          : 0;
+    const reset = e.key === "0" || e.code === "Digit0" || e.code === "Numpad0";
+    if (!delta && !reset) return true;
+    e.preventDefault();
+    if (reset) setZoom(1);
+    else stepZoom(delta);
+    return false;
+  };
+
+  // Ctrl/⌘-wheel over the terminal zooms it, the way a desktop terminal does — without this the
+  // browser would zoom the whole page instead, sidebar and all. Capture phase so xterm's own wheel
+  // handler doesn't scroll the buffer on the way past.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let travel = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      travel += e.deltaY;
+      const steps = Math.trunc(travel / WHEEL_ZOOM_STEP);
+      if (steps === 0) return;
+      travel -= steps * WHEEL_ZOOM_STEP;
+      // Wheel down (positive delta) zooms out, matching every other zoomable surface.
+      stepZoom(-steps);
+    };
+    host.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => host.removeEventListener("wheel", onWheel, { capture: true });
+  }, [stepZoom]);
+
   // Padding lives on the outer wrapper, not the host: FitAddon measures the host (the xterm's
   // parent) and only discounts padding on the .xterm element itself, so any padding here would make
   // it overcount rows and clip the last line. The host stays padding-free and edge-to-edge.
@@ -780,10 +879,23 @@ export const TerminalPane = forwardRef<
   // the status line. Bottom-aligning moves it to the top edge, where it reads as breathing room under
   // the header instead of a gap in the middle of the layout.
   return (
-    <div className="relative h-full w-full bg-white px-2 pt-2 pb-0.5 dark:bg-[#0a0a0a]">
+    <div className="group relative h-full w-full bg-white px-2 pt-2 pb-0.5 dark:bg-[#0a0a0a]">
       <div
         ref={hostRef}
         className="flex h-full w-full flex-col justify-end overscroll-contain overflow-hidden"
+      />
+      {/* Zoom for the terminal alone (the browser's own zoom takes the whole app with it). Kept out
+          of sight until the pointer is over the pane, so it isn't permanently parked on top of the
+          TUI's top-right corner — but pinned open once zoomed, since a non-default size should say
+          so and offer the way back, and always visible on touch, where there is no hover. */}
+      <ZoomControls
+        zoom={zoom}
+        onChange={setZoom}
+        className={cn(
+          "right-4 top-3 transition-opacity",
+          zoom === 1 &&
+            "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+        )}
       />
       {/* The socket dropped (sleep, a backgrounded tab, a network blip). Automatic re-attach is
           already backing off behind this chip; the button is the escape hatch for when it gave up
