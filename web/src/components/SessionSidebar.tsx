@@ -225,7 +225,7 @@ function GroupHeader({
           <ChevronDown className="size-3.5 shrink-0" />
         )}
         <FolderTree className="size-3.5 shrink-0" />
-        <span className="truncate font-mono text-[11px] font-medium">{folderLabel(dir)}</span>
+        <span className="truncate font-mono text-xs font-medium">{folderLabel(dir)}</span>
       </button>
       {activity && (
         <span
@@ -639,12 +639,11 @@ export function SessionSidebar({
                   setEditingId(null);
                 }}
                 onCancel={() => setEditingId(null)}
-                className="font-medium"
               />
             ) : (
               <span
                 className={cn(
-                  "truncate font-medium",
+                  "truncate",
                   // A fork's name starts with its parent's, so cutting the tail would leave every
                   // row in a branch looking identical. Lay the text out right-to-left instead so the
                   // ellipsis eats the shared head and the distinguishing tail survives; the inner
@@ -804,7 +803,7 @@ export function SessionSidebar({
                     )}
                   />
                   {!isCollapsed && (
-                    <div className="mt-0.5 space-y-0.5">
+                    <div className="mt-0.5 space-y-0.5 pl-[18px]">
                       {/* A fork always shares its parent's folder, so nesting inside the group is
                           the same tree the flat list shows — just scoped to this folder. */}
                       {forkTree(
@@ -1146,7 +1145,7 @@ function RecentList({
                   onToggle={() => onToggleGroup(g.dir)}
                 />
                 {!isCollapsed && (
-                  <div className="mt-1 space-y-1 pl-1">
+                  <div className="mt-1 space-y-1 pl-[18px]">
                     {g.items.map(({ item, index }) => renderRow(item, index, false))}
                   </div>
                 )}
