@@ -23,14 +23,36 @@ export interface UrlState {
  * in a new browser tab. It's a separate mode, not part of UrlState: main.tsx sees `preview` and
  * mounts the minimal PreviewApp instead of the full App, and since the path lives in the query
  * string a refresh of that tab restores the same preview.
+ *
+ * The app's current deep-link params ride along untouched, so the preview tab can link back to
+ * exactly the view it was opened from (see previewReturnUrl). Build the href at click time: those
+ * params move by replaceState, which doesn't re-render whatever holds the link.
  */
 export function previewUrl(absPath: string): string {
-  return `${window.location.pathname}?preview=${encodeURIComponent(absPath)}`;
+  const p = new URLSearchParams(window.location.search);
+  p.set("preview", absPath);
+  return `${window.location.pathname}?${p.toString()}`;
 }
 
 /** The `preview` param if this tab was opened as a standalone file preview (see previewUrl). */
 export function readPreviewPath(): string | null {
   return new URLSearchParams(window.location.search).get("preview");
+}
+
+/**
+ * Where the standalone preview tab's header link leads: back into the full app, at the view the
+ * preview was opened from — the session with its tab and open file, or a Files-tree file in the
+ * main area. Dropping `preview` is all it takes, since the rest of the query string is the app
+ * state previewUrl carried over.
+ */
+export function previewReturnUrl(): { href: string; label: string } {
+  const p = new URLSearchParams(window.location.search);
+  p.delete("preview");
+  // `open` is a server file filling the app's main area, so the session behind it isn't the view
+  // this link goes back to.
+  const label = p.get("session") && !p.get("open") ? "Back to session" : "Back to app";
+  const qs = p.toString();
+  return { href: qs ? `${window.location.pathname}?${qs}` : window.location.pathname, label };
 }
 
 /**

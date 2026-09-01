@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { api, getToken, setToken } from "@/lib/api";
 import { Login } from "@/components/Login";
 import { ServerFileViewer } from "@/components/ServerFileViewer";
+import { previewReturnUrl } from "@/lib/urlState";
 
 type AuthStatus = "loading" | "authed" | "anon";
 
@@ -50,5 +51,7 @@ export function PreviewApp({ path }: { path: string }) {
     return <Login onSuccess={() => setAuth("authed")} />;
   }
 
-  return <ServerFileViewer path={path} />;
+  // The tab usually opens via target="_blank", so there's no history to go back through: the way
+  // out is a header link into the app, at the view (session or file) this preview came from.
+  return <ServerFileViewer path={path} back={previewReturnUrl()} />;
 }

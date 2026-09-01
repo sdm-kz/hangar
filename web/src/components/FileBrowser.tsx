@@ -2346,7 +2346,16 @@ function FilePreview({
             )}
             {/* Standalone full-page preview in its own browser tab; survives a refresh there. */}
             <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Open in new browser tab">
-              <a href={previewUrl(absPath)} target="_blank" rel="noreferrer">
+              <a
+                href={previewUrl(absPath)}
+                target="_blank"
+                rel="noreferrer"
+                // Refreshed at click time: the app's deep-link params (which ride along, so the
+                // preview tab can link back here) move without re-rendering this component.
+                onClick={(e) => {
+                  e.currentTarget.href = previewUrl(absPath);
+                }}
+              >
                 <ExternalLink className="size-4" />
               </a>
             </Button>

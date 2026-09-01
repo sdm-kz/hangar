@@ -18,6 +18,7 @@ import { CopyPathButton } from "./CopyPathButton";
 import { previewUrl } from "@/lib/urlState";
 import { writeToClipboard } from "@/lib/clipboard";
 import {
+  ArrowLeft,
   Check,
   Copy,
   Download,
@@ -56,6 +57,7 @@ function baseName(p: string): string {
  */
 export function ServerFileViewer({
   path,
+  back,
   onClose,
   onReveal,
   onToggleSidebar,
@@ -63,6 +65,8 @@ export function ServerFileViewer({
   onToggleCollapsed,
 }: {
   path: string;
+  /** Standalone preview tab only: link back into the app (see previewReturnUrl). */
+  back?: { href: string; label: string };
   /** Return to the session view. Absent in the standalone preview tab, which has nowhere to go. */
   onClose?: () => void;
   // Reveal this file in the Files tab tree (switch tab + expand/scroll to it).
@@ -179,6 +183,15 @@ export function ServerFileViewer({
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-2 border-b px-3 py-2">
+        {/* Standalone preview tab: the way back to the app view this preview was opened from. */}
+        {back && (
+          <Button variant="ghost" size="sm" asChild className="shrink-0 px-2" title={back.label}>
+            <a href={back.href}>
+              <ArrowLeft className="size-4" />
+              <span className="ml-1 hidden sm:inline">{back.label}</span>
+            </a>
+          </Button>
+        )}
         {onToggleSidebar && (
           <Button variant="ghost" size="icon" className="md:hidden" onClick={onToggleSidebar} title="Sessions & files">
             <Menu className="size-5" />
