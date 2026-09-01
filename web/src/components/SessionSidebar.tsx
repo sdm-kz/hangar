@@ -1,7 +1,18 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
 import { forkTree, type ForkNode } from "@/lib/sessionTree";
+import {
+  dirKey,
+  loadPinnedSessions,
+  loadSessionOrder,
+  move,
+  savePinnedSessions,
+  saveSessionOrder,
+  sortFolderSessions,
+  sortPinnedFirst,
+  type SessionOrder,
+} from "@/lib/sessionOrder";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
@@ -36,6 +47,8 @@ import {
   X,
   LogOut,
   Pencil,
+  Pin,
+  PinOff,
   Terminal,
   Trash2,
   FolderTree,
@@ -89,15 +102,6 @@ function saveFilter(v: SessionFilter) {
 function folderLabel(dir: string): string {
   const parts = dir.split(/[/\\]+/).filter(Boolean);
   return parts[parts.length - 1] ?? dir;
-}
-
-/**
- * Grouping key for a working directory. Windows paths are case-insensitive and mix separators, so the
- * same folder can arrive as both `C:\a\b` and `c:/a/b` (e.g. a `--continue` relaunch) — normalize
- * case, separators and any trailing slash so those collapse into one group instead of duplicating it.
- */
-function dirKey(dir: string): string {
-  return dir.replace(/[/\\]+/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
 /**
@@ -402,35 +406,40 @@ function saveCollapsedForks(set: Set<string>) {
 
 /**
  * Native drag-to-reorder for a vertical list. Returns props to spread on each row; a row initiates
- * the drag and is also a drop target. `overIndex` is the row currently hovered during a drag (for a
- * drop indicator). onReorder(from, to) receives list indices.
+ * the drag and is also a drop target. `isOver` reports the row currently hovered during a drag (for
+ * a drop indicator). onReorder(from, to, list) receives indices within one list.
+ *
+ * `list` scopes a drag: the sessions sidebar draws one list per folder, and a row dragged out of its
+ * folder has no meaningful index in the folder it lands on, so a cross-list drop is simply ignored.
+ * Single-list callers can leave it out.
  */
-function useDragReorder(onReorder: (from: number, to: number) => void) {
-  const dragIndex = useRef<number | null>(null);
-  const [overIndex, setOverIndex] = useState<number | null>(null);
+function useDragReorder(onReorder: (from: number, to: number, list: string) => void) {
+  const dragged = useRef<{ index: number; list: string } | null>(null);
+  const [over, setOver] = useState<{ index: number; list: string } | null>(null);
   return {
-    overIndex,
-    rowProps: (index: number) => ({
+    isOver: (index: number, list = "") => over?.index === index && over.list === list,
+    rowProps: (index: number, list = "") => ({
       draggable: true,
       onDragStart: (e: React.DragEvent) => {
-        dragIndex.current = index;
+        dragged.current = { index, list };
         e.dataTransfer.effectAllowed = "move";
       },
       onDragOver: (e: React.DragEvent) => {
+        if (dragged.current?.list !== list) return; // from another folder — not a drop target
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
-        if (overIndex !== index) setOverIndex(index);
+        if (over?.index !== index || over.list !== list) setOver({ index, list });
       },
       onDrop: (e: React.DragEvent) => {
         e.preventDefault();
-        const from = dragIndex.current;
-        if (from !== null && from !== index) onReorder(from, index);
-        dragIndex.current = null;
-        setOverIndex(null);
+        const from = dragged.current;
+        if (from && from.list === list && from.index !== index) onReorder(from.index, index, list);
+        dragged.current = null;
+        setOver(null);
       },
       onDragEnd: () => {
-        dragIndex.current = null;
-        setOverIndex(null);
+        dragged.current = null;
+        setOver(null);
       },
     }),
   };
@@ -495,6 +504,25 @@ export function SessionSidebar({
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
   // Sessions whose forks are folded away (by session id).
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(loadCollapsedForks);
+  // Sessions pinned to the top of their folder, and the manual row order the user dragged into
+  // place (per folder). Per-browser, like the collapse state above.
+  const [pinned, setPinned] = useState<Set<string>>(loadPinnedSessions);
+  const [order, setOrder] = useState<SessionOrder>(loadSessionOrder);
+
+  const aliveIds = () => new Set(sessions.map((s) => s.id));
+
+  const togglePin = (id: string) =>
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return savePinnedSessions(next, aliveIds());
+    });
+
+  // Drop of a dragged row: rewrite that folder's order from what is on screen, so every row in it
+  // gets an explicit place. A session created later isn't in the list and lands back on top.
+  const reorderFolder = (list: string, from: number, to: number, ids: string[]) =>
+    setOrder((prev) => saveSessionOrder({ ...prev, [list]: move(ids, from, to) }, aliveIds()));
 
   const toggleForks = (id: string) =>
     setCollapsedForks((prev) => {
@@ -523,6 +551,36 @@ export function SessionSidebar({
   const allCollapsed = visibleDirs.length > 0 && visibleDirs.every((d) => collapsed.has(d));
   const toggleAllGroups = () => setAllGroups(visibleDirs, !allCollapsed);
 
+  // The grouped list, built once: pins first, then the hand-arranged order, then newest-first for
+  // anything the user hasn't placed. `rootIds` is the drag list — top-level rows only, since a fork
+  // is drawn under its parent wherever the parent sits — and a drop rewrites exactly that list.
+  const groups = useMemo(
+    () =>
+      groupByFolder(visibleSessions).map((g) => {
+        const key = dirKey(g.dir);
+        const nodes = forkTree(
+          sortFolderSessions(g.items.map(({ item }) => item), pinned, order[key]),
+          collapsedForks
+        );
+        return {
+          dir: g.dir,
+          key,
+          count: g.items.length,
+          items: g.items.map(({ item }) => item),
+          nodes,
+          rootIds: nodes.filter((n) => n.depth === 0).map((n) => n.session.id),
+        };
+      }),
+    [visibleSessions, pinned, order, collapsedForks]
+  );
+
+  // Drag-to-reorder inside a folder group; the list key is the folder, so a row can't be dropped
+  // into a folder it doesn't belong to.
+  const dnd = useDragReorder((from, to, list) => {
+    const g = groups.find((x) => x.key === list);
+    if (g) reorderFolder(list, from, to, g.rootIds);
+  });
+
   const toggleGrouped = () =>
     setGrouped((v) => {
       saveGrouped(!v);
@@ -539,7 +597,14 @@ export function SessionSidebar({
   // A single session row. Sessions are ordered newest-first (by creation time); `showPath` is
   // dropped in grouped mode where the folder is already in the header. `depth` nests forks under the
   // session they branched from — indented, with a small elbow so the relationship reads at a glance.
-  const renderRow = ({ session: s, depth, hasChildren, hiddenCount }: ForkNode, showPath: boolean) => {
+  const renderRow = (
+    { session: s, depth, hasChildren, hiddenCount }: ForkNode,
+    showPath: boolean,
+    // Drag-to-reorder props for this row, plus whether it's the row a drag is hovering. Only passed
+    // in grouped mode, and only for top-level rows: a fork is drawn under its parent wherever the
+    // parent sits, so it has no place of its own to drag to.
+    drag?: { props: Record<string, unknown>; over: boolean }
+  ) => {
     const restorable = s.state === "Restorable";
     const color = sessionColor(s.color);
     // Session colour (set via `/color`) as a band down the row's left edge, painted as a background
@@ -565,6 +630,7 @@ export function SessionSidebar({
     return (
       <div
         key={s.id}
+        {...(drag?.props ?? {})}
         style={{ ...(depth > 0 ? { marginLeft: indent } : null), ...colorEdge }}
         onClick={
           restorable
@@ -582,7 +648,9 @@ export function SessionSidebar({
           restorable ? "text-muted-foreground" : "cursor-pointer",
           activeId === s.id && !restorable && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
-          !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
+          !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70",
+          // Where a dragged row would land.
+          drag?.over && "border-t-2 border-t-primary"
         )}
       >
         {/* Activity dot, in the top-left corner rather than sitting in the name's line: an inline
@@ -672,12 +740,19 @@ export function SessionSidebar({
             {s.remoteControl && editingId !== s.id && (
               <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
             )}
+            {/* Why this row sits above the newer ones — without it a pinned folder just looks
+                mis-sorted. */}
+            {pinned.has(s.id) && editingId !== s.id && (
+              <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="pinned" />
+            )}
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {editingId !== s.id && (
               <RowActionsMenu
                 canFork={s.canFork}
                 restorable={restorable}
+                pinned={pinned.has(s.id)}
+                onTogglePin={() => togglePin(s.id)}
                 onRename={() => setEditingId(s.id)}
                 onClone={() => onClone(s)}
                 onFork={() => onFork(s)}
@@ -793,32 +868,39 @@ export function SessionSidebar({
         ) : null}
         {grouped ? (
           <div className="space-y-2">
-            {groupByFolder(visibleSessions).map((g) => {
-              const isCollapsed = collapsed.has(g.dir);
+            {groups.map(({ dir, key, count, items, nodes, rootIds }) => {
+              const isCollapsed = collapsed.has(dir);
               return (
-                <div key={g.dir}>
+                <div key={key}>
                   <GroupHeader
-                    dir={g.dir}
-                    count={g.items.length}
+                    dir={dir}
+                    count={count}
                     collapsed={isCollapsed}
-                    onToggle={() => toggleGroup(g.dir)}
-                    onNewSession={() => onNewInFolder(g.dir)}
-                    onRemove={() => setRemoveDir(dirKey(g.dir))}
-                    activity={folderActivity(
-                      g.items.map(({ item }) => item),
-                      busyIds,
-                      waitingIds,
-                      compactingIds
-                    )}
+                    onToggle={() => toggleGroup(dir)}
+                    onNewSession={() => onNewInFolder(dir)}
+                    onRemove={() => setRemoveDir(key)}
+                    activity={folderActivity(items, busyIds, waitingIds, compactingIds)}
                   />
                   {!isCollapsed && (
                     <div className="mt-0.5 space-y-0.5 pl-[18px]">
                       {/* A fork always shares its parent's folder, so nesting inside the group is
                           the same tree the flat list shows — just scoped to this folder. */}
-                      {forkTree(
-                        g.items.map(({ item }) => item),
-                        collapsedForks
-                      ).map((n) => renderRow(n, false))}
+                      {nodes.map((n) => {
+                        const i = rootIds.indexOf(n.session.id);
+                        // Rows are draggable only while nothing in them is being renamed: the
+                        // rename box has to stay selectable with the mouse.
+                        const draggable = i >= 0 && editingId !== n.session.id;
+                        return renderRow(
+                          n,
+                          false,
+                          draggable
+                            ? {
+                                props: dnd.rowProps(i, key),
+                                over: dnd.isOver(i, key),
+                              }
+                            : undefined
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -826,8 +908,12 @@ export function SessionSidebar({
             })}
           </div>
         ) : (
+          // Flat list: no drag-reorder (newest-first is the order it means), but a pin still floats
+          // its session to the top — a pin the user set shouldn't vanish with a change of view.
           <div className="space-y-0.5">
-            {forkTree(visibleSessions, collapsedForks).map((n) => renderRow(n, true))}
+            {forkTree(sortPinnedFirst(visibleSessions, pinned), collapsedForks).map((n) =>
+              renderRow(n, true)
+            )}
           </div>
         )}
       </div>
@@ -876,6 +962,8 @@ export function SessionSidebar({
 function RowActionsMenu({
   canFork,
   restorable,
+  pinned,
+  onTogglePin,
   onRename,
   onClone,
   onFork,
@@ -884,6 +972,8 @@ function RowActionsMenu({
 }: {
   canFork: boolean;
   restorable: boolean;
+  pinned: boolean;
+  onTogglePin: () => void;
   onRename: () => void;
   onClone: () => void;
   onFork: () => void;
@@ -944,6 +1034,9 @@ function RowActionsMenu({
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >
+          {pinned
+            ? item("Unpin", <PinOff className="size-3.5" />, onTogglePin)
+            : item("Pin to top", <Pin className="size-3.5" />, onTogglePin)}
           {item("Rename", <Pencil className="size-3.5" />, onRename)}
           {item("Clone", <Copy className="size-3.5" />, onClone)}
           {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
@@ -1094,7 +1187,7 @@ function RecentList({
       title="Click to adjust and create"
       className={cn(
         "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
-        dnd.overIndex === i && "border-t-2 border-t-primary"
+        dnd.isOver(i) && "border-t-2 border-t-primary"
       )}
     >
       <div className="flex items-center justify-between gap-2">
