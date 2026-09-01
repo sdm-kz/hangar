@@ -32,3 +32,24 @@ export function sessionColor(name?: string | null): string | null {
   if (!name) return null;
   return PALETTE[name.toLowerCase()] ?? null;
 }
+
+/**
+ * The colours offered in a picker (a project's, today). A hand-picked walk around the wheel rather
+ * than every key in PALETTE: the aliases and the near-neighbours make a swatch row harder to choose
+ * from, not richer. Anything in PALETTE still resolves if it arrives from elsewhere.
+ */
+export const COLOR_CHOICES: readonly { name: string; css: string }[] = [
+  "red",
+  "orange",
+  "amber",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "pink",
+  "gray",
+].map((name) => ({ name, css: PALETTE[name] }));

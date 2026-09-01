@@ -1,7 +1,17 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
-import type { SessionInfo } from "@/types";
+import type { Project, SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
 import { forkTree, type ForkNode } from "@/lib/sessionTree";
+import {
+  isUnder,
+  projectForDir,
+  sameFolder,
+  sectionsByProject,
+  type ProjectSection,
+} from "@/lib/projects";
+import { api } from "@/lib/api";
+import { ProjectDialog } from "./ProjectDialog";
+import { useConfirm } from "@/components/ui/confirm";
 import {
   dirKey,
   loadPinnedSessions,
@@ -34,13 +44,17 @@ import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import { writeToClipboard } from "@/lib/clipboard";
 import {
+  Boxes,
   Check,
   Copy,
   Filter,
+  FolderPlus,
+  Minus,
   MoreVertical,
   GitFork,
   Inbox,
   Plus,
+  Settings,
   Radio,
   RotateCcw,
   Search,
@@ -202,6 +216,11 @@ function GroupHeader({
   onNewSession,
   onRemove,
   activity,
+  projects,
+  projectId,
+  onMoveToProject,
+  onNewProject,
+  dragProps,
 }: {
   dir: string;
   count: number;
@@ -214,9 +233,21 @@ function GroupHeader({
   // The most urgent thing happening in this folder, shown as a dot — so a collapsed folder still
   // says that something inside wants you. Sessions view only; a recent preset has no state.
   activity?: Activity | null;
+  // The projects this folder can be moved between, and the one it is in (null = none). The menu is
+  // the non-drag way to do it — the only way at all on touch, where HTML5 drag never fires.
+  projects: readonly Project[];
+  projectId: string | null;
+  onMoveToProject: (projectId: string | null) => void;
+  onNewProject: () => void;
+  // Makes the header the drag source for "drop this folder on a project".
+  dragProps?: Record<string, unknown>;
 }) {
   return (
-    <div className="group/gh flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+    <div
+      {...dragProps}
+      title={dragProps ? "Drag onto a project to move this folder into it" : undefined}
+      className="group/gh flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
+    >
       <button
         type="button"
         onClick={onToggle}
@@ -251,17 +282,39 @@ function GroupHeader({
           <Plus className="size-3.5" />
         </button>
       )}
-      <FolderMenu dir={dir} onRemove={onRemove} />
+      <FolderMenu
+        dir={dir}
+        onRemove={onRemove}
+        projects={projects}
+        projectId={projectId}
+        onMoveToProject={onMoveToProject}
+        onNewProject={onNewProject}
+      />
     </div>
   );
 }
 
 /**
- * Three-dots menu on a folder header. Holds the folder's own actions — copying its path, and (on the
- * sessions list, where a bulk remove makes sense) removing the sessions it contains. Destructive
- * removal lives here rather than in the header strip so it can't be hit by a stray click.
+ * Three-dots menu on a folder header. Holds the folder's own actions — copying its path, moving it
+ * between projects, and (on the sessions list, where a bulk remove makes sense) removing the sessions
+ * it contains. Destructive removal lives here rather than in the header strip so it can't be hit by a
+ * stray click.
  */
-function FolderMenu({ dir, onRemove }: { dir: string; onRemove?: () => void }) {
+function FolderMenu({
+  dir,
+  onRemove,
+  projects,
+  projectId,
+  onMoveToProject,
+  onNewProject,
+}: {
+  dir: string;
+  onRemove?: () => void;
+  projects: readonly Project[];
+  projectId: string | null;
+  onMoveToProject: (projectId: string | null) => void;
+  onNewProject: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [dropUp, setDropUp] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -273,6 +326,12 @@ function FolderMenu({ dir, onRemove }: { dir: string; onRemove?: () => void }) {
     const box = e.currentTarget.getBoundingClientRect();
     setDropUp(window.innerHeight - box.bottom < 160);
     setOpen((o) => !o);
+  };
+
+  const pick = (e: React.MouseEvent, run: () => void) => {
+    e.stopPropagation();
+    setOpen(false);
+    run();
   };
 
   const copyPath = async () => {
@@ -324,15 +383,55 @@ function FolderMenu({ dir, onRemove }: { dir: string; onRemove?: () => void }) {
             {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
             {copied ? "Copied!" : "Copy path"}
           </button>
+
+          {/* Move to project. Flat entries rather than a submenu: at this width a fly-out has
+              nowhere to go, and a project list is short enough to sit inline. Scrolls once it
+              isn't — the menu must not grow past the viewport. */}
+          <div className="my-1 border-t" />
+          <p className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Project
+          </p>
+          <div className="max-h-48 overflow-auto">
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={(e) => pick(e, () => onMoveToProject(p.id))}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+              >
+                <Boxes
+                  className="size-3.5 shrink-0"
+                  style={sessionColor(p.color) ? { color: sessionColor(p.color)! } : undefined}
+                />
+                <span className="truncate">{p.name}</span>
+                {projectId === p.id && <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />}
+              </button>
+            ))}
+            {projectId && (
+              <button
+                type="button"
+                onClick={(e) => pick(e, () => onMoveToProject(null))}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+              >
+                <Minus className="size-3.5 shrink-0" />
+                No project
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={(e) => pick(e, onNewProject)}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            <FolderPlus className="size-3.5" />
+            New project…
+          </button>
+
           {onRemove && (
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setOpen(false);
-                onRemove();
-              }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-destructive hover:bg-accent"
+              onClick={(e) => pick(e, onRemove)}
+              className="mt-1 flex w-full items-center gap-2 border-t px-3 py-1.5 pt-2 text-left text-sm text-destructive hover:bg-accent"
             >
               <Trash2 className="size-3.5" />
               Remove sessions…
@@ -342,6 +441,229 @@ function FolderMenu({ dir, onRemove }: { dir: string; onRemove?: () => void }) {
       )}
     </span>
   );
+}
+
+/**
+ * A project's heading: the row that collects the folder groups linked to it. `project` is null for
+ * the trailing "No project" section, which exists only once there is at least one project — as a
+ * label for what is left over, and as the place to drag a folder to take it back out of a project.
+ */
+function ProjectHeader({
+  project,
+  count,
+  collapsed,
+  onToggle,
+  onSettings,
+  activity,
+}: {
+  project: Project | null;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  // Sessions and recents both open the settings popup; absent on the "No project" section.
+  onSettings?: () => void;
+  activity?: Activity | null;
+}) {
+  const accent = project ? sessionColor(project.color) : null;
+  return (
+    <div className="group/ph flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+      <button
+        type="button"
+        onClick={onToggle}
+        title={project ? project.name : "Folders that aren’t in a project"}
+        className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-foreground"
+      >
+        {collapsed ? (
+          <ChevronRight className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronDown className="size-3.5 shrink-0" />
+        )}
+        {project ? (
+          // The colour rides on the icon rather than the text: a tinted label fights the folder
+          // names underneath it for attention, and at this size a solid glyph reads better anyway.
+          <Boxes className="size-3.5 shrink-0" style={accent ? { color: accent } : undefined} />
+        ) : (
+          <Minus className="size-3.5 shrink-0" />
+        )}
+        <span
+          className={cn(
+            "truncate text-xs font-semibold",
+            project ? "text-foreground" : "font-medium italic"
+          )}
+        >
+          {project ? project.name : "No project"}
+        </span>
+        <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
+      </button>
+      {activity && (
+        <span
+          className={cn("size-1.5 shrink-0 rounded-full", ACTIVITY_DOT[activity].className)}
+          aria-label={ACTIVITY_DOT[activity].label}
+          title={`${ACTIVITY_DOT[activity].label} (in this project)`}
+        />
+      )}
+      {onSettings && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSettings();
+          }}
+          title="Project settings"
+          // Touch devices never fire hover, so the settings entry point has to stay on screen there.
+          className="hidden shrink-0 hover:text-foreground group-hover/ph:inline-flex [@media(hover:none)]:inline-flex"
+        >
+          <Settings className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A list under its project headings: one section per project (even an empty one — it has to be there
+ * to drop a folder onto), then a section for whatever is left over. Shared by all three lists, which
+ * differ only in what sits under a heading: folder groups in the grouped sessions and recents lists,
+ * the sessions themselves in the flat one.
+ *
+ * With no projects at all this draws nothing of its own: the caller renders its list as it always
+ * did, so the feature is invisible until it is used.
+ */
+function ProjectSections<T>({
+  sections,
+  collapsed,
+  onToggle,
+  onSettings,
+  dnd,
+  renderItems,
+  bodyClassName,
+  countOf,
+  activityOf,
+}: {
+  sections: ProjectSection<T>[];
+  /** Collapsed project ids ("" for the "No project" section). */
+  collapsed: ReadonlySet<string>;
+  onToggle: (key: string) => void;
+  onSettings: (project: Project) => void;
+  /**
+   * Folder drag-and-drop, where the list has folder headers to drag. The flat list has none — a
+   * session row is not a folder — so it passes nothing and its sections are simply not drop targets.
+   */
+  dnd?: ReturnType<typeof useFolderDrag>;
+  /** Draws a section's contents; takes the whole set so the flat list can build one fork tree. */
+  renderItems: (items: T[]) => ReactNode;
+  /** Spacing between whatever renderItems draws — folder groups sit further apart than rows. */
+  bodyClassName?: string;
+  /** What the number after the project name counts. Defaults to the number of items. */
+  countOf?: (items: T[]) => number;
+  activityOf?: (items: T[]) => Activity | null;
+}) {
+  return (
+    <div className="space-y-2">
+      {sections.map(({ project, items }) => {
+        const key = project?.id ?? "";
+        const isCollapsed = collapsed.has(key);
+        const over = dnd?.isOver(project?.id ?? null) ?? false;
+        return (
+          <div
+            key={key}
+            {...(dnd?.sectionProps(project?.id ?? null) ?? {})}
+            className={cn(
+              "rounded-md transition-colors",
+              // Where the folder in flight would land. A tint on the whole section rather than a
+              // line: a folder joins a project, it doesn't take a position in it.
+              over && "bg-accent ring-1 ring-primary"
+            )}
+          >
+            <ProjectHeader
+              project={project}
+              count={countOf ? countOf(items) : items.length}
+              collapsed={isCollapsed}
+              onToggle={() => onToggle(key)}
+              onSettings={project ? () => onSettings(project) : undefined}
+              activity={activityOf?.(items) ?? null}
+            />
+            {!isCollapsed && (
+              // A shallow indent: enough that what follows reads as sitting inside the project,
+              // without spending width the session names below need more.
+              <div className={cn("mt-0.5 pl-2", bodyClassName ?? "space-y-2")}>
+                {items.length > 0 ? (
+                  renderItems(items)
+                ) : dnd ? (
+                  // Empty, in a list you can drop on: the placeholder is what says a folder can go
+                  // here, and is the target worth aiming at. Where nothing can be dropped (the flat
+                  // list) it says nothing the heading's own "(0)" doesn't, so it isn't drawn — an
+                  // empty project is then one quiet line rather than a box of text.
+                  <p className="rounded border border-dashed px-2 py-2 text-center text-[10px] text-muted-foreground">
+                    {project?.folders.length
+                      ? "No sessions in this project’s folders yet"
+                      : "No folders yet — link one in its settings, or drag a folder group here"}
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Drag a folder group onto a project to link it (and onto "No project" to take it back out). Returns
+ * props for the two ends: `folderProps` on a folder header, `sectionProps` on a project section.
+ *
+ * The dragged path rides in a ref rather than the drag payload for the same reason the row reorder
+ * does it: a session row being dragged past a project section must not read as a droppable folder,
+ * and a ref answers "is a folder in flight?" without having to inspect dataTransfer mid-drag.
+ */
+function useFolderDrag(onDropFolder: (dir: string, projectId: string | null) => void) {
+  const dragged = useRef<string | null>(null);
+  // Key of the section a folder is hovering: a project id, or "" for the "No project" section.
+  const [over, setOver] = useState<string | null>(null);
+
+  const end = () => {
+    dragged.current = null;
+    setOver(null);
+  };
+
+  return {
+    folderProps: (dir: string) => ({
+      draggable: true,
+      onDragStart: (e: React.DragEvent) => {
+        dragged.current = dir;
+        e.dataTransfer.effectAllowed = "move";
+        // A folder header sits inside a project section, which is itself a drop target — let the
+        // section see the drag, but don't let a parent list claim it as its own drag source.
+        e.stopPropagation();
+      },
+      onDragEnd: end,
+    }),
+    isOver: (projectId: string | null) => over === (projectId ?? ""),
+    sectionProps: (projectId: string | null) => ({
+      onDragOver: (e: React.DragEvent) => {
+        if (!dragged.current) return; // not a folder in flight (a session row, or something else)
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setOver(projectId ?? "");
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        // dragleave also fires when the pointer crosses between the section's own children, which
+        // would blink the highlight off and on for a drag that never left. Only a move to something
+        // outside the section counts. (Leaving for *another* section is already handled: that one's
+        // dragover has claimed `over` by then, and the guard below leaves it alone.)
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setOver((cur) => (cur === (projectId ?? "") ? null : cur));
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const dir = dragged.current;
+        end();
+        if (dir) onDropFolder(dir, projectId);
+      },
+    }),
+  };
 }
 
 // Which folder groups are collapsed is a per-browser preference, remembered across refreshes (like
@@ -363,22 +685,44 @@ function saveCollapsed(set: Set<string>) {
   }
 }
 
-/** Shared collapse-set state hook for grouped lists; persists the set so it survives a page refresh. */
-function useCollapsedGroups() {
-  const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed);
-  const toggle = (dir: string) =>
+// Which projects are folded away, by project id — the same kind of per-browser preference as the
+// folder collapse above, in its own key so the two can't collide (a project id is not a path).
+const COLLAPSED_PROJECTS_KEY = "claudeweb.collapsedProjects";
+function loadCollapsedProjects(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_PROJECTS_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveCollapsedProjects(set: Set<string>) {
+  try {
+    localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...set]));
+  } catch {
+    /* storage disabled — preference is best-effort */
+  }
+}
+
+/**
+ * Shared collapse-set state hook for grouped lists; persists the set so it survives a page refresh.
+ * Used twice over: once for folder groups (keyed by path) and once for projects (keyed by id).
+ */
+function useCollapsedSet(load: () => Set<string>, save: (set: Set<string>) => void) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(load);
+  const toggle = (key: string) =>
     setCollapsed((prev) => {
       const next = new Set(prev);
-      if (next.has(dir)) next.delete(dir);
-      else next.add(dir);
-      saveCollapsed(next);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      save(next);
       return next;
     });
-  // Collapse every given folder, or clear the set to expand all.
-  const setAll = (dirs: string[], allCollapsed: boolean) =>
+  // Collapse every given key, or clear the set to expand all.
+  const setAll = (keys: string[], allCollapsed: boolean) =>
     setCollapsed(() => {
-      const next = allCollapsed ? new Set(dirs) : new Set<string>();
-      saveCollapsed(next);
+      const next = allCollapsed ? new Set(keys) : new Set<string>();
+      save(next);
       return next;
     });
   return { collapsed, toggle, setAll };
@@ -467,6 +811,8 @@ export function SessionSidebar({
   onSearch,
   tab,
   onTabChange,
+  projects,
+  onProjectsChange,
 }: {
   sessions: SessionInfo[];
   busyIds: Set<string>;
@@ -494,14 +840,33 @@ export function SessionSidebar({
   // list, and so the desktop sidebar and the mobile drawer stay on the same tab.
   tab: SessionListTab;
   onTabChange: (tab: SessionListTab) => void;
+  // Projects, and the setter for the full list every mutation answers with. Owned by App for the
+  // same reason the tab is: the sidebar is mounted twice (desktop column + mobile drawer), and both
+  // copies have to show the same projects the moment one of them changes them.
+  projects: Project[];
+  onProjectsChange: (projects: Project[]) => void;
 }) {
   const setTab = onTabChange;
+  const confirm = useConfirm();
   const [grouped, setGrouped] = useState<boolean>(loadGrouped);
   const [filter, setFilter] = useState<SessionFilter>(loadFilter);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Folder whose bulk-remove popup is open (its normalized dirKey), or null.
   const [removeDir, setRemoveDir] = useState<string | null>(null);
-  const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedGroups();
+  const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedSet(
+    loadCollapsed,
+    saveCollapsed
+  );
+  const {
+    collapsed: collapsedProjects,
+    toggle: toggleProject,
+    setAll: setAllProjects,
+  } = useCollapsedSet(loadCollapsedProjects, saveCollapsedProjects);
+  // Whose settings popup is open, by id — an id rather than the project itself, so the popup keeps
+  // showing the live folder list as it is edited (linking a folder returns a new project object; a
+  // captured one would go stale the moment the first change landed). A null id is the
+  // create-a-new-one form, with `folder` set when it was started from a folder.
+  const [editing, setEditing] = useState<{ id: string | null; folder?: string } | null>(null);
   // Sessions whose forks are folded away (by session id).
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(loadCollapsedForks);
   // Sessions pinned to the top of their folder, and the manual row order the user dragged into
@@ -549,7 +914,12 @@ export function SessionSidebar({
     : groupByFolder(recents)
   ).map((g) => g.dir);
   const allCollapsed = visibleDirs.length > 0 && visibleDirs.every((d) => collapsed.has(d));
-  const toggleAllGroups = () => setAllGroups(visibleDirs, !allCollapsed);
+  // Folds the project headings away with their folders: "collapse all" that left the projects open
+  // would still leave a screenful of headings, which isn't the overview the button is asking for.
+  const toggleAllGroups = () => {
+    setAllGroups(visibleDirs, !allCollapsed);
+    setAllProjects([...projects.map((p) => p.id), ""], !allCollapsed);
+  };
 
   // The grouped list, built once: pins first, then the hand-arranged order, then newest-first for
   // anything the user hasn't placed. `rootIds` is the drag list — top-level rows only, since a fork
@@ -574,12 +944,71 @@ export function SessionSidebar({
     [visibleSessions, pinned, order, collapsedForks]
   );
 
+  // The same groups, filed under the project each one's folder belongs to (see sectionsByProject).
+  const sessionSections = useMemo(
+    () => sectionsByProject(groups, projects, (g) => g.dir),
+    [groups, projects]
+  );
+  // The flat list's sections: the sessions themselves under their project, no folder headings in
+  // between. Ordered like the plain flat list — pins first, then newest-first — since a project here
+  // is a heading over that same list rather than a different way of sorting it.
+  const flatSections = useMemo(
+    () => sectionsByProject(sortPinnedFirst(visibleSessions, pinned), projects, (s) => s.workingDirectory),
+    [visibleSessions, pinned, projects]
+  );
+
+  const editingProject = editing?.id ? projects.find((p) => p.id === editing.id) ?? null : null;
+
   // Drag-to-reorder inside a folder group; the list key is the folder, so a row can't be dropped
   // into a folder it doesn't belong to.
   const dnd = useDragReorder((from, to, list) => {
     const g = groups.find((x) => x.key === list);
     if (g) reorderFolder(list, from, to, g.rootIds);
   });
+
+  /**
+   * Link a folder to a project, or (with a null project) take it out of the one it is in.
+   *
+   * Taking it out has a wrinkle: a folder can be in a project through an *ancestor* link rather than
+   * its own path, and the model has no way to say "everything under C:\git except this one". So the
+   * only honest move is to unlink the ancestor — which takes its siblings out too — and that is worth
+   * asking about first rather than doing quietly.
+   */
+  const moveFolderToProject = async (dir: string, projectId: string | null) => {
+    const current = projectForDir(dir, projects);
+    if (current?.id === (projectId ?? "")) return; // already where it was dropped
+    try {
+      if (projectId) {
+        onProjectsChange(await api.addProjectFolder(projectId, dir));
+        return;
+      }
+      if (!current) return;
+      // The deepest of this project's links covering the folder is the one that puts it here.
+      const link = [...current.folders]
+        .filter((f) => isUnder(dir, f))
+        .sort((a, b) => dirKey(b).length - dirKey(a).length)[0];
+      if (!link) return;
+      if (!sameFolder(link, dir)) {
+        const ok = await confirm({
+          title: `Take “${folderLabel(link)}” out of ${current.name}?`,
+          description: (
+            <>
+              <span className="font-mono text-foreground">{folderLabel(dir)}</span> is in this project
+              through <span className="font-mono text-foreground">{link}</span>, so it can only leave
+              with that folder — everything else under it leaves too.
+            </>
+          ),
+          confirmLabel: "Unlink",
+        });
+        if (!ok) return;
+      }
+      onProjectsChange(await api.removeProjectFolder(current.id, link));
+    } catch {
+      /* the list is re-read on the next load; a failed link isn't worth a dialog */
+    }
+  };
+
+  const folderDnd = useFolderDrag((dir, projectId) => void moveFolderToProject(dir, projectId));
 
   const toggleGrouped = () =>
     setGrouped((v) => {
@@ -785,6 +1214,47 @@ export function SessionSidebar({
     );
   };
 
+  // One folder group: its header and, unless folded, the fork tree of the sessions in it. Pulled out
+  // of the list because it is now rendered from two places — inside a project, and loose below them.
+  const renderFolderGroup = (g: (typeof groups)[number]) => {
+    const isCollapsed = collapsed.has(g.dir);
+    return (
+      <div key={g.key}>
+        <GroupHeader
+          dir={g.dir}
+          count={g.count}
+          collapsed={isCollapsed}
+          onToggle={() => toggleGroup(g.dir)}
+          onNewSession={() => onNewInFolder(g.dir)}
+          onRemove={() => setRemoveDir(g.key)}
+          activity={folderActivity(g.items, busyIds, waitingIds, compactingIds)}
+          projects={projects}
+          projectId={projectForDir(g.dir, projects)?.id ?? null}
+          onMoveToProject={(id) => void moveFolderToProject(g.dir, id)}
+          onNewProject={() => setEditing({ id: null, folder: g.dir })}
+          dragProps={folderDnd.folderProps(g.dir)}
+        />
+        {!isCollapsed && (
+          <div className="mt-0.5 space-y-0.5 pl-[18px]">
+            {/* A fork always shares its parent's folder, so nesting inside the group is the same
+                tree the flat list shows — just scoped to this folder. */}
+            {g.nodes.map((n) => {
+              const i = g.rootIds.indexOf(n.session.id);
+              // Rows are draggable only while nothing in them is being renamed: the rename box has
+              // to stay selectable with the mouse.
+              const draggable = i >= 0 && editingId !== n.session.id;
+              return renderRow(
+                n,
+                false,
+                draggable ? { props: dnd.rowProps(i, g.key), over: dnd.isOver(i, g.key) } : undefined
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex h-full flex-col bg-card">
       {/* Tab switcher: active sessions vs. reusable recent presets. The row is tight on purpose —
@@ -836,6 +1306,18 @@ export function SessionSidebar({
             {grouped ? <List className="size-3.5" /> : <FolderTree className="size-3.5" />}
           </Button>
         )}
+        {/* Projects head both views now, so the button isn't tied to the grouped one. */}
+        {tab === "sessions" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 shrink-0 text-muted-foreground"
+            title="New project"
+            onClick={() => setEditing({ id: null })}
+          >
+            <FolderPlus className="size-3.5" />
+          </Button>
+        )}
         {grouped && visibleDirs.length > 0 && (
           <Button
             variant="ghost"
@@ -862,6 +1344,13 @@ export function SessionSidebar({
           onReuse={onReuse}
           onRemove={onRemoveRecent}
           onReorder={onReorderRecent}
+          projects={projects}
+          collapsedProjects={collapsedProjects}
+          onToggleProject={toggleProject}
+          onProjectSettings={(p) => setEditing({ id: p.id })}
+          onNewProject={(folder) => setEditing({ id: null, folder })}
+          onMoveToProject={(dir, id) => void moveFolderToProject(dir, id)}
+          folderDnd={folderDnd}
         />
       ) : (
       <div className="flex-1 overflow-auto pb-2 pl-2 pr-1">
@@ -871,46 +1360,38 @@ export function SessionSidebar({
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No running sessions</p>
         ) : null}
         {grouped ? (
-          <div className="space-y-2">
-            {groups.map(({ dir, key, count, items, nodes, rootIds }) => {
-              const isCollapsed = collapsed.has(dir);
-              return (
-                <div key={key}>
-                  <GroupHeader
-                    dir={dir}
-                    count={count}
-                    collapsed={isCollapsed}
-                    onToggle={() => toggleGroup(dir)}
-                    onNewSession={() => onNewInFolder(dir)}
-                    onRemove={() => setRemoveDir(key)}
-                    activity={folderActivity(items, busyIds, waitingIds, compactingIds)}
-                  />
-                  {!isCollapsed && (
-                    <div className="mt-0.5 space-y-0.5 pl-[18px]">
-                      {/* A fork always shares its parent's folder, so nesting inside the group is
-                          the same tree the flat list shows — just scoped to this folder. */}
-                      {nodes.map((n) => {
-                        const i = rootIds.indexOf(n.session.id);
-                        // Rows are draggable only while nothing in them is being renamed: the
-                        // rename box has to stay selectable with the mouse.
-                        const draggable = i >= 0 && editingId !== n.session.id;
-                        return renderRow(
-                          n,
-                          false,
-                          draggable
-                            ? {
-                                props: dnd.rowProps(i, key),
-                                over: dnd.isOver(i, key),
-                              }
-                            : undefined
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          projects.length > 0 ? (
+            <ProjectSections
+              sections={sessionSections}
+              collapsed={collapsedProjects}
+              onToggle={toggleProject}
+              onSettings={(p) => setEditing({ id: p.id })}
+              dnd={folderDnd}
+              renderItems={(gs) => gs.map(renderFolderGroup)}
+              countOf={(gs) => gs.reduce((n, g) => n + g.count, 0)}
+              activityOf={(gs) =>
+                folderActivity(gs.flatMap((g) => g.items), busyIds, waitingIds, compactingIds)
+              }
+            />
+          ) : (
+            // No projects yet: the list is exactly what it always was, headings and all.
+            <div className="space-y-2">{groups.map(renderFolderGroup)}</div>
+          )
+        ) : projects.length > 0 ? (
+          // Flat list, under project headings: the sessions themselves, with no folder groups in
+          // between — the whole point of the flat view is not to have them. Each row still carries
+          // its path, and a project can be folded away like it can upstairs. No drag: there is no
+          // folder header here to drag, and a session alone doesn't belong to a project — its folder
+          // does (move it from the grouped view, or the folder's menu).
+          <ProjectSections
+            sections={flatSections}
+            collapsed={collapsedProjects}
+            onToggle={toggleProject}
+            onSettings={(p) => setEditing({ id: p.id })}
+            renderItems={(ss) => forkTree(ss, collapsedForks).map((n) => renderRow(n, true))}
+            bodyClassName="space-y-0.5"
+            activityOf={(ss) => folderActivity(ss, busyIds, waitingIds, compactingIds)}
+          />
         ) : (
           // Flat list: no drag-reorder (newest-first is the order it means), but a pin still floats
           // its session to the top — a pin the user set shouldn't vanish with a change of view.
@@ -943,6 +1424,17 @@ export function SessionSidebar({
           <ThemeToggle />
         </div>
       </div>
+
+      {/* Resolved from the live list on every render; a project deleted from another tab simply
+          stops rendering its popup rather than editing something that is no longer there. */}
+      {editing && (editing.id === null || editingProject) && (
+        <ProjectDialog
+          project={editingProject}
+          initialFolders={editing.folder ? [editing.folder] : undefined}
+          onSaved={onProjectsChange}
+          onClose={() => setEditing(null)}
+        />
+      )}
 
       {removeDir && (
         <FolderRemoveDialog
@@ -1170,6 +1662,13 @@ function RecentList({
   onReuse,
   onRemove,
   onReorder,
+  projects,
+  collapsedProjects,
+  onToggleProject,
+  onProjectSettings,
+  onNewProject,
+  onMoveToProject,
+  folderDnd,
 }: {
   recents: RecentSession[];
   grouped: boolean;
@@ -1178,6 +1677,15 @@ function RecentList({
   onReuse: (r: RecentSession) => void;
   onRemove: (r: RecentSession) => void;
   onReorder: (from: number, to: number) => void;
+  // Projects work the same way here as on the sessions tab — the two lists group by folder, so they
+  // group by project too, and a folder linked from one tab is linked on the other.
+  projects: Project[];
+  collapsedProjects: ReadonlySet<string>;
+  onToggleProject: (key: string) => void;
+  onProjectSettings: (project: Project) => void;
+  onNewProject: (folder: string) => void;
+  onMoveToProject: (dir: string, projectId: string | null) => void;
+  folderDnd: ReturnType<typeof useFolderDrag>;
 }) {
   const dnd = useDragReorder(onReorder);
 
@@ -1232,6 +1740,30 @@ function RecentList({
     </div>
   );
 
+  const renderFolderGroup = (g: ReturnType<typeof groupByFolder<RecentSession>>[number]) => {
+    const isCollapsed = collapsed.has(g.dir);
+    return (
+      <div key={g.dir}>
+        <GroupHeader
+          dir={g.dir}
+          count={g.items.length}
+          collapsed={isCollapsed}
+          onToggle={() => onToggleGroup(g.dir)}
+          projects={projects}
+          projectId={projectForDir(g.dir, projects)?.id ?? null}
+          onMoveToProject={(id) => onMoveToProject(g.dir, id)}
+          onNewProject={() => onNewProject(g.dir)}
+          dragProps={folderDnd.folderProps(g.dir)}
+        />
+        {!isCollapsed && (
+          <div className="mt-1 space-y-1 pl-[18px]">
+            {g.items.map(({ item, index }) => renderRow(item, index, false))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex-1 overflow-auto px-2 pb-2">
       {recents.length === 0 && (
@@ -1240,26 +1772,19 @@ function RecentList({
         </p>
       )}
       {grouped ? (
-        <div className="space-y-2">
-          {groupByFolder(recents).map((g) => {
-            const isCollapsed = collapsed.has(g.dir);
-            return (
-              <div key={g.dir}>
-                <GroupHeader
-                  dir={g.dir}
-                  count={g.items.length}
-                  collapsed={isCollapsed}
-                  onToggle={() => onToggleGroup(g.dir)}
-                />
-                {!isCollapsed && (
-                  <div className="mt-1 space-y-1 pl-[18px]">
-                    {g.items.map(({ item, index }) => renderRow(item, index, false))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        projects.length > 0 ? (
+          <ProjectSections
+            sections={sectionsByProject(groupByFolder(recents), projects, (g) => g.dir)}
+            collapsed={collapsedProjects}
+            onToggle={onToggleProject}
+            onSettings={onProjectSettings}
+            dnd={folderDnd}
+            renderItems={(gs) => gs.map(renderFolderGroup)}
+            countOf={(gs) => gs.reduce((n, g) => n + g.items.length, 0)}
+          />
+        ) : (
+          <div className="space-y-2">{groupByFolder(recents).map(renderFolderGroup)}</div>
+        )
       ) : (
         <div className="space-y-1">{recents.map((r, i) => renderRow(r, i, true))}</div>
       )}

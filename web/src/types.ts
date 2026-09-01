@@ -173,3 +173,15 @@ export interface UpdateStatus {
   state: "Idle" | "Applying" | "Failed";
   error: string | null; // why the last apply attempt failed, when state is Failed
 }
+
+/**
+ * A named grouping of folders — the user's own unit of work, which may span several unrelated
+ * folders or none at all. Shown in the sessions sidebar above the folder groups it collects; a
+ * linked folder covers itself and everything under it. Persisted server-side (`/api/projects`).
+ */
+export interface Project {
+  id: string;
+  name: string;
+  color: string | null; // palette colour name (same names as a session's /color), or null
+  folders: string[]; // absolute paths on the server machine
+}

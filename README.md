@@ -25,6 +25,13 @@ The web UI is a **session manager with a full terminal**:
   name the fork, and it launches beside the original with the same folder and settings, picking up
   its history (`claude --resume <id> --fork-session`). The original keeps running, untouched. Forks
   nest under their parent in the sessions list, and each one's header links back to it.
+- **Projects** — name a project, give it a colour, and link the folders it spans (any number,
+  unrelated to each other). Projects head both session views: grouped, the folder groups sit under
+  their project; flat, the sessions themselves do, with no folder headings in between. Anything
+  unfiled follows under *No project*. A linked folder covers everything **under** it too, so a new
+  worktree or nested repo — and any session started there — joins by itself. Drag a folder group
+  onto a project to move it (or onto *No project* to take it out), or use the folder's ⋯ menu.
+  Stored server-side, so projects follow you across devices.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:

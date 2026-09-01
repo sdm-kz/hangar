@@ -10,6 +10,7 @@ import type {
   GitRefs,
   GitStatus,
   GitWorktree,
+  Project,
   PtyOrphan,
   SessionInfo,
   UpdateStatus,
@@ -212,6 +213,35 @@ export const api = {
   },
   removeRecentFolder(path: string): Promise<Recents> {
     return request("/api/recents/folders/remove", { method: "POST", body: JSON.stringify({ path }) });
+  },
+
+  // ---- Projects (named groupings of folders, server-backed like the recents above) ----
+  // Every mutation answers with the whole list: linking a folder to one project also unlinks it from
+  // another, so the response is the only thing that reliably describes the result.
+  getProjects(): Promise<Project[]> {
+    return request("/api/projects");
+  },
+  createProject(name: string, color?: string | null, folders?: string[]): Promise<Project[]> {
+    return request("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ name, color: color ?? null, folders: folders ?? [] }),
+    });
+  },
+  // Omit a field to leave it as it is; pass "" as the color to clear the accent.
+  updateProject(id: string, patch: { name?: string; color?: string | null }): Promise<Project[]> {
+    return request(`/api/projects/${id}`, { method: "POST", body: JSON.stringify(patch) });
+  },
+  deleteProject(id: string): Promise<Project[]> {
+    return request(`/api/projects/${id}`, { method: "DELETE" });
+  },
+  addProjectFolder(id: string, path: string): Promise<Project[]> {
+    return request(`/api/projects/${id}/folders`, { method: "POST", body: JSON.stringify({ path }) });
+  },
+  removeProjectFolder(id: string, path: string): Promise<Project[]> {
+    return request(`/api/projects/${id}/folders/remove`, {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    });
   },
 
   // ---- In-app update (a build staged by scripts\stage-update.ps1) ----

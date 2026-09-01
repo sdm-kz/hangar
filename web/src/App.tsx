@@ -5,7 +5,7 @@ import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { move } from "@/lib/sessionOrder";
 import { setFaviconStatus } from "@/lib/favicon";
-import type { SessionInfo, UpdateStatus } from "@/types";
+import type { Project, SessionInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar, type SessionListTab } from "@/components/SessionSidebar";
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
@@ -65,6 +65,9 @@ export function App() {
   // Id of the session the fork popup is open for (it asks for a name, then branches its conversation).
   const [forkFromId, setForkFromId] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentSession[]>([]);
+  // Projects (server-backed groupings of folders). Owned here rather than by the sidebar because the
+  // sidebar is mounted twice — desktop column and mobile drawer — and both have to show the same set.
+  const [projects, setProjects] = useState<Project[]>([]);
   // Search popup over sessions + recents. Owned here (not by the sidebar) so the hotkey below works
   // with the sidebar collapsed, and so the two sidebar instances don't each mount a dialog.
   const [searching, setSearching] = useState(false);
@@ -127,6 +130,14 @@ export function App() {
       setRecents(r.sessions);
     } catch {
       /* ignore — recents are non-critical */
+    }
+  }, []);
+
+  const loadProjects = useCallback(async () => {
+    try {
+      setProjects(await api.getProjects());
+    } catch {
+      /* ignore — an unreachable project list just means no headings */
     }
   }, []);
 
@@ -467,7 +478,8 @@ export function App() {
       await migrateLegacyRecents().catch(() => {});
       loadRecents();
     })();
-  }, [auth, loadRecents]);
+    loadProjects();
+  }, [auth, loadRecents, loadProjects]);
 
   // A Restorable entry has no live terminal, so never treat it as the active view.
   const active = sessions.find((s) => s.id === activeId && s.state !== "Restorable") ?? null;
@@ -728,6 +740,8 @@ export function App() {
               onSearch={() => setSearching(true)}
               tab={listTab}
               onTabChange={setListTab}
+              projects={projects}
+              onProjectsChange={setProjects}
             />
           }
           files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} onNewSession={newSessionInFolder} />}
@@ -782,6 +796,8 @@ export function App() {
                   onSearch={() => setSearching(true)}
                   tab={listTab}
                   onTabChange={setListTab}
+                  projects={projects}
+                  onProjectsChange={setProjects}
                 />
               }
               files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} onNewSession={newSessionInFolder} />}

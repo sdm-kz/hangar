@@ -198,6 +198,8 @@ internal static class Program
         builder.Services.AddSingleton<Update.UpdateService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Update.UpdateService>());
         builder.Services.AddSingleton<RecentsStore>();
+        // Projects: named groupings of folders, shown above the folder groups in the sessions sidebar.
+        builder.Services.AddSingleton<ProjectStore>();
         // Extra folders attached to a session's working directory, browsable from its Files panel.
         builder.Services.AddSingleton<LinkedFolderStore>();
         // Web Push: the VAPID keypair, the subscription store, and the notifier that fires a push on
@@ -422,6 +424,28 @@ internal static class Program
         app.MapPost("/api/recents/sessions/reorder", (List<RecentSession> body, RecentsStore store) => Results.Ok(store.ReorderSessions(body)));
         app.MapPost("/api/recents/folders", (FolderRequest body, RecentsStore store) => Results.Ok(store.AddFolder(body.Path)));
         app.MapPost("/api/recents/folders/remove", (FolderRequest body, RecentsStore store) => Results.Ok(store.RemoveFolder(body.Path)));
+
+        // ---- Projects (named groupings of folders, shared across devices) --------------------------
+        // Every mutation answers with the whole list so a client can replace its state from the
+        // response — linking a folder can also unlink it from another project, so a patch would need
+        // to know more about the rules than the client should have to.
+        app.MapGet("/api/projects", (ProjectStore store) => Results.Ok(store.List()));
+        app.MapPost("/api/projects", (ProjectRequest body, ProjectStore store) =>
+            store.Create(body.Name, body.Color, body.Folders) is { } list
+                ? Results.Ok(list)
+                : Results.BadRequest(new { error = "A project needs a name (and there is a limit on how many)." }));
+        // A null name means "leave it alone"; a blank one is a bad request, not a missing project —
+        // the store answers null to both, so the name is checked here to keep the two apart.
+        app.MapPost("/api/projects/{id}", (string id, ProjectRequest body, ProjectStore store) =>
+            body.Name is { } n && string.IsNullOrWhiteSpace(n)
+                ? Results.BadRequest(new { error = "A project needs a name." })
+                : store.Update(id, body.Name, body.Color) is { } list ? Results.Ok(list) : Results.NotFound());
+        app.MapDelete("/api/projects/{id}", (string id, ProjectStore store) =>
+            store.Delete(id) is { } list ? Results.Ok(list) : Results.NotFound());
+        app.MapPost("/api/projects/{id}/folders", (string id, FolderRequest body, ProjectStore store) =>
+            store.AddFolder(id, body.Path) is { } list ? Results.Ok(list) : Results.NotFound());
+        app.MapPost("/api/projects/{id}/folders/remove", (string id, FolderRequest body, ProjectStore store) =>
+            store.RemoveFolder(id, body.Path) is { } list ? Results.Ok(list) : Results.NotFound());
 
         // ---- Web Push subscriptions (background notifications when the tab/PWA is closed) ----------
         // The VAPID public key is not secret and is needed before the browser can subscribe, so its
@@ -899,6 +923,8 @@ internal record ForkRequest(string? Name);
 internal record FileWriteRequest(string Path, string? Content, string? Dir = null);
 internal record FileRenameRequest(string Path, string NewName, string? Dir = null);
 internal record FolderRequest(string? Path, string? Dir = null);
+// Create/update a project. On update a null field means "leave it alone"; an empty colour clears it.
+internal record ProjectRequest(string? Name, string? Color = null, List<string>? Folders = null);
 internal record FolderCreateRequest(string? Path, string? Dir = null);
 internal record FsWriteRequest(string Path, string? Content);
 internal record FsPathRequest(string Path);
