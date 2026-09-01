@@ -648,11 +648,15 @@ export function SessionSidebar({
           restorable ? "text-muted-foreground" : "cursor-pointer",
           activeId === s.id && !restorable && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
-          !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70",
-          // Where a dragged row would land.
-          drag?.over && "border-t-2 border-t-primary"
+          !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
         )}
       >
+        {/* Where a dragged row would land. A bar of its own rather than the row's top border: a
+            border follows the rounded corners around the sides, which reads as a box half-drawn
+            instead of a line between two rows. Inset and pill-ended so it stays a line. */}
+        {drag?.over && (
+          <span className="pointer-events-none absolute inset-x-2 -top-px h-0.5 rounded-full bg-primary" />
+        )}
         {/* Activity dot, in the top-left corner rather than sitting in the name's line: an inline
             gutter would have to stay reserved on every idle row — most of them — just so the title
             wouldn't shift when the dot appears. What it can say lives in ACTIVITY_DOT, so this row
@@ -1185,11 +1189,12 @@ function RecentList({
       {...dnd.rowProps(i)}
       onClick={() => onReuse(r)}
       title="Click to adjust and create"
-      className={cn(
-        "group flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent",
-        dnd.isOver(i) && "border-t-2 border-t-primary"
-      )}
+      className="group relative flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent"
     >
+      {/* Drop indicator; see the session row's for why it isn't the top border. */}
+      {dnd.isOver(i) && (
+        <span className="pointer-events-none absolute inset-x-2 -top-px h-0.5 rounded-full bg-primary" />
+      )}
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1">
           <span className="truncate">{recentLabel(r)}</span>
