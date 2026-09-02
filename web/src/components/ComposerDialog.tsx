@@ -128,7 +128,12 @@ export function ComposerDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-        <DialogContent className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-3">
+        {/* Attaches pasted images itself (see onPaste); the marker keeps the terminal's own
+            document-level paste listener from also dropping them into the live input. */}
+        <DialogContent
+          data-owns-image-paste
+          className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-3"
+        >
           <DialogHeader className="shrink-0">
             <DialogTitle>{isEditing ? "Edit postponed message" : "Compose message"}</DialogTitle>
             <DialogDescription>

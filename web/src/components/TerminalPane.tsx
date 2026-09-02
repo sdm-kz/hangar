@@ -594,9 +594,12 @@ export const TerminalPane = forwardRef<
     // Non-image pastes fall through to xterm's normal text handling. Listens on document in the
     // capture phase so it fires before xterm processes the paste, regardless of focus target.
     const onPaste = async (e: ClipboardEvent) => {
-      // Let the postponed-messages pool handle its own pastes: this capture-phase listener would
-      // otherwise swallow an image pasted into the pool's composer before it bubbles to the textarea.
-      if ((e.target as HTMLElement | null)?.closest?.("[data-postponed-pool]")) return;
+      // Leave alone any surface that attaches images itself — the postponed pool, the compose popup.
+      // This listener is on document in the capture phase, so without the exemption it fires FIRST
+      // and pastes the image into the live terminal as well as into the composer being written in,
+      // which is a message going out that nobody asked to send. Marked with an attribute rather than
+      // named per component so the next such surface inherits the exemption instead of the bug.
+      if ((e.target as HTMLElement | null)?.closest?.("[data-owns-image-paste]")) return;
       const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
       if (!item) return;
       e.preventDefault();

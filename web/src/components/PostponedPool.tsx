@@ -244,7 +244,7 @@ export function PostponedPool({
 
   return (
     <>
-    <div data-postponed-pool className="shrink-0 border-t bg-background">
+    <div data-owns-image-paste className="shrink-0 border-t bg-background">
       {/* One picker for both attach buttons (the bar's and the composer's), mounted outside the
           collapsible body so the bar can open it while the panel is still collapsed. */}
       <input
