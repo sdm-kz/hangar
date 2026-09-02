@@ -14,10 +14,8 @@ import { ProjectDialog } from "./ProjectDialog";
 import { useConfirm } from "@/components/ui/confirm";
 import {
   dirKey,
-  loadPinnedSessions,
   loadSessionOrder,
   move,
-  savePinnedSessions,
   saveSessionOrder,
   sortFolderSessions,
   sortPinnedFirst,
@@ -900,20 +898,24 @@ export function SessionSidebar({
   const [editing, setEditing] = useState<{ id: string | null; folder?: string } | null>(null);
   // Sessions whose forks are folded away (by session id).
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(loadCollapsedForks);
-  // Sessions pinned to the top of their folder, and the manual row order the user dragged into
-  // place (per folder). Per-browser, like the collapse state above.
-  const [pinned, setPinned] = useState<Set<string>>(loadPinnedSessions);
+  // The manual row order the user dragged into place (per folder). Per-browser, like the collapse
+  // state above — unlike a pin, an arrangement really is this browser's view of the list.
   const [order, setOrder] = useState<SessionOrder>(loadSessionOrder);
 
   const aliveIds = () => new Set(sessions.map((s) => s.id));
 
-  const togglePin = (id: string) =>
-    setPinned((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return savePinnedSessions(next, aliveIds());
-    });
+  // Which rows are pinned comes off the session list itself: the server keys pins by conversation, so
+  // this stays right through a reopen and matches what every other browser is showing.
+  const pinned = useMemo(
+    () => new Set(sessions.filter((s) => s.pinned).map((s) => s.id)),
+    [sessions]
+  );
+
+  // No optimistic flip: the server raises its change event as it writes, so the updated list is
+  // pushed down the events socket immediately — and to every other browser at the same time.
+  const togglePin = (id: string, pinned: boolean) => {
+    void api.setPinned(id, pinned).catch(() => {});
+  };
 
   // Drop of a dragged row: rewrite that folder's order from what is on screen, so every row in it
   // gets an explicit place. A session created later isn't in the list and lands back on top.
@@ -966,13 +968,40 @@ export function SessionSidebar({
     () => sectionsByProject(groups, projects, (g) => g.dir),
     [groups, projects]
   );
-  // The flat list's sections: the sessions themselves under their project, no folder headings in
-  // between. Ordered like the plain flat list — pins first, then newest-first — since a project here
-  // is a heading over that same list rather than a different way of sorting it.
+  /**
+   * The flat list's sections: the sessions themselves under their project, no folder headings in
+   * between. Each carries its own fork tree and drag list, exactly like a folder group — a section is
+   * a list you can arrange, and the whole point of the flat view is that a project heading is the
+   * only structure over it.
+   *
+   * The order key is the project rather than a folder (a project spans several), and it is prefixed
+   * so it can never collide with a grouped list's key, which is a path. With no projects at all
+   * sectionsByProject returns a single null-project section — the plain flat list, arrangeable on the
+   * same terms.
+   */
   const flatSections = useMemo(
-    () => sectionsByProject(sortPinnedFirst(visibleSessions, pinned), projects, (s) => s.workingDirectory),
-    [visibleSessions, pinned, projects]
+    () =>
+      sectionsByProject(visibleSessions, projects, (s) => s.workingDirectory).map((sec) => {
+        const key = `project:${sec.project?.id ?? ""}`;
+        const nodes = forkTree(sortFolderSessions(sec.items, pinned, order[key]), collapsedForks);
+        return {
+          ...sec,
+          key,
+          nodes,
+          rootIds: nodes.filter((n) => n.depth === 0).map((n) => n.session.id),
+        };
+      }),
+    [visibleSessions, pinned, projects, order, collapsedForks]
   );
+
+  // Every arrangeable list on screen, by its key, so a drop can find the row order it is rewriting
+  // without caring which view produced it. Grouped keys are paths, flat keys are "project:<id>".
+  const rootIdsByList = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const g of groups) map[g.key] = g.rootIds;
+    for (const sec of flatSections) map[sec.key] = sec.rootIds;
+    return map;
+  }, [groups, flatSections]);
 
   /**
    * Sections to actually draw. Under the active-only filter an empty project is a heading over
@@ -1016,11 +1045,11 @@ export function SessionSidebar({
 
   const editingProject = editing?.id ? projects.find((p) => p.id === editing.id) ?? null : null;
 
-  // Drag-to-reorder inside a folder group; the list key is the folder, so a row can't be dropped
-  // into a folder it doesn't belong to.
+  // Drag-to-reorder within one list — a folder group in the grouped view, a project section in the
+  // flat one. The list key scopes the drag, so a row can't be dropped into a list it isn't part of.
   const dnd = useDragReorder((from, to, list) => {
-    const g = groups.find((x) => x.key === list);
-    if (g) reorderFolder(list, from, to, g.rootIds);
+    const ids = rootIdsByList[list];
+    if (ids) reorderFolder(list, from, to, ids);
   });
 
   /**
@@ -1251,7 +1280,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
                 canFork={s.canFork}
                 restorable={restorable}
                 pinned={pinned.has(s.id)}
-                onTogglePin={() => togglePin(s.id)}
+                onTogglePin={() => togglePin(s.id, !pinned.has(s.id))}
                 onRename={() => setEditingId(s.id)}
                 onClone={() => onClone(s)}
                 onFork={() => onFork(s)}
@@ -1319,6 +1348,30 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
         )}
       </div>
     );
+  };
+
+  /**
+   * One flat-list section: the rows of a project (or of the whole list, when there are no projects).
+   * Mirrors renderFolderGroup's body — same ordering, same drag scoping — minus the folder header,
+   * which is the thing the flat view exists to leave out. `items` is ignored in favour of the
+   * section built in flatSections, so the rows and the drag list can never disagree about the order.
+   */
+  const renderFlatSection = (project: Project | null, fallback: SessionInfo[]) => {
+    const key = `project:${project?.id ?? ""}`;
+    const sec = flatSections.find((x) => x.key === key);
+    const nodes = sec?.nodes ?? forkTree(sortPinnedFirst(fallback, pinned), collapsedForks);
+    const rootIds = sec?.rootIds ?? [];
+    return nodes.map((n) => {
+      const i = rootIds.indexOf(n.session.id);
+      const draggable = i >= 0 && editingId !== n.session.id;
+      return renderRow(
+        n,
+        // Under a project heading the path is a line per row saying what the heading already says.
+        // It stays where nothing above the row does: the "No project" section, and the plain list.
+        !project,
+        draggable ? { props: dnd.rowProps(i, key), over: dnd.isOver(i, key) } : undefined
+      );
+    });
   };
 
   return (
@@ -1448,21 +1501,16 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           )
         ) : projects.length > 0 ? (
           // Flat list, under project headings: the sessions themselves, with no folder groups in
-          // between — the whole point of the flat view is not to have them. Each row still carries
-          // its path, and a project can be folded away like it can upstairs. No drag: there is no
-          // folder header here to drag, and a session alone doesn't belong to a project — its folder
-          // does (move it from the grouped view, or the folder's menu).
+          // between — the whole point of the flat view is not to have them. Rows are dragged into
+          // order within their section, the same as inside a folder group upstairs; what a row can't
+          // do here is change project, because a project holds folders, not sessions.
           <ProjectSections
             sections={shown(flatSections)}
             collapsed={collapsedProjects}
             onToggle={toggleProject}
             onSettings={(p) => setEditing({ id: p.id })}
             onNewSession={onNewInProject}
-            renderItems={(ss, project) =>
-              // Under a project heading the path is a line per row saying what the heading already
-              // says. It stays on the "No project" rows, where nothing above them does.
-              forkTree(ss, collapsedForks).map((n) => renderRow(n, !project))
-            }
+            renderItems={(ss, project) => renderFlatSection(project, ss)}
             // No folder header stands between a project and its rows here, so the rows carry the
             // indent themselves — the same distance in as a grouped row (a section's pl-2 plus the
             // 18px a folder group gives its own), so switching views doesn't shift them sideways.
@@ -1470,13 +1518,9 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
             activityOf={(ss) => folderActivity(ss, busyIds, waitingIds, compactingIds)}
           />
         ) : (
-          // Flat list: no drag-reorder (newest-first is the order it means), but a pin still floats
-          // its session to the top — a pin the user set shouldn't vanish with a change of view.
-          <div className="space-y-0.5">
-            {forkTree(sortPinnedFirst(visibleSessions, pinned), collapsedForks).map((n) =>
-              renderRow(n, true)
-            )}
-          </div>
+          // Plain flat list: no projects to head it, but the same one arrangeable list underneath —
+          // pins float to the top, and everything else keeps the place it was dragged to.
+          <div className="space-y-0.5">{renderFlatSection(null, visibleSessions)}</div>
         )}
       </div>
       )}

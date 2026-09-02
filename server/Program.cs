@@ -198,6 +198,9 @@ internal static class Program
         builder.Services.AddSingleton<Update.UpdateService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Update.UpdateService>());
         builder.Services.AddSingleton<RecentsStore>();
+        // Pinned sessions, keyed by conversation id so a pin survives a reopen and follows the user
+        // between browsers (it rides the session list as SessionInfo.Pinned).
+        builder.Services.AddSingleton<PinStore>();
         // Projects: named groupings of folders, shown above the folder groups in the sessions sidebar.
         builder.Services.AddSingleton<ProjectStore>();
         // Extra folders attached to a session's working directory, browsable from its Files panel.
@@ -402,6 +405,11 @@ internal static class Program
         });
 
         // Enable/disable the hang watchdog for a session.
+        // Pin/unpin a session. The manager resolves which conversation the pin belongs to; the client
+        // only ever names a session, and reads the result back off the session list.
+        app.MapPost("/api/sessions/{id}/pin", (string id, PinRequest body, SessionManager mgr) =>
+            mgr.SetPinned(id, body.Pinned) ? Results.Ok() : Results.NotFound());
+
         app.MapPost("/api/sessions/{id}/watchdog", async (string id, WatchdogRequest body, SessionManager mgr) =>
             await mgr.SetWatchdogEnabledAsync(id, body.Enabled) ? Results.Ok() : Results.NotFound());
 
@@ -915,6 +923,7 @@ internal record LoginRequest(string? Password);
 /// <summary>Body for <c>POST /api/pty/orphans/stop</c>; a null id means "all of them".</summary>
 internal record StopOrphansRequest(string? SessionId);
 internal record WatchdogRequest(bool Enabled);
+internal record PinRequest(bool Pinned);
 internal record RenameRequest(string Name);
 // Name for a forked session; blank/absent falls back to a "<parent> (fork)" default server-side.
 internal record ForkRequest(string? Name);

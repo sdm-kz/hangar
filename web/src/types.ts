@@ -21,6 +21,9 @@ export interface SessionInfo {
   parentSessionId: string | null; // the session this one was forked from; null for an ordinary session
   parentName: string | null; // the parent's name at fork time — shown even once the parent is gone
   adopted: boolean; // the app re-attached to this session at startup instead of launching it
+  // Pinned to the top of its folder. Server-side and keyed by conversation id, so a pin survives a
+  // reopen (which mints a new session id) and is the same in every browser.
+  pinned: boolean;
 }
 
 /** A pty host still running for a session the app no longer tracks (see PtyOrphanInfo server-side). */

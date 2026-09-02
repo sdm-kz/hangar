@@ -166,4 +166,10 @@ public sealed record SessionInfo(
     /// survived a restart, process and conversation intact. Always false for a session this app
     /// started itself, and for a Restorable entry.
     /// </summary>
-    bool Adopted = false);
+    bool Adopted = false,
+    /// <summary>
+    /// Whether the user has pinned this session to the top of its folder. Stamped on by the manager
+    /// from <see cref="PinStore"/>, which keys pins by conversation id — so it rides the session list
+    /// to every browser instead of each one keeping its own idea of what is pinned.
+    /// </summary>
+    bool Pinned = false);

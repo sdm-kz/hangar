@@ -17,24 +17,44 @@ export function dirKey(dir: string): string {
   return dir.replace(/[/\\]+/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
-// Pinned sessions and the manual per-folder order are per-browser view preferences, like the
-// grouped/flat toggle and the collapsed folders — the server has no opinion about how one browser
-// wants its list stacked. Both are keyed by session id, and ids are minted fresh on every
-// reopen/auto-resume, so each write prunes entries for sessions the list no longer has (otherwise a
-// long-lived browser accumulates state for every session it has ever seen).
+// The manual per-folder order is a per-browser view preference, like the grouped/flat toggle and the
+// collapsed folders. It is keyed by session id, and ids are minted fresh on every reopen/auto-resume,
+// so each write prunes entries for sessions the list no longer has (otherwise a long-lived browser
+// accumulates state for every session it has ever seen).
+//
+// Pins used to live here on the same terms and no longer do: a pin is a statement about the
+// conversation, not about this browser's view of it, so it belongs to the server (keyed by
+// conversation id, which survives the reopen that mints a new session id) and arrives on the session
+// list as SessionInfo.pinned. PINNED_KEY remains only to hand the old per-browser pins over once.
 const PINNED_KEY = "claudeweb.pinnedSessions";
 const ORDER_KEY = "claudeweb.sessionOrder";
 
 /** Manual row order per folder (see dirKey): session ids, topmost first. */
 export type SessionOrder = Record<string, string[]>;
 
-export function loadPinnedSessions(): Set<string> {
+/**
+ * Hand this browser's leftover pins to the server, once. Each id is sent as a pin on that session,
+ * which the server re-keys onto its conversation; ids it no longer knows (long-closed sessions) are
+ * simply refused, which is the same as the pruning this file used to do. The key is cleared either
+ * way, so a browser that fails to reach the server keeps its pins for the next attempt only if the
+ * whole call throws before the clear.
+ */
+export async function migratePinnedSessions(pin: (id: string) => Promise<void>): Promise<boolean> {
+  let ids: string[];
   try {
     const raw = localStorage.getItem(PINNED_KEY);
-    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    if (!raw) return false;
+    ids = JSON.parse(raw) as string[];
   } catch {
-    return new Set();
+    return false;
   }
+  await Promise.all(ids.map((id) => pin(id).catch(() => {})));
+  try {
+    localStorage.removeItem(PINNED_KEY);
+  } catch {
+    /* storage disabled — the pins are on the server now either way */
+  }
+  return ids.length > 0;
 }
 
 export function loadSessionOrder(): SessionOrder {
@@ -44,17 +64,6 @@ export function loadSessionOrder(): SessionOrder {
   } catch {
     return {};
   }
-}
-
-/** Drop ids that aren't in the live list any more, then persist. Returns what was stored. */
-export function savePinnedSessions(pinned: ReadonlySet<string>, alive: ReadonlySet<string>): Set<string> {
-  const kept = new Set([...pinned].filter((id) => alive.has(id)));
-  try {
-    localStorage.setItem(PINNED_KEY, JSON.stringify([...kept]));
-  } catch {
-    /* storage disabled — preference is best-effort */
-  }
-  return kept;
 }
 
 export function saveSessionOrder(order: SessionOrder, alive: ReadonlySet<string>): SessionOrder {

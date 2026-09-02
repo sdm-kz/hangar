@@ -3,7 +3,7 @@ import { api, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
 import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
-import { move } from "@/lib/sessionOrder";
+import { migratePinnedSessions, move } from "@/lib/sessionOrder";
 import { setFaviconStatus } from "@/lib/favicon";
 import type { Project, SessionInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
@@ -481,9 +481,12 @@ export function App() {
     (async () => {
       await migrateLegacyRecents().catch(() => {});
       loadRecents();
+      // Pins used to be per-browser; hand any this browser still holds to the server, once. refresh()
+      // then picks them up as SessionInfo.pinned like any other change.
+      if (await migratePinnedSessions((id) => api.setPinned(id, true)).catch(() => false)) refresh();
     })();
     loadProjects();
-  }, [auth, loadRecents, loadProjects]);
+  }, [auth, loadRecents, loadProjects, refresh]);
 
   // A Restorable entry has no live terminal, so never treat it as the active view.
   const active = sessions.find((s) => s.id === activeId && s.state !== "Restorable") ?? null;

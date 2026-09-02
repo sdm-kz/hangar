@@ -109,6 +109,17 @@ export const api = {
   detachSession(id: string): Promise<void> {
     return request(`/api/sessions/${id}/detach`, { method: "POST" });
   },
+  /**
+   * Pin/unpin a session. The server keys the pin by the session's conversation (so it outlives a
+   * reopen) and answers nothing: the new state arrives on the next session-list push, which is also
+   * what carries it to every other browser.
+   */
+  setPinned(id: string, pinned: boolean): Promise<void> {
+    return request(`/api/sessions/${id}/pin`, {
+      method: "POST",
+      body: JSON.stringify({ pinned }),
+    });
+  },
   // Enable/disable the hang watchdog (auto-continue) for a session.
   setWatchdog(id: string, enabled: boolean): Promise<void> {
     return request(`/api/sessions/${id}/watchdog`, {

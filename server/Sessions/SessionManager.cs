@@ -62,6 +62,7 @@ public sealed class SessionManager : IDisposable
     private readonly TokenStore _tokens;
     private readonly HookEventStore _hooks;
     private readonly RecentsStore _recents;
+    private readonly PinStore _pins;
     // The launch preset each live session came from, so the Claude conversation id can be stamped back
     // onto the matching "recent" entry once a hook reports it (see OnClaudeSessionIdCaptured).
     private readonly ConcurrentDictionary<string, RecentSession> _launchedFrom = new();
@@ -103,7 +104,8 @@ public sealed class SessionManager : IDisposable
     private void RaiseChanged() => Changed?.Invoke();
 
     public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, Pty.PtyHostOptions ptyHost,
-        TokenStore tokens, HookEventStore hooks, RecentsStore recents, ILoggerFactory loggerFactory)
+        TokenStore tokens, HookEventStore hooks, RecentsStore recents, PinStore pins,
+        ILoggerFactory loggerFactory)
     {
         _options = options;
         _watchdog = watchdog;
@@ -112,6 +114,7 @@ public sealed class SessionManager : IDisposable
         _tokens = tokens;
         _hooks = hooks;
         _recents = recents;
+        _pins = pins;
         _hooks.ClaudeSessionIdCaptured += OnClaudeSessionIdCaptured;
         _loggerFactory = loggerFactory;
         _log = loggerFactory.CreateLogger<SessionManager>();
@@ -132,10 +135,40 @@ public sealed class SessionManager : IDisposable
     public IReadOnlyCollection<SessionInfo> List()
     {
         foreach (var s in _sessions.Values) s.Refresh();
-        return _sessions.Values.Select(s => s.ToInfo(ConversationId(s)))
-            .Concat(_restorable.Values.Select(ClaudeSession.RestorableInfo))
+        return _sessions.Values
+            .Select(s => s.ToInfo(ConversationId(s)) with { Pinned = IsPinned(ConversationId(s), s.Id) })
+            .Concat(_restorable.Values.Select(p =>
+                ClaudeSession.RestorableInfo(p) with { Pinned = IsPinned(p.ClaudeSessionId, p.Id) }))
             .OrderBy(i => i.CreatedAt)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Whether a session is pinned: by its conversation id, or — for one too young to have reported
+    /// one — by the fallback key it would have been pinned under. See <see cref="PinStore"/>.
+    /// </summary>
+    private bool IsPinned(string? conversationId, string sessionId) =>
+        _pins.IsPinned(conversationId) || _pins.IsPinned(PinStore.SessionKey(sessionId));
+
+    /// <summary>
+    /// Pin or unpin a session, keyed by its conversation so the pin survives a reopen (which mints a
+    /// new session id) and reaches every browser through the session list. Returns false when there
+    /// is no such session.
+    /// </summary>
+    public bool SetPinned(string id, bool pinned)
+    {
+        string? key = null;
+        if (_sessions.TryGetValue(id, out var live)) key = ConversationId(live);
+        else if (_restorable.TryGetValue(id, out var p)) key = p.ClaudeSessionId;
+        else if (!_sessions.ContainsKey(id)) return false;
+
+        // No conversation id yet (a session in its first seconds): pin under the fallback key, which
+        // OnClaudeSessionIdCaptured swaps for the real one as soon as the first hook arrives.
+        if (_pins.Set(key ?? PinStore.SessionKey(id), pinned)) RaiseChanged();
+        // Unpinning has to clear both keys — a pin set before the id arrived may still sit under the
+        // fallback if the session never reported one.
+        if (!pinned && key is not null && _pins.Set(PinStore.SessionKey(id), false)) RaiseChanged();
+        return true;
     }
 
     /// <summary>
@@ -429,6 +462,9 @@ public sealed class SessionManager : IDisposable
             SavePersisted();
             if (_launchedFrom.TryGetValue(sessionId, out var preset))
                 _recents.SetClaudeSessionId(preset, claudeSessionId);
+            // A pin set before this id existed is keyed by the session; move it onto the conversation
+            // so it outlives the session id it was made under.
+            _pins.Rekey(PinStore.SessionKey(sessionId), claudeSessionId);
         }
         catch (Exception ex)
         {
