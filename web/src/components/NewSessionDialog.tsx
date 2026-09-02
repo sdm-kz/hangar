@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { folderName } from "@/lib/recentFolders";
+import { sameFolder } from "@/lib/projects";
+import { cn } from "@/lib/utils";
 import { sameRecent, type RecentSession } from "@/lib/recentSessions";
-import type { SessionInfo } from "@/types";
+import type { Project, SessionInfo } from "@/types";
+import { sessionColor } from "@/lib/sessionColors";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { FolderPicker } from "./FolderPicker";
-import { Activity, History, Loader2, Radio, RotateCcw, X, Zap } from "lucide-react";
+import { Activity, Boxes, History, Loader2, Radio, RotateCcw, X, Zap } from "lucide-react";
 
 const MODELS = [
   { value: "", label: "Default" },
@@ -56,6 +59,7 @@ export function NewSessionDialog({
   onOpenChange,
   onCreated,
   preset,
+  project,
   defaultContinue,
 }: {
   open: boolean;
@@ -63,6 +67,12 @@ export function NewSessionDialog({
   onCreated: (s: SessionInfo) => void;
   /** When opened from the Recent tab, prefill the form with this preset. */
   preset?: RecentSession | null;
+  /**
+   * When opened from a project's "+", the project to start in: its linked folders are offered as
+   * one-click picks. The folder picker still takes anything else — starting somewhere new is a
+   * perfectly ordinary thing to do from here, and the project just saves the typing.
+   */
+  project?: Project | null;
   /** Overrides the "continue conversation" default (normally on for presets, off otherwise). */
   defaultContinue?: boolean;
 }) {
@@ -106,6 +116,9 @@ export function NewSessionDialog({
     // continuing its conversation; a plain "New session" starts fresh. Some openers override this
     // (cloning a live session wants a fresh conversation alongside the original).
     setContinueSession(defaultContinue ?? !!preset);
+    // A project with exactly one linked folder has an unambiguous answer, so fill it in. With several
+    // there is nothing to guess between, and the chips below are one click away.
+    if (project && !preset) setDir(project.folders.length === 1 ? project.folders[0] : "");
     if (preset) {
       setDir(preset.workingDirectory);
       setName(preset.name);
@@ -114,7 +127,7 @@ export function NewSessionDialog({
       setRemoteControl(preset.remoteControl);
       setPermissionMode(preset.permissionMode || "auto");
     }
-  }, [open, preset, defaultContinue]);
+  }, [open, preset, project, defaultContinue]);
 
   async function create() {
     if (!dir.trim()) {
@@ -167,12 +180,22 @@ export function NewSessionDialog({
         onOpenAutoFocus={(e) => {
           // Prefilled with a folder (clone / "new session here") — keep the folder picker collapsed
           // instead of auto-focusing its input, which would pop the browser open over the whole form.
-          if (preset?.workingDirectory) e.preventDefault();
+          if (preset?.workingDirectory || project) e.preventDefault();
         }}
       >
         <DialogHeader className="shrink-0">
           <DialogTitle>New session</DialogTitle>
-          <DialogDescription>Start a Claude Code session in a working folder.</DialogDescription>
+          <DialogDescription>
+            {project ? (
+              <>
+                Start a Claude Code session in{" "}
+                <span className="font-medium text-foreground">{project.name}</span> — pick one of its
+                folders, or any other.
+              </>
+            ) : (
+              "Start a Claude Code session in a working folder."
+            )}
+          </DialogDescription>
         </DialogHeader>
 
         {/* Enter submits (native form submit); the folder picker and the command textarea handle
@@ -188,6 +211,42 @@ export function NewSessionDialog({
           <div className="space-y-2">
             <Label>Working folder</Label>
             <FolderPicker value={dir} onChange={setDir} />
+
+            {project && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Boxes
+                    className="size-3"
+                    style={sessionColor(project.color) ? { color: sessionColor(project.color)! } : undefined}
+                  />
+                  {project.name}
+                </div>
+                {project.folders.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No folders linked yet — choose one above and link it in the project&rsquo;s settings.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {project.folders.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setDir(p)}
+                        title={p}
+                        // The chosen one is marked rather than merely hovered: with the picker
+                        // collapsed above, this row is the only thing saying which folder is set.
+                        className={cn(
+                          "flex max-w-full items-center rounded-md border px-2 py-1 text-xs hover:bg-accent",
+                          sameFolder(p, dir) && "border-primary bg-accent"
+                        )}
+                      >
+                        <span className="truncate">{folderName(p)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {recents.length > 0 && (
               <div className="space-y-1.5 pt-1">

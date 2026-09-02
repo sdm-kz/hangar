@@ -30,7 +30,9 @@ The web UI is a **session manager with a full terminal**:
   their project; flat, the sessions themselves do, with no folder headings in between. Anything
   unfiled follows under *No project*. A linked folder covers everything **under** it too, so a new
   worktree or nested repo — and any session started there — joins by itself. Drag a folder group
-  onto a project to move it (or onto *No project* to take it out), or use the folder's ⋯ menu.
+  onto a project to move it (or onto *No project* to take it out), or use the folder's ⋯ menu. The
+  **+** on a project heading starts a session in it: the create dialog offers the project's linked
+  folders as one-click picks (filling it in when there's only one) and still takes any other folder.
   Stored server-side, so projects follow you across devices.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.

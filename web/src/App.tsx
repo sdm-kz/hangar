@@ -59,6 +59,10 @@ export function App() {
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
   // Override for the dialog's "continue conversation" default; undefined = the dialog's own default.
   const [newDefaultContinue, setNewDefaultContinue] = useState<boolean | undefined>(undefined);
+  // Project the create dialog was opened from ("+" on a project heading): its linked folders are
+  // offered as picks in the dialog. Held by id and resolved from the live list, so a folder linked
+  // in the meantime shows up.
+  const [newProjectId, setNewProjectId] = useState<string | null>(null);
   // Restorable session the create dialog was opened from (see reopenAsNew): once the replacement
   // launches, that stale entry is forgotten so the same conversation isn't listed twice.
   const [newFromId, setNewFromId] = useState<string | null>(null);
@@ -493,9 +497,20 @@ export function App() {
 
   function openNew(preset: RecentSession | null = null) {
     setNewPreset(preset);
+    setNewProjectId(null);
     setNewDefaultContinue(undefined);
     setNewOpen(true);
   }
+
+  // "+" on a project heading. No preset: a project isn't a launch preset, it's a set of folders to
+  // choose between — the dialog fills the folder in itself when there is only one to choose.
+  const newSessionInProject = useCallback((project: Project) => {
+    setNewPreset(null);
+    setNewProjectId(project.id);
+    setNewDefaultContinue(false); // starting fresh, not resuming whatever ran there last
+    setNewOpen(true);
+    setSidebarOpen(false);
+  }, []);
 
   function reuseRecent(r: RecentSession) {
     openNew(r);
@@ -554,6 +569,7 @@ export function App() {
   // Start a new session in a folder picked from the Files tab: open the create dialog prefilled with
   // that working directory (defaults for everything else).
   const newSessionInFolder = useCallback((path: string) => {
+    setNewProjectId(null);
     setNewPreset({
       workingDirectory: path,
       name: "",
@@ -726,6 +742,7 @@ export function App() {
               activeId={activeId}
               onSelect={selectSession}
               onNewInFolder={newSessionInFolder}
+              onNewInProject={newSessionInProject}
               onClose={onClose}
               onClone={cloneSession}
               onFork={forkSession}
@@ -782,6 +799,7 @@ export function App() {
                     setSidebarOpen(false);
                   }}
                   onNewInFolder={newSessionInFolder}
+                  onNewInProject={newSessionInProject}
                   onClose={onClose}
                   onClone={cloneSession}
                   onFork={forkSession}
@@ -877,12 +895,14 @@ export function App() {
           setNewOpen(o);
           if (!o) {
             setNewPreset(null); // clear preset so the next plain "New session" starts fresh
+            setNewProjectId(null);
             setNewDefaultContinue(undefined);
             setNewFromId(null); // dismissed without launching — keep the Restorable entry as it is
           }
         }}
         onCreated={onCreated}
         preset={newPreset}
+        project={projects.find((p) => p.id === newProjectId) ?? null}
         defaultContinue={newDefaultContinue}
       />
     </div>

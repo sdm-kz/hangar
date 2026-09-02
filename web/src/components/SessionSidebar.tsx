@@ -454,6 +454,7 @@ function ProjectHeader({
   collapsed,
   onToggle,
   onSettings,
+  onNewSession,
   activity,
 }: {
   project: Project | null;
@@ -462,6 +463,9 @@ function ProjectHeader({
   onToggle: () => void;
   // Sessions and recents both open the settings popup; absent on the "No project" section.
   onSettings?: () => void;
+  // Start a session in this project (sessions view only) — the create dialog opens with the
+  // project's folders offered as picks. Mirrors the plus on a folder header.
+  onNewSession?: () => void;
   activity?: Activity | null;
 }) {
   const accent = project ? sessionColor(project.color) : null;
@@ -502,6 +506,19 @@ function ProjectHeader({
           title={`${ACTIVITY_DOT[activity].label} (in this project)`}
         />
       )}
+      {onNewSession && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onNewSession();
+          }}
+          title="New session in this project"
+          className="hidden shrink-0 hover:text-foreground group-hover/ph:inline-flex [@media(hover:none)]:inline-flex"
+        >
+          <Plus className="size-3.5" />
+        </button>
+      )}
       {onSettings && (
         <button
           type="button"
@@ -534,6 +551,7 @@ function ProjectSections<T>({
   collapsed,
   onToggle,
   onSettings,
+  onNewSession,
   dnd,
   renderItems,
   bodyClassName,
@@ -545,14 +563,23 @@ function ProjectSections<T>({
   collapsed: ReadonlySet<string>;
   onToggle: (key: string) => void;
   onSettings: (project: Project) => void;
+  /** Sessions view only: start a session in this project (absent on the recents list). */
+  onNewSession?: (project: Project) => void;
   /**
    * Folder drag-and-drop, where the list has folder headers to drag. The flat list has none — a
    * session row is not a folder — so it passes nothing and its sections are simply not drop targets.
    */
   dnd?: ReturnType<typeof useFolderDrag>;
-  /** Draws a section's contents; takes the whole set so the flat list can build one fork tree. */
-  renderItems: (items: T[]) => ReactNode;
-  /** Spacing between whatever renderItems draws — folder groups sit further apart than rows. */
+  /**
+   * Draws a section's contents; takes the whole set so the flat list can build one fork tree, and
+   * the section's project so it can drop what the heading already says.
+   */
+  renderItems: (items: T[], project: Project | null) => ReactNode;
+  /**
+   * Layout of a section's contents: the spacing between whatever renderItems draws, and how far it
+   * is indented under the heading. Folder groups sit further apart than rows, and rows have to carry
+   * the indent a folder header would otherwise have given them.
+   */
   bodyClassName?: string;
   /** What the number after the project name counts. Defaults to the number of items. */
   countOf?: (items: T[]) => number;
@@ -581,14 +608,15 @@ function ProjectSections<T>({
               collapsed={isCollapsed}
               onToggle={() => onToggle(key)}
               onSettings={project ? () => onSettings(project) : undefined}
+              onNewSession={project && onNewSession ? () => onNewSession(project) : undefined}
               activity={activityOf?.(items) ?? null}
             />
             {!isCollapsed && (
-              // A shallow indent: enough that what follows reads as sitting inside the project,
-              // without spending width the session names below need more.
-              <div className={cn("mt-0.5 pl-2", bodyClassName ?? "space-y-2")}>
+              // A shallow indent by default: enough that the folder headers read as sitting inside
+              // the project, without spending width the session names below them need more.
+              <div className={cn("mt-0.5", bodyClassName ?? "space-y-2 pl-2")}>
                 {items.length > 0 ? (
-                  renderItems(items)
+                  renderItems(items, project)
                 ) : dnd ? (
                   // Empty, in a list you can drop on: the placeholder is what says a folder can go
                   // here, and is the target worth aiming at. Where nothing can be dropped (the flat
@@ -797,6 +825,7 @@ export function SessionSidebar({
   activeId,
   onSelect,
   onNewInFolder,
+  onNewInProject,
   onClose,
   onClone,
   onFork,
@@ -821,6 +850,8 @@ export function SessionSidebar({
   activeId: string | null;
   onSelect: (id: string) => void;
   onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
+  // Start a session in a project: the create dialog opens with its linked folders offered as picks.
+  onNewInProject: (project: Project) => void;
   onClose: (id: string) => void;
   onClone: (s: SessionInfo) => void;
   onFork: (s: SessionInfo) => void; // branch this session's conversation into a new one
@@ -907,20 +938,6 @@ export function SessionSidebar({
   const visibleSessions =
     filter === "active" ? sessions.filter((s) => s.state === "Running") : sessions;
   const activeCount = sessions.filter((s) => s.state === "Running").length;
-  // Dirs of the groups currently shown, and whether every one is collapsed — drives the
-  // collapse/expand-all toggle so it flips to "expand" once nothing is left open.
-  const visibleDirs = (tab === "sessions"
-    ? groupByFolder(visibleSessions)
-    : groupByFolder(recents)
-  ).map((g) => g.dir);
-  const allCollapsed = visibleDirs.length > 0 && visibleDirs.every((d) => collapsed.has(d));
-  // Folds the project headings away with their folders: "collapse all" that left the projects open
-  // would still leave a screenful of headings, which isn't the overview the button is asking for.
-  const toggleAllGroups = () => {
-    setAllGroups(visibleDirs, !allCollapsed);
-    setAllProjects([...projects.map((p) => p.id), ""], !allCollapsed);
-  };
-
   // The grouped list, built once: pins first, then the hand-arranged order, then newest-first for
   // anything the user hasn't placed. `rootIds` is the drag list — top-level rows only, since a fork
   // is drawn under its parent wherever the parent sits — and a drop rewrites exactly that list.
@@ -956,6 +973,46 @@ export function SessionSidebar({
     () => sectionsByProject(sortPinnedFirst(visibleSessions, pinned), projects, (s) => s.workingDirectory),
     [visibleSessions, pinned, projects]
   );
+
+  /**
+   * Sections to actually draw. Under the active-only filter an empty project is a heading over
+   * nothing — the sessions that justify it exist, they just aren't running — so it goes. With the
+   * filter off it stays: an empty project is still where you drop a folder and reach its settings,
+   * and hiding it would leave a project you just made nowhere to be seen.
+   */
+  const shown = <T,>(sections: ProjectSection<T>[]) =>
+    filter === "active" ? sections.filter((s) => s.items.length > 0) : sections;
+
+  // ---- What the collapse/expand-all button acts on -----------------------------------------------
+  // Two kinds of heading fold: folder groups, which only the grouped lists have, and project
+  // headings, which both lists have — so the button belongs in the flat list too, where projects are
+  // the one thing it can fold. It flips to "expand" once everything on screen is already folded.
+  const visibleDirs = grouped
+    ? (tab === "sessions" ? groupByFolder(visibleSessions) : groupByFolder(recents)).map((g) => g.dir)
+    : [];
+  // The project headings actually on screen. Taken from the sections the list will draw, so the
+  // button doesn't wait on a heading that isn't there (an empty "No project", say) to call itself done.
+  const headingKeys = <T,>(secs: ProjectSection<T>[]) =>
+    shown(secs).map((sec) => sec.project?.id ?? "");
+  const projectKeys =
+    tab === "sessions"
+      ? grouped
+        ? headingKeys(sessionSections)
+        : headingKeys(flatSections)
+      : projects.length
+        ? [...projects.map((p) => p.id), ""]
+        : [];
+  const canFoldAll = visibleDirs.length > 0 || projectKeys.length > 0;
+  const allCollapsed =
+    canFoldAll &&
+    visibleDirs.every((d) => collapsed.has(d)) &&
+    projectKeys.every((k) => collapsedProjects.has(k));
+  const toggleAllGroups = () => {
+    // Only touch the folder set where folders are on screen: doing it in the flat list would quietly
+    // expand every folder group the user had folded away in the grouped one.
+    if (grouped) setAllGroups(visibleDirs, !allCollapsed);
+    setAllProjects(projectKeys, !allCollapsed);
+  };
 
   const editingProject = editing?.id ? projects.find((p) => p.id === editing.id) ?? null : null;
 
@@ -1069,7 +1126,16 @@ export function SessionSidebar({
         // Middle-click opens the session in a new tab; suppress the OS autoscroll it would otherwise start.
         onMouseDown={restorable ? undefined : (e) => e.button === 1 && e.preventDefault()}
         onAuxClick={restorable ? undefined : (e) => e.button === 1 && openInNewTab()}
-        title={restorable ? undefined : "Middle-click or Ctrl/⌘-click to open in a new tab"}
+        // With no path line of its own (grouped mode, or under a project), the folder still has to be
+        // recoverable — a project can span several, and "which repo is this one in" is a fair question.
+        title={
+          restorable
+            ? undefined
+            : showPath
+              ? "Middle-click or Ctrl/⌘-click to open in a new tab"
+              : `${s.workingDirectory}
+Middle-click or Ctrl/⌘-click to open in a new tab`
+        }
         className={cn(
           "group relative flex flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-2 text-sm hover:bg-accent",
           // Dim a closed session by colour, not opacity: opacity on the row would make its
@@ -1318,12 +1384,14 @@ export function SessionSidebar({
             <FolderPlus className="size-3.5" />
           </Button>
         )}
-        {grouped && visibleDirs.length > 0 && (
+        {canFoldAll && (
           <Button
             variant="ghost"
             size="icon"
             className="size-6 shrink-0 text-muted-foreground"
-            title={allCollapsed ? "Expand all folders" : "Collapse all folders"}
+            title={`${allCollapsed ? "Expand" : "Collapse"} all ${
+              visibleDirs.length > 0 ? "folders and projects" : "projects"
+            }`}
             onClick={toggleAllGroups}
           >
             {allCollapsed ? (
@@ -1362,10 +1430,11 @@ export function SessionSidebar({
         {grouped ? (
           projects.length > 0 ? (
             <ProjectSections
-              sections={sessionSections}
+              sections={shown(sessionSections)}
               collapsed={collapsedProjects}
               onToggle={toggleProject}
               onSettings={(p) => setEditing({ id: p.id })}
+              onNewSession={onNewInProject}
               dnd={folderDnd}
               renderItems={(gs) => gs.map(renderFolderGroup)}
               countOf={(gs) => gs.reduce((n, g) => n + g.count, 0)}
@@ -1384,12 +1453,20 @@ export function SessionSidebar({
           // folder header here to drag, and a session alone doesn't belong to a project — its folder
           // does (move it from the grouped view, or the folder's menu).
           <ProjectSections
-            sections={flatSections}
+            sections={shown(flatSections)}
             collapsed={collapsedProjects}
             onToggle={toggleProject}
             onSettings={(p) => setEditing({ id: p.id })}
-            renderItems={(ss) => forkTree(ss, collapsedForks).map((n) => renderRow(n, true))}
-            bodyClassName="space-y-0.5"
+            onNewSession={onNewInProject}
+            renderItems={(ss, project) =>
+              // Under a project heading the path is a line per row saying what the heading already
+              // says. It stays on the "No project" rows, where nothing above them does.
+              forkTree(ss, collapsedForks).map((n) => renderRow(n, !project))
+            }
+            // No folder header stands between a project and its rows here, so the rows carry the
+            // indent themselves — the same distance in as a grouped row (a section's pl-2 plus the
+            // 18px a folder group gives its own), so switching views doesn't shift them sideways.
+            bodyClassName="space-y-0.5 pl-[26px]"
             activityOf={(ss) => folderActivity(ss, busyIds, waitingIds, compactingIds)}
           />
         ) : (
