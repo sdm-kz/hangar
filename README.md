@@ -27,8 +27,10 @@ The web UI is a **session manager with a full terminal**:
   nest under their parent in the sessions list, and each one's header links back to it.
 - **Projects** — name a project, give it a colour, and link the folders it spans (any number,
   unrelated to each other). Projects head both session views: grouped, the folder groups sit under
-  their project; flat, the sessions themselves do, with no folder headings in between. Anything
-  unfiled follows under *No project*. A linked folder covers everything **under** it too, so a new
+  their project; flat, the sessions themselves do, with no folder headings in between. A project
+  that is just one folder drops the folder heading in the grouped view too — its sessions hang
+  straight off the project, since the two headings would say the same thing. Anything unfiled
+  follows under *No project*. A linked folder covers everything **under** it too, so a new
   worktree or nested repo — and any session started there — joins by itself. Drag a folder group
   onto a project to move it (or onto *No project* to take it out), or use the folder's ⋯ menu. The
   **+** on a project heading starts a session in it: the create dialog offers the project's linked

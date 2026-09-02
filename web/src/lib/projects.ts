@@ -87,3 +87,19 @@ export function sectionsByProject<T>(
   if (loose.length) sections.push({ project: null, items: loose });
   return sections;
 }
+
+/**
+ * Whether a project heading has already said everything this section's folder header would: the
+ * project links exactly one folder, and that folder is the only one in the section with anything in
+ * it. Drawing both is then a box inside an identically named box — one chevron to fold the project,
+ * another to fold its single folder — so the grouped lists drop the folder header and hang its
+ * sessions straight off the project heading.
+ *
+ * A subfolder does not count: a project linked to `C:\git` whose only sessions live in
+ * `C:\git\app` keeps its folder header, because "app" is a name the project heading never says.
+ */
+export function mergesFolderHeader(project: Project | null, dirs: readonly string[]): boolean {
+  return (
+    !!project && project.folders.length === 1 && dirs.length === 1 && sameFolder(dirs[0], project.folders[0])
+  );
+}

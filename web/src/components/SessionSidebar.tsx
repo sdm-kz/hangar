@@ -4,6 +4,7 @@ import { sessionColor } from "@/lib/sessionColors";
 import { forkTree, type ForkNode } from "@/lib/sessionTree";
 import {
   isUnder,
+  mergesFolderHeader,
   projectForDir,
   sameFolder,
   sectionsByProject,
@@ -1016,9 +1017,20 @@ export function SessionSidebar({
   // Two kinds of heading fold: folder groups, which only the grouped lists have, and project
   // headings, which both lists have — so the button belongs in the flat list too, where projects are
   // the one thing it can fold. It flips to "expand" once everything on screen is already folded.
-  const visibleDirs = grouped
-    ? (tab === "sessions" ? groupByFolder(visibleSessions) : groupByFolder(recents)).map((g) => g.dir)
+  const visibleGroups = grouped
+    ? tab === "sessions"
+      ? groupByFolder(visibleSessions).map((g) => ({ dir: g.dir }))
+      : groupByFolder(recents).map((g) => ({ dir: g.dir }))
     : [];
+  // A folder header merged into its project heading isn't on screen to fold, so the button must not
+  // wait on it to call everything collapsed — the project's own chevron is what folds those rows.
+  const visibleDirs = (
+    projects.length
+      ? sectionsByProject(visibleGroups, projects, (g) => g.dir).flatMap((sec) =>
+          mergesFolderHeader(sec.project, sec.items.map((g) => g.dir)) ? [] : sec.items
+        )
+      : visibleGroups
+  ).map((g) => g.dir);
   // The project headings actually on screen. Taken from the sections the list will draw, so the
   // button doesn't wait on a heading that isn't there (an empty "No project", say) to call itself done.
   const headingKeys = <T,>(secs: ProjectSection<T>[]) =>
@@ -1309,6 +1321,30 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
     );
   };
 
+  /**
+   * The rows of one folder group: its fork tree, in the order the list was arranged into. Drawn
+   * either under the folder's own header, or — where the project heading has already named the
+   * folder (see mergesFolderHeader) — directly under that heading, with the same indent either way
+   * so the two cases line up.
+   */
+  const renderGroupRows = (g: (typeof groups)[number]) => (
+    <div className="mt-0.5 space-y-0.5 pl-[18px]">
+      {/* A fork always shares its parent's folder, so nesting inside the group is the same
+          tree the flat list shows — just scoped to this folder. */}
+      {g.nodes.map((n) => {
+        const i = g.rootIds.indexOf(n.session.id);
+        // Rows are draggable only while nothing in them is being renamed: the rename box has
+        // to stay selectable with the mouse.
+        const draggable = i >= 0 && editingId !== n.session.id;
+        return renderRow(
+          n,
+          false,
+          draggable ? { props: dnd.rowProps(i, g.key), over: dnd.isOver(i, g.key) } : undefined
+        );
+      })}
+    </div>
+  );
+
   // One folder group: its header and, unless folded, the fork tree of the sessions in it. Pulled out
   // of the list because it is now rendered from two places — inside a project, and loose below them.
   const renderFolderGroup = (g: (typeof groups)[number]) => {
@@ -1329,23 +1365,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           onNewProject={() => setEditing({ id: null, folder: g.dir })}
           dragProps={folderDnd.folderProps(g.dir)}
         />
-        {!isCollapsed && (
-          <div className="mt-0.5 space-y-0.5 pl-[18px]">
-            {/* A fork always shares its parent's folder, so nesting inside the group is the same
-                tree the flat list shows — just scoped to this folder. */}
-            {g.nodes.map((n) => {
-              const i = g.rootIds.indexOf(n.session.id);
-              // Rows are draggable only while nothing in them is being renamed: the rename box has
-              // to stay selectable with the mouse.
-              const draggable = i >= 0 && editingId !== n.session.id;
-              return renderRow(
-                n,
-                false,
-                draggable ? { props: dnd.rowProps(i, g.key), over: dnd.isOver(i, g.key) } : undefined
-              );
-            })}
-          </div>
-        )}
+        {!isCollapsed && renderGroupRows(g)}
       </div>
     );
   };
@@ -1489,7 +1509,13 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
               onSettings={(p) => setEditing({ id: p.id })}
               onNewSession={onNewInProject}
               dnd={folderDnd}
-              renderItems={(gs) => gs.map(renderFolderGroup)}
+              renderItems={(gs, project) =>
+                // A project that is just one folder draws its sessions itself: the folder header
+                // would only repeat the heading right above it.
+                mergesFolderHeader(project, gs.map((g) => g.dir))
+                  ? renderGroupRows(gs[0])
+                  : gs.map(renderFolderGroup)
+              }
               countOf={(gs) => gs.reduce((n, g) => n + g.count, 0)}
               activityOf={(gs) =>
                 folderActivity(gs.flatMap((g) => g.items), busyIds, waitingIds, compactingIds)
@@ -1861,6 +1887,14 @@ function RecentList({
     </div>
   );
 
+  // The presets of one folder, drawn under the folder's header or — where the project heading has
+  // already named the folder — straight under that. Same indent either way.
+  const renderGroupRows = (g: ReturnType<typeof groupByFolder<RecentSession>>[number]) => (
+    <div className="mt-1 space-y-1 pl-[18px]">
+      {g.items.map(({ item, index }) => renderRow(item, index, false))}
+    </div>
+  );
+
   const renderFolderGroup = (g: ReturnType<typeof groupByFolder<RecentSession>>[number]) => {
     const isCollapsed = collapsed.has(g.dir);
     return (
@@ -1876,11 +1910,7 @@ function RecentList({
           onNewProject={() => onNewProject(g.dir)}
           dragProps={folderDnd.folderProps(g.dir)}
         />
-        {!isCollapsed && (
-          <div className="mt-1 space-y-1 pl-[18px]">
-            {g.items.map(({ item, index }) => renderRow(item, index, false))}
-          </div>
-        )}
+        {!isCollapsed && renderGroupRows(g)}
       </div>
     );
   };
@@ -1900,7 +1930,11 @@ function RecentList({
             onToggle={onToggleProject}
             onSettings={onProjectSettings}
             dnd={folderDnd}
-            renderItems={(gs) => gs.map(renderFolderGroup)}
+            renderItems={(gs, project) =>
+              mergesFolderHeader(project, gs.map((g) => g.dir))
+                ? renderGroupRows(gs[0])
+                : gs.map(renderFolderGroup)
+            }
             countOf={(gs) => gs.reduce((n, g) => n + g.items.length, 0)}
           />
         ) : (
