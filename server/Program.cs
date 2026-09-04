@@ -390,10 +390,20 @@ internal static class Program
         // so no browser token or API key is involved and a session can only ever rename itself.
         // Beyond the id, this is exactly the UI rename: the display name changes and `/rename <name>`
         // is injected into the terminal so Claude's own conversation title follows.
-        app.MapPost("/api/self/name", (HttpContext ctx, RenameRequest body, TokenStore tokens, SessionManager mgr) =>
+        app.MapPost("/api/self/name", (HttpContext ctx, RenameRequest body, TokenStore tokens,
+            SessionManager mgr, ILoggerFactory lf) =>
         {
             if (!tokens.IsValidHookToken(ctx.Request.Headers["X-Hook-Token"].ToString()))
+            {
+                // Worth a line: from inside a session this reads as a bare 401 with nothing to chase.
+                // The token is persisted now, so the remaining cause is a session started against a
+                // different state directory — or one launched before this build, still carrying a
+                // per-run token that no longer exists.
+                lf.CreateLogger("SelfRename").LogWarning(
+                    "Self-rename rejected: stale or missing X-Hook-Token from session {Id}",
+                    ctx.Request.Headers["X-Session-Id"].ToString());
                 return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            }
             var id = ctx.Request.Headers["X-Session-Id"].ToString();
             if (string.IsNullOrEmpty(id))
                 return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);

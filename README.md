@@ -310,7 +310,7 @@ its environment, and they are all the call takes.
 | ---------------------- | ---------------------------------------------------------------- |
 | `CLAUDEWEB_URL`        | Base URL of the app, on loopback (e.g. `http://127.0.0.1:5099`)  |
 | `CLAUDEWEB_SESSION_ID` | This session's id — also the session the call renames             |
-| `CLAUDEWEB_HOOK_TOKEN` | Per-app-run secret that authorizes the call                       |
+| `CLAUDEWEB_HOOK_TOKEN` | Local secret that authorizes the call (also used by the hooks)   |
 
 ```bash
 curl -s -X POST "$CLAUDEWEB_URL/api/self/name" \
@@ -324,6 +324,14 @@ curl -s -X POST "$CLAUDEWEB_URL/api/self/name" \
 The name is stripped of control characters, trimmed, and capped at 100 characters. Responses are
 `200` with the applied name, `400` when the name is empty, `401` when the headers are missing or
 wrong, and `404` when the id names no session.
+
+The token is minted once and kept in `auth.json`, not regenerated per app run. A session's
+environment is fixed when its `claude` process starts, and that process outlives the app — a restart
+or a redeploy re-adopts the still-running session but cannot re-inject anything into it — so a
+per-run secret left every surviving session silently 401'ing on this endpoint and on its hooks.
+Sessions launched *before* this changed still carry a token that no longer exists: their self-rename
+fails with `401` (logged server-side) until they are restarted, and typing `/rename <name>` in the
+terminal is the way to rename them in the meantime.
 
 The effect is exactly the sidebar rename: the display name changes everywhere and `/rename <name>`
 is injected into the session's terminal so Claude's own conversation title follows. A session that

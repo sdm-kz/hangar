@@ -55,7 +55,15 @@ public sealed class TokenStore
         _stateFile = Path.Combine(stateDir, "tokens.json");
         _authFile = Path.Combine(stateDir, "auth.json");
         Load();
-        LoadPasswordHash();
+        LoadAuthState();
+
+        // Mint the hook token once and keep it: sessions carry it in their environment for as long as
+        // their claude process lives, which outlasts this app run (see SessionManager adoption).
+        if (string.IsNullOrEmpty(HookToken))
+        {
+            HookToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            SaveAuthState();
+        }
 
         // A plaintext Auth:Password is a one-time bootstrap/rotation input: hash it, persist the
         // hash, and warn the operator to remove the plaintext. It always wins so a rotation takes
@@ -63,7 +71,7 @@ public sealed class TokenStore
         if (!string.IsNullOrEmpty(_options.Password))
         {
             _passwordHash = PasswordHasher.Hash(_options.Password);
-            SavePasswordHash();
+            SaveAuthState();
             _logger.LogWarning(
                 "A plaintext Auth:Password was detected and hashed to {AuthFile}. Remove the " +
                 "plaintext Password from appsettings.json — the persisted hash is now authoritative.",
@@ -74,12 +82,17 @@ public sealed class TokenStore
     public bool AuthDisabled => string.IsNullOrEmpty(_passwordHash);
 
     /// <summary>
-    /// Secret that authorizes Claude hook callbacks (<c>POST /api/hooks</c>), passed by the hook as the
-    /// <c>X-Hook-Token</c> header. Minted fresh per app run and injected into each launched session's
-    /// environment as <c>CLAUDEWEB_HOOK_TOKEN</c>, so the static global hook config only references the
-    /// env var — never the literal secret — and stays valid across restarts.
+    /// Secret that authorizes Claude hook callbacks (<c>POST /api/hooks</c>) and a session's self-rename
+    /// (<c>POST /api/self/name</c>), passed as the <c>X-Hook-Token</c> header. Injected into each
+    /// launched session's environment as <c>CLAUDEWEB_HOOK_TOKEN</c>, so the static global hook config
+    /// only references the env var — never the literal secret.
+    /// <para>Minted once and persisted to <c>auth.json</c>, NOT per app run: a session's environment is
+    /// fixed when its claude process starts, and that process outlives the app — a restart or a redeploy
+    /// re-adopts the still-running session (see SessionManager adoption) but cannot re-inject anything
+    /// into it. A per-run secret therefore left every surviving session holding a stale token, and its
+    /// hooks and its <c>/rename-session</c> silently 401'd until it was restarted by hand.</para>
     /// </summary>
-    public string HookToken { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    public string HookToken { get; private set; } = "";
 
     /// <summary>
     /// Validate the <c>X-Hook-Token</c> header on a hook callback. Constant-time compare. Returns false
@@ -161,31 +174,39 @@ public sealed class TokenStore
         }
     }
 
-    // ---- Persistence: the password hash lives next to tokens.json, not in appsettings.json -------
+    // ---- Persistence: the password hash and hook token live next to tokens.json, not in appsettings -
 
-    private sealed class AuthState { public string? PasswordHash { get; set; } }
+    private sealed class AuthState
+    {
+        public string? PasswordHash { get; set; }
+        public string? HookToken { get; set; }
+    }
 
-    private void LoadPasswordHash()
+    // Both fields are written together, so a save must never carry only one of them: an auth.json from
+    // a build that predates the hook token simply has none, and the constructor mints one.
+    private void LoadAuthState()
     {
         try
         {
             if (!File.Exists(_authFile)) return;
             var state = JsonSerializer.Deserialize<AuthState>(File.ReadAllText(_authFile));
             if (!string.IsNullOrEmpty(state?.PasswordHash)) _passwordHash = state.PasswordHash;
+            if (!string.IsNullOrEmpty(state?.HookToken)) HookToken = state.HookToken;
         }
         catch { /* unreadable/old-format auth file — treat as unset (bootstrap plaintext can reseed) */ }
     }
 
-    private void SavePasswordHash()
+    private void SaveAuthState()
     {
         lock (_saveLock)
         {
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_authFile)!);
-                File.WriteAllText(_authFile, JsonSerializer.Serialize(new AuthState { PasswordHash = _passwordHash }));
+                File.WriteAllText(_authFile, JsonSerializer.Serialize(
+                    new AuthState { PasswordHash = _passwordHash, HookToken = HookToken }));
             }
-            catch (Exception ex) { _logger.LogWarning(ex, "Failed to persist password hash to {AuthFile}", _authFile); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to persist auth state to {AuthFile}", _authFile); }
         }
     }
 }
