@@ -1292,6 +1292,11 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
                 canFork={s.canFork}
                 restorable={restorable}
                 pinned={pinned.has(s.id)}
+                dir={s.workingDirectory}
+                projects={projects}
+                projectId={projectForDir(s.workingDirectory, projects)?.id ?? null}
+                onMoveToProject={(id) => void moveFolderToProject(s.workingDirectory, id)}
+                onNewProject={() => setEditing({ id: null, folder: s.workingDirectory })}
                 onTogglePin={() => togglePin(s.id, !pinned.has(s.id))}
                 onRename={() => setEditingId(s.id)}
                 onClone={() => onClone(s)}
@@ -1606,6 +1611,11 @@ function RowActionsMenu({
   canFork,
   restorable,
   pinned,
+  dir,
+  projects,
+  projectId,
+  onMoveToProject,
+  onNewProject,
   onTogglePin,
   onRename,
   onClone,
@@ -1616,6 +1626,12 @@ function RowActionsMenu({
   canFork: boolean;
   restorable: boolean;
   pinned: boolean;
+  /** The session's folder — what "move to project" actually moves. */
+  dir: string;
+  projects: readonly Project[];
+  projectId: string | null;
+  onMoveToProject: (projectId: string | null) => void;
+  onNewProject: () => void;
   onTogglePin: () => void;
   onRename: () => void;
   onClone: () => void;
@@ -1627,12 +1643,19 @@ function RowActionsMenu({
   const [dropUp, setDropUp] = useState(false);
   const ref = useDismissable<HTMLSpanElement>(open, useCallback(() => setOpen(false), []));
 
-  // Rows near the bottom of the list would push the menu past the viewport, so flip it upwards.
+  // Rows near the bottom of the list would push the menu past the viewport, so flip it upwards. The
+  // project section roughly doubles the menu's height, so what counts as "near the bottom" grows too.
   const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     const box = e.currentTarget.getBoundingClientRect();
-    setDropUp(window.innerHeight - box.bottom < 200);
+    setDropUp(window.innerHeight - box.bottom < (projects.length ? 440 : 240));
     setOpen((o) => !o);
+  };
+
+  const pick = (e: React.MouseEvent, run: () => void) => {
+    e.stopPropagation();
+    setOpen(false);
+    run();
   };
 
   const item = (label: string, icon: ReactNode, run: () => void, destructive = false) => (
@@ -1673,7 +1696,11 @@ function RowActionsMenu({
       {open && (
         <div
           className={cn(
-            "absolute right-0 z-50 w-48 overflow-hidden rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
+            // As wide as the folder menu, which now lists the same projects: a name plus its tick
+            // needs the room, and two menus offering one action shouldn't be two different widths.
+            // The height cap is a backstop for a short window, where neither flip leaves room for
+            // the project list and the menu would otherwise run off the screen.
+            "absolute right-0 z-50 max-h-[85vh] w-52 overflow-y-auto rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >
@@ -1684,6 +1711,48 @@ function RowActionsMenu({
           {item("Clone", <Copy className="size-3.5" />, onClone)}
           {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
           {restorable && item("Reopen", <RotateCcw className="size-3.5" />, onRestore)}
+
+          {/* The same move the folder header offers, reachable from a row — which is the only place
+              there is one in the flat view, where folder headers don't exist. A project holds folders,
+              not sessions, so this moves the whole folder and the heading says so: taking one session
+              out of its folder's project is not a thing the model can express. */}
+          <div className="my-1 border-t" />
+          <p
+            className="truncate px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+            title={dir}
+          >
+            Move folder to project
+          </p>
+          <div className="max-h-48 overflow-auto">
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={(e) => pick(e, () => onMoveToProject(p.id))}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+              >
+                <Boxes
+                  className="size-3.5 shrink-0"
+                  style={sessionColor(p.color) ? { color: sessionColor(p.color)! } : undefined}
+                />
+                <span className="truncate">{p.name}</span>
+                {projectId === p.id && <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />}
+              </button>
+            ))}
+            {projectId && (
+              <button
+                type="button"
+                onClick={(e) => pick(e, () => onMoveToProject(null))}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+              >
+                <Minus className="size-3.5 shrink-0" />
+                No project
+              </button>
+            )}
+          </div>
+          {item("New project…", <FolderPlus className="size-3.5" />, onNewProject)}
+          <div className="my-1 border-t" />
+
           {item(
             restorable ? "Forget" : "Close session",
             <X className="size-3.5" />,
