@@ -3,8 +3,17 @@ import type { GitStatus, SessionInfo } from "@/types";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
 import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
-import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
+import {
+  flushSessionUi,
+  loadSessionUi,
+  noteSessionUiRev,
+  saveSessionUi,
+  subscribeSessionUi,
+  syncSessionUi,
+} from "@/lib/sessionUi";
+import { fileEntryFromPath, useFileTabs } from "@/lib/useFileTabs";
 import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
+import { FileTabStrip } from "./FileTabStrip";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
 import { RenameField } from "./RenameField";
@@ -14,6 +23,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -110,6 +120,9 @@ export function SessionView({
     if (url.session === session.id && url.tab) return url.tab;
     return loadSessionUi(session.id).view ?? url.tab ?? "terminal";
   });
+  // The files this session has open. They are tabs in the bar below the header, beside
+  // Terminal/Split/Files, so the state belongs here rather than inside the Files panel.
+  const { fileTabs, closeGuard, settleCloseGuard } = useFileTabs(session.id);
   const [copiedPath, setCopiedPath] = useState(false);
   const [splitWidth, setSplitWidth] = useState(readSplitWidth); // Files-panel width in Split view
   // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
@@ -196,19 +209,21 @@ export function SessionView({
   );
 
   // Open a working-tree-relative file in this session's Files panel. If the panel is already showing
-  // (files/split), reveal it via the browser's imperative handle; otherwise seed the selection and
-  // switch to the Files view so the browser opens it as it mounts.
+  // (files/split/a file tab), reveal it via the browser's imperative handle — that also expands the
+  // tree down to it. Otherwise open the tab here and switch to the Files view; the saved `file` is
+  // written first so the tree expands to it as it mounts.
   const openInFiles = useCallback(
     (rel: string) => {
       if (view === "terminal") {
         saveSessionUi(session.id, { file: rel });
         patchUrlState({ file: rel });
+        void fileTabs.open(fileEntryFromPath(rel), false);
         changeView("files");
       } else {
         fileBrowserRef.current?.revealFile(rel);
       }
     },
-    [view, session.id, changeView]
+    [view, session.id, changeView, fileTabs]
   );
 
   // Open this session's git-changes view (from the header branch badge). If the Files panel is already
@@ -259,13 +274,53 @@ export function SessionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // On switching to another session, restore that session's last-used view mode.
+  // On switching to another session, restore that session's last-used view mode — and hand whatever
+  // the browser it was left in still owes the server, so the next device sees it.
   const prevViewSession = useRef(session.id);
   useEffect(() => {
     if (prevViewSession.current === session.id) return;
+    flushSessionUi(prevViewSession.current);
     prevViewSession.current = session.id;
     setView(loadSessionUi(session.id).view ?? "terminal");
   }, [session.id]);
+
+  // The saved state lives on the server, so opening a session fetches it: this device may never have
+  // seen the session, or may have last seen it before another one moved things around.
+  useEffect(() => {
+    void syncSessionUi(session.id, true);
+  }, [session.id]);
+
+  // A revision on the session list higher than the one this browser holds means another browser
+  // wrote — re-fetch (the tabs follow through useFileTabs' own subscription).
+  useEffect(() => {
+    noteSessionUiRev(session.id, session.uiRev);
+  }, [session.id, session.uiRev]);
+
+  // Take the view mode from the copy fetched on open, but not from a later remote write: the tab
+  // list is shared state worth following live, while which surface is on screen is whatever the
+  // person in front of this browser last chose.
+  useEffect(
+    () =>
+      subscribeSessionUi(session.id, (seed) => {
+        if (seed) setView(loadSessionUi(session.id).view ?? "terminal");
+      }),
+    [session.id]
+  );
+
+  // A file tab has nothing to show once its file is closed; fall back to the tree it came from.
+  useEffect(() => {
+    if (view === "file" && !fileTabs.tabs.length) changeView("files");
+  }, [view, fileTabs.tabs.length, changeView]);
+
+  // Clicking a file tab fills the pane with that file. Clicking the one already showing beside the
+  // tree does too — that is what asking for its own tab means.
+  const openFileTab = useCallback(
+    async (path: string) => {
+      await fileTabs.activate(path);
+      changeView("file");
+    },
+    [fileTabs, changeView]
+  );
 
   const bump = useCallback(() => setRefreshToken((t) => t + 1), []);
   const loadGit = useCallback(() => {
@@ -559,6 +614,18 @@ export function SessionView({
             <FolderTree className="size-4" />
             <span className="hidden sm:inline">Files</span>
           </ViewTab>
+          {/* The open files, as tabs of the same standing: one click and the file has the pane. */}
+          <FileTabStrip
+            tabs={fileTabs.tabs}
+            activePath={fileTabs.activePath}
+            previewPath={fileTabs.previewPath}
+            showingFile={view === "file"}
+            gitFiles={git?.isRepo ? git.files : undefined}
+            onActivate={(p) => void openFileTab(p)}
+            onPin={fileTabs.pin}
+            onClose={(p) => void fileTabs.close(p)}
+            onCloseAll={() => void fileTabs.closeAll()}
+          />
         </div>
       </header>
 
@@ -578,6 +645,8 @@ export function SessionView({
               sessionId={session.id}
               workingDirectory={session.workingDirectory}
               gitFiles={git?.isRepo ? git.files : undefined}
+              tabs={fileTabs}
+              previewOnly={view === "file"}
               onRefresh={onRefresh}
               refreshToken={refreshToken}
             />
@@ -593,7 +662,12 @@ export function SessionView({
           />
         )}
 
-        <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", view === "files" && "hidden")}>
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 flex-col",
+            (view === "files" || view === "file") && "hidden"
+          )}
+        >
           {/* The pane keeps flex-1 so FitAddon measures the height left over by the pool bar below. */}
           <div className="min-h-0 flex-1">
             <TerminalPane
@@ -610,6 +684,30 @@ export function SessionView({
           <PostponedPool sessionId={session.id} busy={busy} terminalRef={terminalRef} />
         </div>
       </div>
+
+      {/* Save-changes prompt shown when a tab with unsaved edits is about to close. */}
+      <Dialog open={!!closeGuard} onOpenChange={(o) => !o && settleCloseGuard("cancel")}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Save changes?</DialogTitle>
+            <DialogDescription>
+              <span className="font-medium text-foreground">{closeGuard?.name}</span> has unsaved
+              changes. Save them before closing?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => settleCloseGuard("cancel")}>
+              Cancel
+            </Button>
+            <Button variant="outline" onClick={() => settleCloseGuard("discard")}>
+              Don't save
+            </Button>
+            <Button onClick={() => settleCloseGuard("save")} autoFocus>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Picker shown when a bare filename clicked in the terminal matched more than one file. */}
       <Dialog open={!!filePicker} onOpenChange={(o) => !o && setFilePicker(null)}>

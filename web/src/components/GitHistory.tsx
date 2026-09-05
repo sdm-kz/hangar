@@ -3,7 +3,8 @@ import { api } from "@/lib/api";
 import type { GitCommit, GitCommitDetail, GitCommitFile, GitFileContent, GitRefs } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
-import { DiffView, STATUS_COLOR } from "./FileBrowser";
+import { DiffView } from "./FileBrowser";
+import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import {
   ArrowLeft,
   ChevronDown,

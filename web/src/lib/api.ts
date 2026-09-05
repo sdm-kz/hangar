@@ -27,6 +27,12 @@ export function setToken(token: string | null) {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+/** A session's server-side UI state and the revision it was last written at. */
+export interface SessionUiState {
+  rev: number;
+  state: Record<string, unknown>;
+}
+
 class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -118,6 +124,25 @@ export const api = {
     return request(`/api/sessions/${id}/pin`, {
       method: "POST",
       body: JSON.stringify({ pinned }),
+    });
+  },
+  /**
+   * How a session was last being looked at — its open file tabs, view mode and tree state. Kept
+   * server-side (keyed by conversation) so it is the same on every browser; see lib/sessionUi.ts,
+   * which is what the app talks to rather than these two directly.
+   */
+  getSessionUi(id: string): Promise<SessionUiState> {
+    return request(`/api/sessions/${id}/ui`);
+  },
+  /**
+   * Merge a patch into a session's saved UI state; answers with the whole merged bag. `quiet` saves
+   * it without advancing the revision, so the other browsers are not told to re-fetch — for state
+   * that changes continuously and only matters next time the session is opened.
+   */
+  patchSessionUi(id: string, state: Record<string, unknown>, quiet = false): Promise<SessionUiState> {
+    return request(`/api/sessions/${id}/ui`, {
+      method: "POST",
+      body: JSON.stringify({ state, quiet }),
     });
   },
   // Enable/disable the hang watchdog (auto-continue) for a session.

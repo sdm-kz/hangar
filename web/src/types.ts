@@ -24,6 +24,9 @@ export interface SessionInfo {
   // Pinned to the top of its folder. Server-side and keyed by conversation id, so a pin survives a
   // reopen (which mints a new session id) and is the same in every browser.
   pinned: boolean;
+  // Revision of this session's server-side UI state (open file tabs, view mode, tree state). Only the
+  // number rides the list; a browser holding an older one re-fetches the bag. See lib/sessionUi.ts.
+  uiRev: number;
 }
 
 /** A pty host still running for a session the app no longer tracks (see PtyOrphanInfo server-side). */

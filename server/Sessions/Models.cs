@@ -172,4 +172,11 @@ public sealed record SessionInfo(
     /// from <see cref="PinStore"/>, which keys pins by conversation id — so it rides the session list
     /// to every browser instead of each one keeping its own idea of what is pinned.
     /// </summary>
-    bool Pinned = false);
+    bool Pinned = false,
+    /// <summary>
+    /// Revision of this session's saved UI state (see <see cref="SessionUiStore"/>), or 0 when it has
+    /// none. Only the number rides the list: a browser holding an older revision knows to re-fetch the
+    /// bag, which is how one browser's tab changes reach the others without the state itself being
+    /// broadcast to everyone on every tick.
+    /// </summary>
+    int UiRev = 0);

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ClaudeWeb.Pty;
@@ -63,6 +63,7 @@ public sealed class SessionManager : IDisposable
     private readonly HookEventStore _hooks;
     private readonly RecentsStore _recents;
     private readonly PinStore _pins;
+    private readonly SessionUiStore _sessionUi;
     // The launch preset each live session came from, so the Claude conversation id can be stamped back
     // onto the matching "recent" entry once a hook reports it (see OnClaudeSessionIdCaptured).
     private readonly ConcurrentDictionary<string, RecentSession> _launchedFrom = new();
@@ -105,7 +106,7 @@ public sealed class SessionManager : IDisposable
 
     public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, Pty.PtyHostOptions ptyHost,
         TokenStore tokens, HookEventStore hooks, RecentsStore recents, PinStore pins,
-        ILoggerFactory loggerFactory)
+        SessionUiStore sessionUi, ILoggerFactory loggerFactory)
     {
         _options = options;
         _watchdog = watchdog;
@@ -115,6 +116,7 @@ public sealed class SessionManager : IDisposable
         _hooks = hooks;
         _recents = recents;
         _pins = pins;
+        _sessionUi = sessionUi;
         _hooks.ClaudeSessionIdCaptured += OnClaudeSessionIdCaptured;
         _loggerFactory = loggerFactory;
         _log = loggerFactory.CreateLogger<SessionManager>();
@@ -136,9 +138,16 @@ public sealed class SessionManager : IDisposable
     {
         foreach (var s in _sessions.Values) s.Refresh();
         return _sessions.Values
-            .Select(s => s.ToInfo(ConversationId(s)) with { Pinned = IsPinned(ConversationId(s), s.Id) })
-            .Concat(_restorable.Values.Select(p =>
-                ClaudeSession.RestorableInfo(p) with { Pinned = IsPinned(p.ClaudeSessionId, p.Id) }))
+            .Select(s => s.ToInfo(ConversationId(s)) with
+            {
+                Pinned = IsPinned(ConversationId(s), s.Id),
+                UiRev = UiRev(ConversationId(s), s.Id),
+            })
+            .Concat(_restorable.Values.Select(p => ClaudeSession.RestorableInfo(p) with
+            {
+                Pinned = IsPinned(p.ClaudeSessionId, p.Id),
+                UiRev = UiRev(p.ClaudeSessionId, p.Id),
+            }))
             .OrderBy(i => i.CreatedAt)
             .ToArray();
     }
@@ -149,6 +158,53 @@ public sealed class SessionManager : IDisposable
     /// </summary>
     private bool IsPinned(string? conversationId, string sessionId) =>
         _pins.IsPinned(conversationId) || _pins.IsPinned(PinStore.SessionKey(sessionId));
+
+    /// <summary>
+    /// Revision of a session's saved UI state, under whichever key holds it — the conversation, or
+    /// the fallback a session too young to have reported one writes under. See
+    /// <see cref="SessionUiStore"/>.
+    /// </summary>
+    private int UiRev(string? conversationId, string sessionId) =>
+        Math.Max(_sessionUi.Rev(conversationId), _sessionUi.Rev(SessionUiStore.SessionKey(sessionId)));
+
+    /// <summary>
+    /// The key a session's UI state lives under: its conversation, or the <c>session:</c> fallback
+    /// while it has no conversation id yet. Null when there is no such session.
+    /// </summary>
+    private string? UiKey(string id)
+    {
+        string? conversation = null;
+        if (_sessions.TryGetValue(id, out var live)) conversation = ConversationId(live);
+        else if (_restorable.TryGetValue(id, out var p)) conversation = p.ClaudeSessionId;
+        else return null;
+        // Prefer whichever key actually holds state, so a bag written in this session's first seconds
+        // is still found in the window before its conversation id arrives and Rekey folds it over.
+        if (conversation is not null && _sessionUi.Rev(conversation) > 0) return conversation;
+        var fallback = SessionUiStore.SessionKey(id);
+        if (_sessionUi.Rev(fallback) > 0) return fallback;
+        return conversation ?? fallback;
+    }
+
+    /// <summary>How a session was last being looked at, or null when there is no such session.</summary>
+    public SessionUiStore.Snapshot? GetUi(string id) =>
+        UiKey(id) is { } key ? _sessionUi.Get(key) : null;
+
+    /// <summary>
+    /// Merge a browser's UI-state patch into a session's saved bag. Returns the merged bag, or the
+    /// current one unchanged when the patch was a no-op; null when there is no such session. A change
+    /// that advances the revision raises <see cref="Changed"/>, so the new number reaches every other
+    /// browser on the next session-list push — which is what tells them to re-fetch. A
+    /// <paramref name="quiet"/> patch (see <see cref="SessionUiStore.Merge"/>) is saved without that.
+    /// </summary>
+    public SessionUiStore.Snapshot? MergeUi(string id, IReadOnlyDictionary<string, JsonElement>? patch, bool quiet = false)
+    {
+        if (UiKey(id) is not { } key) return null;
+        var before = _sessionUi.Rev(key);
+        var merged = _sessionUi.Merge(key, patch, quiet);
+        if (merged is null) return _sessionUi.Get(key);
+        if (merged.Rev != before) RaiseChanged();
+        return merged;
+    }
 
     /// <summary>
     /// Pin or unpin a session, keyed by its conversation so the pin survives a reopen (which mints a
@@ -465,6 +521,9 @@ public sealed class SessionManager : IDisposable
             // A pin set before this id existed is keyed by the session; move it onto the conversation
             // so it outlives the session id it was made under.
             _pins.Rekey(PinStore.SessionKey(sessionId), claudeSessionId);
+            // Same for the UI state (open file tabs, view mode): written under the session while the
+            // conversation had no id, it belongs to the conversation now.
+            _sessionUi.Rekey(SessionUiStore.SessionKey(sessionId), claudeSessionId);
         }
         catch (Exception ex)
         {

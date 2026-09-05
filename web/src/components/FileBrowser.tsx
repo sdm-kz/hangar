@@ -3,8 +3,10 @@ import { ApiError, api, sessionFileUrl } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
-import { readUrlState, patchUrlState, previewUrl } from "@/lib/urlState";
-import { loadSessionUi, saveSessionUi } from "@/lib/sessionUi";
+import { readUrlState, previewUrl } from "@/lib/urlState";
+import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
+import { fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type PreviewGuard } from "@/lib/useFileTabs";
+import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
@@ -94,16 +96,14 @@ function readTreeWidth() {
   return Number.isFinite(n) && n > 0 ? Math.min(TREE_MAX, Math.max(TREE_MIN, n)) : TREE_DEFAULT;
 }
 
-type GitFiles = Record<string, string>;
+export type GitFiles = Record<string, string>;
 
-// Entries built from a path alone (git status, a restored URL) carry no stat, so their size is
-// unknown rather than zero — the preview header hides it instead of claiming "0 B".
-const UNKNOWN_SIZE = -1;
-
-// Build a minimal FileEntry from a path (used to restore a selection from the URL,
-// where we only know the path). Size is filled in once the tree/preview loads.
-function fileEntryFromPath(path: string): FileEntry {
-  return { name: path.split("/").pop() || path, path, isDir: false, size: UNKNOWN_SIZE };
+// Whether two sets hold the same members — used to leave state (and the renders below it) alone
+// when the server's copy says what this browser already had.
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
 }
 
 // Trailing segment of an absolute server path — the display name of a root folder in the picker.
@@ -133,33 +133,10 @@ function ancestorDirs(path: string): string[] {
   return out;
 }
 
-// Reconstruct the open file tabs for a session: a URL deep-link for this session wins as the active
-// tab, otherwise the per-session storage. `files` holds every open tab; the active one is always
-// present (older stored state only had a single `file`). `preview` marks the transient tab that
-// single-click reuses (only kept if it's actually one of the open tabs).
-function restoreTabs(
-  sessionId: string,
-  useUrl: boolean
-): { tabs: FileEntry[]; active: string | null; preview: string | null } {
-  const u = useUrl ? readUrlState() : {};
-  const ui = loadSessionUi(sessionId);
-  const active = (useUrl && u.session === sessionId && u.file ? u.file : ui.file) || null;
-  const paths = ui.files && ui.files.length ? [...ui.files] : active ? [active] : [];
-  if (active && !paths.includes(active)) paths.unshift(active);
-  const preview = ui.preview && paths.includes(ui.preview) ? ui.preview : null;
-  return { tabs: paths.map(fileEntryFromPath), active, preview };
-}
-
 /** Imperative handle: lets a parent (SessionView) open a file in this browser from elsewhere. */
 export interface FileBrowserHandle {
   revealFile: (path: string) => void;
   showChanges: () => void; // switch this browser into the git-changes view
-}
-
-/** How the active preview reports unsaved edits back up so closing a tab can guard them. */
-interface PreviewGuard {
-  dirty: boolean;
-  save: () => Promise<boolean>;
 }
 
 /** Two-pane file explorer: searchable, auto-refreshing directory tree + preview/edit pane. */
@@ -171,26 +148,19 @@ export const FileBrowser = forwardRef<
     // one for the standalone new-tab preview (which reads through the server-wide file API).
     workingDirectory: string;
     gitFiles?: GitFiles;
+    // The session's open files. They are tabs in the session's own tab bar, so the state lives above
+    // this panel (see lib/useFileTabs); the panel opens files into it and renders the active one.
+    tabs: FileTabs;
+    // Show the preview alone, no tree: the pane a file tab fills when it is the surface on screen.
+    previewOnly?: boolean;
     onRefresh?: () => void;
     refreshToken?: number;
   }
->(function FileBrowser({ sessionId, workingDirectory, gitFiles, onRefresh, refreshToken = 0 }, ref) {
-  // Open files shown as tabs above the preview. Clicking a file opens (or re-activates) its tab; the
-  // active tab is what the preview renders. Restored from the URL deep-link / per-session storage.
-  const [tabs, setTabs] = useState<FileEntry[]>(() => restoreTabs(sessionId, true).tabs);
-  const [activePath, setActivePath] = useState<string | null>(() => restoreTabs(sessionId, true).active);
-  // The transient "preview" tab: single-clicking a file reuses this one slot instead of piling up
-  // tabs; middle-/double-click opens a pinned tab and clears the preview mark.
-  const [previewPath, setPreviewPath] = useState<string | null>(() => restoreTabs(sessionId, true).preview);
-  const selected = useMemo(
-    () => tabs.find((t) => t.path === activePath) ?? null,
-    [tabs, activePath]
-  );
-  // The active preview registers its unsaved-edit state here so closing that tab can prompt to save.
-  const previewGuard = useRef<PreviewGuard>({ dirty: false, save: async () => true });
-  // Promise-based "save changes?" dialog shown when a tab with unsaved edits is about to close.
-  const [closeGuard, setCloseGuard] = useState<{ name: string } | null>(null);
-  const closeGuardResolve = useRef<((choice: "save" | "discard" | "cancel") => void) | null>(null);
+>(function FileBrowser(
+  { sessionId, workingDirectory, gitFiles, tabs, previewOnly = false, onRefresh, refreshToken = 0 },
+  ref
+) {
+  const { selected, guardActiveEdits } = tabs;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FileEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -296,6 +266,36 @@ export const FileBrowser = forwardRef<
   });
   const [changesExpanded, setChangesExpanded] = useState<Set<string>>(
     () => new Set(loadSessionUi(sessionId).changesExpanded ?? [])
+  );
+  // Bumped when the copy the server holds for this session arrives, which is generally after this
+  // panel has already read the local mirror — the effects that only run at mount re-run off it.
+  const [seedEpoch, setSeedEpoch] = useState(0);
+
+  // The saved state lives on the server, so opening a session fetches it and it lands here a moment
+  // after mount: this device may never have seen the session, or may have seen it before another one
+  // moved things around. Only that seed is taken — a later write from another browser must not
+  // re-expand folders or jump the tree under whoever is using this one.
+  useEffect(
+    () =>
+      subscribeSessionUi(sessionId, (seed) => {
+        if (!seed) return;
+        const ui = loadSessionUi(sessionId);
+        setRootDir(ui.worktree ?? "");
+        setShowChanges(ui.changes ?? false);
+        setChangesTree(ui.changesTree ?? false);
+        setFilesExpanded((cur) => {
+          const next = new Set(ui.filesExpanded ?? []);
+          // Keep the tree open down to whatever file the seed says is active.
+          if (ui.file) for (const d of ancestorDirs(ui.file)) next.add(d);
+          return sameSet(cur, next) ? cur : next;
+        });
+        setChangesExpanded((cur) => {
+          const next = new Set(ui.changesExpanded ?? []);
+          return sameSet(cur, next) ? cur : next;
+        });
+        setSeedEpoch((e) => e + 1);
+      }),
+    [sessionId]
   );
   const toggleFilesDir = useCallback(
     (path: string) => {
@@ -412,39 +412,6 @@ export const FileBrowser = forwardRef<
     localStorage.setItem(TREE_WIDTH_KEY, String(TREE_DEFAULT));
   }, []);
 
-  // Persist the open tabs + active + preview mark for this session; mirror the active into the URL.
-  const persistTabs = useCallback(
-    (nextTabs: FileEntry[], nextActive: string | null, nextPreview: string | null) => {
-      saveSessionUi(sessionId, {
-        file: nextActive ?? "",
-        files: nextTabs.map((t) => t.path),
-        preview: nextPreview ?? "",
-      });
-      patchUrlState({ file: nextActive ?? undefined });
-    },
-    [sessionId]
-  );
-
-  // Guard against silently dropping unsaved edits in the active tab: if it's dirty, ask whether to
-  // save, discard, or cancel. Returns false to abort. Called before anything that would navigate
-  // away from (or close) the edited file. Only the active tab can be edited.
-  const guardActiveEdits = useCallback(async (): Promise<boolean> => {
-    if (!previewGuard.current.dirty) return true;
-    setCloseGuard({ name: selected?.name ?? "This file" });
-    const choice = await new Promise<"save" | "discard" | "cancel">((resolve) => {
-      closeGuardResolve.current = resolve;
-    });
-    if (choice === "cancel") return false;
-    if (choice === "save") return previewGuard.current.save();
-    return true; // discard
-  }, [selected]);
-
-  const settleCloseGuard = useCallback((choice: "save" | "discard" | "cancel") => {
-    closeGuardResolve.current?.(choice);
-    closeGuardResolve.current = null;
-    setCloseGuard(null);
-  }, []);
-
   // A user-driven root switch (the picker, or linking/unlinking a folder). Open tabs and the upload
   // target are paths *inside* the current root: worktrees of one repo share a layout so they carry
   // over, but a linked folder is an unrelated tree, so switching to or from one closes the open
@@ -456,10 +423,7 @@ export const FileBrowser = forwardRef<
       const unrelated = isLinkedRoot || (!!dir && folders.some((f) => samePath(f, dir)));
       if (unrelated) {
         if (!(await guardActiveEdits())) return false;
-        setTabs([]);
-        setActivePath(null);
-        setPreviewPath(null);
-        persistTabs([], null, null);
+        tabs.replace([], null, null);
         setCommitSel(null);
         setUploadDir("");
         setCreatingFolder(false);
@@ -468,7 +432,7 @@ export const FileBrowser = forwardRef<
       setRoot(dir);
       return true;
     },
-    [rootDir, linked, isLinkedRoot, guardActiveEdits, persistTabs, setRoot]
+    [rootDir, linked, isLinkedRoot, guardActiveEdits, tabs, setRoot]
   );
 
   // Switch into the changes view (used by the header's branch badge). Idempotent if already there.
@@ -517,96 +481,17 @@ export const FileBrowser = forwardRef<
     [rootDir, sessionId, pickRoot]
   );
 
-  // Open a file and activate it. `pin` decides the tab model:
-  //  - pin=false (single click): reuse the one transient preview slot — replace the current preview
-  //    tab in place, or create it if there's none. Keeps the tab list from piling up.
-  //  - pin=true (middle/double click): open (or promote to) a permanent tab.
-  const openFile = useCallback(
-    async (f: FileEntry, pin: boolean) => {
-      // Switching away from an unsaved edit prompts to save first.
-      if (f.path !== activePath && !(await guardActiveEdits())) return;
-      setCommitSel(null);
-      const isOpen = tabs.some((t) => t.path === f.path);
-      let next: FileEntry[];
-      let nextPreview = previewPath;
-      if (isOpen) {
-        next = tabs.map((t) => (t.path === f.path ? f : t)); // refresh entry (size may now be known)
-        if (pin && previewPath === f.path) nextPreview = null; // promote the preview tab to pinned
-      } else if (pin || !previewPath) {
-        next = [...tabs, f]; // new tab (pinned, or the first preview tab)
-        if (!pin) nextPreview = f.path;
-      } else {
-        next = tabs.map((t) => (t.path === previewPath ? f : t)); // reuse the preview slot in place
-        nextPreview = f.path;
-      }
-      setTabs(next);
-      setActivePath(f.path);
-      setPreviewPath(nextPreview);
-      persistTabs(next, f.path, nextPreview);
-    },
-    [tabs, activePath, previewPath, persistTabs, guardActiveEdits]
-  );
-
-  // Tree/list selection: single click previews, middle/double click opens a pinned tab.
+  // Tree/list selection: single click previews, middle/double click opens a pinned tab. Leaving a
+  // commit's diff behind is what opening a working-tree file means; a dirty file can never be showing
+  // while a commit is (the preview holding the edits is unmounted), so dropping the commit ahead of
+  // the tab api's unsaved-edit guard can't discard anything.
   const selectFile = useCallback(
-    (f: FileEntry, newTab?: boolean) => openFile(f, !!newTab),
-    [openFile]
-  );
-
-  // Switch to an already-open tab (doesn't change its preview/pinned status). Switching away from an
-  // unsaved edit prompts to save first.
-  const activateTab = useCallback(
-    async (path: string) => {
-      if (path === activePath) return;
-      if (!(await guardActiveEdits())) return;
+    (f: FileEntry, newTab?: boolean) => {
       setCommitSel(null);
-      setActivePath(path);
-      persistTabs(tabs, path, previewPath);
+      void tabs.open(f, !!newTab);
     },
-    [tabs, activePath, previewPath, persistTabs, guardActiveEdits]
+    [tabs]
   );
-
-  // Double-clicking a preview tab pins it so single-clicking other files won't replace it.
-  const pinTab = useCallback(
-    (path: string) => {
-      if (previewPath !== path) return;
-      setPreviewPath(null);
-      persistTabs(tabs, path, null);
-    },
-    [tabs, previewPath, persistTabs]
-  );
-
-  // Close a tab; if it was the active one, fall back to its neighbour (or empty).
-  const closeTab = useCallback(
-    async (path: string) => {
-      const idx = tabs.findIndex((t) => t.path === path);
-      if (idx === -1) return;
-      // Only the active tab can hold unsaved edits — guard just that case.
-      if (path === activePath && !(await guardActiveEdits())) return;
-      const next = tabs.filter((t) => t.path !== path);
-      const nextActive =
-        activePath === path
-          ? next.length
-            ? next[Math.min(idx, next.length - 1)].path
-            : null
-          : activePath;
-      const nextPreview = previewPath === path ? null : previewPath;
-      setTabs(next);
-      setActivePath(nextActive);
-      setPreviewPath(nextPreview);
-      persistTabs(next, nextActive, nextPreview);
-    },
-    [tabs, activePath, previewPath, persistTabs, guardActiveEdits]
-  );
-
-  // Close every open tab.
-  const closeAllTabs = useCallback(async () => {
-    if (!(await guardActiveEdits())) return;
-    setTabs([]);
-    setActivePath(null);
-    setPreviewPath(null);
-    persistTabs([], null, null);
-  }, [persistTabs, guardActiveEdits]);
 
   // ---- Per-node file operations (rename / delete / new folder inside a folder) ----
   const confirm = useConfirm();
@@ -623,24 +508,19 @@ export const FileBrowser = forwardRef<
         const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
         const newPath = parent ? `${parent}/${clean}` : clean;
         const affected = (p: string) => p === path || p.startsWith(path + "/");
-        if (tabs.some((t) => affected(t.path))) {
-          const next = tabs.map((t) =>
+        if (tabs.tabs.some((t) => affected(t.path))) {
+          const next = tabs.tabs.map((t) =>
             affected(t.path) ? fileEntryFromPath(t.path.replace(path, newPath)) : t
           );
           const remap = (p: string | null) => (p && affected(p) ? p.replace(path, newPath) : p);
-          const nextActive = remap(activePath);
-          const nextPreview = remap(previewPath);
-          setTabs(next);
-          setActivePath(nextActive);
-          setPreviewPath(nextPreview);
-          persistTabs(next, nextActive, nextPreview);
+          tabs.replace(next, remap(tabs.activePath), remap(tabs.previewPath));
         }
         onRefresh?.();
       } catch {
         /* ignore — best effort */
       }
     },
-    [sessionId, writeDir, tabs, activePath, previewPath, persistTabs, onRefresh]
+    [sessionId, writeDir, tabs, onRefresh]
   );
 
   const doDelete = useCallback(
@@ -660,22 +540,22 @@ export const FileBrowser = forwardRef<
         await api.deleteSessionFile(sessionId, entry.path, writeDir);
         // Drop any tab for the deleted file (or files under a deleted folder).
         const affected = (p: string) => p === entry.path || p.startsWith(entry.path + "/");
-        if (tabs.some((t) => affected(t.path))) {
-          const next = tabs.filter((t) => !affected(t.path));
-          const nextActive =
-            activePath && !affected(activePath) ? activePath : next[0]?.path ?? null;
-          const nextPreview = previewPath && !affected(previewPath) ? previewPath : null;
-          setTabs(next);
-          setActivePath(nextActive);
-          setPreviewPath(nextPreview);
-          persistTabs(next, nextActive, nextPreview);
+        if (tabs.tabs.some((t) => affected(t.path))) {
+          const next = tabs.tabs.filter((t) => !affected(t.path));
+          const cur = tabs.activePath;
+          const prev = tabs.previewPath;
+          tabs.replace(
+            next,
+            cur && !affected(cur) ? cur : next[0]?.path ?? null,
+            prev && !affected(prev) ? prev : null
+          );
         }
         onRefresh?.();
       } catch {
         /* ignore — best effort */
       }
     },
-    [sessionId, writeDir, tabs, activePath, previewPath, persistTabs, confirm, onRefresh]
+    [sessionId, writeDir, tabs, confirm, onRefresh]
   );
 
   // Open the new-folder creator targeting a specific directory ("" = repo root).
@@ -701,7 +581,7 @@ export const FileBrowser = forwardRef<
   const revealFile = useCallback(
     async (path: string) => {
       // Leaving a linked folder closes its tabs, so check for unsaved edits the same way a switch
-      // through the picker would. (The plain path guards inside openFile.)
+      // through the picker would. (The plain path guards inside the tab api's open.)
       if (isLinkedRoot && !(await guardActiveEdits())) return;
       setShowChanges(false);
       setQuery("");
@@ -711,18 +591,15 @@ export const FileBrowser = forwardRef<
       // pickRoot, whose clearing would then race this open) so the revealed file is what's left.
       if (isLinkedRoot) {
         setRoot("");
-        const f = fileEntryFromPath(path);
-        setTabs([f]);
-        setActivePath(path);
-        setPreviewPath(path);
-        persistTabs([f], path, path);
+        tabs.replace([fileEntryFromPath(path)], path, path);
         setCommitSel(null);
         setUploadDir("");
         return;
       }
-      openFile(fileEntryFromPath(path), false);
+      setCommitSel(null);
+      void tabs.open(fileEntryFromPath(path), false);
     },
-    [openFile, expandFilesTo, isLinkedRoot, guardActiveEdits, setRoot, persistTabs]
+    [tabs, expandFilesTo, isLinkedRoot, guardActiveEdits, setRoot]
   );
 
   // Let SessionView open a file here (from a terminal file-link click) or switch to the changes view.
@@ -735,13 +612,10 @@ export const FileBrowser = forwardRef<
   useEffect(() => {
     if (prevSession.current === sessionId) return;
     prevSession.current = sessionId;
-    const restored = restoreTabs(sessionId, false);
-    setTabs(restored.tabs);
-    setActivePath(restored.active);
-    setPreviewPath(restored.preview);
     const ui = loadSessionUi(sessionId);
     const nextFilesExpanded = new Set(ui.filesExpanded ?? []);
-    if (restored.active) for (const d of ancestorDirs(restored.active)) nextFilesExpanded.add(d);
+    // useFileTabs restores the tab list; expand the tree down to whatever it lands on.
+    if (ui.file) for (const d of ancestorDirs(ui.file)) nextFilesExpanded.add(d);
     setFilesExpanded(nextFilesExpanded);
     setChangesExpanded(new Set(ui.changesExpanded ?? []));
     setCommitSel(null);
@@ -753,7 +627,6 @@ export const FileBrowser = forwardRef<
     setCreatingFolder(false);
     setNewFolder("");
     setFolderError(null);
-    patchUrlState({ file: restored.active ?? undefined });
   }, [sessionId]);
 
   // Which repo's changes to show: the session's own (gitFiles) or the picked worktree's (altStatus).
@@ -809,7 +682,7 @@ export const FileBrowser = forwardRef<
   // Re-arm the restore whenever the pane switches to showing something else.
   useEffect(() => {
     restoredScrollRef.current = false;
-  }, [sessionId, changesView, searchActive]);
+  }, [sessionId, changesView, searchActive, seedEpoch]);
 
   // Replay the remembered offset, but only once the tree has stopped growing: folder levels each
   // fetch on their own, and scrolling while rows are still arriving above the viewport lets the
@@ -850,7 +723,7 @@ export const FileBrowser = forwardRef<
       obs.disconnect();
       window.clearTimeout(timer);
     };
-  }, [sessionId, changesView, searchActive]);
+  }, [sessionId, changesView, searchActive, seedEpoch]);
 
   // Save it back, debounced. Scrolls that land before the restore are the browser shifting rows
   // around as they load, not the user, so they mustn't overwrite the remembered offset.
@@ -888,9 +761,13 @@ export const FileBrowser = forwardRef<
 
   return (
     <div className="flex h-full flex-col md:flex-row">
+      {/* The tree, hidden when a file tab owns the whole pane — there the file is the view. */}
       <div
         style={{ "--tree-w": `${treeWidth}px` } as React.CSSProperties}
-        className="flex max-h-64 w-full flex-col border-b md:max-h-none md:w-[var(--tree-w)] md:shrink-0 md:border-b-0"
+        className={cn(
+          "flex max-h-64 w-full flex-col border-b md:max-h-none md:w-[var(--tree-w)] md:shrink-0 md:border-b-0",
+          previewOnly && "hidden"
+        )}
       >
         <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground">
           <span>{changesView ? "Changes" : "Files"}</span>
@@ -1157,12 +1034,14 @@ export const FileBrowser = forwardRef<
       </div>
 
       {/* Draggable divider between the tree and preview (desktop only). */}
-      <div
-        onPointerDown={startResize}
-        onDoubleClick={resetTreeWidth}
-        title="Drag to resize · double-click to reset"
-        className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:block"
-      />
+      {!previewOnly && (
+        <div
+          onPointerDown={startResize}
+          onDoubleClick={resetTreeWidth}
+          title="Drag to resize · double-click to reset"
+          className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:block"
+        />
+      )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {commitSel ? (
@@ -1186,33 +1065,19 @@ export const FileBrowser = forwardRef<
             )}
           </div>
         ) : (
-          <>
-            {tabs.length > 0 && (
-              <FileTabStrip
-                tabs={tabs}
-                activePath={activePath}
-                previewPath={previewPath}
-                gitFiles={effectiveGitFiles}
-                onActivate={activateTab}
-                onPin={pinTab}
-                onClose={closeTab}
-                onCloseAll={closeAllTabs}
-              />
-            )}
-            <div className="min-h-0 flex-1">
-              <FilePreview
-                sessionId={sessionId}
-                workingDirectory={workingDirectory}
-                file={selected}
-                gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
-                dir={rootDir || undefined}
-                readOnly={readOnly}
-                refreshToken={refreshToken}
-                onSaved={onRefresh}
-                guard={previewGuard}
-              />
-            </div>
-          </>
+          <div className="min-h-0 flex-1">
+            <FilePreview
+              sessionId={sessionId}
+              workingDirectory={workingDirectory}
+              file={selected}
+              gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
+              dir={rootDir || undefined}
+              readOnly={readOnly}
+              refreshToken={refreshToken}
+              onSaved={onRefresh}
+              guard={tabs.previewGuard}
+            />
+          </div>
         )}
       </div>
 
@@ -1238,166 +1103,9 @@ export const FileBrowser = forwardRef<
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Save-changes prompt shown when a tab with unsaved edits is about to close. */}
-      <Dialog open={!!closeGuard} onOpenChange={(o) => !o && settleCloseGuard("cancel")}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Save changes?</DialogTitle>
-            <DialogDescription>
-              <span className="font-medium text-foreground">{closeGuard?.name}</span> has unsaved
-              changes. Save them before closing?
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => settleCloseGuard("cancel")}>
-              Cancel
-            </Button>
-            <Button variant="outline" onClick={() => settleCloseGuard("discard")}>
-              Don't save
-            </Button>
-            <Button onClick={() => settleCloseGuard("save")} autoFocus>
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 });
-
-/**
- * Tab strip above the preview: one tab per open file. The transient "preview" tab (opened by a
- * single click) is shown in italics; double-clicking it pins it. Middle-click closes a tab, and a
- * trailing "close all" button clears them.
- */
-function FileTabStrip({
-  tabs,
-  activePath,
-  previewPath,
-  gitFiles,
-  onActivate,
-  onPin,
-  onClose,
-  onCloseAll,
-}: {
-  tabs: FileEntry[];
-  activePath: string | null;
-  previewPath: string | null;
-  gitFiles?: GitFiles;
-  onActivate: (path: string) => void;
-  onPin: (path: string) => void;
-  onClose: (path: string) => void;
-  onCloseAll: () => void;
-}) {
-  // Translate a vertical mouse wheel into horizontal scrolling over the strip. Uses a native,
-  // non-passive listener so preventDefault works (React's onWheel is passive and can't).
-  const scrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY === 0 || el.scrollWidth <= el.clientWidth) return; // nothing to scroll sideways
-      e.preventDefault();
-      el.scrollLeft += e.deltaY;
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
-
-  // Keep the active tab in view: when selection changes (or tabs shift), scroll the strip so the
-  // active tab is visible. Adjusts only the container's own scrollLeft, never the page.
-  useEffect(() => {
-    const el = scrollRef.current;
-    const active = el?.querySelector<HTMLElement>('[aria-selected="true"]');
-    if (!el || !active) return;
-    const c = el.getBoundingClientRect();
-    const a = active.getBoundingClientRect();
-    const pad = 8;
-    let target = el.scrollLeft;
-    if (a.left < c.left) target -= c.left - a.left + pad;
-    else if (a.right > c.right) target += a.right - c.right + pad;
-    if (target !== el.scrollLeft) el.scrollTo({ left: target, behavior: "smooth" });
-  }, [activePath, tabs.length]);
-
-  return (
-    <div className="flex shrink-0 items-stretch border-b bg-muted/30">
-      <div ref={scrollRef} className="hover-scrollbar flex flex-1 items-stretch gap-0.5 overflow-x-auto px-1 pt-1">
-        {tabs.map((t) => {
-          const kind = fileKind(t.name);
-          const Icon =
-            kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "binary" ? FileIcon : FileText;
-          const active = t.path === activePath;
-          const preview = t.path === previewPath;
-          return (
-            <div
-              key={t.path}
-              role="tab"
-              aria-selected={active}
-              title={t.path}
-              onClick={() => onActivate(t.path)}
-              onDoubleClick={() => onPin(t.path)}
-              // Middle-click closes the tab (matches browser tab behaviour).
-              onMouseDown={(e) => {
-                if (e.button === 1) {
-                  e.preventDefault();
-                  onClose(t.path);
-                }
-              }}
-              className={cn(
-                "group/tab flex shrink-0 cursor-pointer items-center gap-1.5 rounded-t border-b-2 px-2 py-1.5 text-xs",
-                active
-                  ? "border-primary bg-background text-foreground"
-                  : "border-transparent text-muted-foreground hover:bg-background/60 hover:text-foreground"
-              )}
-            >
-              <Icon className="size-3.5 shrink-0" />
-              <span
-                className={cn(
-                  "max-w-[12rem] truncate",
-                  preview && "italic",
-                  gitFiles?.[t.path] && STATUS_COLOR[gitFiles[t.path]]
-                )}
-              >
-                {t.name}
-              </span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose(t.path);
-                }}
-                title="Close tab"
-                className={cn(
-                  "-mr-0.5 ml-0.5 rounded p-0.5 hover:bg-accent hover:text-foreground",
-                  active ? "opacity-100" : "opacity-0 group-hover/tab:opacity-100"
-                )}
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      {tabs.length > 1 && (
-        <button
-          onClick={onCloseAll}
-          title="Close all tabs"
-          className="flex shrink-0 items-center border-l px-2 text-muted-foreground hover:bg-background hover:text-foreground"
-        >
-          <X className="size-4" />
-        </button>
-      )}
-    </div>
-  );
-}
-
-export const STATUS_COLOR: Record<string, string> = {
-  M: "text-amber-500",
-  A: "text-emerald-500",
-  U: "text-emerald-500",
-  D: "text-red-500",
-  R: "text-sky-500",
-};
 
 function GitMarker({ status }: { status?: string }) {
   if (!status) return null;

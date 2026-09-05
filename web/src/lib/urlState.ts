@@ -3,7 +3,10 @@
 // We use replaceState (no history spam) on the root path so a hard refresh works
 // without any server-side routing.
 
-export type TabName = "terminal" | "files" | "split";
+// Which surface the session view is showing. "file" is one of the open file tabs in the session
+// tab bar, filling the pane on its own (which one is the session's saved `file`); "files" and
+// "split" show the tree beside it.
+export type TabName = "terminal" | "files" | "split" | "file";
 
 // Which sidebar tab is showing: the session list (default) or the server Files tree.
 export type PanelName = "sessions" | "files";
@@ -83,7 +86,7 @@ export function readUrlState(): UrlState {
   const panel = p.get("panel");
   return {
     session: p.get("session") || undefined,
-    tab: tab === "files" || tab === "terminal" || tab === "split" ? tab : undefined,
+    tab: tab === "files" || tab === "terminal" || tab === "split" || tab === "file" ? tab : undefined,
     file: p.get("file") || undefined,
     panel: panel === "files" || panel === "sessions" ? panel : undefined,
     open: p.get("open") || undefined,
