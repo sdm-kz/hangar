@@ -11,7 +11,11 @@ CLI sessions with Remote Control enabled** so you can drive them from the **Clau
 Run `ClaudeWeb.exe` and it starts the web host in-process and drops an icon in the system tray:
 
 - **Left-click** the tray icon → opens the web UI in your browser.
-- **Right-click** → menu listing running sessions, plus **Exit**.
+- **Right-click** → menu listing running sessions, plus **Exit**. Each project is a submenu, and
+  inside it the sessions are laid out the way the sidebar's grouped view lays them out with its
+  active-only filter on: folder groups (dropped where the project links only that folder), forks
+  under the session they came from, and no submenu for a project with nothing running in it. Click
+  a session to open it.
 - Runs as a single instance; launching it again just reopens the UI.
 - The same exe also runs headless as a **Windows service** (auto-detected) if you prefer.
 

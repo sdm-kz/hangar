@@ -115,7 +115,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         else
         {
-            foreach (var s in running) menu.Items.Add(SessionItem(s, "●", duplicated));
+            AddRunningTree(menu, running);
         }
 
         if (closed.Length > 0)
@@ -123,7 +123,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             var recent = new ToolStripMenuItem($"Recent — {closed.Length}");
             foreach (var s in closed.Take(RecentLimit))
             {
-                recent.DropDownItems.Add(SessionItem(s, "○", duplicated));
+                recent.DropDownItems.Add(SessionItem(s, "○", duplicated.Contains(s.Name)));
             }
             if (closed.Length > RecentLimit)
             {
@@ -139,6 +139,40 @@ public sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Exit", null, (_, _) => ExitApp()));
     }
+
+    /// <summary>
+    /// The running sessions, arranged the way the sidebar's grouped ("tree") view arranges them with
+    /// its active-only filter on: folder groups under the project that links them, forks under the
+    /// session they were forked from, and nothing on screen that has no running session in it. The
+    /// arranging is <see cref="SessionTree"/>'s; all that happens here is rows becoming menu items.
+    /// </summary>
+    private void AddRunningTree(ContextMenuStrip menu, IReadOnlyCollection<SessionInfo> running)
+    {
+        IReadOnlyList<Project> projects;
+        try { projects = _app.Services.GetRequiredService<ProjectStore>().List(); }
+        catch { projects = Array.Empty<Project>(); }
+
+        foreach (var group in SessionTree.Menu(running, projects))
+        {
+            if (group.Heading is null)
+            {
+                foreach (var row in group.Rows) menu.Items.Add(Row(row));
+                continue;
+            }
+
+            var project = new ToolStripMenuItem($"{group.Heading}  ({group.Count})");
+            foreach (var row in group.Rows) project.DropDownItems.Add(Row(row));
+            menu.Items.Add(project);
+        }
+    }
+
+    /// <summary>
+    /// One line of the running list. A row with no session is a folder heading — it names a group
+    /// rather than pointing at anything, so it is disabled, which is both what greys it out and what
+    /// leaves the sessions as the only clickable lines.
+    /// </summary>
+    private ToolStripMenuItem Row(TreeRow row) =>
+        row.Session is { } s ? SessionItem(s, row.Text) : new ToolStripMenuItem(row.Text) { Enabled = false };
 
     /// <summary>
     /// Offer to stop pty hosts still running for sessions the app no longer knows about (see
@@ -192,16 +226,25 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private ToolStripMenuItem SessionItem(SessionInfo s, string glyph, ISet<string> duplicated)
+    /// <param name="showPath">
+    /// Append a short path to the name. On in the flat Recent list, where two sessions can share a
+    /// name and nothing else says them apart; the running tree doesn't need it, because the heading
+    /// above the row already names the folder.
+    /// </param>
+    private ToolStripMenuItem SessionItem(SessionInfo s, string glyph, bool showPath)
     {
-        var label = duplicated.Contains(s.Name) ? $"{s.Name}  ·  {ShortPath(s.WorkingDirectory)}" : s.Name;
-        return new ToolStripMenuItem($"{glyph}  {label}", null, (_, _) => OpenUi(s.Id))
+        var label = showPath ? $"{s.Name}  ·  {ShortPath(s.WorkingDirectory)}" : s.Name;
+        return SessionItem(s, $"{glyph}  {label}");
+    }
+
+    /// <summary>A session row with its text already decided — the tree builds its own.</summary>
+    private ToolStripMenuItem SessionItem(SessionInfo s, string text) =>
+        new(text, null, (_, _) => OpenUi(s.Id))
         {
             ToolTipText = s.RemoteControl
                 ? $"{s.WorkingDirectory}\nRemote control — control from the Claude Code app"
                 : s.WorkingDirectory,
         };
-    }
 
     /// <summary>Last two path segments — enough to tell same-named sessions apart without a long menu.</summary>
     private static string ShortPath(string path)

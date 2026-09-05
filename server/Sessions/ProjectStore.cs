@@ -155,6 +155,55 @@ public sealed class ProjectStore
         }
     }
 
+    // ---- membership ----------------------------------------------------------------------------
+    // The same rules the sidebar applies client-side (web/src/lib/projects.ts). They live here too
+    // because the tray menu asks the same questions of the same data, and a second answer to "which
+    // project is this folder in?" is a second thing to keep in step.
+
+    /// <summary>
+    /// A folder path folded to a comparison key: separators unified, trailing ones dropped, case
+    /// folded on Windows. Two spellings of one folder have to compare equal, or a link stops covering
+    /// the folder it names.
+    /// </summary>
+    public static string DirKey(string dir)
+    {
+        var key = dir.Replace('\\', '/').TrimEnd('/');
+        return OperatingSystem.IsWindows() ? key.ToLowerInvariant() : key;
+    }
+
+    /// <summary>Whether <paramref name="dir"/> is the linked folder itself or sits under it.</summary>
+    public static bool Covers(string link, string dir)
+    {
+        var l = DirKey(link);
+        var d = DirKey(dir);
+        // The separator on the prefix test is what stops a link to C:\git\app from swallowing
+        // C:\git\app-old.
+        return d == l || d.StartsWith(l + "/", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The project a folder belongs to, or null when nothing links it. Where two projects link
+    /// overlapping paths the deeper link wins: linking C:\git\app\web says something more specific
+    /// about that folder than linking C:\git, and honouring the specific one is what lets a sub-tree
+    /// be split out into its own project.
+    /// </summary>
+    public static Project? ForDirectory(IReadOnlyList<Project> projects, string? dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir)) return null;
+        Project? best = null;
+        var bestLen = -1;
+        foreach (var p in projects)
+            foreach (var f in p.Folders)
+            {
+                if (!Covers(f, dir)) continue;
+                var len = DirKey(f).Length;
+                if (len <= bestLen) continue;
+                best = p;
+                bestLen = len;
+            }
+        return best;
+    }
+
     // ---- helpers -------------------------------------------------------------------------------
 
     private static readonly StringComparer PathComparer =
