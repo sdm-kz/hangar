@@ -1287,6 +1287,18 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
             )}
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {/* Postponed-message counter, so a stashed pool is discoverable from the list. It sits
+                left of the menu button, which holds the right edge of every row. */}
+            {s.postponedCount > 0 && (
+              <Badge
+                variant="secondary"
+                className="gap-0.5 px-1.5"
+                title={`${s.postponedCount} postponed message${s.postponedCount === 1 ? "" : "s"}`}
+              >
+                <Inbox className="size-3" />
+                {s.postponedCount}
+              </Badge>
+            )}
             {editingId !== s.id && (
               <RowActionsMenu
                 canFork={s.canFork}
@@ -1304,18 +1316,6 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
                 onRestore={() => onRestore(s.id)}
                 onClose={() => onClose(s.id)}
               />
-            )}
-            {/* Postponed-message counter: always visible (unlike the hover-only actions) so a stashed
-                pool is discoverable from the list. Pinned last so the action buttons expand to its left. */}
-            {s.postponedCount > 0 && (
-              <Badge
-                variant="secondary"
-                className="gap-0.5 px-1.5"
-                title={`${s.postponedCount} postponed message${s.postponedCount === 1 ? "" : "s"}`}
-              >
-                <Inbox className="size-3" />
-                {s.postponedCount}
-              </Badge>
             )}
           </span>
         </div>
@@ -1684,11 +1684,11 @@ function RowActionsMenu({
         aria-expanded={open}
         title="Session actions"
         className={cn(
-          "rounded text-muted-foreground hover:text-foreground",
-          // Touch devices never fire hover, so the strip's only entry point has to stay on screen.
-          open
-            ? "inline-flex text-foreground"
-            : "hidden group-hover:inline-flex [@media(hover:none)]:inline-flex"
+          // Always on screen, unlike the hover-only actions: it is the row's only entry point on a
+          // touch device, and a button that holds the right edge on every row is somewhere the eye
+          // can go straight to instead of hunting for the row that happens to be under the pointer.
+          "inline-flex rounded text-muted-foreground hover:text-foreground",
+          open && "text-foreground"
         )}
       >
         <MoreVertical className="size-3.5" />
