@@ -99,7 +99,7 @@ function FileGlyph({ name }: { name: string }) {
 /**
  * Whole-server filesystem tree for the sidebar Files tab. Lazily lists drives, then directories on
  * expand. Clicking a file opens it in the main content area (via <c>onOpenFile</c>); clicking a
- * folder selects it as the target for the New file / New folder / Upload actions in the toolbar.
+ * folder selects it as the target for the New session / New file / New folder / Upload toolbar actions.
  * Any node can be renamed inline. Absolute server paths throughout.
  */
 export function FilesSidebar({
@@ -377,6 +377,17 @@ export function FilesSidebar({
         <span className="mr-auto truncate text-xs text-muted-foreground" title={selectedDir ?? undefined}>
           {selectedDir ? baseName(selectedDir) : "Select a folder"}
         </span>
+        {/* Same action as the row's hover button, reachable where there is no hover (touch). */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          title="New session in this folder"
+          disabled={!selectedDir}
+          onClick={() => selectedDir && onNewSession(selectedDir)}
+        >
+          <Bot className="size-4" />
+        </Button>
         <Button variant="ghost" size="icon" className="size-7" title="New file" disabled={!selectedDir} onClick={newFile}>
           <FilePlus className="size-4" />
         </Button>
