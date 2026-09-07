@@ -96,6 +96,23 @@ function readTreeWidth() {
   return Number.isFinite(n) && n > 0 ? Math.min(TREE_MAX, Math.max(TREE_MIN, n)) : TREE_DEFAULT;
 }
 
+// The same pane stacked above the preview on narrow screens, where the divider is horizontal and it
+// is the height that gets dragged. Kept under its own key so a phone and a desktop don't fight.
+const TREE_H_MIN = 96;
+const TREE_H_DEFAULT = 256; // matches the old max-h-64
+const TREE_HEIGHT_KEY = "claudeweb.filesTreeHeight";
+
+function readTreeHeight() {
+  const n = Number(localStorage.getItem(TREE_HEIGHT_KEY));
+  return Number.isFinite(n) && n > 0 ? Math.max(TREE_H_MIN, n) : TREE_H_DEFAULT;
+}
+
+// Which way the split runs right now — the divider is the same element in both layouts, so it asks
+// at drag time rather than rendering two of them. Matches the `md:` breakpoint the classes use.
+function isRowLayout() {
+  return window.matchMedia("(min-width: 768px)").matches;
+}
+
 export type GitFiles = Record<string, string>;
 
 // Whether two sets hold the same members — used to leave state (and the renders below it) alone
@@ -334,6 +351,7 @@ export const FileBrowser = forwardRef<
   // A file picked out of a commit in the History panel — previewed in place of a working-tree file.
   const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
   const [treeWidth, setTreeWidth] = useState(readTreeWidth); // desktop tree-pane width (px)
+  const [treeHeight, setTreeHeight] = useState(readTreeHeight); // mobile tree-pane height (px)
 
   // Folder that Upload targets in the tree ("" = repo root). Clicking a folder selects it.
   const [uploadDir, setUploadDir] = useState("");
@@ -384,32 +402,46 @@ export const FileBrowser = forwardRef<
     }
   }, [newFolder, uploadDir, sessionId, writeDir, onRefresh]);
 
-  // Drag the divider between the tree and the preview to resize the tree; persist the result.
+  // Drag the divider between the tree and the preview to resize the tree; persist the result. Side by
+  // side that means the tree's width, stacked it means its height — same gesture, whichever axis the
+  // split currently runs along. Touch drags come through as pointer events too, so both work here.
   const startResize = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
-    const startX = e.clientX;
-    const startW = readTreeWidth();
-    let width = startW;
+    const row = isRowLayout();
+    const box = e.currentTarget.parentElement?.getBoundingClientRect();
+    // Stacked, the ceiling is the pane itself: leave room for the preview below rather than a
+    // fixed pixel cap, since a phone in landscape has far less to give than one upright.
+    const max = row ? TREE_MAX : Math.max(TREE_H_MIN, (box?.height ?? window.innerHeight) - 120);
+    const min = row ? TREE_MIN : TREE_H_MIN;
+    const start = row ? e.clientX : e.clientY;
+    const startSize = row ? readTreeWidth() : readTreeHeight();
+    let size = startSize;
     const onMove = (ev: PointerEvent) => {
-      width = Math.min(TREE_MAX, Math.max(TREE_MIN, startW + ev.clientX - startX));
-      setTreeWidth(width);
+      size = Math.min(max, Math.max(min, startSize + (row ? ev.clientX : ev.clientY) - start));
+      if (row) setTreeWidth(size);
+      else setTreeHeight(size);
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      localStorage.setItem(TREE_WIDTH_KEY, String(width));
+      localStorage.setItem(row ? TREE_WIDTH_KEY : TREE_HEIGHT_KEY, String(size));
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = row ? "col-resize" : "row-resize";
     document.body.style.userSelect = "none";
   }, []);
 
-  const resetTreeWidth = useCallback(() => {
-    setTreeWidth(TREE_DEFAULT);
-    localStorage.setItem(TREE_WIDTH_KEY, String(TREE_DEFAULT));
+  const resetTreeSize = useCallback(() => {
+    if (isRowLayout()) {
+      setTreeWidth(TREE_DEFAULT);
+      localStorage.setItem(TREE_WIDTH_KEY, String(TREE_DEFAULT));
+    } else {
+      setTreeHeight(TREE_H_DEFAULT);
+      localStorage.setItem(TREE_HEIGHT_KEY, String(TREE_H_DEFAULT));
+    }
   }, []);
 
   // A user-driven root switch (the picker, or linking/unlinking a folder). Open tabs and the upload
@@ -763,9 +795,9 @@ export const FileBrowser = forwardRef<
     <div className="flex h-full flex-col md:flex-row">
       {/* The tree, hidden when a file tab owns the whole pane — there the file is the view. */}
       <div
-        style={{ "--tree-w": `${treeWidth}px` } as React.CSSProperties}
+        style={{ "--tree-w": `${treeWidth}px`, "--tree-h": `${treeHeight}px` } as React.CSSProperties}
         className={cn(
-          "flex max-h-64 w-full flex-col border-b md:max-h-none md:w-[var(--tree-w)] md:shrink-0 md:border-b-0",
+          "flex h-[var(--tree-h)] w-full shrink-0 flex-col border-b md:h-auto md:w-[var(--tree-w)] md:border-b-0",
           previewOnly && "hidden"
         )}
       >
@@ -1033,14 +1065,18 @@ export const FileBrowser = forwardRef<
         )}
       </div>
 
-      {/* Draggable divider between the tree and preview (desktop only). */}
+      {/* Draggable divider between the tree and preview: horizontal when stacked, vertical beside.
+          `touch-none` keeps a drag from scrolling the page out from under the finger. */}
       {!previewOnly && (
         <div
           onPointerDown={startResize}
-          onDoubleClick={resetTreeWidth}
+          onDoubleClick={resetTreeSize}
           title="Drag to resize · double-click to reset"
-          className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:block"
-        />
+          className="group flex h-3 w-full shrink-0 touch-none cursor-row-resize items-center justify-center bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:h-auto md:w-1.5 md:cursor-col-resize md:border-l"
+        >
+          {/* A grip only the stacked layout needs — beside the preview the border is hint enough. */}
+          <span className="h-0.5 w-8 rounded-full bg-border group-active:bg-primary/50 md:hidden" />
+        </div>
       )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
