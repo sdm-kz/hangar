@@ -1718,15 +1718,17 @@ function RowActionsMenu({
           {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
           {restorable && item("Reopen", <RotateCcw className="size-3.5" />, onRestore)}
 
-          {/* The same move the folder header offers, reachable from a row — which is the only place
-              there is one in the flat view, where folder headers don't exist. A project holds folders,
-              not sessions, so this moves the whole folder and the heading says so: taking one session
-              out of its folder's project is not a thing the model can express. */}
           <div className="my-1 border-t" />
+
           {/* Heads the folder half of the menu: the row names a session, and this is how you get
               from it to the folder behind it — in the Files tree, which lists every drive and is
               not somewhere you would want to walk down to a deep path by hand. */}
           {item("Show folder in Files", <FolderSearch className="size-3.5" />, onRevealFolder)}
+
+          {/* The same move the folder header offers, reachable from a row — which is the only place
+              there is one in the flat view, where folder headers don't exist. A project holds folders,
+              not sessions, so this moves the whole folder and the heading says so: taking one session
+              out of its folder's project is not a thing the model can express. */}
           <p
             className="truncate px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
             title={dir}

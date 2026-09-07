@@ -831,7 +831,7 @@ export function App() {
                     setSidebarOpen(false);
                   }}
                   onNewInFolder={newSessionInFolder}
-              onRevealFolder={revealFolderInFiles}
+                  onRevealFolder={revealFolderInFiles}
                   onNewInProject={newSessionInProject}
                   onClose={onClose}
                   onClone={cloneSession}
