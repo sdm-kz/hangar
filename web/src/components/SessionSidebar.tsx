@@ -1765,13 +1765,18 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
   };
 
   /**
-   * The rows of one folder group: its fork tree, in the order the list was arranged into. Drawn
-   * either under the folder's own header, or — where the project heading has already named the
-   * folder (see mergesFolderHeader) — directly under that heading, with the same indent either way
-   * so the two cases line up.
+   * The rows of one folder group: its fork tree, in the order the list was arranged into.
+   *
+   * `indent` is a step in, taken when there is a header of their own above them — a folder group's,
+   * or a virtual folder's. Where the rows hang straight off the project heading instead (a merged
+   * folder header, or the flat list), they are at the project's own child level and take no step, so
+   * a row's fork chevron lands in the same column as the chevron of a box sitting beside it.
    */
-  const renderGroupRows = (g: { key: string; nodes: ForkNode[]; rootIds: string[] }) => (
-    <div className="mt-0.5 space-y-0.5 pl-[18px]">
+  const renderGroupRows = (
+    g: { key: string; nodes: ForkNode[]; rootIds: string[] },
+    indent = "pl-[18px]"
+  ) => (
+    <div className={cn("mt-0.5 space-y-0.5", indent)}>
       {/* A fork always shares its parent's folder, so nesting inside the group is the same
           tree the flat list shows — just scoped to this folder. */}
       {g.nodes.map((n) => {
@@ -1999,7 +2004,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
                 // A project that is just one folder draws its sessions itself: the folder header
                 // would only repeat the heading right above it.
                 mergesFolderHeader(project, gs.map((g) => g.dir), shownGroups(project).length > 0)
-                  ? renderGroupRows(gs[0])
+                  ? renderGroupRows(gs[0], "pl-0")
                   : gs.map(renderFolderGroup)
               }
               countOf={(gs, project) =>
@@ -2039,10 +2044,15 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
             sessionDrop={sectionSessionDrop}
             before={renderVirtualGroups}
             renderItems={(ss, project) => renderFlatSection(project, ss)}
-            // No folder header stands between a project and its rows here, so the rows carry the
-            // indent themselves — the same distance in as a grouped row (a section's pl-2 plus the
-            // 18px a folder group gives its own), so switching views doesn't shift them sideways.
-            bodyClassName="space-y-0.5 pl-[26px]"
+            // No folder header stands between a project and its rows here, so they sit at the
+            // project's own child level — level with the virtual folders beside them, which is what
+            // puts a row's fork chevron in the same column as a box's. (They used to carry a folder
+            // group's indent as well, which lined them up with the grouped view at the cost of
+            // looking like they hung off a header that isn't there.)
+            // 5px, not 6: a row carries a 1px transparent border (it turns solid when selected)
+            // and a header does not, so the row needs one pixel less to put its chevron in the
+            // same column as a virtual folder's.
+            bodyClassName="space-y-0.5 pl-[5px]"
             countOf={(ss, project) =>
               ss.length + shownGroups(project).reduce((n, g) => n + g.count, 0)
             }
