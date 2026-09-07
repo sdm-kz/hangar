@@ -179,6 +179,10 @@ export function ProjectDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {/* Only the two lists scroll. Scrolling the whole body meant the name, the colour and
+            both "add" rows slid away with it, so linking a second folder to a project that already
+            has twelve started with a hunt for the field. The lists take what height is left, in
+            proportion to how much each one has to show. */}
         <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="project-name">Name</Label>
@@ -241,7 +245,7 @@ export function ProjectDialog({
                 sessions list.
               </p>
             ) : (
-              <ul className="flex flex-col gap-1">
+              <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto overscroll-contain">
                 {folders.map((f) => (
                   <li
                     key={f}
@@ -265,7 +269,7 @@ export function ProjectDialog({
                 ))}
               </ul>
             )}
-            <div className="flex items-start gap-2">
+            <div className="flex shrink-0 items-start gap-2">
               <div className="min-w-0 flex-1">
                 <FolderPicker value={picker} onChange={setPicker} />
               </div>
@@ -292,7 +296,7 @@ export function ProjectDialog({
                 there — the sessions in a box don’t have to share a folder, which is the whole point.
               </p>
               {project.groups.length > 0 && (
-                <ul className="flex flex-col gap-1">
+                <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain">
                   {project.groups.map((g) => {
                     const Icon = groupIcon(g.icon);
                     const tint = sessionColor(g.color);
@@ -359,7 +363,7 @@ export function ProjectDialog({
                   })}
                 </ul>
               )}
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <Input
                   value={newGroup}
                   placeholder="New group — “Release 2.4”, “Bugs”, “Spikes”"

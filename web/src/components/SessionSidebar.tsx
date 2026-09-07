@@ -71,6 +71,7 @@ import {
   FolderTree,
   List,
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
@@ -258,6 +259,75 @@ function folderActivity(
 }
 
 /**
+ * A row that opens a submenu, and the header that comes back from one.
+ *
+ * The submenu replaces the menu's contents rather than flying out beside it. A fly-out would have
+ * to escape the sidebar's scroll container to be seen at all, and the sidebar can be dragged down to
+ * 220px — narrower than the menu itself — so there is frequently no side to fly out to. Drilling in
+ * keeps every entry at the width it already has, and works the same under a finger as under a
+ * pointer, which a hover-opened fly-out does not.
+ */
+function SubmenuRow({
+  label,
+  icon,
+  value,
+  onOpen,
+}: {
+  label: string;
+  icon: ReactNode;
+  /** What is currently chosen, shown greyed after the label so the menu answers before it is opened. */
+  value?: string | null;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+    >
+      {icon}
+      <span className="shrink-0">{label}</span>
+      {value && (
+        <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">{value}</span>
+      )}
+      <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground", !value && "ml-auto")} />
+    </button>
+  );
+}
+
+function SubmenuHeader({
+  title,
+  hint,
+  onBack,
+}: {
+  title: string;
+  /** The longer phrasing there was no room for on the row that opened this. */
+  hint?: string;
+  onBack: () => void;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onBack();
+        }}
+        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-sm font-medium hover:bg-accent"
+      >
+        <ChevronLeft className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate">{title}</span>
+      </button>
+      {hint && <p className="px-3 pb-1 text-[10px] text-muted-foreground">{hint}</p>}
+      <div className="my-1 border-t" />
+    </>
+  );
+}
+
+/**
  * Where a row or header popup opens, and how tall it may be.
  *
  * The lists scroll, and a popup positioned inside a scrolling box is clipped by that box — so the
@@ -388,19 +458,28 @@ function FolderMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Which level is showing; reset on close so reopening starts at the top.
+  const [view, setView] = useState<"root" | "project">("root");
   const { dropUp, maxHeight, place } = useMenuPlacement();
-  const ref = useDismissable<HTMLSpanElement>(open, useCallback(() => setOpen(false), []));
+  const shut = useCallback(() => {
+    setOpen(false);
+    setView("root");
+  }, []);
+  const ref = useDismissable<HTMLSpanElement>(open, shut);
 
-  // Headers near the bottom of the list would push the menu past it, so flip it upwards.
+  const project = projects.find((p) => p.id === projectId) ?? null;
+
+  // Headers near the bottom of the list would push the menu past it, so flip it upwards. The root
+  // level is three entries whatever the number of projects, now that the list is behind a submenu.
   const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    place(e.currentTarget, projects.length ? 340 : 160);
+    place(e.currentTarget, 180);
     setOpen((o) => !o);
   };
 
   const pick = (e: React.MouseEvent, run: () => void) => {
     e.stopPropagation();
-    setOpen(false);
+    shut();
     run();
   };
 
@@ -410,7 +489,7 @@ function FolderMenu({
     setCopied(true);
     setTimeout(() => {
       setCopied(false);
-      setOpen(false);
+      shut();
     }, 900);
   };
 
@@ -443,71 +522,99 @@ function FolderMenu({
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              void copyPath();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-          >
-            {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
-            {copied ? "Copied!" : "Copy path"}
-          </button>
-
-          {/* Move to project. Flat entries rather than a submenu: at this width a fly-out has
-              nowhere to go, and a project list is short enough to sit inline. Scrolls once it
-              isn't — the menu must not grow past the viewport. */}
-          <div className="my-1 border-t" />
-          <p className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            Project
-          </p>
-          <div className="max-h-48 overflow-auto">
-            {projects.map((p) => (
+          {view === "project" ? (
+            <>
+              <SubmenuHeader
+                title="Move to project"
+                hint={`Moves the folder — ${folderLabel(dir)}`}
+                onBack={() => setView("root")}
+              />
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={(e) => pick(e, () => onMoveToProject(p.id))}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <Boxes
+                    className="size-3.5 shrink-0"
+                    style={sessionColor(p.color) ? { color: sessionColor(p.color)! } : undefined}
+                  />
+                  <span className="truncate">{p.name}</span>
+                  {projectId === p.id && (
+                    <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />
+                  )}
+                </button>
+              ))}
+              {projectId && (
+                <button
+                  type="button"
+                  onClick={(e) => pick(e, () => onMoveToProject(null))}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <Minus className="size-3.5 shrink-0" />
+                  No project
+                </button>
+              )}
+              <div className="my-1 border-t" />
               <button
-                key={p.id}
                 type="button"
-                onClick={(e) => pick(e, () => onMoveToProject(p.id))}
+                onClick={(e) => pick(e, onNewProject)}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
               >
-                <Boxes
-                  className="size-3.5 shrink-0"
-                  style={sessionColor(p.color) ? { color: sessionColor(p.color)! } : undefined}
-                />
-                <span className="truncate">{p.name}</span>
-                {projectId === p.id && <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />}
+                <FolderPlus className="size-3.5" />
+                New project…
               </button>
-            ))}
-            {projectId && (
+            </>
+          ) : (
+            <>
               <button
                 type="button"
-                onClick={(e) => pick(e, () => onMoveToProject(null))}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void copyPath();
+                }}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
               >
-                <Minus className="size-3.5 shrink-0" />
-                No project
+                {copied ? (
+                  <Check className="size-3.5 text-emerald-500" />
+                ) : (
+                  <Copy className="size-3.5" />
+                )}
+                {copied ? "Copied!" : "Copy path"}
               </button>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={(e) => pick(e, onNewProject)}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-          >
-            <FolderPlus className="size-3.5" />
-            New project…
-          </button>
 
-          {onRemove && (
-            <button
-              type="button"
-              onClick={(e) => pick(e, onRemove)}
-              className="mt-1 flex w-full items-center gap-2 border-t px-3 py-1.5 pt-2 text-left text-sm text-destructive hover:bg-accent"
-            >
-              <Trash2 className="size-3.5" />
-              Remove sessions…
-            </button>
+              {/* The project list lives one level in, as it does on a session row: a dozen projects
+                  inline turned a three-entry menu into a scrolling column. */}
+              <SubmenuRow
+                label="Move to project"
+                icon={
+                  <Boxes
+                    className="size-3.5 shrink-0"
+                    style={
+                      project && sessionColor(project.color)
+                        ? { color: sessionColor(project.color)! }
+                        : undefined
+                    }
+                  />
+                }
+                value={project?.name ?? "None"}
+                onOpen={() => setView("project")}
+              />
+
+              {onRemove && (
+                <button
+                  type="button"
+                  onClick={(e) => pick(e, onRemove)}
+                  className="mt-1 flex w-full items-center gap-2 border-t px-3 py-1.5 pt-2 text-left text-sm text-destructive hover:bg-accent"
+                >
+                  <Trash2 className="size-3.5" />
+                  Remove sessions…
+                </button>
+              )}
+            </>
           )}
+
         </div>
       )}
     </span>
@@ -2182,21 +2289,31 @@ function RowActionsMenu({
   onClose: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Which level of the menu is showing. Reset on close, so reopening never lands you halfway down
+  // a list you finished with.
+  const [view, setView] = useState<"root" | "project" | "group">("root");
   const { dropUp, maxHeight, place } = useMenuPlacement(200);
-  const ref = useDismissable<HTMLSpanElement>(open, useCallback(() => setOpen(false), []));
+  const shut = useCallback(() => {
+    setOpen(false);
+    setView("root");
+  }, []);
+  const ref = useDismissable<HTMLSpanElement>(open, shut);
 
-  // Rows near the bottom of the list would push the menu past it, so flip it upwards. The project
-  // and group sections roughly treble the menu's height, so what counts as "near the bottom" grows
-  // with them; where neither direction has the room, the menu scrolls instead.
+  const project = projects.find((p) => p.id === projectId) ?? null;
+  const group = groups.find((g) => g.id === groupId) ?? null;
+
+  // Rows near the bottom of the list would push the menu past it, so flip it upwards. The root level
+  // is a fixed dozen entries now that the lists are behind submenus, so what counts as "near the
+  // bottom" no longer grows with the number of projects; a submenu that outgrows the room scrolls.
   const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    place(e.currentTarget, projects.length ? (projectId ? 560 : 440) : 240);
+    place(e.currentTarget, 280);
     setOpen((o) => !o);
   };
 
   const pick = (e: React.MouseEvent, run: () => void) => {
     e.stopPropagation();
-    setOpen(false);
+    shut();
     run();
   };
 
@@ -2205,7 +2322,7 @@ function RowActionsMenu({
       type="button"
       onClick={(e) => {
         e.stopPropagation();
-        setOpen(false);
+        shut();
         run();
       }}
       className={cn(
@@ -2248,112 +2365,152 @@ function RowActionsMenu({
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >
-          {pinned
-            ? item("Unpin", <PinOff className="size-3.5" />, onTogglePin)
-            : item("Pin to top", <Pin className="size-3.5" />, onTogglePin)}
-          {item("Rename", <Pencil className="size-3.5" />, onRename)}
-          {item("Clone", <Copy className="size-3.5" />, onClone)}
-          {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
-          {restorable && item("Reopen", <RotateCcw className="size-3.5" />, onRestore)}
-
-          <div className="my-1 border-t" />
-
-          {/* Heads the folder half of the menu: the row names a session, and this is how you get
-              from it to the folder behind it — in the Files tree, which lists every drive and is
-              not somewhere you would want to walk down to a deep path by hand. */}
-          {item("Show folder in Files", <FolderSearch className="size-3.5" />, onRevealFolder)}
-
-          {/* The same move the folder header offers, reachable from a row — which is the only place
-              there is one in the flat view, where folder headers don't exist. A project holds folders,
-              not sessions, so this moves the whole folder and the heading says so: taking one session
-              out of its folder's project is not a thing the model can express. */}
-          <p
-            className="truncate px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-            title={dir}
-          >
-            Move folder to project
-          </p>
-          <div className="max-h-48 overflow-auto">
-            {projects.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={(e) => pick(e, () => onMoveToProject(p.id))}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-              >
-                <Boxes
-                  className="size-3.5 shrink-0"
-                  style={sessionColor(p.color) ? { color: sessionColor(p.color)! } : undefined}
-                />
-                <span className="truncate">{p.name}</span>
-                {projectId === p.id && <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />}
-              </button>
-            ))}
-            {projectId && (
-              <button
-                type="button"
-                onClick={(e) => pick(e, () => onMoveToProject(null))}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-              >
-                <Minus className="size-3.5 shrink-0" />
-                No project
-              </button>
-            )}
-          </div>
-          {item("New project…", <FolderPlus className="size-3.5" />, onNewProject)}
-
-          {/* Virtual folders — the drag-free way to do what dropping the row on a box does. Only
-              offered where there is a project to hold them: a group lives inside one, so a session
-              whose folder is unfiled has nowhere to be filed to. */}
-          {projectId && (
+          {view === "project" && (
             <>
-              <p className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                Group
-              </p>
-              <div className="max-h-48 overflow-auto">
-                {groups.map((g) => {
-                  const Icon = groupIcon(g.icon);
-                  const accent = sessionColor(g.color);
-                  return (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={(e) => pick(e, () => onMoveToGroup(g.id))}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-                    >
-                      <Icon
-                        className="size-3.5 shrink-0"
-                        style={accent ? { color: accent } : undefined}
-                      />
-                      <span className="truncate">{g.name}</span>
-                      {groupId === g.id && (
-                        <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />
-                      )}
-                    </button>
-                  );
-                })}
-                {groupId && (
+              <SubmenuHeader
+                title="Move to project"
+                // The nuance there was no room for on the row that opens this: a project holds
+                // folders, not sessions, so this moves the whole folder and everything else in it.
+                hint={`Moves the folder — ${folderLabel(dir)}`}
+                onBack={() => setView("root")}
+              />
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={(e) => pick(e, () => onMoveToProject(p.id))}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <Boxes
+                    className="size-3.5 shrink-0"
+                    style={sessionColor(p.color) ? { color: sessionColor(p.color)! } : undefined}
+                  />
+                  <span className="truncate">{p.name}</span>
+                  {projectId === p.id && (
+                    <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />
+                  )}
+                </button>
+              ))}
+              {projectId && (
+                <button
+                  type="button"
+                  onClick={(e) => pick(e, () => onMoveToProject(null))}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <Minus className="size-3.5 shrink-0" />
+                  No project
+                </button>
+              )}
+              <div className="my-1 border-t" />
+              {item("New project…", <FolderPlus className="size-3.5" />, onNewProject)}
+            </>
+          )}
+
+          {view === "group" && (
+            <>
+              <SubmenuHeader
+                title="Group"
+                hint={project ? `A virtual folder in ${project.name}` : undefined}
+                onBack={() => setView("root")}
+              />
+              {groups.map((g) => {
+                const Icon = groupIcon(g.icon);
+                const accent = sessionColor(g.color);
+                return (
                   <button
+                    key={g.id}
                     type="button"
-                    onClick={(e) => pick(e, () => onMoveToGroup(null))}
+                    onClick={(e) => pick(e, () => onMoveToGroup(g.id))}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
                   >
-                    <Minus className="size-3.5 shrink-0" />
-                    No group
+                    <Icon
+                      className="size-3.5 shrink-0"
+                      style={accent ? { color: accent } : undefined}
+                    />
+                    <span className="truncate">{g.name}</span>
+                    {groupId === g.id && (
+                      <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />
+                    )}
                   </button>
-                )}
-              </div>
+                );
+              })}
+              {groupId && (
+                <button
+                  type="button"
+                  onClick={(e) => pick(e, () => onMoveToGroup(null))}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <Minus className="size-3.5 shrink-0" />
+                  No group
+                </button>
+              )}
+              <div className="my-1 border-t" />
               {item("New group…", <FolderPlus className="size-3.5" />, onNewGroup)}
             </>
           )}
 
-          <div className="my-1 border-t" />
+          {view === "root" && (
+            <>
+              {pinned
+                ? item("Unpin", <PinOff className="size-3.5" />, onTogglePin)
+                : item("Pin to top", <Pin className="size-3.5" />, onTogglePin)}
+              {item("Rename", <Pencil className="size-3.5" />, onRename)}
+              {item("Clone", <Copy className="size-3.5" />, onClone)}
+              {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
+              {restorable && item("Reopen", <RotateCcw className="size-3.5" />, onRestore)}
 
-          {item(
-            restorable ? "Forget" : "Close session",
-            <X className="size-3.5" />,
-            onClose,
-            true
+              <div className="my-1 border-t" />
+
+              {/* Heads the folder half of the menu: the row names a session, and this is how you get
+                  from it to the folder behind it — in the Files tree, which lists every drive and is
+                  not somewhere you would want to walk down to a deep path by hand. */}
+              {item("Show folder in Files", <FolderSearch className="size-3.5" />, onRevealFolder)}
+
+              {/* Both lists live one level in. Inline, a dozen projects turned the menu into a
+                  scrolling column that buried Close session below the fold; behind a row that says
+                  what is currently chosen, the menu stays a fixed, readable length. */}
+              <SubmenuRow
+                label="Move to project"
+                icon={
+                  <Boxes
+                    className="size-3.5 shrink-0"
+                    style={
+                      project && sessionColor(project.color)
+                        ? { color: sessionColor(project.color)! }
+                        : undefined
+                    }
+                  />
+                }
+                value={project?.name ?? "None"}
+                onOpen={() => setView("project")}
+              />
+              {projectId && (
+                <SubmenuRow
+                  label="Group"
+                  icon={(() => {
+                    const Icon = groupIcon(group?.icon);
+                    const accent = sessionColor(group?.color);
+                    return (
+                      <Icon
+                        className="size-3.5 shrink-0"
+                        style={accent ? { color: accent } : undefined}
+                      />
+                    );
+                  })()}
+                  value={group?.name ?? "None"}
+                  onOpen={() => setView("group")}
+                />
+              )}
+
+              <div className="my-1 border-t" />
+
+              {item(
+                restorable ? "Forget" : "Close session",
+                <X className="size-3.5" />,
+                onClose,
+                true
+              )}
+            </>
           )}
         </div>
       )}
