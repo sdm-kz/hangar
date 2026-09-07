@@ -138,20 +138,22 @@ function folderLabel(dir: string): string {
 }
 
 /**
- * The dot a heading wears for the most urgent thing happening inside it — pinned to the row's
- * top-left corner, where a session row wears its own, so a project, its folders and the sessions
- * under them all mark activity in the same place and the eye reads one column down the list.
+ * The dot a heading wears for the most urgent thing happening inside it, pinned to the corner of
+ * the heading's own icon — the folder, the box, the project — so what is busy is said by the thing
+ * that is busy, the way a badge sits on an app's icon.
  *
  * Out of the flow rather than in the line: a heading's line starts with its chevron, so an inline
  * dot would either hold a gutter open on every idle heading or shove the name sideways the moment
- * something inside woke up. In the corner it costs nothing and shifts nothing. It sits high enough
- * to clear the chevron below it, with a ring of the page background so the two stay legible where
- * they meet — the same treatment, for the same reason, as the dot on a row.
+ * something inside woke up. Here it costs nothing and shifts nothing. The ring of page background
+ * keeps it legible against a coloured glyph, and out of the flow it takes no pointer events — the
+ * same trade the dot on a session row already makes.
+ *
+ * Expects a positioned parent: wrap the icon, not the row.
  */
 function HeadingActivityDot({ activity }: { activity: Activity | null }) {
   if (!activity) return null;
   return (
-    <span className="pointer-events-none absolute left-0 top-0 rounded-full bg-background p-[2px] leading-none">
+    <span className="pointer-events-none absolute -left-1 -top-1 rounded-full bg-background p-[2px] leading-none">
       <span
         className={cn("block size-1.5 rounded-full", ACTIVITY_DOT[activity].className)}
         aria-label={ACTIVITY_DOT[activity].label}
@@ -392,9 +394,8 @@ function GroupHeader({
     <div
       {...dragProps}
       title={dragProps ? "Drag onto a project to move this folder into it" : undefined}
-      className="group/gh relative flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
+      className="group/gh flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
     >
-      <HeadingActivityDot activity={activity ?? null} />
       <button
         type="button"
         onClick={onToggle}
@@ -406,7 +407,10 @@ function GroupHeader({
         ) : (
           <ChevronDown className="size-3.5 shrink-0" />
         )}
-        <FolderTree className="size-3.5 shrink-0" />
+        <span className="relative inline-flex shrink-0">
+          <FolderTree className="size-3.5" />
+          <HeadingActivityDot activity={activity ?? null} />
+        </span>
         <span className="truncate font-mono text-xs font-medium">{folderLabel(dir)}</span>
         {/* Session count, right after the name rather than pinned to the row's edge: it reads as
             part of the folder's label, and never drifts away from it on a wide sidebar. */}
@@ -648,8 +652,7 @@ function VirtualFolderHeader({
   const Icon = groupIcon(group.icon);
   const accent = sessionColor(group.color);
   return (
-    <div className="group/vf relative flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
-      <HeadingActivityDot activity={activity ?? null} />
+    <div className="group/vf flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
       <button
         type="button"
         onClick={onToggle}
@@ -663,7 +666,10 @@ function VirtualFolderHeader({
         )}
         {/* Same deal as the project heading: the colour rides the icon, not the label, so a tinted
             name doesn't fight the session names below it. */}
-        <Icon className="size-3.5 shrink-0" style={accent ? { color: accent } : undefined} />
+        <span className="relative inline-flex shrink-0">
+          <Icon className="size-3.5" style={accent ? { color: accent } : undefined} />
+          <HeadingActivityDot activity={activity ?? null} />
+        </span>
         {/* Not renameable in place, unlike a session row. A rename box here would have to live
             inside the fold button — an input nested in a button, and two stray folds fired by the
             double-click that opens it — and the name, the colour and the icon are one decision
@@ -718,8 +724,7 @@ function ProjectHeader({
 }) {
   const accent = project ? sessionColor(project.color) : null;
   return (
-    <div className="group/ph relative flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
-      <HeadingActivityDot activity={activity ?? null} />
+    <div className="group/ph flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
       <button
         type="button"
         onClick={onToggle}
@@ -731,13 +736,16 @@ function ProjectHeader({
         ) : (
           <ChevronDown className="size-3.5 shrink-0" />
         )}
-        {project ? (
-          // The colour rides on the icon rather than the text: a tinted label fights the folder
-          // names underneath it for attention, and at this size a solid glyph reads better anyway.
-          <Boxes className="size-3.5 shrink-0" style={accent ? { color: accent } : undefined} />
-        ) : (
-          <Minus className="size-3.5 shrink-0" />
-        )}
+        <span className="relative inline-flex shrink-0">
+          {project ? (
+            // The colour rides on the icon rather than the text: a tinted label fights the folder
+            // names underneath it for attention, and at this size a solid glyph reads better anyway.
+            <Boxes className="size-3.5" style={accent ? { color: accent } : undefined} />
+          ) : (
+            <Minus className="size-3.5" />
+          )}
+          <HeadingActivityDot activity={activity ?? null} />
+        </span>
         <span
           className={cn(
             "truncate text-xs font-semibold",
