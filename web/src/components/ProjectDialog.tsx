@@ -155,7 +155,12 @@ export function ProjectDialog({
         onClose();
       }}
     >
-      <DialogContent className="max-w-md">
+      {/* The popup grows with the project: a dozen linked folders and a list of groups is taller
+          than a laptop screen, and the dialog is centred, so without a cap it runs off both ends at
+          once — the title above the top edge, the Delete/Done row below the bottom. Cap it to the
+          viewport and give the middle its own scroll, so the heading stays put and the buttons stay
+          reachable however long the lists get. */}
+      <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {accent && (
@@ -173,7 +178,7 @@ export function ProjectDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="project-name">Name</Label>
             <Input
