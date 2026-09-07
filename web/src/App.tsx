@@ -544,6 +544,26 @@ export function App() {
     setSidebarOpen(true);
   }, []);
 
+  // The same move for a session's folder, from its row menu. The Files tab lists every drive, so
+  // walking down to a session's working directory by hand is the long way round to somewhere the
+  // app already knows. The token makes a second ask for the same folder count: by then the tree has
+  // usually been scrolled somewhere else, and going back is the whole point of asking again.
+  const [revealDir, setRevealDir] = useState<string | null>(null);
+  const [revealDirToken, setRevealDirToken] = useState(0);
+  const revealFolderInFiles = useCallback((dir: string) => {
+    setRevealDir(dir);
+    setRevealDirToken((n) => n + 1);
+    setSidebarTab("files");
+    setSidebarOpen(true);
+  }, []);
+
+  // The request lives only as long as the visit it was made for. The Files panel unmounts whenever
+  // the sidebar shows Sessions, so a request left standing would fire again on the way back and drag
+  // the tree off whatever the user had since selected.
+  useEffect(() => {
+    if (sidebarTab !== "files") setRevealDir(null);
+  }, [sidebarTab]);
+
   // Clone a session: open the create dialog prefilled with its settings (the one-time initial prompt
   // can't be recovered, so it starts empty) for the user to adjust before launching.
   const cloneSession = useCallback((s: SessionInfo) => {
@@ -745,6 +765,7 @@ export function App() {
               activeId={activeId}
               onSelect={selectSession}
               onNewInFolder={newSessionInFolder}
+              onRevealFolder={revealFolderInFiles}
               onNewInProject={newSessionInProject}
               onClose={onClose}
               onClone={cloneSession}
@@ -764,7 +785,15 @@ export function App() {
               onProjectsChange={setProjects}
             />
           }
-          files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} onNewSession={newSessionInFolder} />}
+          files={
+            <FilesSidebar
+              openPath={openFile}
+              revealDir={revealDir}
+              revealToken={revealDirToken}
+              onOpenFile={openServerFile}
+              onNewSession={newSessionInFolder}
+            />
+          }
         />
         {/* Drag handle straddling the right border. */}
         <div
@@ -802,6 +831,7 @@ export function App() {
                     setSidebarOpen(false);
                   }}
                   onNewInFolder={newSessionInFolder}
+              onRevealFolder={revealFolderInFiles}
                   onNewInProject={newSessionInProject}
                   onClose={onClose}
                   onClone={cloneSession}
@@ -821,7 +851,15 @@ export function App() {
                   onProjectsChange={setProjects}
                 />
               }
-              files={<FilesSidebar openPath={openFile} onOpenFile={openServerFile} onNewSession={newSessionInFolder} />}
+              files={
+                <FilesSidebar
+                  openPath={openFile}
+                  revealDir={revealDir}
+                  revealToken={revealDirToken}
+                  onOpenFile={openServerFile}
+                  onNewSession={newSessionInFolder}
+                />
+              }
             />
           </aside>
         </div>

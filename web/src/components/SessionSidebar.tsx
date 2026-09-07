@@ -48,6 +48,7 @@ import {
   Copy,
   Filter,
   FolderPlus,
+  FolderSearch,
   Minus,
   MoreVertical,
   GitFork,
@@ -824,6 +825,7 @@ export function SessionSidebar({
   activeId,
   onSelect,
   onNewInFolder,
+  onRevealFolder,
   onNewInProject,
   onClose,
   onClone,
@@ -849,6 +851,7 @@ export function SessionSidebar({
   activeId: string | null;
   onSelect: (id: string) => void;
   onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
+  onRevealFolder: (dir: string) => void; // show a folder in the whole-server Files tree
   // Start a session in a project: the create dialog opens with its linked folders offered as picks.
   onNewInProject: (project: Project) => void;
   onClose: (id: string) => void;
@@ -1309,6 +1312,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
                 projectId={projectForDir(s.workingDirectory, projects)?.id ?? null}
                 onMoveToProject={(id) => void moveFolderToProject(s.workingDirectory, id)}
                 onNewProject={() => setEditing({ id: null, folder: s.workingDirectory })}
+                onRevealFolder={() => onRevealFolder(s.workingDirectory)}
                 onTogglePin={() => togglePin(s.id, !pinned.has(s.id))}
                 onRename={() => setEditingId(s.id)}
                 onClone={() => onClone(s)}
@@ -1616,6 +1620,7 @@ function RowActionsMenu({
   projectId,
   onMoveToProject,
   onNewProject,
+  onRevealFolder,
   onTogglePin,
   onRename,
   onClone,
@@ -1632,6 +1637,7 @@ function RowActionsMenu({
   projectId: string | null;
   onMoveToProject: (projectId: string | null) => void;
   onNewProject: () => void;
+  onRevealFolder: () => void;
   onTogglePin: () => void;
   onRename: () => void;
   onClone: () => void;
@@ -1717,6 +1723,10 @@ function RowActionsMenu({
               not sessions, so this moves the whole folder and the heading says so: taking one session
               out of its folder's project is not a thing the model can express. */}
           <div className="my-1 border-t" />
+          {/* Heads the folder half of the menu: the row names a session, and this is how you get
+              from it to the folder behind it — in the Files tree, which lists every drive and is
+              not somewhere you would want to walk down to a deep path by hand. */}
+          {item("Show folder in Files", <FolderSearch className="size-3.5" />, onRevealFolder)}
           <p
             className="truncate px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
             title={dir}

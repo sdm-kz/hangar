@@ -104,10 +104,14 @@ function FileGlyph({ name }: { name: string }) {
  */
 export function FilesSidebar({
   openPath,
+  revealDir,
+  revealToken = 0,
   onOpenFile,
   onNewSession,
 }: {
   openPath: string | null; // the file currently open in the main area, for highlight
+  revealDir?: string | null; // a folder to jump to, asked for from outside the tree
+  revealToken?: number; // bumped per request, so asking for the same folder twice goes back to it
   onOpenFile: (path: string) => void;
   onNewSession: (path: string) => void; // start a session in a folder (hover action on dir rows)
 }) {
@@ -125,7 +129,10 @@ export function FilesSidebar({
   const scrollRef = useRef<HTMLDivElement>(null); // tree scroll container, for scroll-into-view
   const openPathRef = useRef(openPath);
   openPathRef.current = openPath;
+  const revealDirRef = useRef(revealDir);
+  revealDirRef.current = revealDir;
   const scrolledRef = useRef<string | null>(null); // last openPath we scrolled to
+  const scrolledDirRef = useRef<number | null>(null); // last reveal-a-folder request we scrolled to
   const restoredScrollRef = useRef(false); // have we replayed the remembered scroll offset yet?
   const saveScrollRef = useRef<number | undefined>(undefined); // debounce timer for scroll writes
 
@@ -145,12 +152,9 @@ export function FilesSidebar({
     }
   }, []);
 
-  // Expand the tree down to (and select) a file's directory, loading each ancestor as needed. Used to
-  // "reveal" a file opened elsewhere (a terminal link, the preview's Show-in-Files button).
-  const revealPath = useCallback(
-    async (filePath: string) => {
-      const dir = parentOf(filePath);
-      if (!dir) return;
+  // Expand the tree down to (and select) a directory, loading each ancestor as needed.
+  const expandTo = useCallback(
+    async (dir: string) => {
       const chain: string[] = [];
       let cur: string | null = dir;
       while (cur) {
@@ -162,6 +166,16 @@ export function FilesSidebar({
       await Promise.all(chain.map(listDir));
     },
     [listDir]
+  );
+
+  // "Reveal" a file opened elsewhere (a terminal link, the preview's Show-in-Files button) — which
+  // means opening the folder holding it, since that is what the tree can point at.
+  const revealPath = useCallback(
+    async (filePath: string) => {
+      const dir = parentOf(filePath);
+      if (dir) await expandTo(dir);
+    },
+    [expandTo]
   );
 
   // Remember the expanded-folder set across refreshes.
@@ -219,11 +233,13 @@ export function FilesSidebar({
         const persisted = loadExpanded();
         if (persisted.size > 0) {
           // Keep the folder that was selected last time; only fall back to the default start folder.
-          if (res.current && !readStored(SELECTED_KEY)) setSelectedDir(res.current);
+          if (res.current && !readStored(SELECTED_KEY) && !revealDirRef.current) setSelectedDir(res.current);
           await Promise.all([...persisted].map(listDir));
           return;
         }
-        if (openPathRef.current) return; // a file is open — the reveal effect below expands to it
+        // A file is open, or a folder was asked for — the reveal effects below expand to those
+        // instead of to the default start folder.
+        if (openPathRef.current || revealDirRef.current) return;
         if (res.current) {
           // Expand the chain from the drive root down to the default folder.
           const chain: string[] = [];
@@ -250,6 +266,28 @@ export function FilesSidebar({
   useEffect(() => {
     if (openPath) revealPath(openPath);
   }, [openPath, revealPath]);
+
+  // Jump to a folder asked for from outside — a session row's "show folder in Files". Keyed on the
+  // token rather than the path so a second ask for the same folder takes you back to it, and it
+  // claims the scroll restore: this reveal is where the tree is meant to be, not where it was left.
+  useEffect(() => {
+    if (!revealDir) return;
+    restoredScrollRef.current = true;
+    void expandTo(revealDir);
+  }, [revealDir, revealToken, expandTo]);
+
+  // ...and scroll to it once its row exists, on the same terms as the file scroll below.
+  useEffect(() => {
+    if (!revealDir || scrolledDirRef.current === revealToken) return;
+    const box = scrollRef.current;
+    const el = box?.querySelector<HTMLElement>(`[data-fspath="${CSS.escape(revealDir)}"]`);
+    if (!box || !el) return;
+    scrolledDirRef.current = revealToken;
+    const c = box.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (r.top >= c.top && r.bottom <= c.bottom) return;
+    el.scrollIntoView({ block: "center" });
+  }, [revealDir, revealToken, children]);
 
   // Once the revealed file's row is rendered, scroll it into view (once per open file). Rows that are
   // already visible stay put — otherwise clicking from one file to the next re-centres the tree and
