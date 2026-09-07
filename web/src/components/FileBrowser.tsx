@@ -100,6 +100,7 @@ function readTreeWidth() {
 // is the height that gets dragged. Kept under its own key so a phone and a desktop don't fight.
 const TREE_H_MIN = 96;
 const TREE_H_DEFAULT = 256; // matches the old max-h-64
+const PREVIEW_H_MIN = 120; // room the preview keeps below the tree, and so the tree's ceiling
 const TREE_HEIGHT_KEY = "claudeweb.filesTreeHeight";
 
 function readTreeHeight() {
@@ -108,9 +109,11 @@ function readTreeHeight() {
 }
 
 // Which way the split runs right now — the divider is the same element in both layouts, so it asks
-// at drag time rather than rendering two of them. Matches the `md:` breakpoint the classes use.
+// at drag time rather than rendering two of them. Stated in rem, because that is what Tailwind's
+// `md:` is: at a larger root font size the two part company, and the drag would work the wrong axis.
+const ROW_LAYOUT_QUERY = "(min-width: 48rem)";
 function isRowLayout() {
-  return window.matchMedia("(min-width: 768px)").matches;
+  return window.matchMedia(ROW_LAYOUT_QUERY).matches;
 }
 
 export type GitFiles = Record<string, string>;
@@ -410,8 +413,11 @@ export const FileBrowser = forwardRef<
     const row = isRowLayout();
     const box = e.currentTarget.parentElement?.getBoundingClientRect();
     // Stacked, the ceiling is the pane itself: leave room for the preview below rather than a
-    // fixed pixel cap, since a phone in landscape has far less to give than one upright.
-    const max = row ? TREE_MAX : Math.max(TREE_H_MIN, (box?.height ?? window.innerHeight) - 120);
+    // fixed pixel cap, since a phone in landscape has far less to give than one upright. The same
+    // ceiling is on the pane as a max-height, so the drag stops exactly where the layout does.
+    const max = row
+      ? TREE_MAX
+      : Math.max(TREE_H_MIN, (box?.height ?? window.innerHeight) - PREVIEW_H_MIN);
     const min = row ? TREE_MIN : TREE_H_MIN;
     const start = row ? e.clientX : e.clientY;
     const startSize = row ? readTreeWidth() : readTreeHeight();
@@ -795,9 +801,20 @@ export const FileBrowser = forwardRef<
     <div className="flex h-full flex-col md:flex-row">
       {/* The tree, hidden when a file tab owns the whole pane — there the file is the view. */}
       <div
-        style={{ "--tree-w": `${treeWidth}px`, "--tree-h": `${treeHeight}px` } as React.CSSProperties}
+        style={
+          {
+            "--tree-w": `${treeWidth}px`,
+            "--tree-h": `${treeHeight}px`,
+            "--tree-h-max": `max(${TREE_H_MIN}px, calc(100% - ${PREVIEW_H_MIN}px))`,
+          } as React.CSSProperties
+        }
         className={cn(
-          "flex h-[var(--tree-h)] w-full shrink-0 flex-col border-b md:h-auto md:w-[var(--tree-w)] md:border-b-0",
+          // The stacked cap mirrors the drag ceiling exactly, in CSS so it re-applies wherever the
+          // pane lands: a height dragged in the full-width Files view would otherwise overflow the
+          // half-height Split view (and a rotation into landscape), pushing the preview — and the
+          // divider that would have fixed it — off the bottom of the screen.
+          "flex h-[var(--tree-h)] max-h-[var(--tree-h-max)] w-full shrink-0 flex-col border-b",
+          "md:h-auto md:max-h-none md:w-[var(--tree-w)] md:border-b-0",
           previewOnly && "hidden"
         )}
       >
