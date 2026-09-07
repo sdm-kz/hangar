@@ -3,6 +3,7 @@ import { ApiError, api, sessionFileUrl } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
+import { useHtml } from "@/lib/useHtml";
 import { readUrlState, previewUrl } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
 import { fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type PreviewGuard } from "@/lib/useFileTabs";
@@ -1823,10 +1824,13 @@ function FilePreview({
     ? `${(dir || workingDirectory).replace(/[/\\]+$/, "")}/${file.path}`
     : "";
 
-  // Syntax-highlighted HTML for the plain-text view (null for unsupported languages).
-  const highlighted = useMemo(
-    () => (file && text !== null ? highlightCode(file.name, text) : null),
-    [file, text]
+  // Syntax-highlighted HTML for the plain-text view (null for unsupported languages), wrapped so
+  // the markup is only injected when it actually changed — see useHtml.
+  const highlighted = useHtml(
+    useMemo(
+      () => (file && text !== null ? highlightCode(file.name, text) : null),
+      [file, text]
+    )
   );
 
   useEffect(() => {
@@ -2217,12 +2221,9 @@ function FilePreview({
                   sandbox="allow-scripts allow-forms allow-popups allow-modals"
                   className="h-full w-full border-0 bg-white"
                 />
-              ) : highlighted !== null ? (
+              ) : highlighted ? (
                 <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
-                  <code
-                    className="hljs bg-transparent p-0"
-                    dangerouslySetInnerHTML={{ __html: highlighted }}
-                  />
+                  <code className="hljs bg-transparent p-0" dangerouslySetInnerHTML={highlighted} />
                 </pre>
               ) : (
                 <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>

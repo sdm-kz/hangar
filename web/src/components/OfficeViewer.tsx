@@ -9,6 +9,7 @@ import {
 } from "@/lib/docxLinks";
 import { TocPanel } from "@/components/TocPanel";
 import { ZoomControls, usePersistentZoom } from "@/components/ZoomControls";
+import { useHtml } from "@/lib/useHtml";
 import { cn } from "@/lib/utils";
 
 type Status = "loading" | "error" | "toolarge" | "ready";
@@ -134,7 +135,9 @@ function XlsxViewer({ url }: { url: string }) {
     return () => ctrl.abort();
   }, [url]);
 
-  const activeHtml = useMemo(() => sheets[active]?.html ?? "", [sheets, active]);
+  // useHtml keeps the injected table identical between renders, so re-rendering doesn't rebuild it
+  // (which would drop a text selection and reset the scroll inside a big sheet).
+  const activeHtml = useHtml(useMemo(() => sheets[active]?.html ?? "", [sheets, active]));
 
   if (status === "loading")
     return <Centered><Loader2 className="size-4 animate-spin" /> Loading spreadsheet…</Centered>;
@@ -167,7 +170,7 @@ function XlsxViewer({ url }: { url: string }) {
       <div
         style={{ zoom }}
         className="xlsx-host min-h-0 flex-1 overflow-auto p-3 text-xs"
-        dangerouslySetInnerHTML={{ __html: activeHtml }}
+        dangerouslySetInnerHTML={activeHtml}
       />
     </div>
   );

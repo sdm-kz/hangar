@@ -16,6 +16,7 @@ import type { PluggableList } from "unified";
 import { Loader2 } from "lucide-react";
 import { getTheme, subscribeTheme } from "@/lib/theme";
 import { mdAssetUrl } from "@/lib/mdAssets";
+import { useHtml } from "@/lib/useHtml";
 import { TocPanel, type TocItem } from "./TocPanel";
 
 /**
@@ -331,6 +332,7 @@ function MermaidDiagram({ code }: { code: string }) {
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [theme, setTheme] = useState(getTheme());
+  const html = useHtml(svg ?? ""); // the diagram is only rendered once svg is non-null
 
   useEffect(() => subscribeTheme(setTheme), []);
 
@@ -386,10 +388,11 @@ function MermaidDiagram({ code }: { code: string }) {
   }
   // Safe to inject: mermaid at securityLevel "strict" sanitizes labels/links with its bundled
   // DOMPurify before emitting this SVG (same trust model as the highlight.js output elsewhere).
+  // Injected through useHtml so a re-render doesn't re-parse the whole diagram.
   return (
     <div
       className="my-4 flex justify-center overflow-x-auto [&_svg]:h-auto [&_svg]:max-w-full"
-      dangerouslySetInnerHTML={{ __html: svg }}
+      dangerouslySetInnerHTML={html}
     />
   );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, serverFileUrl } from "@/lib/api";
 import { fileExt, fileKind } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
+import { useHtml } from "@/lib/useHtml";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -155,9 +156,10 @@ export function ServerFileViewer({
   }, [path, loading, editing, text, rendered, isMarkdown]);
 
   // highlight.js escapes its input, so the resulting HTML is safe to inject (same as FileBrowser).
-  const highlighted = useMemo(
-    () => (text !== null ? highlightCode(name, text) : null),
-    [name, text]
+  // useHtml keeps the injected markup identical across renders, so re-renders don't rebuild the
+  // <code> (and drop whatever the user had selected in it).
+  const highlighted = useHtml(
+    useMemo(() => (text !== null ? highlightCode(name, text) : null), [name, text])
   );
 
   const copyContent = useCallback(async () => {
@@ -407,7 +409,7 @@ export function ServerFileViewer({
           />
         ) : highlighted ? (
           <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
-            <code className="hljs" dangerouslySetInnerHTML={{ __html: highlighted }} />
+            <code className="hljs" dangerouslySetInnerHTML={highlighted} />
           </pre>
         ) : (
           <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
