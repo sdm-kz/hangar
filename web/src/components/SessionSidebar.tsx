@@ -138,26 +138,25 @@ function folderLabel(dir: string): string {
 }
 
 /**
- * The dot a heading wears for the most urgent thing happening inside it, at the head of the label
- * the way a session row wears its own — so a folder and the sessions under it say the same thing in
- * the same place, and the eye reads one column instead of hunting the row's far edge.
+ * The dot a heading wears for the most urgent thing happening inside it — pinned to the row's
+ * top-left corner, where a session row wears its own, so a project, its folders and the sessions
+ * under them all mark activity in the same place and the eye reads one column down the list.
  *
- * The slot is held even when there is nothing to say. A heading is not a session row, where a
- * reserved gutter would be dead space on every idle row of a long list: there are few headings, they
- * all indent alike, and holding it keeps their names on one line rather than nudging each one
- * sideways the moment something inside it wakes up.
+ * Out of the flow rather than in the line: a heading's line starts with its chevron, so an inline
+ * dot would either hold a gutter open on every idle heading or shove the name sideways the moment
+ * something inside woke up. In the corner it costs nothing and shifts nothing. It sits high enough
+ * to clear the chevron below it, with a ring of the page background so the two stay legible where
+ * they meet — the same treatment, for the same reason, as the dot on a row.
  */
-function HeadingActivityDot({ activity, where }: { activity: Activity | null; where: string }) {
+function HeadingActivityDot({ activity }: { activity: Activity | null }) {
+  if (!activity) return null;
   return (
-    <span
-      className={cn(
-        "size-1.5 shrink-0 rounded-full",
-        activity ? ACTIVITY_DOT[activity].className : "opacity-0"
-      )}
-      aria-hidden={activity ? undefined : true}
-      aria-label={activity ? ACTIVITY_DOT[activity].label : undefined}
-      title={activity ? `${ACTIVITY_DOT[activity].label} (${where})` : undefined}
-    />
+    <span className="pointer-events-none absolute left-0 top-0 rounded-full bg-background p-[2px] leading-none">
+      <span
+        className={cn("block size-1.5 rounded-full", ACTIVITY_DOT[activity].className)}
+        aria-label={ACTIVITY_DOT[activity].label}
+      />
+    </span>
   );
 }
 
@@ -393,8 +392,9 @@ function GroupHeader({
     <div
       {...dragProps}
       title={dragProps ? "Drag onto a project to move this folder into it" : undefined}
-      className="group/gh flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
+      className="group/gh relative flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
     >
+      <HeadingActivityDot activity={activity ?? null} />
       <button
         type="button"
         onClick={onToggle}
@@ -406,7 +406,6 @@ function GroupHeader({
         ) : (
           <ChevronDown className="size-3.5 shrink-0" />
         )}
-        <HeadingActivityDot activity={activity ?? null} where="in this folder" />
         <FolderTree className="size-3.5 shrink-0" />
         <span className="truncate font-mono text-xs font-medium">{folderLabel(dir)}</span>
         {/* Session count, right after the name rather than pinned to the row's edge: it reads as
@@ -649,7 +648,8 @@ function VirtualFolderHeader({
   const Icon = groupIcon(group.icon);
   const accent = sessionColor(group.color);
   return (
-    <div className="group/vf flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+    <div className="group/vf relative flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+      <HeadingActivityDot activity={activity ?? null} />
       <button
         type="button"
         onClick={onToggle}
@@ -661,7 +661,6 @@ function VirtualFolderHeader({
         ) : (
           <ChevronDown className="size-3.5 shrink-0" />
         )}
-        <HeadingActivityDot activity={activity ?? null} where="in this group" />
         {/* Same deal as the project heading: the colour rides the icon, not the label, so a tinted
             name doesn't fight the session names below it. */}
         <Icon className="size-3.5 shrink-0" style={accent ? { color: accent } : undefined} />
@@ -719,7 +718,8 @@ function ProjectHeader({
 }) {
   const accent = project ? sessionColor(project.color) : null;
   return (
-    <div className="group/ph flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+    <div className="group/ph relative flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+      <HeadingActivityDot activity={activity ?? null} />
       <button
         type="button"
         onClick={onToggle}
@@ -731,7 +731,6 @@ function ProjectHeader({
         ) : (
           <ChevronDown className="size-3.5 shrink-0" />
         )}
-        <HeadingActivityDot activity={activity ?? null} where="in this project" />
         {project ? (
           // The colour rides on the icon rather than the text: a tinted label fights the folder
           // names underneath it for attention, and at this size a solid glyph reads better anyway.
@@ -894,16 +893,18 @@ function ProjectSections<T>({
               // The virtual folders sit at the project's own indent in both views, not the body's:
               // the flat list pulls its rows further in (they carry the indent a folder header would
               // have given them), and a box is not a row.
-              <div className="mt-0.5 space-y-2 pl-2">{groups}</div>
+              <div className="mt-0.5 space-y-2 pl-[18px]">{groups}</div>
             )}
             {!isCollapsed && (
-              // A shallow indent by default: enough that the folder headers read as sitting inside
-              // the project, without spending width the session names below them need more.
+              // Far enough in that what a project holds reads as held by it: a heading carries a
+              // chevron and an icon before its name, and contents that start under the chevron look
+              // like the next thing in the list rather than the inside of this one. Everything a
+              // section draws steps in by the same amount, so the columns within it are unchanged.
               //
               // Under a virtual folder the gap does the work a heading would: the flat list draws its
               // rows at exactly the indent a box's rows sit at, so without a break the first loose
               // row reads as the last row of the box above it.
-              <div className={cn(groups ? "mt-2" : "mt-0.5", bodyClassName ?? "space-y-2 pl-2")}>
+              <div className={cn(groups ? "mt-2" : "mt-0.5", bodyClassName ?? "space-y-2 pl-[18px]")}>
                 {items.length > 0 ? (
                   renderItems(items, project)
                 ) : groups ? null : dnd ? (
@@ -2159,7 +2160,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
             // 5px, not 6: a row carries a 1px transparent border (it turns solid when selected)
             // and a header does not, so the row needs one pixel less to put its chevron in the
             // same column as a virtual folder's.
-            bodyClassName="space-y-0.5 pl-[5px]"
+            bodyClassName="space-y-0.5 pl-[15px]"
             countOf={(ss, project) =>
               ss.length + shownGroups(project).reduce((n, g) => n + g.count, 0)
             }
