@@ -44,7 +44,9 @@ The web UI is a **session manager with a full terminal**:
   sessions you put there by hand. The folder a session runs in is often the wrong unit: three
   sessions in one repo can be three unrelated errands, and two sessions in different repos can be
   one piece of work. Add them in the project's settings, then **drag a session onto a box** to file
-  it there (or pick the group from the row's ⋯ menu, which is the only way on touch). Drag it back
+  it there. The row's ⋯ menu offers the same move without a drag — the only way on touch — listing
+  the project's groups the way it lists its projects, with **New group…** at the end: name it, give
+  it a colour and an icon, and the session you opened the menu from is in it. Drag it back
   onto the project heading to take it out. A filed session is drawn in its box and nowhere else, so
   the folder groups thin out as you use them; the boxes sit above the folder groups in both views,
   and fold away like any other heading. A session can only go into a box of the project its own

@@ -14,6 +14,7 @@ import {
 import { groupIcon } from "@/lib/groupIcons";
 import { api } from "@/lib/api";
 import { ProjectDialog } from "./ProjectDialog";
+import { GroupDialog } from "./GroupDialog";
 import { useConfirm } from "@/components/ui/confirm";
 import {
   dirKey,
@@ -1186,6 +1187,12 @@ export function SessionSidebar({
   const [editing, setEditing] = useState<
     { id: string | null; folder?: string; group?: string } | null
   >(null);
+  // A new virtual folder being made from a session's own menu: the project it goes in, and the
+  // session that goes into it the moment it exists. The project is held by id and resolved from the
+  // live list, so an edit from another tab can't leave the dialog writing to a project that is gone.
+  const [newGroupFor, setNewGroupFor] = useState<{ projectId: string; sessionId: string } | null>(
+    null
+  );
   // Sessions whose forks are folded away (by session id).
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(loadCollapsedForks);
   // The manual row order the user dragged into place (per folder). Per-browser, like the collapse
@@ -1735,9 +1742,9 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
                 groups={projectForDir(s.workingDirectory, projects)?.groups ?? []}
                 groupId={groupForSession(s, projects)?.id ?? null}
                 onMoveToGroup={(id) => void moveSessionToGroup(s.id, id)}
-                onManageGroups={() => {
+                onNewGroup={() => {
                   const p = projectForDir(s.workingDirectory, projects);
-                  if (p) setEditing({ id: p.id });
+                  if (p) setNewGroupFor({ projectId: p.id, sessionId: s.id });
                 }}
                 onRevealFolder={() => onRevealFolder(s.workingDirectory)}
                 onTogglePin={() => togglePin(s.id, !pinned.has(s.id))}
@@ -2092,6 +2099,16 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
         />
       )}
 
+      {/* Resolved from the live list on every render, like the project popup above. */}
+      {newGroupFor && projects.some((p) => p.id === newGroupFor.projectId) && (
+        <GroupDialog
+          project={projects.find((p) => p.id === newGroupFor.projectId)!}
+          onSaved={onProjectsChange}
+          onCreated={(groupId) => void moveSessionToGroup(newGroupFor.sessionId, groupId)}
+          onClose={() => setNewGroupFor(null)}
+        />
+      )}
+
       {removeDir && (
         <FolderRemoveDialog
           dir={removeDir}
@@ -2123,7 +2140,7 @@ function RowActionsMenu({
   groups,
   groupId,
   onMoveToGroup,
-  onManageGroups,
+  onNewGroup,
   onRevealFolder,
   onTogglePin,
   onRename,
@@ -2145,7 +2162,7 @@ function RowActionsMenu({
   groups: readonly ProjectGroup[];
   groupId: string | null;
   onMoveToGroup: (groupId: string | null) => void;
-  onManageGroups: () => void;
+  onNewGroup: () => void;
   onRevealFolder: () => void;
   onTogglePin: () => void;
   onRename: () => void;
@@ -2315,13 +2332,8 @@ function RowActionsMenu({
                     No group
                   </button>
                 )}
-                {groups.length === 0 && (
-                  <p className="px-3 py-1.5 text-xs italic text-muted-foreground">
-                    None in this project yet
-                  </p>
-                )}
               </div>
-              {item("Manage groups…", <Boxes className="size-3.5" />, onManageGroups)}
+              {item("New group…", <FolderPlus className="size-3.5" />, onNewGroup)}
             </>
           )}
 

@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { Project, ProjectGroup } from "@/types";
 import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
-import { GROUP_ICONS, groupIcon } from "@/lib/groupIcons";
+import { groupIcon } from "@/lib/groupIcons";
+import { GroupAppearance } from "./GroupDialog";
 import { folderName } from "@/lib/recentFolders";
 import { sameFolder } from "@/lib/projects";
 import { FolderPicker } from "./FolderPicker";
@@ -338,64 +339,19 @@ export function ProjectDialog({
                           </button>
                         </div>
                         {open && (
-                          <div className="flex flex-col gap-2 border-t px-2 py-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {COLOR_CHOICES.map((c) => (
-                                <button
-                                  key={c.name}
-                                  type="button"
-                                  title={c.name}
-                                  aria-label={c.name}
-                                  aria-pressed={g.color === c.name}
-                                  onClick={() =>
-                                    void run(() => api.updateProjectGroup(g.id, { color: c.name }))
-                                  }
-                                  className={cn(
-                                    "size-5 rounded-full border-2 transition-transform hover:scale-110",
-                                    g.color === c.name ? "border-foreground" : "border-transparent"
-                                  )}
-                                  style={{ backgroundColor: c.css }}
-                                />
-                              ))}
-                              <button
-                                type="button"
-                                title="No colour"
-                                aria-label="No colour"
-                                aria-pressed={g.color === null}
-                                onClick={() =>
-                                  void run(() => api.updateProjectGroup(g.id, { color: "" }))
-                                }
-                                className={cn(
-                                  "flex size-5 items-center justify-center rounded-full border-2 text-muted-foreground transition-transform hover:scale-110",
-                                  g.color === null ? "border-foreground" : "border-border"
-                                )}
-                              >
-                                <Ban className="size-3" />
-                              </button>
-                            </div>
-                            {/* The icons wear the group's colour, so the two choices are made
-                                against each other rather than one after the other. */}
-                            <div className="flex flex-wrap gap-1">
-                              {GROUP_ICONS.map(({ name, Icon: Choice }) => (
-                                <button
-                                  key={name}
-                                  type="button"
-                                  title={name}
-                                  aria-label={name}
-                                  aria-pressed={g.icon === name}
-                                  onClick={() =>
-                                    void run(() => api.updateProjectGroup(g.id, { icon: name }))
-                                  }
-                                  className={cn(
-                                    "flex size-7 items-center justify-center rounded border transition-colors hover:bg-accent",
-                                    g.icon === name ? "border-foreground" : "border-transparent"
-                                  )}
-                                  style={tint ? { color: tint } : undefined}
-                                >
-                                  <Choice className="size-4" />
-                                </button>
-                              ))}
-                            </div>
+                          <div className="border-t px-2 py-2">
+                            <GroupAppearance
+                              color={g.color}
+                              icon={g.icon}
+                              onColor={(next) =>
+                                void run(() => api.updateProjectGroup(g.id, { color: next ?? "" }))
+                              }
+                              onIcon={(next) =>
+                                void run(() =>
+                                  api.updateProjectGroup(g.id, { icon: g.icon === next ? "" : next })
+                                )
+                              }
+                            />
                           </div>
                         )}
                       </li>
