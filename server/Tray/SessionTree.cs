@@ -5,8 +5,12 @@ namespace ClaudeWeb.Server.Tray;
 /// <summary>One session in the tray menu, and how deep it hangs off its folder (0 = not a fork).</summary>
 internal sealed record TreeSession(SessionInfo Session, int ForkDepth);
 
-/// <summary>One folder's sessions, under the heading its last path segment gives it.</summary>
-internal sealed record TreeFolder(string Dir, string Label, IReadOnlyList<TreeSession> Sessions)
+/// <summary>
+/// One heading's sessions: a working directory, labelled by its last path segment — or a project's
+/// virtual folder (<see cref="Virtual"/>), labelled by the name it was given, whose sessions were
+/// filed there by hand rather than by the path they run in.
+/// </summary>
+internal sealed record TreeFolder(string Dir, string Label, IReadOnlyList<TreeSession> Sessions, bool Virtual = false)
 {
     public int Count => Sessions.Count;
 }
@@ -29,6 +33,7 @@ internal sealed record TreeSection(Project? Project, IReadOnlyList<TreeFolder> F
     public bool FolderHeadingMerged =>
         Project is { Folders.Count: 1 }
         && Folders.Count == 1
+        && !Folders[0].Virtual
         && ProjectStore.DirKey(Folders[0].Dir) == ProjectStore.DirKey(Project.Folders[0]);
 }
 
@@ -124,12 +129,29 @@ internal static class SessionTree
     /// Group sessions into project sections. Projects come out in name order and only when something
     /// in them is on the list — an empty project is a heading over nothing, which is exactly what
     /// the sidebar's active-only filter drops too — followed by one section for whatever is unfiled.
+    ///
+    /// <para>A project's virtual folders come first, in the order they were made, and the folder
+    /// groups follow: the hand-made grouping is the one the user went to the trouble of stating, and
+    /// what is left is whatever the paths happened to say. A session filed into a virtual folder is
+    /// drawn there and nowhere else, so it leaves its folder group's count as it goes.</para>
     /// </summary>
     public static IReadOnlyList<TreeSection> Build(
         IReadOnlyCollection<SessionInfo> sessions,
         IReadOnlyList<Project> projects)
     {
-        var folders = GroupByFolder(sessions);
+        // Sessions filed by hand, under the group that actually holds them — a membership pointing at
+        // some other project's group doesn't apply (see ProjectStore.GroupFor) and falls through to
+        // the folder grouping below, exactly as if it had never been filed.
+        var byGroup = new Dictionary<string, List<SessionInfo>>(StringComparer.Ordinal);
+        var unfiled = new List<SessionInfo>();
+        foreach (var s in sessions)
+        {
+            if (ProjectStore.GroupFor(projects, s) is not { } g) unfiled.Add(s);
+            else if (byGroup.TryGetValue(g.Id, out var list)) list.Add(s);
+            else byGroup[g.Id] = [s];
+        }
+
+        var folders = GroupByFolder(unfiled);
 
         var byProject = new Dictionary<string, List<TreeFolder>>(StringComparer.Ordinal);
         var loose = new List<TreeFolder>();
@@ -142,9 +164,16 @@ internal static class SessionTree
         }
 
         var sections = projects
-            .Where(p => byProject.ContainsKey(p.Id))
-            .OrderBy(p => p.Name, StringComparer.CurrentCultureIgnoreCase)
-            .Select(p => new TreeSection(p, byProject[p.Id]))
+            .Select(p => (Project: p, Folders: (List<TreeFolder>)
+            [
+                .. p.Groups
+                    .Where(g => byGroup.ContainsKey(g.Id))
+                    .Select(g => new TreeFolder(string.Empty, g.Name, Nest(byGroup[g.Id]), Virtual: true)),
+                .. byProject.TryGetValue(p.Id, out var own) ? own : [],
+            ]))
+            .Where(x => x.Folders.Count > 0)
+            .OrderBy(x => x.Project.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(x => new TreeSection(x.Project, x.Folders))
             .ToList();
         if (loose.Count > 0) sections.Add(new TreeSection(null, loose));
         return sections;

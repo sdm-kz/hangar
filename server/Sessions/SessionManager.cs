@@ -63,6 +63,7 @@ public sealed class SessionManager : IDisposable
     private readonly HookEventStore _hooks;
     private readonly RecentsStore _recents;
     private readonly PinStore _pins;
+    private readonly ProjectStore _projects;
     private readonly SessionUiStore _sessionUi;
     // The launch preset each live session came from, so the Claude conversation id can be stamped back
     // onto the matching "recent" entry once a hook reports it (see OnClaudeSessionIdCaptured).
@@ -106,7 +107,7 @@ public sealed class SessionManager : IDisposable
 
     public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, Pty.PtyHostOptions ptyHost,
         TokenStore tokens, HookEventStore hooks, RecentsStore recents, PinStore pins,
-        SessionUiStore sessionUi, ILoggerFactory loggerFactory)
+        ProjectStore projects, SessionUiStore sessionUi, ILoggerFactory loggerFactory)
     {
         _options = options;
         _watchdog = watchdog;
@@ -116,6 +117,7 @@ public sealed class SessionManager : IDisposable
         _hooks = hooks;
         _recents = recents;
         _pins = pins;
+        _projects = projects;
         _sessionUi = sessionUi;
         _hooks.ClaudeSessionIdCaptured += OnClaudeSessionIdCaptured;
         _loggerFactory = loggerFactory;
@@ -142,11 +144,13 @@ public sealed class SessionManager : IDisposable
             {
                 Pinned = IsPinned(ConversationId(s), s.Id),
                 UiRev = UiRev(ConversationId(s), s.Id),
+                GroupId = GroupIdOf(ConversationId(s), s.Id),
             })
             .Concat(_restorable.Values.Select(p => ClaudeSession.RestorableInfo(p) with
             {
                 Pinned = IsPinned(p.ClaudeSessionId, p.Id),
                 UiRev = UiRev(p.ClaudeSessionId, p.Id),
+                GroupId = GroupIdOf(p.ClaudeSessionId, p.Id),
             }))
             .OrderBy(i => i.CreatedAt)
             .ToArray();
@@ -158,6 +162,56 @@ public sealed class SessionManager : IDisposable
     /// </summary>
     private bool IsPinned(string? conversationId, string sessionId) =>
         _pins.IsPinned(conversationId) || _pins.IsPinned(PinStore.SessionKey(sessionId));
+
+    /// <summary>
+    /// The virtual folder a session has been filed into, under whichever key holds the membership —
+    /// its conversation, or the fallback a session too young to have reported one was filed under.
+    /// See <see cref="ProjectStore"/>.
+    /// </summary>
+    private string? GroupIdOf(string? conversationId, string sessionId) =>
+        _projects.GroupOf(conversationId) ?? _projects.GroupOf(ProjectStore.SessionKey(sessionId));
+
+    /// <summary>Every key a session's membership could be filed under; the first is the one it is written to.</summary>
+    private IReadOnlyList<string> GroupKeys(string id)
+    {
+        string? conversation = null;
+        if (_sessions.TryGetValue(id, out var live)) conversation = ConversationId(live);
+        else if (_restorable.TryGetValue(id, out var p)) conversation = p.ClaudeSessionId;
+        var fallback = ProjectStore.SessionKey(id);
+        return conversation is null ? new[] { fallback } : new[] { conversation, fallback };
+    }
+
+    /// <summary>
+    /// File a session into a virtual folder, or (with a null <paramref name="groupId"/>) take it out
+    /// of the one holding it. Keyed by conversation so the grouping survives a reopen, exactly as a
+    /// pin does. Returns the updated project list, or null when there is no such session, or the
+    /// group is one this session cannot go in.
+    ///
+    /// <para>The project check is here rather than in the store because it is the manager that knows
+    /// where a session runs. It is not a formality: a group only ever applies inside the project that
+    /// owns the folder (see <see cref="ProjectStore.GroupFor"/>), so filing a session into some other
+    /// project's group would clear the membership it had and write one that can never be read back —
+    /// the session would come out ungrouped and the caller would have been told it worked.</para>
+    /// </summary>
+    public IReadOnlyList<Project>? SetGroup(string id, string? groupId)
+    {
+        var dir = _sessions.TryGetValue(id, out var live) ? live.WorkingDirectory
+            : _restorable.TryGetValue(id, out var restorable) ? restorable.WorkingDirectory
+            : null;
+        if (dir is null) return null;
+
+        if (groupId is not null)
+        {
+            var owner = ProjectStore.ForDirectory(_projects.List(), dir);
+            if (owner is null || !owner.Groups.Any(g => g.Id == groupId)) return null;
+        }
+
+        var list = _projects.SetSessionGroup(GroupKeys(id), groupId);
+        // The membership rides the session list (SessionInfo.GroupId), so every browser has to be
+        // told the list changed — the project list this returns only reaches the one that asked.
+        if (list is not null) RaiseChanged();
+        return list;
+    }
 
     /// <summary>
     /// Revision of a session's saved UI state, under whichever key holds it — the conversation, or
@@ -524,6 +578,8 @@ public sealed class SessionManager : IDisposable
             // Same for the UI state (open file tabs, view mode): written under the session while the
             // conversation had no id, it belongs to the conversation now.
             _sessionUi.Rekey(SessionUiStore.SessionKey(sessionId), claudeSessionId);
+            // And for a virtual folder it was dropped into in those same first seconds.
+            _projects.Rekey(ProjectStore.SessionKey(sessionId), claudeSessionId);
         }
         catch (Exception ex)
         {

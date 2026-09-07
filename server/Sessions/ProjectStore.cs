@@ -18,7 +18,40 @@ public sealed record Project(
     string Name,
     /// <summary>Palette colour name (the same names as a session's /color), or null for no accent.</summary>
     string? Color,
-    IReadOnlyList<string> Folders);
+    IReadOnlyList<string> Folders)
+{
+    /// <summary>
+    /// The project's virtual folders, in the order they were made. Never null — a project with none
+    /// is one that groups nothing by hand, which is most of them.
+    /// </summary>
+    public IReadOnlyList<ProjectGroup> Groups { get; init; } = Array.Empty<ProjectGroup>();
+}
+
+/// <summary>
+/// A <em>virtual folder</em>: a named box inside a project that holds sessions the user put there by
+/// hand, rather than sessions a path put there. It exists because the folder a session runs in is
+/// often the wrong unit — three sessions in one repo can be three unrelated errands, and two sessions
+/// in different repos can be one — so a project's tree needs a grouping the filesystem doesn't supply.
+///
+/// <para><see cref="Sessions"/> holds membership keys, not session ids: a session id is minted afresh
+/// on every resume, so an id-keyed membership would evaporate the first time the conversation was
+/// reopened. The key is Claude's conversation id, with the same <c>session:</c> fallback the pins use
+/// for a session too young to have reported one — see <see cref="ProjectStore.SessionKey"/>.</para>
+///
+/// <para>A session can only sit in a virtual folder of the project its own folder belongs to. Letting
+/// it sit anywhere would mean a session showing up under a project that has no claim on it, and two
+/// contradictory answers to "which project is this?" — so membership decorates the path rule rather
+/// than overriding it. A membership whose project no longer links the folder simply stops applying;
+/// it is kept, so relinking the folder brings the grouping back.</para>
+/// </summary>
+public sealed record ProjectGroup(
+    string Id,
+    string Name,
+    /// <summary>Palette colour name, as on a project — or null to inherit the plain heading colour.</summary>
+    string? Color,
+    /// <summary>Icon name from the client's own set (see web/src/lib/groupIcons.ts); null = the default.</summary>
+    string? Icon,
+    IReadOnlyList<string> Sessions);
 
 /// <summary>
 /// Server-side store for projects, persisted to %LocalAppData%\ClaudeWeb\projects.json so they follow
@@ -32,8 +65,14 @@ public sealed class ProjectStore
 {
     private const int MaxProjects = 100;
     private const int MaxFoldersPerProject = 100;
+    private const int MaxGroupsPerProject = 50;
+    // A virtual folder is something you file sessions into by hand, so this is a backstop against a
+    // runaway writer rather than a limit anyone reaches. Membership keys are never cleaned up (a
+    // conversation that is gone looks exactly like one that just isn't loaded), so the list is capped.
+    private const int MaxSessionsPerGroup = 500;
     private const int MaxNameLength = 80;
     private const int MaxColorLength = 32;
+    private const int MaxIconLength = 40;
 
     private readonly string _file;
     private readonly ILogger<ProjectStore> _log;
@@ -155,6 +194,212 @@ public sealed class ProjectStore
         }
     }
 
+    // ---- virtual folders -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Membership key for a session whose conversation id isn't known yet — the first seconds of a
+    /// fresh session. <see cref="Rekey"/> folds it into the real one the moment a hook reports it,
+    /// exactly as <see cref="PinStore"/> does for a pin set in that same window.
+    /// </summary>
+    public static string SessionKey(string sessionId) => "session:" + sessionId;
+
+    /// <summary>Add a virtual folder to a project. Returns null when the project or the name is unusable.</summary>
+    public IReadOnlyList<Project>? AddGroup(string projectId, string? name, string? color, string? icon)
+    {
+        var clean = CleanName(name);
+        if (clean is null) return null;
+
+        lock (_lock)
+        {
+            var i = IndexOf(projectId);
+            if (i < 0) return null;
+            var p = _projects[i];
+            if (p.Groups.Count >= MaxGroupsPerProject) return Snapshot();
+            var group = new ProjectGroup(
+                Guid.NewGuid().ToString("n"), clean, CleanColor(color), CleanIcon(icon), Array.Empty<string>());
+            _projects[i] = p with { Groups = p.Groups.Append(group).ToList() };
+            Save();
+            return Snapshot();
+        }
+    }
+
+    /// <summary>
+    /// Rename, recolour or re-icon a virtual folder, wherever it lives — a group id is unique across
+    /// projects, so the caller doesn't have to say which project holds it. A null field is left as it
+    /// was; an empty colour or icon clears it. Returns null when there is no such group.
+    /// </summary>
+    public IReadOnlyList<Project>? UpdateGroup(string groupId, string? name, string? color, string? icon)
+    {
+        lock (_lock)
+        {
+            var (i, j) = Find(groupId);
+            if (i < 0) return null;
+            var p = _projects[i];
+            var g = p.Groups[j];
+            var clean = name is null ? g.Name : CleanName(name);
+            if (clean is null) return null; // a rename to blank is a slip, not an intent
+            _projects[i] = p with
+            {
+                Groups = Replace(p.Groups, j, g with
+                {
+                    Name = clean,
+                    Color = color is null ? g.Color : CleanColor(color),
+                    Icon = icon is null ? g.Icon : CleanIcon(icon),
+                }),
+            };
+            Save();
+            return Snapshot();
+        }
+    }
+
+    /// <summary>
+    /// Delete a virtual folder. Its sessions are untouched — they simply go back to showing under the
+    /// folder they run in. Returns null when there is no such group.
+    /// </summary>
+    public IReadOnlyList<Project>? DeleteGroup(string groupId)
+    {
+        lock (_lock)
+        {
+            var (i, j) = Find(groupId);
+            if (i < 0) return null;
+            var p = _projects[i];
+            _projects[i] = p with { Groups = p.Groups.Where((_, k) => k != j).ToList() };
+            Save();
+            return Snapshot();
+        }
+    }
+
+    /// <summary>
+    /// File a session into a virtual folder, or (with a null <paramref name="groupId"/>) take it out
+    /// of whichever one holds it. A session sits in at most one, so this clears the others first.
+    ///
+    /// <para><paramref name="keys"/> is every key the session could be filed under — its conversation
+    /// id and the <c>session:</c> fallback — because a membership written before the conversation id
+    /// arrived may still be sitting under the fallback. All of them are cleared; the first is what a
+    /// new membership is written under.</para>
+    ///
+    /// Returns null when there is no such group (or no usable key).
+    /// </summary>
+    public IReadOnlyList<Project>? SetSessionGroup(IReadOnlyList<string> keys, string? groupId)
+    {
+        var usable = keys.Where(k => !string.IsNullOrEmpty(k)).ToList();
+        if (usable.Count == 0) return null;
+
+        lock (_lock)
+        {
+            var target = groupId is null ? (Project: -1, Group: -1) : Find(groupId);
+            if (groupId is not null && target.Project < 0) return null;
+
+            var changed = false;
+            for (var i = 0; i < _projects.Count; i++)
+            {
+                var p = _projects[i];
+                if (!p.Groups.Any(g => g.Sessions.Any(usable.Contains))) continue;
+                _projects[i] = p with
+                {
+                    Groups = p.Groups
+                        .Select(g => g.Sessions.Any(usable.Contains)
+                            ? g with { Sessions = g.Sessions.Where(s => !usable.Contains(s)).ToList() }
+                            : g)
+                        .ToList(),
+                };
+                changed = true;
+            }
+
+            if (groupId is not null)
+            {
+                var (pi, gi) = target;
+                var p = _projects[pi];
+                var g = p.Groups[gi];
+                // Newest last, and trimmed from the front: the oldest membership is the one whose
+                // conversation is most likely gone for good.
+                var members = g.Sessions.Append(usable[0]).ToList();
+                if (members.Count > MaxSessionsPerGroup) members.RemoveRange(0, members.Count - MaxSessionsPerGroup);
+                _projects[pi] = p with { Groups = Replace(p.Groups, gi, g with { Sessions = members }) };
+                changed = true;
+            }
+
+            if (changed) Save();
+            return Snapshot();
+        }
+    }
+
+    /// <summary>The virtual folder a membership key sits in, or null. A null/blank key never does.</summary>
+    public string? GroupOf(string? key)
+    {
+        if (string.IsNullOrEmpty(key)) return null;
+        lock (_lock)
+            foreach (var p in _projects)
+                foreach (var g in p.Groups)
+                    if (g.Sessions.Contains(key, StringComparer.Ordinal))
+                        return g.Id;
+        return null;
+    }
+
+    /// <summary>
+    /// Move a membership from one key to another, keeping its place — used when a session's
+    /// conversation id finally arrives and the <c>session:</c> fallback it was filed under stops being
+    /// the key anyone will look it up by. Returns whether anything moved.
+    /// </summary>
+    public bool Rekey(string from, string to)
+    {
+        if (string.IsNullOrEmpty(from) || string.IsNullOrEmpty(to) || from == to) return false;
+        lock (_lock)
+        {
+            bool Holds(ProjectGroup g, string key) => g.Sessions.Contains(key, StringComparer.Ordinal);
+
+            // Nothing filed under the old key means there is nothing to move — and the guard matters
+            // more than it looks: this runs on every conversation id that arrives, including for a
+            // reopened session whose conversation is ALREADY filed under <paramref name="to"/>. Without
+            // it, the sweep below would read that as a stale duplicate and delete the very grouping the
+            // reopen was supposed to preserve.
+            if (!_projects.Any(p => p.Groups.Any(g => Holds(g, from)))) return false;
+
+            for (var i = 0; i < _projects.Count; i++)
+            {
+                var p = _projects[i];
+                // Every group holding either key is rewritten, not just the ones holding the old key:
+                // an entry under the new key can be sitting in a DIFFERENT box (the same conversation
+                // filed there on an earlier run), and leaving it would put one session in two boxes
+                // with the stale one winning, since GroupOf answers with the first it finds.
+                if (!p.Groups.Any(g => Holds(g, from) || Holds(g, to))) continue;
+                _projects[i] = p with
+                {
+                    Groups = p.Groups
+                        .Select(g => Holds(g, from) || Holds(g, to)
+                            ? g with
+                            {
+                                Sessions = g.Sessions
+                                    .Where(s => s != to)
+                                    .Select(s => s == from ? to : s)
+                                    .ToList(),
+                            }
+                            : g)
+                        .ToList(),
+                };
+            }
+            Save();
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The virtual folder a session should be drawn in, given the project its folder falls under —
+    /// or null when it isn't filed, or is filed in a group belonging to some other project.
+    ///
+    /// <para>That last case is the one worth spelling out: a membership only applies inside the
+    /// project that owns the group. A folder moved to another project (or unlinked entirely) leaves
+    /// its sessions' memberships pointing somewhere that has no claim on them, and the honest thing
+    /// is to show those sessions where the path says they belong. The membership is not erased, so
+    /// putting the folder back puts the grouping back with it.</para>
+    /// </summary>
+    public static ProjectGroup? GroupFor(IReadOnlyList<Project> projects, SessionInfo session)
+    {
+        if (session.GroupId is not { } id) return null;
+        var owner = ForDirectory(projects, session.WorkingDirectory);
+        return owner?.Groups.FirstOrDefault(g => g.Id == id);
+    }
+
     // ---- membership ----------------------------------------------------------------------------
     // The same rules the sidebar applies client-side (web/src/lib/projects.ts). They live here too
     // because the tray menu asks the same questions of the same data, and a second answer to "which
@@ -211,6 +456,29 @@ public sealed class ProjectStore
 
     private int IndexOf(string id) => _projects.FindIndex(p => p.Id == id);
 
+    /// <summary>
+    /// Where a virtual folder lives, as (project index, group index), or (-1, -1) when no project
+    /// holds one with that id. Group ids are unique across the whole file, so a caller only ever has
+    /// to name the group. The caller holds the lock.
+    /// </summary>
+    private (int Project, int Group) Find(string groupId)
+    {
+        for (var i = 0; i < _projects.Count; i++)
+        {
+            var j = _projects[i].Groups.ToList().FindIndex(g => g.Id == groupId);
+            if (j >= 0) return (i, j);
+        }
+        return (-1, -1);
+    }
+
+    /// <summary>The list with one entry swapped out — records are immutable, so an edit is a rebuild.</summary>
+    private static List<ProjectGroup> Replace(IReadOnlyList<ProjectGroup> groups, int index, ProjectGroup group)
+    {
+        var next = groups.ToList();
+        next[index] = group;
+        return next;
+    }
+
     private IReadOnlyList<Project> Snapshot() => _projects.ToArray();
 
     /// <summary>Drop a folder from every project that links it. The caller holds the lock.</summary>
@@ -238,6 +506,18 @@ public sealed class ProjectStore
         return trimmed.Length > MaxColorLength ? trimmed[..MaxColorLength] : trimmed;
     }
 
+    /// <summary>
+    /// An icon name, trimmed and bounded. Which names mean anything is the client's business (it owns
+    /// the icon set), so an unknown one is stored as given and drawn as the default — the same deal
+    /// the colour has with the palette.
+    /// </summary>
+    private static string? CleanIcon(string? icon)
+    {
+        var trimmed = icon?.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return null;
+        return trimmed.Length > MaxIconLength ? trimmed[..MaxIconLength] : trimmed;
+    }
+
     private static string? Normalize(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return null;
@@ -256,6 +536,36 @@ public sealed class ProjectStore
 
     private sealed record Persisted(List<Project>? Projects);
 
+    /// <summary>
+    /// A project's virtual folders as read back off disk: nameless or id-less entries dropped, ids
+    /// deduplicated (they address a group on their own, so two of one id would make "which group?"
+    /// unanswerable), and every list bounded the way a write bounds it. <paramref name="seen"/> spans
+    /// the whole file, because the ambiguity a repeated id creates spans it too.
+    /// </summary>
+    private static List<ProjectGroup> CleanGroups(IReadOnlyList<ProjectGroup>? groups, HashSet<string> seen)
+    {
+        if (groups is null) return new List<ProjectGroup>();
+        return groups
+            // `g is not null` is not paranoia: a hand-edited (or truncated) file can hold a null
+            // entry, and an exception here is swallowed by Load, which leaves the store empty — and the
+            // next write would then persist that emptiness over every project in the file.
+            .Where(g => g is not null && !string.IsNullOrWhiteSpace(g.Id) && CleanName(g.Name) is not null
+                && seen.Add(g.Id))
+            .Take(MaxGroupsPerProject)
+            .Select(g => g with
+            {
+                Name = CleanName(g.Name)!,
+                Color = CleanColor(g.Color),
+                Icon = CleanIcon(g.Icon),
+                Sessions = (g.Sessions ?? Array.Empty<string>())
+                    .Where(s => !string.IsNullOrEmpty(s))
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(MaxSessionsPerGroup)
+                    .ToList(),
+            })
+            .ToList();
+    }
+
     private void Load()
     {
         try
@@ -264,6 +574,7 @@ public sealed class ProjectStore
             var p = JsonSerializer.Deserialize<Persisted>(
                 File.ReadAllText(_file), new JsonSerializerOptions(JsonSerializerDefaults.Web));
             if (p?.Projects is null) return;
+            var seenGroups = new HashSet<string>(StringComparer.Ordinal);
             _projects = p.Projects
                 .Where(x => !string.IsNullOrWhiteSpace(x.Id) && CleanName(x.Name) is not null)
                 .Take(MaxProjects)
@@ -278,6 +589,7 @@ public sealed class ProjectStore
                         .Distinct(PathComparer)
                         .Take(MaxFoldersPerProject)
                         .ToList(),
+                    Groups = CleanGroups(x.Groups, seenGroups),
                 })
                 .ToList();
         }

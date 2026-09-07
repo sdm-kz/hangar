@@ -13,9 +13,9 @@ Run `ClaudeWeb.exe` and it starts the web host in-process and drops an icon in t
 - **Left-click** the tray icon → opens the web UI in your browser.
 - **Right-click** → menu listing running sessions, plus **Exit**. Each project is a submenu, and
   inside it the sessions are laid out the way the sidebar's grouped view lays them out with its
-  active-only filter on: folder groups (dropped where the project links only that folder), forks
-  under the session they came from, and no submenu for a project with nothing running in it. Click
-  a session to open it.
+  active-only filter on: virtual folders first, then folder groups (dropped where the project links
+  only that folder and there is no virtual folder to tell it apart from), forks under the session
+  they came from, and no submenu for a project with nothing running in it. Click a session to open it.
 - Runs as a single instance; launching it again just reopens the UI.
 - The same exe also runs headless as a **Windows service** (auto-detected) if you prefer.
 
@@ -40,6 +40,19 @@ The web UI is a **session manager with a full terminal**:
   **+** on a project heading starts a session in it: the create dialog offers the project's linked
   folders as one-click picks (filling it in when there's only one) and still takes any other folder.
   Stored server-side, so projects follow you across devices.
+- **Virtual folders** — named boxes inside a project, each with its own colour and icon, holding
+  sessions you put there by hand. The folder a session runs in is often the wrong unit: three
+  sessions in one repo can be three unrelated errands, and two sessions in different repos can be
+  one piece of work. Add them in the project's settings, then **drag a session onto a box** to file
+  it there (or pick the group from the row's ⋯ menu, which is the only way on touch). Drag it back
+  onto the project heading to take it out. A filed session is drawn in its box and nowhere else, so
+  the folder groups thin out as you use them; the boxes sit above the folder groups in both views,
+  and fold away like any other heading. A session can only go into a box of the project its own
+  folder belongs to — a group refines where a session sits, it never moves it between projects — so
+  a folder that later leaves the project quietly hands its sessions back to the folder grouping,
+  and putting the folder back brings the grouping back with it. Membership is keyed by the
+  conversation, like a pin, so it survives reopening the session, and lives server-side alongside
+  the project.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:

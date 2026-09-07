@@ -1,7 +1,8 @@
 import { useState } from "react";
-import type { Project } from "@/types";
+import type { Project, ProjectGroup } from "@/types";
 import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
+import { GROUP_ICONS, groupIcon } from "@/lib/groupIcons";
 import { folderName } from "@/lib/recentFolders";
 import { sameFolder } from "@/lib/projects";
 import { FolderPicker } from "./FolderPicker";
@@ -31,6 +32,7 @@ import { Ban, FolderPlus, Loader2, Plus, Trash2, X } from "lucide-react";
 export function ProjectDialog({
   project,
   initialFolders,
+  initialGroup,
   onSaved,
   onClose,
 }: {
@@ -38,6 +40,8 @@ export function ProjectDialog({
   project: Project | null;
   /** Create mode: folders the new project starts with — the one it was created from. */
   initialFolders?: string[];
+  /** Open with this group's colour/icon editor already unfolded — the pencil on its sidebar header. */
+  initialGroup?: string;
   /** The full project list, as returned by every mutation. */
   onSaved: (projects: Project[]) => void;
   onClose: () => void;
@@ -48,6 +52,10 @@ export function ProjectDialog({
   // Create mode only: the folders to link once the project exists.
   const [draftFolders, setDraftFolders] = useState<string[]>(initialFolders ?? []);
   const [picker, setPicker] = useState<string>("");
+  // The virtual folder whose colour/icon editor is unfolded (one at a time — the grid is tall), and
+  // the name being typed into the "new group" field.
+  const [openGroup, setOpenGroup] = useState<string | null>(initialGroup ?? null);
+  const [newGroup, setNewGroup] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -100,6 +108,24 @@ export function ProjectDialog({
   const removeFolder = (path: string) => {
     if (project) void run(() => api.removeProjectFolder(project.id, path));
     else setDraftFolders((prev) => prev.filter((f) => !sameFolder(f, path)));
+  };
+
+  const addGroup = async () => {
+    const next = newGroup.trim();
+    if (!project || !next) return;
+    if (await run(() => api.createProjectGroup(project.id, next))) setNewGroup("");
+  };
+
+  const removeGroup = async (group: ProjectGroup) => {
+    const ok = await confirm({
+      title: `Delete “${group.name}”?`,
+      description:
+        "The group goes away; the sessions in it don’t — they go back to showing under the folder " +
+        "they run in.",
+      confirmLabel: "Delete group",
+    });
+    if (!ok) return;
+    void run(() => api.deleteProjectGroup(group.id));
   };
 
   const create = async () => {
@@ -249,6 +275,153 @@ export function ProjectDialog({
               </Button>
             </div>
           </div>
+
+          {/* Virtual folders. Only once the project exists: a group is created against its id, and a
+              draft list here would be a second way to make one that behaves subtly differently. */}
+          {project && (
+            <div className="flex flex-col gap-1.5">
+              <Label>Groups</Label>
+              <p className="text-xs text-muted-foreground">
+                Virtual folders inside this project. Drag a session onto one in the sidebar to file it
+                there — the sessions in a box don’t have to share a folder, which is the whole point.
+              </p>
+              {project.groups.length > 0 && (
+                <ul className="flex flex-col gap-1">
+                  {project.groups.map((g) => {
+                    const Icon = groupIcon(g.icon);
+                    const tint = sessionColor(g.color);
+                    const open = openGroup === g.id;
+                    return (
+                      <li key={g.id} className="rounded-md border">
+                        <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
+                          <button
+                            type="button"
+                            onClick={() => setOpenGroup(open ? null : g.id)}
+                            title="Colour and icon"
+                            aria-expanded={open}
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                            style={tint ? { color: tint } : undefined}
+                          >
+                            <Icon className="size-4" />
+                          </button>
+                          {/* Committed on blur or Enter, like the project's own name above: a rename
+                              is one decision, not one per keystroke. */}
+                          <Input
+                            defaultValue={g.name}
+                            className="h-7 min-w-0 flex-1 border-transparent px-1 shadow-none hover:border-input focus-visible:border-input"
+                            onBlur={(e) => {
+                              const next = e.target.value.trim();
+                              if (!next) e.target.value = g.name; // a blank name is a slip
+                              else if (next !== g.name)
+                                void run(() => api.updateProjectGroup(g.id, { name: next }));
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                              if (e.key === "Escape") {
+                                e.currentTarget.value = g.name;
+                                e.currentTarget.blur();
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void removeGroup(g)}
+                            title="Delete this group"
+                            className="shrink-0 text-muted-foreground hover:text-destructive"
+                          >
+                            <X className="size-4" />
+                          </button>
+                        </div>
+                        {open && (
+                          <div className="flex flex-col gap-2 border-t px-2 py-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {COLOR_CHOICES.map((c) => (
+                                <button
+                                  key={c.name}
+                                  type="button"
+                                  title={c.name}
+                                  aria-label={c.name}
+                                  aria-pressed={g.color === c.name}
+                                  onClick={() =>
+                                    void run(() => api.updateProjectGroup(g.id, { color: c.name }))
+                                  }
+                                  className={cn(
+                                    "size-5 rounded-full border-2 transition-transform hover:scale-110",
+                                    g.color === c.name ? "border-foreground" : "border-transparent"
+                                  )}
+                                  style={{ backgroundColor: c.css }}
+                                />
+                              ))}
+                              <button
+                                type="button"
+                                title="No colour"
+                                aria-label="No colour"
+                                aria-pressed={g.color === null}
+                                onClick={() =>
+                                  void run(() => api.updateProjectGroup(g.id, { color: "" }))
+                                }
+                                className={cn(
+                                  "flex size-5 items-center justify-center rounded-full border-2 text-muted-foreground transition-transform hover:scale-110",
+                                  g.color === null ? "border-foreground" : "border-border"
+                                )}
+                              >
+                                <Ban className="size-3" />
+                              </button>
+                            </div>
+                            {/* The icons wear the group's colour, so the two choices are made
+                                against each other rather than one after the other. */}
+                            <div className="flex flex-wrap gap-1">
+                              {GROUP_ICONS.map(({ name, Icon: Choice }) => (
+                                <button
+                                  key={name}
+                                  type="button"
+                                  title={name}
+                                  aria-label={name}
+                                  aria-pressed={g.icon === name}
+                                  onClick={() =>
+                                    void run(() => api.updateProjectGroup(g.id, { icon: name }))
+                                  }
+                                  className={cn(
+                                    "flex size-7 items-center justify-center rounded border transition-colors hover:bg-accent",
+                                    g.icon === name ? "border-foreground" : "border-transparent"
+                                  )}
+                                  style={tint ? { color: tint } : undefined}
+                                >
+                                  <Choice className="size-4" />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <div className="flex items-center gap-2">
+                <Input
+                  value={newGroup}
+                  placeholder="New group — “Release 2.4”, “Bugs”, “Spikes”"
+                  onChange={(e) => setNewGroup(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    void addGroup();
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  title="Add this group"
+                  disabled={!newGroup.trim() || busy}
+                  onClick={() => void addGroup()}
+                >
+                  <Plus className="size-4" />
+                </Button>
+              </div>
+            </div>
+          )}
 
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>

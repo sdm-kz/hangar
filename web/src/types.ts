@@ -27,6 +27,10 @@ export interface SessionInfo {
   // Revision of this session's server-side UI state (open file tabs, view mode, tree state). Only the
   // number rides the list; a browser holding an older one re-fetches the bag. See lib/sessionUi.ts.
   uiRev: number;
+  // The virtual folder this session was filed into, or null. Server-side and keyed by conversation
+  // id like the pin above, so it survives a reopen. It only applies inside the project that owns the
+  // group — see groupForSession in lib/projects.ts, which is what the sidebar actually asks.
+  groupId: string | null;
 }
 
 /** A pty host still running for a session the app no longer tracks (see PtyOrphanInfo server-side). */
@@ -190,4 +194,23 @@ export interface Project {
   name: string;
   color: string | null; // palette colour name (same names as a session's /color), or null
   folders: string[]; // absolute paths on the server machine
+  groups: ProjectGroup[]; // virtual folders, in the order they were made
+}
+
+/**
+ * A *virtual folder*: a named box inside a project holding sessions the user dropped into it, rather
+ * than sessions a path put there. The folder a session runs in is often the wrong unit — three
+ * sessions in one repo can be three unrelated errands — so this is the grouping the filesystem can't
+ * supply. A session can only be in a group of the project its own folder belongs to.
+ *
+ * `sessions` holds server-side membership keys (conversation ids), not session ids: it is there so
+ * the client can count a group without walking the session list, and is otherwise opaque — what a
+ * row belongs to arrives on the session itself, as `SessionInfo.groupId`.
+ */
+export interface ProjectGroup {
+  id: string;
+  name: string;
+  color: string | null; // palette colour name, or null for the plain heading colour
+  icon: string | null; // a name from lib/groupIcons.ts; null (or unknown) draws the default
+  sessions: string[];
 }

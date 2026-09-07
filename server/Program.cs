@@ -477,6 +477,33 @@ internal static class Program
         app.MapPost("/api/projects/{id}/folders/remove", (string id, FolderRequest body, ProjectStore store) =>
             store.RemoveFolder(id, body.Path) is { } list ? Results.Ok(list) : Results.NotFound());
 
+        // Virtual folders: named boxes inside a project that hold sessions filed there by hand. A
+        // group id addresses a group on its own (they are unique across the file), so editing and
+        // deleting one doesn't route through the project that holds it.
+        // AddGroup answers null to both "blank name" and "no such project", so the name is checked
+        // here to keep the two apart — the same split the update route below makes.
+        app.MapPost("/api/projects/{id}/groups", (string id, GroupRequest body, ProjectStore store) =>
+            string.IsNullOrWhiteSpace(body.Name)
+                ? Results.BadRequest(new { error = "A group needs a name." })
+                : store.AddGroup(id, body.Name, body.Color, body.Icon) is { } list
+                    ? Results.Ok(list)
+                    : Results.NotFound());
+        app.MapPost("/api/projects/groups/{groupId}", (string groupId, GroupRequest body, ProjectStore store) =>
+            body.Name is { } n && string.IsNullOrWhiteSpace(n)
+                ? Results.BadRequest(new { error = "A group needs a name." })
+                : store.UpdateGroup(groupId, body.Name, body.Color, body.Icon) is { } list
+                    ? Results.Ok(list)
+                    : Results.NotFound());
+        app.MapDelete("/api/projects/groups/{groupId}", (string groupId, ProjectStore store) =>
+            store.DeleteGroup(groupId) is { } list ? Results.Ok(list) : Results.NotFound());
+        // Filing a session into one (a null groupId takes it out). It goes through the manager rather
+        // than the store because the membership is keyed by the session's conversation, which only the
+        // manager can resolve — and because every browser has to be told the session list changed.
+        app.MapPost("/api/sessions/{id}/group", (string id, SessionGroupRequest body, SessionManager mgr) =>
+            mgr.SetGroup(id, string.IsNullOrWhiteSpace(body.GroupId) ? null : body.GroupId) is { } list
+                ? Results.Ok(list)
+                : Results.NotFound());
+
         // ---- Web Push subscriptions (background notifications when the tab/PWA is closed) ----------
         // The VAPID public key is not secret and is needed before the browser can subscribe, so its
         // config endpoint is on the public allowlist in TokenAuthMiddleware; subscribe/unsubscribe are
@@ -961,6 +988,11 @@ internal record FileRenameRequest(string Path, string NewName, string? Dir = nul
 internal record FolderRequest(string? Path, string? Dir = null);
 // Create/update a project. On update a null field means "leave it alone"; an empty colour clears it.
 internal record ProjectRequest(string? Name, string? Color = null, List<string>? Folders = null);
+// Create/update a virtual folder. On update a null field means "leave it alone"; an empty colour or
+// icon clears it.
+internal record GroupRequest(string? Name, string? Color = null, string? Icon = null);
+// File a session into a virtual folder; a blank/absent id takes it out of the one it is in.
+internal record SessionGroupRequest(string? GroupId);
 internal record FolderCreateRequest(string? Path, string? Dir = null);
 internal record FsWriteRequest(string Path, string? Content);
 internal record FsPathRequest(string Path);

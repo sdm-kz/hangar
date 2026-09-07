@@ -179,4 +179,12 @@ public sealed record SessionInfo(
     /// bag, which is how one browser's tab changes reach the others without the state itself being
     /// broadcast to everyone on every tick.
     /// </summary>
-    int UiRev = 0);
+    int UiRev = 0,
+    /// <summary>
+    /// The virtual folder this session has been filed into (see <see cref="ProjectGroup"/>), or null.
+    /// Stamped on by the manager from <see cref="ProjectStore"/>, which keys memberships by
+    /// conversation id — so it survives a reopen and reaches every browser on the session list, like
+    /// <see cref="Pinned"/>. It only takes effect inside the project that owns the group; whether it
+    /// applies right now is <see cref="ProjectStore.GroupFor"/>'s question, not this field's.
+    /// </summary>
+    string? GroupId = null);

@@ -1,4 +1,4 @@
-import type { Project } from "@/types";
+import type { Project, ProjectGroup, SessionInfo } from "@/types";
 import { dirKey } from "./sessionOrder";
 
 /**
@@ -98,8 +98,38 @@ export function sectionsByProject<T>(
  * A subfolder does not count: a project linked to `C:\git` whose only sessions live in
  * `C:\git\app` keeps its folder header, because "app" is a name the project heading never says.
  */
-export function mergesFolderHeader(project: Project | null, dirs: readonly string[]): boolean {
+export function mergesFolderHeader(
+  project: Project | null,
+  dirs: readonly string[],
+  // Whether the project is also drawing virtual folders. With boxes above it, the loose sessions
+  // need a box of their own to be read as a set rather than as strays hanging off the project — so
+  // the folder header earns its place back the moment there is something to tell it apart from.
+  hasGroups = false
+): boolean {
   return (
-    !!project && project.folders.length === 1 && dirs.length === 1 && sameFolder(dirs[0], project.folders[0])
+    !!project &&
+    !hasGroups &&
+    project.folders.length === 1 &&
+    dirs.length === 1 &&
+    sameFolder(dirs[0], project.folders[0])
   );
+}
+
+/**
+ * The virtual folder a session is drawn in, or null when it is drawn under its own folder.
+ *
+ * A membership only applies inside the project that owns the group: the session's folder decides
+ * which project it is in, and a group can only refine that, never overrule it. So a folder moved to
+ * another project (or unlinked) leaves its sessions' memberships pointing at a group with no claim
+ * on them, and those sessions go back to showing where the path says they belong. Nothing is erased
+ * — putting the folder back puts the grouping back with it. This mirrors ProjectStore.GroupFor, which
+ * answers the same question for the tray menu.
+ */
+export function groupForSession(
+  session: SessionInfo,
+  projects: readonly Project[]
+): ProjectGroup | null {
+  if (!session.groupId) return null;
+  const owner = projectForDir(session.workingDirectory, projects);
+  return owner?.groups.find((g) => g.id === session.groupId) ?? null;
 }

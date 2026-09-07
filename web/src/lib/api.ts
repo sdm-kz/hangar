@@ -65,6 +65,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
 
+/**
+ * Every project answer, made safe to read. Virtual folders arrived after the projects themselves, so
+ * a server older than them sends no `groups` at all — and the sidebar reads `project.groups` on
+ * every render. One place to fill it in beats a `?? []` at each of them, and it means a UI deployed
+ * ahead of its exe (the static assets ship on their own) degrades to "no groups yet" rather than
+ * throwing on the first paint.
+ */
+async function projects(answer: Promise<Project[]>): Promise<Project[]> {
+  return (await answer).map((p) => (p.groups ? p : { ...p, groups: [] }));
+}
+
 export const api = {
   async authConfig(): Promise<{ authRequired: boolean }> {
     return request("/api/auth/config");
@@ -255,29 +266,76 @@ export const api = {
   // Every mutation answers with the whole list: linking a folder to one project also unlinks it from
   // another, so the response is the only thing that reliably describes the result.
   getProjects(): Promise<Project[]> {
-    return request("/api/projects");
+    return projects(request("/api/projects"));
   },
   createProject(name: string, color?: string | null, folders?: string[]): Promise<Project[]> {
-    return request("/api/projects", {
-      method: "POST",
-      body: JSON.stringify({ name, color: color ?? null, folders: folders ?? [] }),
-    });
+    return projects(
+      request("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ name, color: color ?? null, folders: folders ?? [] }),
+      })
+    );
   },
   // Omit a field to leave it as it is; pass "" as the color to clear the accent.
   updateProject(id: string, patch: { name?: string; color?: string | null }): Promise<Project[]> {
-    return request(`/api/projects/${id}`, { method: "POST", body: JSON.stringify(patch) });
+    return projects(request(`/api/projects/${id}`, { method: "POST", body: JSON.stringify(patch) }));
   },
   deleteProject(id: string): Promise<Project[]> {
-    return request(`/api/projects/${id}`, { method: "DELETE" });
+    return projects(request(`/api/projects/${id}`, { method: "DELETE" }));
   },
   addProjectFolder(id: string, path: string): Promise<Project[]> {
-    return request(`/api/projects/${id}/folders`, { method: "POST", body: JSON.stringify({ path }) });
+    return projects(
+      request(`/api/projects/${id}/folders`, { method: "POST", body: JSON.stringify({ path }) })
+    );
   },
   removeProjectFolder(id: string, path: string): Promise<Project[]> {
-    return request(`/api/projects/${id}/folders/remove`, {
-      method: "POST",
-      body: JSON.stringify({ path }),
-    });
+    return projects(
+      request(`/api/projects/${id}/folders/remove`, {
+        method: "POST",
+        body: JSON.stringify({ path }),
+      })
+    );
+  },
+
+  // ---- Virtual folders (a project's own boxes for sessions filed there by hand) ----
+  // A group id is unique across every project, so editing and deleting one doesn't name the project
+  // holding it. These answer with the project list too — a group lives inside a project.
+  createProjectGroup(
+    projectId: string,
+    name: string,
+    color?: string | null,
+    icon?: string | null
+  ): Promise<Project[]> {
+    return projects(
+      request(`/api/projects/${projectId}/groups`, {
+        method: "POST",
+        body: JSON.stringify({ name, color: color ?? null, icon: icon ?? null }),
+      })
+    );
+  },
+  // Omit a field to leave it as it is; pass "" as the colour or icon to clear it.
+  updateProjectGroup(
+    groupId: string,
+    patch: { name?: string; color?: string | null; icon?: string | null }
+  ): Promise<Project[]> {
+    return projects(
+      request(`/api/projects/groups/${groupId}`, {
+        method: "POST",
+        body: JSON.stringify(patch),
+      })
+    );
+  },
+  deleteProjectGroup(groupId: string): Promise<Project[]> {
+    return projects(request(`/api/projects/groups/${groupId}`, { method: "DELETE" }));
+  },
+  /** File a session into a virtual folder, or (with null) take it out of the one it is in. */
+  setSessionGroup(sessionId: string, groupId: string | null): Promise<Project[]> {
+    return projects(
+      request(`/api/sessions/${sessionId}/group`, {
+        method: "POST",
+        body: JSON.stringify({ groupId }),
+      })
+    );
   },
 
   // ---- In-app update (a build staged by scripts\stage-update.ps1) ----

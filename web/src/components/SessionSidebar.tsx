@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Project, SessionInfo } from "@/types";
+import type { Project, ProjectGroup, SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
 import { forkTree, type ForkNode } from "@/lib/sessionTree";
 import {
+  groupForSession,
   isUnder,
   mergesFolderHeader,
   projectForDir,
@@ -10,6 +11,7 @@ import {
   sectionsByProject,
   type ProjectSection,
 } from "@/lib/projects";
+import { groupIcon } from "@/lib/groupIcons";
 import { api } from "@/lib/api";
 import { ProjectDialog } from "./ProjectDialog";
 import { useConfirm } from "@/components/ui/confirm";
@@ -76,6 +78,21 @@ import {
 // The two lists the session sidebar can show: live sessions, or recent launch presets.
 export type SessionListTab = "sessions" | "recent";
 
+/**
+ * One virtual folder ready to draw: the group itself, the sessions filed into it, and the same fork
+ * tree and drag list a folder group carries — so the rows inside a box you filled by hand and a box
+ * a path filled are drawn by exactly the same code.
+ */
+type VirtualGroup = {
+  group: ProjectGroup;
+  /** Order/collapse key, prefixed so it can't collide with a folder's path or a flat section's. */
+  key: string;
+  count: number;
+  items: SessionInfo[];
+  nodes: ForkNode[];
+  rootIds: string[];
+};
+
 // Grouped-vs-flat is a per-browser view preference, kept client-side like the session order.
 const GROUPED_KEY = "claudeweb.sessionsGrouped";
 function loadGrouped(): boolean {
@@ -116,6 +133,30 @@ function saveFilter(v: SessionFilter) {
 function folderLabel(dir: string): string {
   const parts = dir.split(/[/\\]+/).filter(Boolean);
   return parts[parts.length - 1] ?? dir;
+}
+
+/**
+ * The dot a heading wears for the most urgent thing happening inside it, at the head of the label
+ * the way a session row wears its own — so a folder and the sessions under it say the same thing in
+ * the same place, and the eye reads one column instead of hunting the row's far edge.
+ *
+ * The slot is held even when there is nothing to say. A heading is not a session row, where a
+ * reserved gutter would be dead space on every idle row of a long list: there are few headings, they
+ * all indent alike, and holding it keeps their names on one line rather than nudging each one
+ * sideways the moment something inside it wakes up.
+ */
+function HeadingActivityDot({ activity, where }: { activity: Activity | null; where: string }) {
+  return (
+    <span
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        activity ? ACTIVITY_DOT[activity].className : "opacity-0"
+      )}
+      aria-hidden={activity ? undefined : true}
+      aria-label={activity ? ACTIVITY_DOT[activity].label : undefined}
+      title={activity ? `${ACTIVITY_DOT[activity].label} (${where})` : undefined}
+    />
+  );
 }
 
 /**
@@ -192,6 +233,14 @@ const FOLDER_URGENCY: Record<Activity, number> = {
   compacting: 2,
   busy: 1,
 };
+/**
+ * Postponed messages waiting across a set of sessions. Closed sessions count: their pool is still
+ * stashed and still there to come back to, which is not true of anything folderActivity reports.
+ */
+function folderPostponed(items: SessionInfo[]): number {
+  return items.reduce((n, s) => n + s.postponedCount, 0);
+}
+
 function folderActivity(
   items: SessionInfo[],
   busyIds: Set<string>,
@@ -205,6 +254,33 @@ function folderActivity(
     if (a && (!top || FOLDER_URGENCY[a] > FOLDER_URGENCY[top])) top = a;
   }
   return top;
+}
+
+/**
+ * Where a row or header popup opens, and how tall it may be.
+ *
+ * The lists scroll, and a popup positioned inside a scrolling box is clipped by that box — so the
+ * room a menu has to grow into is the list's, not the window's, and measuring the window is what
+ * once left a tall menu with its first few items cut off above the fold. The list marks itself with
+ * `data-menu-bounds`; without one the document stands in, which is the right answer for a menu that
+ * isn't inside anything scrollable.
+ *
+ * Flipping upwards only happens when there is genuinely more room up there: a menu too tall for
+ * either direction is better left pointing down and scrolling than flipped into even less space.
+ */
+function useMenuPlacement(minHeight = 160) {
+  const [dropUp, setDropUp] = useState(false);
+  const [maxHeight, setMaxHeight] = useState<number | undefined>();
+  const place = (el: HTMLElement, wanted: number) => {
+    const box = el.getBoundingClientRect();
+    const bounds = (el.closest("[data-menu-bounds]") ?? document.documentElement).getBoundingClientRect();
+    const above = box.top - bounds.top;
+    const below = bounds.bottom - box.bottom;
+    const up = below < wanted && above > below;
+    setDropUp(up);
+    setMaxHeight(Math.max(minHeight, (up ? above : below) - 8));
+  };
+  return { dropUp, maxHeight, place };
 }
 
 /** Collapsible folder header shared by the grouped session and recent lists. */
@@ -259,19 +335,13 @@ function GroupHeader({
         ) : (
           <ChevronDown className="size-3.5 shrink-0" />
         )}
+        <HeadingActivityDot activity={activity ?? null} where="in this folder" />
         <FolderTree className="size-3.5 shrink-0" />
         <span className="truncate font-mono text-xs font-medium">{folderLabel(dir)}</span>
         {/* Session count, right after the name rather than pinned to the row's edge: it reads as
             part of the folder's label, and never drifts away from it on a wide sidebar. */}
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
       </button>
-      {activity && (
-        <span
-          className={cn("size-1.5 shrink-0 rounded-full", ACTIVITY_DOT[activity].className)}
-          aria-label={ACTIVITY_DOT[activity].label}
-          title={`${ACTIVITY_DOT[activity].label} (in this folder)`}
-        />
-      )}
       {onNewSession && (
         <button
           type="button"
@@ -316,15 +386,14 @@ function FolderMenu({
   onNewProject: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [dropUp, setDropUp] = useState(false);
   const [copied, setCopied] = useState(false);
+  const { dropUp, maxHeight, place } = useMenuPlacement();
   const ref = useDismissable<HTMLSpanElement>(open, useCallback(() => setOpen(false), []));
 
-  // Headers near the bottom of the list would push the menu past the viewport, so flip it upwards.
+  // Headers near the bottom of the list would push the menu past it, so flip it upwards.
   const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    const box = e.currentTarget.getBoundingClientRect();
-    setDropUp(window.innerHeight - box.bottom < 160);
+    place(e.currentTarget, projects.length ? 340 : 160);
     setOpen((o) => !o);
   };
 
@@ -367,8 +436,9 @@ function FolderMenu({
       </button>
       {open && (
         <div
+          style={{ maxHeight }}
           className={cn(
-            "absolute right-0 z-50 w-52 overflow-hidden rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
+            "absolute right-0 z-50 w-52 overflow-y-auto rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >
@@ -444,6 +514,73 @@ function FolderMenu({
 }
 
 /**
+ * A virtual folder's header: the row that collects the sessions filed into it by hand. Deliberately
+ * unlike the folder header above — a proportional name rather than a monospace path, and the icon
+ * the user chose rather than a folder tree — because the two say different things about the rows
+ * underneath, and a box you made yourself should be findable at a glance.
+ *
+ * Renaming is a double-click on the name, as on a session row. Colour and icon live in the project's
+ * settings, behind the pencil: they are chosen once and then not touched, and a popup crowded onto a
+ * sidebar header would be the wrong place to choose them.
+ */
+function VirtualFolderHeader({
+  group,
+  count,
+  collapsed,
+  onToggle,
+  activity,
+  onEdit,
+}: {
+  group: ProjectGroup;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  activity?: Activity | null;
+  onEdit: () => void;
+}) {
+  const Icon = groupIcon(group.icon);
+  const accent = sessionColor(group.color);
+  return (
+    <div className="group/vf flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+      <button
+        type="button"
+        onClick={onToggle}
+        title={`${group.name} — a virtual folder; drag sessions onto it to file them here`}
+        className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-foreground"
+      >
+        {collapsed ? (
+          <ChevronRight className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronDown className="size-3.5 shrink-0" />
+        )}
+        <HeadingActivityDot activity={activity ?? null} where="in this group" />
+        {/* Same deal as the project heading: the colour rides the icon, not the label, so a tinted
+            name doesn't fight the session names below it. */}
+        <Icon className="size-3.5 shrink-0" style={accent ? { color: accent } : undefined} />
+        {/* Not renameable in place, unlike a session row. A rename box here would have to live
+            inside the fold button — an input nested in a button, and two stray folds fired by the
+            double-click that opens it — and the name, the colour and the icon are one decision
+            anyway. All three are behind the pencil, in the project's settings. */}
+        <span className="truncate text-xs font-medium">{group.name}</span>
+        <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
+      </button>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit();
+        }}
+        title="Rename this group, or change its colour and icon"
+        // Touch devices never fire hover, so the entry point has to stay on screen there.
+        className="hidden shrink-0 hover:text-foreground group-hover/vf:inline-flex [@media(hover:none)]:inline-flex"
+      >
+        <Pencil className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
  * A project's heading: the row that collects the folder groups linked to it. `project` is null for
  * the trailing "No project" section, which exists only once there is at least one project — as a
  * label for what is left over, and as the place to drag a folder to take it back out of a project.
@@ -456,6 +593,7 @@ function ProjectHeader({
   onSettings,
   onNewSession,
   activity,
+  postponed = 0,
 }: {
   project: Project | null;
   count: number;
@@ -467,6 +605,9 @@ function ProjectHeader({
   // project's folders offered as picks. Mirrors the plus on a folder header.
   onNewSession?: () => void;
   activity?: Activity | null;
+  // Postponed messages stashed across the whole project, so a collapsed one still says they are
+  // there — the per-session badges it is a total of are hidden inside it.
+  postponed?: number;
 }) {
   const accent = project ? sessionColor(project.color) : null;
   return (
@@ -482,6 +623,7 @@ function ProjectHeader({
         ) : (
           <ChevronDown className="size-3.5 shrink-0" />
         )}
+        <HeadingActivityDot activity={activity ?? null} where="in this project" />
         {project ? (
           // The colour rides on the icon rather than the text: a tinted label fights the folder
           // names underneath it for attention, and at this size a solid glyph reads better anyway.
@@ -498,14 +640,20 @@ function ProjectHeader({
           {project ? project.name : "No project"}
         </span>
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
+        {/* Kept with the count rather than pinned to the row's edge, for the reason the count is:
+            both say what is inside, and on a wide sidebar an edge-pinned number drifts away from
+            the name it belongs to. Smaller than the badge on a row so the heading keeps its height. */}
+        {postponed > 0 && (
+          <Badge
+            variant="secondary"
+            className="gap-0.5 px-1 py-0 text-[10px]"
+            title={`${postponed} postponed message${postponed === 1 ? "" : "s"} in this project`}
+          >
+            <Inbox className="size-2.5" />
+            {postponed}
+          </Badge>
+        )}
       </button>
-      {activity && (
-        <span
-          className={cn("size-1.5 shrink-0 rounded-full", ACTIVITY_DOT[activity].className)}
-          aria-label={ACTIVITY_DOT[activity].label}
-          title={`${ACTIVITY_DOT[activity].label} (in this project)`}
-        />
-      )}
       {onNewSession && (
         <button
           type="button"
@@ -553,10 +701,13 @@ function ProjectSections<T>({
   onSettings,
   onNewSession,
   dnd,
+  sessionDrop,
+  before,
   renderItems,
   bodyClassName,
   countOf,
   activityOf,
+  postponedOf,
 }: {
   sections: ProjectSection<T>[];
   /** Collapsed project ids ("" for the "No project" section). */
@@ -571,6 +722,18 @@ function ProjectSections<T>({
    */
   dnd?: ReturnType<typeof useFolderDrag>;
   /**
+   * Makes the section itself the place a session is dragged to when it is leaving a virtual folder —
+   * "out of the box, back into the project". Sessions view only; there is nothing to file on the
+   * recents list.
+   */
+  sessionDrop?: (project: Project | null) => { props: Record<string, unknown>; over: boolean };
+  /**
+   * The project's virtual folders, drawn above its own items — the hand-made grouping first, then
+   * whatever the paths still say. Returns null when there are none to draw, which is what lets the
+   * empty-section placeholder below know it is still the only thing in here.
+   */
+  before?: (project: Project | null) => ReactNode;
+  /**
    * Draws a section's contents; takes the whole set so the flat list can build one fork tree, and
    * the section's project so it can drop what the heading already says.
    */
@@ -581,43 +744,61 @@ function ProjectSections<T>({
    * the indent a folder header would otherwise have given them.
    */
   bodyClassName?: string;
-  /** What the number after the project name counts. Defaults to the number of items. */
-  countOf?: (items: T[]) => number;
-  activityOf?: (items: T[]) => Activity | null;
+  /**
+   * What the number after the project name counts. Defaults to the number of items — anything that
+   * also draws virtual folders has to add those in itself, since their sessions are not in `items`.
+   */
+  countOf?: (items: T[], project: Project | null) => number;
+  activityOf?: (items: T[], project: Project | null) => Activity | null;
+  /** Postponed messages stashed inside the section. Sessions view only; a recent preset has none. */
+  postponedOf?: (items: T[], project: Project | null) => number;
 }) {
   return (
     <div className="space-y-2">
       {sections.map(({ project, items }) => {
         const key = project?.id ?? "";
         const isCollapsed = collapsed.has(key);
-        const over = dnd?.isOver(project?.id ?? null) ?? false;
+        const drop = sessionDrop?.(project);
+        const groups = before?.(project) ?? null;
+        const over = (dnd?.isOver(project?.id ?? null) ?? false) || (drop?.over ?? false);
         return (
           <div
             key={key}
-            {...(dnd?.sectionProps(project?.id ?? null) ?? {})}
+            {...mergeProps(dnd?.sectionProps(project?.id ?? null), drop?.props)}
             className={cn(
               "rounded-md transition-colors",
-              // Where the folder in flight would land. A tint on the whole section rather than a
-              // line: a folder joins a project, it doesn't take a position in it.
+              // Where the folder (or the session leaving a virtual folder) would land. A tint on the
+              // whole section rather than a line: it joins the project, it doesn't take a position in it.
               over && "bg-accent ring-1 ring-primary"
             )}
           >
             <ProjectHeader
               project={project}
-              count={countOf ? countOf(items) : items.length}
+              count={countOf ? countOf(items, project) : items.length}
               collapsed={isCollapsed}
               onToggle={() => onToggle(key)}
               onSettings={project ? () => onSettings(project) : undefined}
               onNewSession={project && onNewSession ? () => onNewSession(project) : undefined}
-              activity={activityOf?.(items) ?? null}
+              activity={activityOf?.(items, project) ?? null}
+              postponed={postponedOf?.(items, project) ?? 0}
             />
+            {!isCollapsed && groups && (
+              // The virtual folders sit at the project's own indent in both views, not the body's:
+              // the flat list pulls its rows further in (they carry the indent a folder header would
+              // have given them), and a box is not a row.
+              <div className="mt-0.5 space-y-2 pl-2">{groups}</div>
+            )}
             {!isCollapsed && (
               // A shallow indent by default: enough that the folder headers read as sitting inside
               // the project, without spending width the session names below them need more.
-              <div className={cn("mt-0.5", bodyClassName ?? "space-y-2 pl-2")}>
+              //
+              // Under a virtual folder the gap does the work a heading would: the flat list draws its
+              // rows at exactly the indent a box's rows sit at, so without a break the first loose
+              // row reads as the last row of the box above it.
+              <div className={cn(groups ? "mt-2" : "mt-0.5", bodyClassName ?? "space-y-2 pl-2")}>
                 {items.length > 0 ? (
                   renderItems(items, project)
-                ) : dnd ? (
+                ) : groups ? null : dnd ? (
                   // Empty, in a list you can drop on: the placeholder is what says a folder can go
                   // here, and is the target worth aiming at. Where nothing can be dropped (the flat
                   // list) it says nothing the heading's own "(0)" doesn't, so it isn't drawn — an
@@ -635,6 +816,103 @@ function ProjectSections<T>({
       })}
     </div>
   );
+}
+
+/**
+ * Combine two sets of DOM props, calling both handlers where each side defines one. The sidebar has
+ * three drags in flight over the same elements — reorder a row, move a folder, file a session — and
+ * a project section is a drop target for two of them, so spreading one set over the other would
+ * silently drop half the listeners.
+ */
+function mergeProps(
+  ...sets: (Record<string, unknown> | undefined)[]
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const set of sets) {
+    if (!set) continue;
+    for (const [key, value] of Object.entries(set)) {
+      const prev = out[key];
+      out[key] =
+        typeof prev === "function" && typeof value === "function"
+          ? (...args: unknown[]) => {
+              (prev as (...a: unknown[]) => void)(...args);
+              (value as (...a: unknown[]) => void)(...args);
+            }
+          : value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Drag a session row into a virtual folder — and out of one, onto the project section around it. The
+ * dragged session rides in a ref for the same reason the folder drag's path does: a folder header
+ * being dragged past a virtual folder must not read as a session, and a ref answers "is a session in
+ * flight?" without inspecting dataTransfer mid-drag.
+ *
+ * Two predicates, not one, and the difference between them is what stops the gesture from eating
+ * itself. A virtual folder sits inside the project section, and the section is a target for the very
+ * same drag — it means "take this out of its box". So a box has to *claim* every drag it is the
+ * innermost target for, including the ones that would change nothing, and swallow the event even
+ * then: letting a drop bubble out of the box it landed in is how reordering two rows inside a box
+ * would quietly unfile the row instead.
+ *
+ * - `claims` — is this drag any of this target's business? (the session belongs to this project)
+ * - `changes` — would dropping here actually alter anything? Only then does the target take the drop
+ *   and light up; otherwise it stays quiet and the browser shows the "no" cursor.
+ */
+function useSessionDrag(onDropSession: (sessionId: string, groupId: string | null) => void) {
+  const dragged = useRef<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+
+  const end = () => {
+    dragged.current = null;
+    setOver(null);
+  };
+
+  return {
+    rowProps: (id: string) => ({
+      draggable: true,
+      onDragStart: () => {
+        dragged.current = id;
+      },
+      onDragEnd: end,
+    }),
+    isOver: (key: string) => over === key,
+    targetProps: (
+      key: string,
+      groupId: string | null,
+      claims: (sessionId: string) => boolean,
+      changes: (sessionId: string) => boolean
+    ) => ({
+      onDragOver: (e: React.DragEvent) => {
+        const id = dragged.current;
+        if (!id || !claims(id)) return;
+        e.stopPropagation();
+        if (!changes(id)) return; // in scope, but there is nothing here to do
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setOver(key);
+      },
+      onDragLeave: (e: React.DragEvent) => {
+        // See the folder drag's dragleave: crossing between a target's own children fires this too.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setOver((cur) => (cur === key ? null : cur));
+      },
+      onDrop: (e: React.DragEvent) => {
+        const id = dragged.current;
+        if (!id || !claims(id)) return;
+        // Swallowed whether or not it does anything — a row dropped inside its own box got here
+        // through the row's reorder handler, and the section outside must not also read it as
+        // "dropped on the project", which would take the row out of the box the user was arranging.
+        e.stopPropagation();
+        if (!changes(id)) return;
+        e.preventDefault();
+        end();
+        onDropSession(id, groupId);
+      },
+    }),
+  };
 }
 
 /**
@@ -746,10 +1024,16 @@ function useCollapsedSet(load: () => Set<string>, save: (set: Set<string>) => vo
       save(next);
       return next;
     });
-  // Collapse every given key, or clear the set to expand all.
-  const setAll = (keys: string[], allCollapsed: boolean) =>
-    setCollapsed(() => {
-      const next = allCollapsed ? new Set(keys) : new Set<string>();
+  // Fold or unfold every given key, leaving the rest of the set alone. Only the keys on screen are
+  // passed in, and the button must not reach past them: the flat list's fold-all would otherwise
+  // quietly unfold every folder group the grouped list had folded away, since both live in this set.
+  const setAll = (keys: string[], collapse: boolean) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      for (const key of keys) {
+        if (collapse) next.add(key);
+        else next.delete(key);
+      }
       save(next);
       return next;
     });
@@ -899,7 +1183,9 @@ export function SessionSidebar({
   // showing the live folder list as it is edited (linking a folder returns a new project object; a
   // captured one would go stale the moment the first change landed). A null id is the
   // create-a-new-one form, with `folder` set when it was started from a folder.
-  const [editing, setEditing] = useState<{ id: string | null; folder?: string } | null>(null);
+  const [editing, setEditing] = useState<
+    { id: string | null; folder?: string; group?: string } | null
+  >(null);
   // Sessions whose forks are folded away (by session id).
   const [collapsedForks, setCollapsedForks] = useState<Set<string>>(loadCollapsedForks);
   // The manual row order the user dragged into place (per folder). Per-browser, like the collapse
@@ -944,12 +1230,36 @@ export function SessionSidebar({
   const visibleSessions =
     filter === "active" ? sessions.filter((s) => s.state === "Running") : sessions;
   const activeCount = sessions.filter((s) => s.state === "Running").length;
+  /**
+   * The sessions filed into a virtual folder by hand, and everything the folder grouping still owns.
+   * A filed session is drawn in its box and nowhere else — showing it in both places would double
+   * every count and make the grouping look like a tag rather than a move.
+   *
+   * A membership only counts inside the project that owns the group (see groupForSession), so a
+   * folder that has since moved projects quietly hands its sessions back to the folder grouping.
+   */
+  const filed = useMemo(() => {
+    const byGroup = new Map<string, SessionInfo[]>();
+    const rest: SessionInfo[] = [];
+    for (const s of visibleSessions) {
+      const g = groupForSession(s, projects);
+      if (!g) {
+        rest.push(s);
+        continue;
+      }
+      const list = byGroup.get(g.id);
+      if (list) list.push(s);
+      else byGroup.set(g.id, [s]);
+    }
+    return { byGroup, rest };
+  }, [visibleSessions, projects]);
+
   // The grouped list, built once: pins first, then the hand-arranged order, then newest-first for
   // anything the user hasn't placed. `rootIds` is the drag list — top-level rows only, since a fork
   // is drawn under its parent wherever the parent sits — and a drop rewrites exactly that list.
   const groups = useMemo(
     () =>
-      groupByFolder(visibleSessions).map((g) => {
+      groupByFolder(filed.rest).map((g) => {
         const key = dirKey(g.dir);
         const nodes = forkTree(
           sortFolderSessions(g.items.map(({ item }) => item), pinned, order[key]),
@@ -964,8 +1274,46 @@ export function SessionSidebar({
           rootIds: nodes.filter((n) => n.depth === 0).map((n) => n.session.id),
         };
       }),
-    [visibleSessions, pinned, order, collapsedForks]
+    [filed, pinned, order, collapsedForks]
   );
+
+  /**
+   * A project's virtual folders as lists to draw: the same shape a folder group has, so the rows,
+   * the fork nesting and the drag-to-reorder inside one are the same code. The order key is the
+   * group rather than a path, and prefixed so it can't collide with either of the other two kinds.
+   */
+  const virtualGroups = useMemo(
+    () =>
+      new Map(
+        projects.map((p) => [
+          p.id,
+          p.groups.map((group) => {
+            const items = filed.byGroup.get(group.id) ?? [];
+            const key = `group:${group.id}`;
+            const nodes = forkTree(sortFolderSessions(items, pinned, order[key]), collapsedForks);
+            return {
+              group,
+              key,
+              count: items.length,
+              items,
+              nodes,
+              rootIds: nodes.filter((n) => n.depth === 0).map((n) => n.session.id),
+            };
+          }),
+        ])
+      ),
+    [projects, filed, pinned, order, collapsedForks]
+  );
+
+  /**
+   * The virtual folders actually drawn under a project. Under the active-only filter an empty one is
+   * a heading over nothing, the same call the empty projects get; with the filter off it stays, as
+   * the thing you drop a session onto.
+   */
+  const shownGroups = (project: Project | null) => {
+    const gs = project ? virtualGroups.get(project.id) ?? [] : [];
+    return filter === "active" ? gs.filter((g) => g.count > 0) : gs;
+  };
 
   // The same groups, filed under the project each one's folder belongs to (see sectionsByProject).
   const sessionSections = useMemo(
@@ -985,7 +1333,7 @@ export function SessionSidebar({
    */
   const flatSections = useMemo(
     () =>
-      sectionsByProject(visibleSessions, projects, (s) => s.workingDirectory).map((sec) => {
+      sectionsByProject(filed.rest, projects, (s) => s.workingDirectory).map((sec) => {
         const key = `project:${sec.project?.id ?? ""}`;
         const nodes = forkTree(sortFolderSessions(sec.items, pinned, order[key]), collapsedForks);
         return {
@@ -995,7 +1343,7 @@ export function SessionSidebar({
           rootIds: nodes.filter((n) => n.depth === 0).map((n) => n.session.id),
         };
       }),
-    [visibleSessions, pinned, projects, order, collapsedForks]
+    [filed, pinned, projects, order, collapsedForks]
   );
 
   // Every arrangeable list on screen, by its key, so a drop can find the row order it is rewriting
@@ -1004,8 +1352,9 @@ export function SessionSidebar({
     const map: Record<string, string[]> = {};
     for (const g of groups) map[g.key] = g.rootIds;
     for (const sec of flatSections) map[sec.key] = sec.rootIds;
+    for (const gs of virtualGroups.values()) for (const g of gs) map[g.key] = g.rootIds;
     return map;
-  }, [groups, flatSections]);
+  }, [groups, flatSections, virtualGroups]);
 
   /**
    * Sections to actually draw. Under the active-only filter an empty project is a heading over
@@ -1014,7 +1363,9 @@ export function SessionSidebar({
    * and hiding it would leave a project you just made nowhere to be seen.
    */
   const shown = <T,>(sections: ProjectSection<T>[]) =>
-    filter === "active" ? sections.filter((s) => s.items.length > 0) : sections;
+    filter === "active"
+      ? sections.filter((s) => s.items.length > 0 || shownGroups(s.project).length > 0)
+      : sections;
 
   // ---- What the collapse/expand-all button acts on -----------------------------------------------
   // Two kinds of heading fold: folder groups, which only the grouped lists have, and project
@@ -1022,7 +1373,7 @@ export function SessionSidebar({
   // the one thing it can fold. It flips to "expand" once everything on screen is already folded.
   const visibleGroups = grouped
     ? tab === "sessions"
-      ? groupByFolder(visibleSessions).map((g) => ({ dir: g.dir }))
+      ? groups.map((g) => ({ dir: g.dir }))
       : groupByFolder(recents).map((g) => ({ dir: g.dir }))
     : [];
   // A folder header merged into its project heading isn't on screen to fold, so the button must not
@@ -1030,10 +1381,28 @@ export function SessionSidebar({
   const visibleDirs = (
     projects.length
       ? sectionsByProject(visibleGroups, projects, (g) => g.dir).flatMap((sec) =>
-          mergesFolderHeader(sec.project, sec.items.map((g) => g.dir)) ? [] : sec.items
+          // A folded project's own headings aren't on screen, so the button must not wait on them
+          // to call everything collapsed — its chevron is what folds them.
+          collapsedProjects.has(sec.project?.id ?? "") ||
+          mergesFolderHeader(
+            sec.project,
+            sec.items.map((g) => g.dir),
+            tab === "sessions" && shownGroups(sec.project).length > 0
+          )
+            ? []
+            : sec.items
         )
       : visibleGroups
   ).map((g) => g.dir);
+  // Virtual folders fold on the same terms and out of the same set (a group key is not a path), and
+  // unlike the folder headers they are on screen in the flat view too — a box is the one piece of
+  // structure that view keeps.
+  const virtualKeys =
+    tab === "sessions"
+      ? projects.flatMap((p) =>
+          collapsedProjects.has(p.id) ? [] : shownGroups(p).map((g) => g.key)
+        )
+      : [];
   // The project headings actually on screen. Taken from the sections the list will draw, so the
   // button doesn't wait on a heading that isn't there (an empty "No project", say) to call itself done.
   const headingKeys = <T,>(secs: ProjectSection<T>[]) =>
@@ -1046,15 +1415,16 @@ export function SessionSidebar({
       : projects.length
         ? [...projects.map((p) => p.id), ""]
         : [];
-  const canFoldAll = visibleDirs.length > 0 || projectKeys.length > 0;
+  // Everything on screen that folds out of the folder set — the folder headers (grouped view only)
+  // and the virtual folders (both views).
+  const foldableKeys = [...visibleDirs, ...virtualKeys];
+  const canFoldAll = foldableKeys.length > 0 || projectKeys.length > 0;
   const allCollapsed =
     canFoldAll &&
-    visibleDirs.every((d) => collapsed.has(d)) &&
+    foldableKeys.every((k) => collapsed.has(k)) &&
     projectKeys.every((k) => collapsedProjects.has(k));
   const toggleAllGroups = () => {
-    // Only touch the folder set where folders are on screen: doing it in the flat list would quietly
-    // expand every folder group the user had folded away in the grouped one.
-    if (grouped) setAllGroups(visibleDirs, !allCollapsed);
+    setAllGroups(foldableKeys, !allCollapsed);
     setAllProjects(projectKeys, !allCollapsed);
   };
 
@@ -1111,6 +1481,52 @@ export function SessionSidebar({
 
   const folderDnd = useFolderDrag((dir, projectId) => void moveFolderToProject(dir, projectId));
 
+  /**
+   * File a session into a virtual folder, or (with a null group) take it out of the one it is in.
+   *
+   * Only the project list comes back on the response; which group a row is in rides the session list
+   * (SessionInfo.groupId), which the server pushes to every browser as it writes — so there is
+   * nothing to flip optimistically here, exactly as with a pin.
+   */
+  const moveSessionToGroup = async (sessionId: string, groupId: string | null) => {
+    try {
+      onProjectsChange(await api.setSessionGroup(sessionId, groupId));
+    } catch {
+      /* the list is re-read on the next load; a failed drop isn't worth a dialog */
+    }
+  };
+
+  /**
+   * Whether a project's boxes are any of this dragged session's business at all: a session can only
+   * be filed under the project its own folder belongs to — a group refines the path rule, it never
+   * overrules it. This is `claims` for both targets (see useSessionDrag), which is why a box swallows
+   * a drop even when the row is already in it.
+   */
+  const inProject = (sessionId: string, project: Project | null) => {
+    const s = sessions.find((x) => x.id === sessionId);
+    return !!s && !!project && projectForDir(s.workingDirectory, projects)?.id === project.id;
+  };
+
+  /** Whether dropping it there would move it — a box it is already in is not somewhere to drop it. */
+  const canFile = (sessionId: string, project: Project | null, groupId: string | null) => {
+    const s = sessions.find((x) => x.id === sessionId);
+    if (!s || !inProject(sessionId, project)) return false;
+    return (groupForSession(s, projects)?.id ?? null) !== groupId;
+  };
+
+  const sessionDnd = useSessionDrag((id, groupId) => void moveSessionToGroup(id, groupId));
+
+  /** Dropping a row on the project itself is how it leaves a box — see ProjectSections.sessionDrop. */
+  const sectionSessionDrop = (project: Project | null) => ({
+    props: sessionDnd.targetProps(
+      `ungroup:${project?.id ?? ""}`,
+      null,
+      (id) => inProject(id, project),
+      (id) => canFile(id, project, null)
+    ),
+    over: sessionDnd.isOver(`ungroup:${project?.id ?? ""}`),
+  });
+
   const toggleGrouped = () =>
     setGrouped((v) => {
       saveGrouped(!v);
@@ -1160,7 +1576,11 @@ export function SessionSidebar({
     return (
       <div
         key={s.id}
-        {...(drag?.props ?? {})}
+        // Two drags start here: reorder within this list (top-level rows only — a fork is drawn
+        // under its parent, so it has no place of its own to move to) and file into a virtual
+        // folder, which any row can do. Neither may start while the row is being renamed: the
+        // rename box has to stay selectable with the mouse.
+        {...mergeProps(drag?.props, editingId === s.id ? undefined : sessionDnd.rowProps(s.id))}
         style={{ ...(depth > 0 ? { marginLeft: indent } : null), ...colorEdge }}
         onClick={
           restorable
@@ -1312,6 +1732,13 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
                 projectId={projectForDir(s.workingDirectory, projects)?.id ?? null}
                 onMoveToProject={(id) => void moveFolderToProject(s.workingDirectory, id)}
                 onNewProject={() => setEditing({ id: null, folder: s.workingDirectory })}
+                groups={projectForDir(s.workingDirectory, projects)?.groups ?? []}
+                groupId={groupForSession(s, projects)?.id ?? null}
+                onMoveToGroup={(id) => void moveSessionToGroup(s.id, id)}
+                onManageGroups={() => {
+                  const p = projectForDir(s.workingDirectory, projects);
+                  if (p) setEditing({ id: p.id });
+                }}
                 onRevealFolder={() => onRevealFolder(s.workingDirectory)}
                 onTogglePin={() => togglePin(s.id, !pinned.has(s.id))}
                 onRename={() => setEditingId(s.id)}
@@ -1336,7 +1763,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
    * folder (see mergesFolderHeader) — directly under that heading, with the same indent either way
    * so the two cases line up.
    */
-  const renderGroupRows = (g: (typeof groups)[number]) => (
+  const renderGroupRows = (g: { key: string; nodes: ForkNode[]; rootIds: string[] }) => (
     <div className="mt-0.5 space-y-0.5 pl-[18px]">
       {/* A fork always shares its parent's folder, so nesting inside the group is the same
           tree the flat list shows — just scoped to this folder. */}
@@ -1353,6 +1780,47 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
       })}
     </div>
   );
+
+  /**
+   * One virtual folder: its header and, unless folded, the sessions filed into it. The body is a
+   * folder group's body — once you are looking at rows, a box you filled by hand and a box a path
+   * filled are the same list. The box itself is the drop target that fills it.
+   */
+  const renderVirtualGroup = (vg: VirtualGroup, project: Project) => {
+    const isCollapsed = collapsed.has(vg.key);
+    return (
+      <div
+        key={vg.key}
+        {...sessionDnd.targetProps(
+          vg.key,
+          vg.group.id,
+          (id) => inProject(id, project),
+          (id) => canFile(id, project, vg.group.id)
+        )}
+        className={cn(
+          "rounded-md transition-colors",
+          sessionDnd.isOver(vg.key) && "bg-accent ring-1 ring-primary"
+        )}
+      >
+        <VirtualFolderHeader
+          group={vg.group}
+          count={vg.count}
+          collapsed={isCollapsed}
+          onToggle={() => toggleGroup(vg.key)}
+          activity={folderActivity(vg.items, busyIds, waitingIds, compactingIds)}
+          onEdit={() => setEditing({ id: project.id, group: vg.group.id })}
+        />
+        {!isCollapsed && renderGroupRows(vg)}
+      </div>
+    );
+  };
+
+  /** A project's virtual folders, or null when it has none to draw (see ProjectSections.before). */
+  const renderVirtualGroups = (project: Project | null) => {
+    const gs = shownGroups(project);
+    if (!project || gs.length === 0) return null;
+    return gs.map((vg) => renderVirtualGroup(vg, project));
+  };
 
   // One folder group: its header and, unless folded, the fork tree of the sessions in it. Pulled out
   // of the list because it is now rendered from two places — inside a project, and loose below them.
@@ -1472,7 +1940,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
             size="icon"
             className="size-6 shrink-0 text-muted-foreground"
             title={`${allCollapsed ? "Expand" : "Collapse"} all ${
-              visibleDirs.length > 0 ? "folders and projects" : "projects"
+              foldableKeys.length > 0 ? "folders and projects" : "projects"
             }`}
             onClick={toggleAllGroups}
           >
@@ -1503,7 +1971,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           folderDnd={folderDnd}
         />
       ) : (
-      <div className="flex-1 overflow-auto pb-2 pl-2 pr-1">
+      <div data-menu-bounds className="flex-1 overflow-auto pb-2 pl-2 pr-1">
         {sessions.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
         ) : visibleSessions.length === 0 ? (
@@ -1518,16 +1986,32 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
               onSettings={(p) => setEditing({ id: p.id })}
               onNewSession={onNewInProject}
               dnd={folderDnd}
+              sessionDrop={sectionSessionDrop}
+              before={renderVirtualGroups}
               renderItems={(gs, project) =>
                 // A project that is just one folder draws its sessions itself: the folder header
                 // would only repeat the heading right above it.
-                mergesFolderHeader(project, gs.map((g) => g.dir))
+                mergesFolderHeader(project, gs.map((g) => g.dir), shownGroups(project).length > 0)
                   ? renderGroupRows(gs[0])
                   : gs.map(renderFolderGroup)
               }
-              countOf={(gs) => gs.reduce((n, g) => n + g.count, 0)}
-              activityOf={(gs) =>
-                folderActivity(gs.flatMap((g) => g.items), busyIds, waitingIds, compactingIds)
+              countOf={(gs, project) =>
+                gs.reduce((n, g) => n + g.count, 0) +
+                shownGroups(project).reduce((n, g) => n + g.count, 0)
+              }
+              activityOf={(gs, project) =>
+                folderActivity(
+                  [...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)],
+                  busyIds,
+                  waitingIds,
+                  compactingIds
+                )
+              }
+              postponedOf={(gs, project) =>
+                folderPostponed([
+                  ...gs.flatMap((g) => g.items),
+                  ...shownGroups(project).flatMap((g) => g.items),
+                ])
               }
             />
           ) : (
@@ -1545,12 +2029,27 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
             onToggle={toggleProject}
             onSettings={(p) => setEditing({ id: p.id })}
             onNewSession={onNewInProject}
+            sessionDrop={sectionSessionDrop}
+            before={renderVirtualGroups}
             renderItems={(ss, project) => renderFlatSection(project, ss)}
             // No folder header stands between a project and its rows here, so the rows carry the
             // indent themselves — the same distance in as a grouped row (a section's pl-2 plus the
             // 18px a folder group gives its own), so switching views doesn't shift them sideways.
             bodyClassName="space-y-0.5 pl-[26px]"
-            activityOf={(ss) => folderActivity(ss, busyIds, waitingIds, compactingIds)}
+            countOf={(ss, project) =>
+              ss.length + shownGroups(project).reduce((n, g) => n + g.count, 0)
+            }
+            activityOf={(ss, project) =>
+              folderActivity(
+                [...ss, ...shownGroups(project).flatMap((g) => g.items)],
+                busyIds,
+                waitingIds,
+                compactingIds
+              )
+            }
+            postponedOf={(ss, project) =>
+              folderPostponed([...ss, ...shownGroups(project).flatMap((g) => g.items)])
+            }
           />
         ) : (
           // Plain flat list: no projects to head it, but the same one arrangeable list underneath —
@@ -1587,6 +2086,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
         <ProjectDialog
           project={editingProject}
           initialFolders={editing.folder ? [editing.folder] : undefined}
+          initialGroup={editing.group}
           onSaved={onProjectsChange}
           onClose={() => setEditing(null)}
         />
@@ -1620,6 +2120,10 @@ function RowActionsMenu({
   projectId,
   onMoveToProject,
   onNewProject,
+  groups,
+  groupId,
+  onMoveToGroup,
+  onManageGroups,
   onRevealFolder,
   onTogglePin,
   onRename,
@@ -1637,6 +2141,11 @@ function RowActionsMenu({
   projectId: string | null;
   onMoveToProject: (projectId: string | null) => void;
   onNewProject: () => void;
+  /** The virtual folders of the project this session's folder is in — the only ones it can go into. */
+  groups: readonly ProjectGroup[];
+  groupId: string | null;
+  onMoveToGroup: (groupId: string | null) => void;
+  onManageGroups: () => void;
   onRevealFolder: () => void;
   onTogglePin: () => void;
   onRename: () => void;
@@ -1646,15 +2155,15 @@ function RowActionsMenu({
   onClose: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [dropUp, setDropUp] = useState(false);
+  const { dropUp, maxHeight, place } = useMenuPlacement(200);
   const ref = useDismissable<HTMLSpanElement>(open, useCallback(() => setOpen(false), []));
 
-  // Rows near the bottom of the list would push the menu past the viewport, so flip it upwards. The
-  // project section roughly doubles the menu's height, so what counts as "near the bottom" grows too.
+  // Rows near the bottom of the list would push the menu past it, so flip it upwards. The project
+  // and group sections roughly treble the menu's height, so what counts as "near the bottom" grows
+  // with them; where neither direction has the room, the menu scrolls instead.
   const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    const box = e.currentTarget.getBoundingClientRect();
-    setDropUp(window.innerHeight - box.bottom < (projects.length ? 440 : 240));
+    place(e.currentTarget, projects.length ? (projectId ? 560 : 440) : 240);
     setOpen((o) => !o);
   };
 
@@ -1701,12 +2210,14 @@ function RowActionsMenu({
       </button>
       {open && (
         <div
+          // The cap comes from the room the list actually has (see useMenuPlacement) — with the
+          // project and group sections in it this menu is taller than a short window, and a fixed
+          // cap would either clip it or overflow the list it lives in.
+          style={{ maxHeight }}
           className={cn(
             // As wide as the folder menu, which now lists the same projects: a name plus its tick
             // needs the room, and two menus offering one action shouldn't be two different widths.
-            // The height cap is a backstop for a short window, where neither flip leaves room for
-            // the project list and the menu would otherwise run off the screen.
-            "absolute right-0 z-50 max-h-[85vh] w-52 overflow-y-auto rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
+            "absolute right-0 z-50 w-52 overflow-y-auto rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >
@@ -1763,6 +2274,57 @@ function RowActionsMenu({
             )}
           </div>
           {item("New project…", <FolderPlus className="size-3.5" />, onNewProject)}
+
+          {/* Virtual folders — the drag-free way to do what dropping the row on a box does. Only
+              offered where there is a project to hold them: a group lives inside one, so a session
+              whose folder is unfiled has nowhere to be filed to. */}
+          {projectId && (
+            <>
+              <p className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Group
+              </p>
+              <div className="max-h-48 overflow-auto">
+                {groups.map((g) => {
+                  const Icon = groupIcon(g.icon);
+                  const accent = sessionColor(g.color);
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={(e) => pick(e, () => onMoveToGroup(g.id))}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                    >
+                      <Icon
+                        className="size-3.5 shrink-0"
+                        style={accent ? { color: accent } : undefined}
+                      />
+                      <span className="truncate">{g.name}</span>
+                      {groupId === g.id && (
+                        <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />
+                      )}
+                    </button>
+                  );
+                })}
+                {groupId && (
+                  <button
+                    type="button"
+                    onClick={(e) => pick(e, () => onMoveToGroup(null))}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
+                  >
+                    <Minus className="size-3.5 shrink-0" />
+                    No group
+                  </button>
+                )}
+                {groups.length === 0 && (
+                  <p className="px-3 py-1.5 text-xs italic text-muted-foreground">
+                    None in this project yet
+                  </p>
+                )}
+              </div>
+              {item("Manage groups…", <Boxes className="size-3.5" />, onManageGroups)}
+            </>
+          )}
+
           <div className="my-1 border-t" />
 
           {item(
@@ -1997,7 +2559,7 @@ function RecentList({
   };
 
   return (
-    <div className="flex-1 overflow-auto px-2 pb-2">
+    <div data-menu-bounds className="flex-1 overflow-auto px-2 pb-2">
       {recents.length === 0 && (
         <p className="px-2 py-6 text-center text-xs text-muted-foreground">
           No recent sessions yet. Created sessions are saved here to relaunch.
