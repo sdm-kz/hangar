@@ -13,7 +13,10 @@ public sealed record PtySpawnRequest(
     /// <summary>Where the host writes its <see cref="PtyState"/>.</summary>
     string StateFile,
     string LogFile,
-    /// <summary>The program to attach to the pseudoconsole (cmd.exe for the npm shim).</summary>
+    /// <summary>
+    /// The program to attach to the pseudoconsole: the CLI itself for a session (claude.exe, or the
+    /// launcher its npm shim names), or the chosen shell for a shell tab.
+    /// </summary>
     string FileName,
     IReadOnlyList<string> Arguments,
     string WorkingDirectory,

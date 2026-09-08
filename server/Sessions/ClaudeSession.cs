@@ -254,8 +254,8 @@ public sealed class ClaudeSession : IDisposable
 
     /// <summary>
     /// Launch the session: start a pty host for it, then attach to that host over its pipe. The
-    /// process tree that results is <c>ClaudeWeb.PtyHost.exe -&gt; cmd.exe -&gt; claude.exe</c>, and
-    /// only the first of those is ours to end.
+    /// process tree that results is <c>ClaudeWeb.PtyHost.exe -&gt; claude.exe</c> (with a cmd.exe in
+    /// between only when an npm shim could not be resolved), and the first of those is ours to end.
     /// </summary>
     public async Task StartAsync(CancellationToken ct = default)
     {
@@ -263,7 +263,8 @@ public sealed class ClaudeSession : IDisposable
         // (so the TUI renders and --remote-control registers), but its VT stream is piped to the host,
         // and from there to us and on to the in-app xterm.js terminal.
         var args = BuildArgs();
-        // If claude is the npm .cmd shim we must invoke it via cmd.exe /c; prepend that prefix.
+        // The resolver may front the executable with a prefix (node + cli.js for a classic npm shim,
+        // or cmd.exe /c as a last resort); it goes ahead of our own arguments.
         var launchArgs = new List<string>(_exe.Prefix);
         launchArgs.AddRange(args);
 
@@ -488,8 +489,8 @@ public sealed class ClaudeSession : IDisposable
     /// End the session for real: ask its pty host to shut down, and kill the host outright if it
     /// doesn't. Killing the host is sufficient and complete — Porta.Pty puts the pseudoconsole's child
     /// in a job object with <c>JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE</c> and job membership is inherited,
-    /// so <c>cmd.exe</c> and the <c>claude.exe</c> under it go down with it. There is no process tree
-    /// left to hunt.
+    /// so <c>claude.exe</c> — and any launcher we started it through — goes down with it. There is no
+    /// process tree left to hunt.
     /// </summary>
     /// <remarks>
     /// This is the ONLY path that ends a session. <see cref="Dispose"/> deliberately does not — see

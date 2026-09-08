@@ -287,7 +287,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// <summary>
     /// Terminate a session's host and forget its state file. This is a complete teardown, not a
     /// partial one: the pseudoconsole's job object is kill-on-close and job membership is inherited,
-    /// so <c>cmd.exe</c> and the <c>claude.exe</c> under it go down with the host. Used as the
+    /// so <c>claude.exe</c> and anything we launched it through go down with the host. Used as the
     /// backstop for a host that ignored <c>shutdown</c>, and as the whole story for an orphan.
     /// </summary>
     public void KillHost(string sessionId)

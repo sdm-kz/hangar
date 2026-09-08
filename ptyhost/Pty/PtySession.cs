@@ -19,9 +19,10 @@ namespace ClaudeWeb.PtyHost.Pty;
 /// whole pseudoconsole tree dies with whichever process owns the connection — including on a
 /// <c>TerminateProcess</c>. That is exactly the lifetime we want here: the host must not outlive its
 /// child, and killing the host must still take <c>claude.exe</c> down.</para>
-/// <para>Job membership is inherited, so the grandchild matters too: we launch
-/// <c>cmd.exe /c claude.cmd …</c>, and the <c>claude.exe</c> underneath is in the same job. One job
-/// close covers the entire tree — no separate process-tree kill is needed.</para>
+/// <para>Job membership is inherited, so any grandchild matters too: when the CLI is reached through
+/// a launcher (node for a classic npm shim, or cmd.exe when a shim could not be resolved), the
+/// <c>claude.exe</c> underneath is in the same job. One job close covers the entire tree — no
+/// separate process-tree kill is needed.</para>
 /// </remarks>
 public sealed class PtySession : IDisposable
 {

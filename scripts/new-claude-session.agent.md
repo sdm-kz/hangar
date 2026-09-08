@@ -69,6 +69,30 @@ $s = new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -PassThru
 $s.id; $s.state
 ```
 
+## Multi-line and long prompts
+
+`-InitialPrompt` takes the whole string, newlines and all. Use a single-quoted here-string so
+PowerShell leaves `$`, backticks and quotes alone — the closing `'@` must sit at column 0:
+
+```powershell
+new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -PermissionMode auto -InitialPrompt @'
+Review the diff on this branch.
+Write the findings to review.md, one heading per file.
+Don't commit anything.
+'@
+```
+
+Two things to know:
+
+- **Run the script with `pwsh`, not Windows PowerShell 5.1.** Under 5.1 the `.ps1` is read as ANSI
+  and `Invoke-RestMethod` doesn't send the body as UTF-8, so any non-ASCII text (Cyrillic, em dashes,
+  emoji) reaches the server corrupted. `pwsh` sends it byte-for-byte.
+- The prompt travels to `claude` as a command-line argument, so it is bounded by the Windows
+  command-line limit (32,767 characters) — far above anything you'd type, but not unlimited. Before
+  the shim resolution in `ClaudeExecutableResolver`, a launch that went through `cmd.exe` capped it
+  at ~8,000 characters and cut it at the first newline; if you ever see a prompt arrive truncated,
+  that fallback path is the thing to check.
+
 ## Examples
 
 ```powershell
@@ -102,5 +126,5 @@ $s = new-claude-session.ps1 -WorkingDirectory C:\Git\myproject `
   the session wherever the shell happened to be.
 - `-Continue` and `-ResumeSessionId` both resume prior work; on an unfamiliar folder that can pick
   up a conversation you know nothing about. Omit both to start clean.
-- Quote paths with spaces, and keep `-InitialPrompt` in single quotes so PowerShell doesn't expand
-  `$` or backticks inside it.
+- Quote paths with spaces, and keep `-InitialPrompt` in single quotes (or a `@'...'@` here-string)
+  so PowerShell doesn't expand `$` or backticks inside it.

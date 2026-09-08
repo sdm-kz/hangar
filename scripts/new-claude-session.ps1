@@ -21,6 +21,12 @@
 
 .EXAMPLE
     .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -Continue -PassThru
+
+.EXAMPLE
+    $prompt = Get-Content .\task.md -Raw
+    pwsh -File .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -InitialPrompt $prompt
+    A multi-line prompt. Written inline instead, a here-string works too, but its closing '@ has to
+    sit at column 0 -- which is why this example reads the text from a file. See the .agent.md notes.
 #>
 [CmdletBinding()]
 param(
@@ -37,7 +43,9 @@ param(
     # 'opus' | 'sonnet' | 'haiku' or a full model id. Omit for the default model.
     [string] $Model,
 
-    # Prompt (or slash command) sent as soon as the session starts.
+    # Prompt (or slash command) sent as soon as the session starts. Multi-line is fine — pass a
+    # single-quoted here-string (@'...'@). Run this script with pwsh, not Windows PowerShell 5.1:
+    # 5.1 does not send the request body as UTF-8, which corrupts non-ASCII prompts.
     [string] $InitialPrompt,
 
     [ValidateSet('default', 'auto', 'acceptEdits', 'bypassPermissions')]
