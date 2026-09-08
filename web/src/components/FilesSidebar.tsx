@@ -17,6 +17,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  TerminalSquare,
   HardDrive,
   Image as ImageIcon,
   Loader2,
@@ -108,12 +109,14 @@ export function FilesSidebar({
   revealToken = 0,
   onOpenFile,
   onNewSession,
+  onOpenShell,
 }: {
   openPath: string | null; // the file currently open in the main area, for highlight
   revealDir?: string | null; // a folder to jump to, asked for from outside the tree
   revealToken?: number; // bumped per request, so asking for the same folder twice goes back to it
   onOpenFile: (path: string) => void;
   onNewSession: (path: string) => void; // start a session in a folder (hover action on dir rows)
+  onOpenShell: (path: string) => void; // open a shell in a folder (hover action on dir rows)
 }) {
   const confirm = useConfirm();
   const [drives, setDrives] = useState<DirEntry[]>([]);
@@ -426,6 +429,16 @@ export function FilesSidebar({
         >
           <Bot className="size-4" />
         </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          title="Open a shell in this folder"
+          disabled={!selectedDir}
+          onClick={() => selectedDir && onOpenShell(selectedDir)}
+        >
+          <TerminalSquare className="size-4" />
+        </Button>
         <Button variant="ghost" size="icon" className="size-7" title="New file" disabled={!selectedDir} onClick={newFile}>
           <FilePlus className="size-4" />
         </Button>
@@ -487,6 +500,7 @@ export function FilesSidebar({
             onToggle={toggle}
             onOpenFile={onOpenFile}
             onNewSession={onNewSession}
+            onOpenShell={onOpenShell}
             onStartRename={setRenaming}
             onRename={doRename}
             onCancelRename={() => setRenaming(null)}
@@ -514,6 +528,7 @@ function TreeNode({
   onToggle,
   onOpenFile,
   onNewSession,
+  onOpenShell,
   onStartRename,
   onRename,
   onCancelRename,
@@ -533,6 +548,7 @@ function TreeNode({
   onToggle: (path: string) => void;
   onOpenFile: (path: string) => void;
   onNewSession: (path: string) => void;
+  onOpenShell: (path: string) => void;
   onStartRename: (path: string) => void;
   onRename: (path: string, name: string) => void;
   onCancelRename: () => void;
@@ -598,6 +614,19 @@ function TreeNode({
             <Bot className="size-3.5" />
           </button>
         )}
+        {/* Open a shell in this folder — hover action on any directory row. */}
+        {isDir && renaming !== path && (
+          <button
+            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+            title="Open a shell in this folder"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenShell(path);
+            }}
+          >
+            <TerminalSquare className="size-3.5" />
+          </button>
+        )}
         {/* Drives can't be renamed/deleted; everything else can, via hover actions. */}
         {!isDrive && renaming !== path && (
           <button
@@ -648,6 +677,7 @@ function TreeNode({
                 onToggle={onToggle}
                 onOpenFile={onOpenFile}
                 onNewSession={onNewSession}
+                onOpenShell={onOpenShell}
                 onStartRename={onStartRename}
                 onRename={onRename}
                 onCancelRename={onCancelRename}

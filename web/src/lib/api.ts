@@ -135,9 +135,14 @@ export const api = {
   shellOptions(): Promise<{ shells: ShellOption[]; default: string }> {
     return request("/api/shells/options");
   },
-  // The shells open for a session. Server-side, so every browser on that session sees the same tabs.
-  listShells(sessionId: string): Promise<ShellInfo[]> {
-    return request(`/api/shells?sessionId=${encodeURIComponent(sessionId)}`);
+  // The shells open for a session, or the folder shells opened from the Files tree in a folder.
+  // Server-side, so every browser looking at the same thing sees the same tabs.
+  listShells(owner: { sessionId: string } | { folder: string }): Promise<ShellInfo[]> {
+    const q =
+      "sessionId" in owner
+        ? `sessionId=${encodeURIComponent(owner.sessionId)}`
+        : `folder=${encodeURIComponent(owner.folder)}`;
+    return request(`/api/shells?${q}`);
   },
   createShell(req: { sessionId?: string; workingDirectory: string; shell?: string }): Promise<ShellInfo> {
     return request("/api/shells", { method: "POST", body: JSON.stringify(req) });

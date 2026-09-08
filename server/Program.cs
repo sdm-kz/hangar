@@ -394,10 +394,11 @@ internal static class Program
             @default = Sessions.Shells.ShellCatalog.DefaultId,
         }));
 
-        // The open shells, optionally narrowed to one session's. Server-side, so every browser looking
-        // at a session sees the same tabs.
-        app.MapGet("/api/shells", (string? sessionId, Sessions.Shells.ShellManager shells) =>
-            Results.Ok(shells.List(sessionId)));
+        // The open shells, narrowed to one session's — or, with ?folder=, to the folder shells opened
+        // from the Files tree there. Server-side, so every browser looking at the same thing sees the
+        // same tabs.
+        app.MapGet("/api/shells", (string? sessionId, string? folder, Sessions.Shells.ShellManager shells) =>
+            Results.Ok(shells.List(sessionId, folder)));
 
         app.MapPost("/api/shells", async (Sessions.Shells.CreateShellRequest req, Sessions.Shells.ShellManager shells) =>
         {

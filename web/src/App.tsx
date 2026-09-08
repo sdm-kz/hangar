@@ -12,6 +12,7 @@ import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
 import { FilesSidebar } from "@/components/FilesSidebar";
 import { ServerFileViewer } from "@/components/ServerFileViewer";
+import { ShellView } from "@/components/ShellView";
 import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
 import { ForkSessionDialog } from "@/components/ForkSessionDialog";
@@ -57,6 +58,9 @@ export function App() {
   const [listTab, setListTab] = useState<SessionListTab>("sessions"); // Sessions vs Recent list
   // Server file open in the main area, restored from the URL so a refresh comes back to it.
   const [openFile, setOpenFile] = useState<string | null>(() => readUrlState().open ?? null);
+  // Folder whose shells fill the main area, opened from the Files tree. Restored from the URL like
+  // openFile is, and mutually exclusive with it — each takes the main area from the other.
+  const [shellFolder, setShellFolder] = useState<string | null>(() => readUrlState().shell ?? null);
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
@@ -206,6 +210,11 @@ export function App() {
   useEffect(() => {
     patchUrlState({ open: openFile ?? undefined });
   }, [openFile]);
+
+  // Same for a folder's shells, so a refresh comes back to the shell that was open.
+  useEffect(() => {
+    patchUrlState({ shell: shellFolder ?? undefined });
+  }, [shellFolder]);
 
   // Reflect the active session in the page title so browser tabs are tellable apart.
   useEffect(() => {
@@ -398,7 +407,7 @@ export function App() {
           n.onclick = () => {
             window.focus();
             setActiveId(s.id);
-            setOpenFile(null);
+            clearMainArea();
             n.close();
           };
         } catch {
@@ -436,7 +445,7 @@ export function App() {
           n.onclick = () => {
             window.focus();
             setActiveId(id);
-            setOpenFile(null);
+            clearMainArea();
             n.close();
           };
         } catch {
@@ -457,7 +466,7 @@ export function App() {
       if (e.data?.type === "open-session" && typeof e.data.sessionId === "string") {
         window.focus();
         setActiveId(e.data.sessionId);
-        setOpenFile(null);
+        clearMainArea();
       }
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
@@ -538,9 +547,24 @@ export function App() {
     setSidebarOpen(false);
   }, []);
 
+  // Whatever the main area was showing — a server file, a folder's shells — gives way. Both are
+  // opened from the Files tree and neither survives the other, or a session being selected.
+  const clearMainArea = useCallback(() => {
+    setOpenFile(null);
+    setShellFolder(null);
+  }, []);
+
   // Open a server file (from the Files tab) in the main content area; close the mobile drawer.
   const openServerFile = useCallback((path: string) => {
+    setShellFolder(null);
     setOpenFile(path);
+    setSidebarOpen(false);
+  }, []);
+
+  // Open a folder's shells (the terminal action on a Files-tree folder) in the main content area.
+  const openFolderShell = useCallback((path: string) => {
+    setOpenFile(null);
+    setShellFolder(path);
     setSidebarOpen(false);
   }, []);
 
@@ -614,11 +638,11 @@ export function App() {
     setSidebarOpen(false);
   }, []);
 
-  // Selecting a session takes over the main area, so drop any open server file.
+  // Selecting a session takes over the main area, so drop whatever was filling it.
   const selectSession = useCallback((id: string) => {
     setActiveId(id);
-    setOpenFile(null);
-  }, []);
+    clearMainArea();
+  }, [clearMainArea]);
 
   async function removeRecent(r: RecentSession) {
     const next = await api.removeRecentSession(r).catch(() => null);
@@ -634,7 +658,7 @@ export function App() {
     // response returns, so drop any existing copy of its id before appending to avoid a duplicate row.
     setSessions((prev) => [...prev.filter((x) => x.id !== s.id && x.id !== replaced), s]);
     setActiveId(s.id);
-    setOpenFile(null); // the new session takes over the main area, like selecting one does
+    clearMainArea(); // the new session takes over the main area, like selecting one does
     // Launching can start from the Files tab or the Recent list; pull both sidebar levels back to the
     // session list so the new session is visible and shown as selected.
     setSidebarTab("sessions");
@@ -799,6 +823,7 @@ export function App() {
               revealToken={revealDirToken}
               onOpenFile={openServerFile}
               onNewSession={newSessionInFolder}
+              onOpenShell={openFolderShell}
             />
           }
         />
@@ -865,6 +890,7 @@ export function App() {
                   revealToken={revealDirToken}
                   onOpenFile={openServerFile}
                   onNewSession={newSessionInFolder}
+                  onOpenShell={openFolderShell}
                 />
               }
             />
@@ -878,6 +904,16 @@ export function App() {
             path={openFile}
             onClose={() => setOpenFile(null)}
             onReveal={revealInFiles}
+            onToggleSidebar={() => setSidebarOpen(true)}
+            collapsed={collapsed}
+            onToggleCollapsed={toggleCollapsed}
+          />
+        ) : shellFolder ? (
+          <ShellView
+            folder={shellFolder}
+            shellsRev={shellsRev}
+            onClose={() => setShellFolder(null)}
+            onReveal={revealFolderInFiles}
             onToggleSidebar={() => setSidebarOpen(true)}
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}

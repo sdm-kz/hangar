@@ -58,6 +58,7 @@ export function ShellTabStrip({
   onActivate,
   onOpen,
   onClose,
+  className,
 }: {
   shells: ShellInfo[];
   activeId: string | null;
@@ -68,6 +69,8 @@ export function ShellTabStrip({
   onActivate: (id: string) => void;
   onOpen: (shell: string) => void;
   onClose: (id: string) => void;
+  // Overrides the default right-alignment — the folder view has nothing else in the row.
+  className?: string;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [options, setOptions] = useState<ShellOption[] | null>(null);
@@ -136,8 +139,8 @@ export function ShellTabStrip({
   return (
     // ml-auto so the strip ends the row whether or not there are file tabs beside it (those take
     // the slack when they exist): the "+" is then always in the same place.
-    <div className="ml-auto flex h-full min-w-0 items-stretch">
-      <div className="my-2 w-px shrink-0 bg-border" />
+    <div className={cn("ml-auto flex h-full min-w-0 items-stretch", className)}>
+      {!className && <div className="my-2 w-px shrink-0 bg-border" />}
       <div ref={scrollRef} className="hover-scrollbar flex min-w-0 items-stretch overflow-x-auto">
         {shells.map((s) => {
           const Icon = shellIcon(s.kind);

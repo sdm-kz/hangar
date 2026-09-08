@@ -20,6 +20,8 @@ export interface UrlState {
   /** Absolute server path opened from the Files tree into the main area (distinct from `file`,
    *  which is a session-relative path in that session's own file browser). */
   open?: string;
+  /** Absolute server path of a folder whose shells fill the main area (from the Files tree). */
+  shell?: string;
 }
 
 /**
@@ -77,6 +79,7 @@ export function sessionUrl(id: string): string {
   p.set("session", id);
   p.delete("file");
   p.delete("open");
+  p.delete("shell");
   const qs = p.toString();
   return qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
 }
@@ -94,6 +97,7 @@ export function readUrlState(): UrlState {
     file: p.get("file") || undefined,
     panel: panel === "files" || panel === "sessions" ? panel : undefined,
     open: p.get("open") || undefined,
+    shell: p.get("shell") || undefined,
   };
 }
 
@@ -112,6 +116,7 @@ export function patchUrlState(patch: UrlState): void {
   if ("file" in patch) apply("file", patch.file);
   if ("panel" in patch) apply("panel", patch.panel);
   if ("open" in patch) apply("open", patch.open);
+  if ("shell" in patch) apply("shell", patch.shell);
   const qs = p.toString();
   window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
 }

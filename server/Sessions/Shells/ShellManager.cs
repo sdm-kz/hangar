@@ -104,13 +104,33 @@ public sealed class ShellManager : IDisposable
             "ClaudeWeb", $"shells-{_hosts.InstanceKey}.json");
     }
 
-    /// <summary>Every live shell, newest last; optionally only those belonging to one session.</summary>
-    public IReadOnlyList<ShellInfo> List(string? sessionId = null) =>
+    /// <summary>
+    /// Live shells, newest last. With <paramref name="sessionId"/>, the ones belonging to that
+    /// session; with <paramref name="folder"/>, the <em>folder</em> shells opened there — the ones
+    /// belonging to no session, from the Files tree. With neither, everything.
+    /// </summary>
+    /// <remarks>
+    /// A folder shell is deliberately not matched by path alone: a session's own shells run in the
+    /// session's folder too, and they belong to that session's tab bar, not to the Files tree's.
+    /// </remarks>
+    public IReadOnlyList<ShellInfo> List(string? sessionId = null, string? folder = null) =>
         _shells.Values
             .Where(s => sessionId is null || s.SessionId == sessionId)
+            .Where(s => folder is null || (s.SessionId is null && SamePath(s.WorkingDirectory, folder)))
             .OrderBy(s => s.CreatedAt)
             .Select(s => s.ToInfo())
             .ToArray();
+
+    /// <summary>Whether two paths name the same folder — Windows, so case- and trailing-slash-blind.</summary>
+    private static bool SamePath(string a, string b)
+    {
+        static string Norm(string p)
+        {
+            try { p = Path.GetFullPath(p); } catch { /* keep it as given */ }
+            return p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        return string.Equals(Norm(a), Norm(b), StringComparison.OrdinalIgnoreCase);
+    }
 
     public ShellInfo? Get(string id) => _shells.TryGetValue(id, out var s) ? s.ToInfo() : null;
 

@@ -76,6 +76,12 @@ The web UI is a **session manager with a full terminal**:
   live server-side, so they show up on every device looking at that session — and each one runs in
   its own pty host, so a build left running in a shell **survives a restart of the app** exactly as a
   session does. Closing a tab kills what's in it; stopping the session closes its shells with it.
+
+  The **Files** tree offers the same thing for any folder, session or not: the terminal button on a
+  folder row (and in the panel's toolbar, for touch) opens that folder's shells in the main area,
+  where a previewed file would go. It starts one straight away and takes the same **+** for more.
+  A folder's shells are its own — a session running in the same folder keeps its tabs in its own tab
+  bar — and closing the last one hands the main area back.
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile.
 - **Light / dark** theme toggle.
 - **Start / stop** — stop kills the process; the app just manages lifecycle.
