@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { GitStatus, SessionInfo } from "@/types";
+import type { GitStatus, SessionInfo, ShellInfo } from "@/types";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
 import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
@@ -14,6 +14,7 @@ import {
 import { fileEntryFromPath, useFileTabs } from "@/lib/useFileTabs";
 import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
 import { FileTabStrip } from "./FileTabStrip";
+import { ShellTabStrip } from "./ShellTabStrip";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
 import { RenameField } from "./RenameField";
@@ -79,6 +80,7 @@ export function SessionView({
   session,
   busy,
   parent,
+  shellsRev,
   onFork,
   onSelectSession,
   onToggleSidebar,
@@ -95,6 +97,9 @@ export function SessionView({
   // The session this one was forked from, when it's still around — null once it's been closed and
   // forgotten, in which case the header falls back to the name recorded at fork time.
   parent?: SessionInfo | null;
+  // The server's shell-set revision, pushed on the events hub. When it moves, this session re-reads
+  // its own shell tabs — that is how a shell opened (or closed) on another device shows up here.
+  shellsRev?: number;
   onFork: (s: SessionInfo) => void;
   onSelectSession: (id: string) => void; // used by the "forked from" link to jump to the parent
   onToggleSidebar: () => void;
@@ -132,6 +137,20 @@ export function SessionView({
   const fileBrowserRef = useRef<FileBrowserHandle>(null);
   // Candidates when a bare filename clicked in the terminal matched more than one file.
   const [filePicker, setFilePicker] = useState<{ name: string; matches: string[] } | null>(null);
+  // The session's shell tabs. They live on the SERVER (each is a process in a pty host), so this is
+  // a mirror of what it reports rather than browser state: open one on a laptop and the phone shows
+  // it too, and both find it still there after the app restarts.
+  const [shells, setShells] = useState<ShellInfo[]>([]);
+  const [activeShell, setActiveShell] = useState<string | null>(() => loadSessionUi(session.id).shell ?? null);
+  const [openingShell, setOpeningShell] = useState(false);
+  // Whether the server has answered for THIS session yet. Before it has, an empty list means "not
+  // asked", and treating it as "no shells" would bounce a deep-linked ?tab=shell to the terminal
+  // half a second before its tab arrives.
+  const [shellsLoaded, setShellsLoaded] = useState(false);
+  // Shells opened here that the server's list hasn't reported back yet. `shellsRev` is server-wide,
+  // so a list request can already be in flight — carrying its answer's gaps here is what stops a
+  // just-opened tab from blinking out of existence.
+  const pendingShellsRef = useRef<ShellInfo[]>([]);
 
   useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
 
@@ -214,7 +233,9 @@ export function SessionView({
   // written first so the tree expands to it as it mounts.
   const openInFiles = useCallback(
     (rel: string) => {
-      if (view === "terminal") {
+      // "terminal" and "shell" are the views with no tree on screen — FileBrowser isn't mounted, so
+      // there is no handle to reveal through and the panel has to be brought up instead.
+      if (view === "terminal" || view === "shell") {
         saveSessionUi(session.id, { file: rel });
         patchUrlState({ file: rel });
         void fileTabs.open(fileEntryFromPath(rel), false);
@@ -229,7 +250,7 @@ export function SessionView({
   // Open this session's git-changes view (from the header branch badge). If the Files panel is already
   // showing, flip it via the imperative handle; otherwise seed the mode and switch to the Files view.
   const openChanges = useCallback(() => {
-    if (view === "terminal") {
+    if (view === "terminal" || view === "shell") {
       saveSessionUi(session.id, { changes: true });
       changeView("files");
     } else {
@@ -302,7 +323,12 @@ export function SessionView({
   useEffect(
     () =>
       subscribeSessionUi(session.id, (seed) => {
-        if (seed) setView(loadSessionUi(session.id).view ?? "terminal");
+        if (!seed) return;
+        const ui = loadSessionUi(session.id);
+        setView(ui.view ?? "terminal");
+        // The shell that view names comes with it; the effect above drops it again if the server
+        // no longer has that shell.
+        if (ui.shell) setActiveShell(ui.shell);
       }),
     [session.id]
   );
@@ -311,6 +337,118 @@ export function SessionView({
   useEffect(() => {
     if (view === "file" && !fileTabs.tabs.length) changeView("files");
   }, [view, fileTabs.tabs.length, changeView]);
+
+  // Switching sessions: drop the previous one's tabs at once rather than showing them under the new
+  // session's name until its own list arrives, and take its remembered active shell from the bag.
+  useEffect(() => {
+    setShells([]);
+    setShellsLoaded(false);
+    pendingShellsRef.current = [];
+    setActiveShell(loadSessionUi(session.id).shell ?? null);
+  }, [session.id]);
+
+  // The session's shells come from the server — this browser may never have seen the session, and a
+  // shell another device opened (or one that outlived an app restart) is still there. Re-read on
+  // every revision bump, which is how a change made elsewhere reaches this tab strip.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listShells(session.id)
+      .then((list) => {
+        if (cancelled) return;
+        // A shell this browser opened a moment ago may not be in an answer that was already in
+        // flight — the revision is server-wide, so a fetch can be running for something that
+        // happened in another session entirely. Carry those over rather than unmounting a pane
+        // (and closing its brand-new socket) for the second until the next push.
+        pendingShellsRef.current = pendingShellsRef.current.filter(
+          (p) => !list.some((s) => s.id === p.id)
+        );
+        setShells([...list, ...pendingShellsRef.current]);
+        setShellsLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Keep whatever is on screen. A blip on this one request — a server restart, a phone
+        // waking — must not close every shell socket and drop a running build out of view; the
+        // next revision bump re-reads anyway.
+        setShellsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // The revision is a change signal, not data: any move in it (this browser's own open included)
+    // means re-read the list, which is authoritative.
+  }, [session.id, shellsRev]);
+
+  // Keep the active shell pointing at one that exists. The tab it names can be gone for reasons
+  // this browser never saw — closed from a phone, or a shell whose process died while the app was
+  // stopped — and a shell view attached to nothing would just sit there blank.
+  useEffect(() => {
+    if (!shellsLoaded) return;
+    const live = activeShell && shells.some((s) => s.id === activeShell) ? activeShell : null;
+    const next = live ?? (shells.length ? shells[shells.length - 1].id : null);
+    // Local repair only — deliberately NOT saved. Which shell you are looking at is a choice, and
+    // only `showShell` (a click) records one: a device that merely opens the session would
+    // otherwise overwrite the shell another device is watching, since the bag is shared.
+    if (next !== activeShell) setActiveShell(next);
+    // Nothing left to show: the shell view has to give the pane back to the terminal.
+    if (!next && view === "shell") changeView("terminal");
+  }, [shells, shellsLoaded, activeShell, view, changeView]);
+
+  const showShell = useCallback(
+    (id: string) => {
+      setActiveShell(id);
+      saveSessionUi(session.id, { shell: id, view: "shell" });
+      setView("shell");
+    },
+    [session.id]
+  );
+
+  // Open another shell in the session's working folder. `shell` is a ShellOption id; empty lets the
+  // server pick its default.
+  const openShell = useCallback(
+    async (shell: string) => {
+      setOpeningShell(true);
+      try {
+        const created = await api.createShell({
+          sessionId: session.id,
+          workingDirectory: session.workingDirectory,
+          shell: shell || undefined,
+        });
+        pendingShellsRef.current = [
+          ...pendingShellsRef.current.filter((p) => p.id !== created.id),
+          created,
+        ];
+        setShells((prev) => [...prev.filter((s) => s.id !== created.id), created]);
+        showShell(created.id);
+      } catch (e) {
+        await confirm({
+          title: "Could not open a shell",
+          description: e instanceof Error ? e.message : String(e),
+          confirmLabel: "OK",
+          destructive: false,
+        });
+      } finally {
+        setOpeningShell(false);
+      }
+    },
+    [session.id, session.workingDirectory, showShell, confirm]
+  );
+
+  // Close a shell tab. Unlike a file tab this ends a process, so it goes to the server first and the
+  // tab is dropped on the answer — a close that failed must not leave a tab nobody can get back to.
+  const closeShell = useCallback(
+    async (id: string) => {
+      try {
+        await api.closeShell(id);
+      } catch {
+        /* already gone server-side — drop the tab either way */
+      }
+      pendingShellsRef.current = pendingShellsRef.current.filter((p) => p.id !== id);
+      setShells((prev) => prev.filter((s) => s.id !== id));
+    },
+    []
+  );
 
   // Clicking a file tab fills the pane with that file. Clicking the one already showing beside the
   // tree does too — that is what asking for its own tab means.
@@ -626,13 +764,24 @@ export function SessionView({
             onClose={(p) => void fileTabs.close(p)}
             onCloseAll={() => void fileTabs.closeAll()}
           />
+          {/* Shells in the same folder, and the "+" that opens another. Last in the row so the
+              views that are always there keep their places as shells come and go. */}
+          <ShellTabStrip
+            shells={shells}
+            activeId={activeShell}
+            showingShell={view === "shell"}
+            busy={openingShell}
+            onActivate={showShell}
+            onOpen={(sh) => void openShell(sh)}
+            onClose={(id) => void closeShell(id)}
+          />
         </div>
       </header>
 
       {/* The terminal stays mounted in every view (hidden in Files) so toggling never drops its
           connection; the Files panel is a resizable left column in Split and full-width in Files. */}
       <div ref={contentRef} className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {view !== "terminal" && (
+        {(view === "files" || view === "split" || view === "file") && (
           <div
             style={{ "--split-w": `${splitWidth}px` } as React.CSSProperties}
             className={cn(
@@ -665,7 +814,7 @@ export function SessionView({
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-1 flex-col",
-            (view === "files" || view === "file") && "hidden"
+            view !== "terminal" && view !== "split" && "hidden"
           )}
         >
           {/* The pane keeps flex-1 so FitAddon measures the height left over by the pool bar below. */}
@@ -675,6 +824,10 @@ export function SessionView({
               ref={terminalRef}
               sessionId={session.id}
               workingDirectory={session.workingDirectory}
+              // A shell is showing: its tab bar and header sit outside the shell pane's own
+              // `data-owns-image-paste` wrapper, so a Ctrl+V there would otherwise land here —
+              // uploading the image and injecting its path into Claude's live prompt.
+              imagePaste={view !== "shell"}
               onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
               onColorDetected={(color) => onTerminalColor?.(session.id, color)}
               onOpenFile={onTerminalOpenFile}
@@ -683,6 +836,30 @@ export function SessionView({
           </div>
           <PostponedPool sessionId={session.id} busy={busy} terminalRef={terminalRef} />
         </div>
+
+        {/* Every open shell stays mounted, hidden behind the active tab: switching away from a
+            build must not drop its socket and stop showing its output. `data-owns-image-paste`
+            keeps the Claude terminal's document-level paste handler out of a shell — an image
+            dropped at a shell prompt is a path nobody asked for. */}
+        {shells.map((sh) => (
+          <div
+            key={sh.id}
+            data-owns-image-paste
+            className={cn(
+              "flex min-h-0 min-w-0 flex-1 flex-col",
+              !(view === "shell" && sh.id === activeShell) && "hidden"
+            )}
+          >
+            <TerminalPane
+              sessionId={session.id}
+              socketPath={`/hub/shells/${sh.id}/terminal`}
+              imagePaste={false}
+              workingDirectory={sh.workingDirectory}
+              onOpenFile={onTerminalOpenFile}
+              onFindFile={onTerminalFindFile}
+            />
+          </div>
+        ))}
       </div>
 
       {/* Save-changes prompt shown when a tab with unsaved edits is about to close. */}

@@ -307,9 +307,9 @@ public sealed partial class TerminalChannel : IDisposable
     }
 
     public static TerminalChannel Start(string fileName, IReadOnlyList<string> args, string cwd,
-        short cols, short rows, IReadOnlyDictionary<string, string> environment)
+        short cols, short rows, IReadOnlyDictionary<string, string> environment, bool verbatim = false)
     {
-        var pty = PtySession.Start(fileName, args, cwd, cols, rows, environment);
+        var pty = PtySession.Start(fileName, args, cwd, cols, rows, environment, verbatim);
         var channel = new TerminalChannel(pty) { Cols = cols, Rows = rows };
         // A dedicated blocking-read thread bridges the (synchronous) PTY pipe to async subscribers.
         var t = new Thread(channel.ReadPump) { IsBackground = true, Name = $"pty-read-{pty.ProcessId}" };

@@ -206,11 +206,22 @@ export interface TerminalPaneHandle {
  * Live terminal for a session: an xterm.js terminal wired to the ConPTY-backed WebSocket at
  * /hub/sessions/{id}/terminal. Output frames arrive as binary VT bytes; keystrokes and resizes
  * are sent back (binary input, JSON control). Mount one per session (key by session id).
+ *
+ * A shell tab is the same pane pointed at /hub/shells/{id}/terminal (see `socketPath`): the server
+ * speaks one protocol for both, so everything here — scrollback replay, the heartbeat, reconnects,
+ * touch scrolling, zoom, file links — comes along unchanged.
  */
 export const TerminalPane = forwardRef<
   TerminalPaneHandle,
   {
     sessionId: string;
+    // Which terminal to attach to. Defaults to this session's own; a shell tab passes its
+    // /hub/shells/{id}/terminal path instead. The session id still comes along, because the things
+    // built around the pane (file links, image upload) are about the session either way.
+    socketPath?: string;
+    // Whether a pasted image is uploaded into the session's folder and its path pasted in. On for
+    // Claude, which reads images; off for a shell, where a path appearing at the prompt is noise.
+    imagePaste?: boolean;
     // The session's working directory, used to resolve a relative file path clicked in the terminal.
     workingDirectory: string;
     // Fired with the new name when Claude's "Session renamed to:" confirmation appears in this
@@ -227,9 +238,19 @@ export const TerminalPane = forwardRef<
     onFindFile?: (name: string) => void;
   }
 >(function TerminalPane(
-  { sessionId, workingDirectory, onRenameDetected, onColorDetected, onOpenFile, onFindFile },
+  {
+    sessionId,
+    socketPath,
+    imagePaste = true,
+    workingDirectory,
+    onRenameDetected,
+    onColorDetected,
+    onOpenFile,
+    onFindFile,
+  },
   ref
 ) {
+  const path = socketPath ?? `/hub/sessions/${sessionId}/terminal`;
   const hostRef = useRef<HTMLDivElement>(null);
   // Holds the live terminal socket so the imperative handle can write to it; set inside the socket
   // effect below and nulled on teardown. `null` means "not connected" → sendMessage returns false.
@@ -429,7 +450,7 @@ export const TerminalPane = forwardRef<
 
     const token = getToken() ?? "";
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}://${location.host}/hub/sessions/${sessionId}/terminal?access_token=${encodeURIComponent(token)}`;
+    const url = `${proto}://${location.host}${path}?access_token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     // Set by the cleanup below so a close we caused (unmount, session switch, our own re-attach)
@@ -594,6 +615,7 @@ export const TerminalPane = forwardRef<
     // Non-image pastes fall through to xterm's normal text handling. Listens on document in the
     // capture phase so it fires before xterm processes the paste, regardless of focus target.
     const onPaste = async (e: ClipboardEvent) => {
+      if (!imagePaste) return;
       // Leave alone any surface that attaches images itself — the postponed pool, the compose popup.
       // This listener is on document in the capture phase, so without the exemption it fires FIRST
       // and pastes the image into the live terminal as well as into the composer being written in,
@@ -807,7 +829,7 @@ export const TerminalPane = forwardRef<
         /* nothing left to salvage at unmount */
       }
     };
-  }, [sessionId, generation, reattach]);
+  }, [sessionId, path, imagePaste, generation, reattach]);
 
   // Apply a zoom change to the live terminal. Only the font moves; the refit that follows works out
   // how many rows and columns now fit and tells Claude, so the TUI reflows to the new grid instead

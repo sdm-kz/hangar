@@ -70,7 +70,7 @@ public static class Host
     {
         var terminal = TerminalChannel.Start(
             request.FileName, request.Arguments, request.WorkingDirectory,
-            (short)request.Cols, (short)request.Rows, request.Environment);
+            (short)request.Cols, (short)request.Rows, request.Environment, request.VerbatimArguments);
 
         ChildStartTicks = StartTicks(terminal.ProcessId);
         HostLog.Info($"Child pid {terminal.ProcessId} started: {request.FileName} {string.Join(' ', request.Arguments)}");

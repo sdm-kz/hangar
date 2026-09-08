@@ -214,3 +214,33 @@ export interface ProjectGroup {
   icon: string | null; // a name from lib/groupIcons.ts; null (or unknown) draws the default
   sessions: string[];
 }
+
+/** A shell the SERVER machine can run, as offered in the session tab bar's "+" menu. */
+export interface ShellOption {
+  /** Stable handle sent back to open a tab: "cmd" | "powershell" | "pwsh" | "gitbash" | "wsl:<distro>". */
+  id: string;
+  /** What the menu shows, e.g. "PowerShell" or "Ubuntu-24.04 (WSL)". */
+  label: string;
+  /** Family, which is all the icon needs: "cmd" | "powershell" | "pwsh" | "bash" | "wsl". */
+  kind: string;
+  /** Where it was found — an exe path, or the distribution name. Shown as the tooltip. */
+  detail: string;
+}
+
+/** An open shell tab. Lives on the server, so every browser on the session sees the same ones. */
+export interface ShellInfo {
+  id: string;
+  /** The session it belongs to; null for a shell opened outside one. */
+  sessionId: string | null;
+  workingDirectory: string;
+  /** The ShellOption.id it was launched with. */
+  shell: string;
+  /** That option's label and family at launch time, so the tab still names itself if the shell
+   *  is later uninstalled. */
+  label: string;
+  kind: string;
+  processId: number;
+  createdAt: string;
+  /** False once the shell process has ended; the tab stays until it is closed. */
+  running: boolean;
+}

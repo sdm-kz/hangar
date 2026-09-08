@@ -45,6 +45,9 @@ export function App() {
   const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
   // The updater's view of itself, from the hub snapshot (or the poll below when it's down).
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  // Revision of the server's shell set, pushed on the events hub. The open session watches it to
+  // notice a shell opened or closed somewhere else — another browser, or the phone.
+  const [shellsRev, setShellsRev] = useState(0);
   // Latched once an update starts installing, so the overlay survives the server going away — the
   // hub and the polls both fail while it's down, and this is what says "that's expected, wait".
   const [installing, setInstalling] = useState<string | null>(null); // build id being installed
@@ -248,11 +251,15 @@ export function App() {
             waiting?: string[];
             compacting?: string[];
             update?: UpdateStatus;
+            shellsRev?: number;
           };
           applySessions(msg.sessions);
           setBusyIds(new Set(msg.busy));
           setWaitingIds(new Set(msg.waiting ?? []));
           setCompactingIds(new Set(msg.compacting ?? []));
+          // Only the revision travels; the open session re-fetches its own tabs when it moves (see
+          // SessionView). A server that predates shells sends none, which reads as "never changed".
+          setShellsRev(msg.shellsRev ?? 0);
           if (msg.update) {
             setUpdate(msg.update);
             // Another tab (or the tray) started the install: show the overlay here too rather than
@@ -882,6 +889,7 @@ export function App() {
             // terminal mid-compact, and a manual /compact leaves the hook-derived busy set empty.
             busy={busyIds.has(active.id) || compactingIds.has(active.id)}
             parent={activeParent}
+            shellsRev={shellsRev}
             onFork={forkSession}
             onSelectSession={selectSession}
             onToggleSidebar={() => setSidebarOpen(true)}

@@ -274,7 +274,7 @@ public sealed class ClaudeSession : IDisposable
         {
             var client = await _hosts.StartAsync(
                 Id, _exe.FileName, launchArgs, WorkingDirectory, BuildEnvironment(), 120, 30,
-                _watchdog, WatchdogEnabled, ct);
+                _watchdog, WatchdogEnabled, ct: ct);
             Bind(client);
             State = SessionState.Running;
             StartWatcher();

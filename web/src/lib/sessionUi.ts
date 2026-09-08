@@ -23,7 +23,10 @@ const FLUSH_MS = 400; // coalesce bursts (a scroll settling, a tab open) into on
 const QUIET_FIELDS = new Set<keyof SessionUi>(["filesScroll", "changesScroll"]);
 
 export interface SessionUi {
-  view?: TabName; // active tab: terminal | files | split | file (a file tab in the session bar)
+  view?: TabName; // active tab: terminal | files | split | file | shell (a tab in the session bar)
+  // Id of the shell tab filling the pane in the "shell" view. The shells themselves live on the
+  // server (they are processes), so only which one is on screen is remembered here.
+  shell?: string;
   file?: string; // path of the active file tab in the Files/Split view (relative to the working dir)
   files?: string[]; // paths of all open file tabs, in order (the active one is `file`)
   preview?: string; // path of the transient "preview" tab (reused by single-click), if any

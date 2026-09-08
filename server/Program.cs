@@ -96,6 +96,13 @@ internal static class Program
                 catch (OperationCanceledException) { return; }
                 catch (Exception ex) { startupLog.LogWarning(ex, "Could not re-attach to running pty hosts"); }
 
+                // Shell tabs come back the same way — a build or a tail left running in one is
+                // exactly the thing a restart must not interrupt. There is no resume half for them:
+                // a shell whose process is gone has nothing left worth relaunching.
+                try { await app.Services.GetRequiredService<Sessions.Shells.ShellManager>().AdoptRunningHostsAsync(ct); }
+                catch (OperationCanceledException) { return; }
+                catch (Exception ex) { startupLog.LogWarning(ex, "Could not re-attach to running shells"); }
+
                 if (!resumeSessions) return;
                 try { await manager.ResumePersistedAsync(ct); }
                 catch (OperationCanceledException) { /* app is shutting down */ }
@@ -206,6 +213,9 @@ internal static class Program
         builder.Services.AddSingleton<SessionUiStore>();
         // Projects: named groupings of folders, shown above the folder groups in the sessions sidebar.
         builder.Services.AddSingleton<ProjectStore>();
+        // Shell tabs: a plain interactive shell (cmd/PowerShell/Git Bash/WSL) in a session's folder,
+        // on its own pty hosts so a build left running survives a restart of this app.
+        builder.Services.AddSingleton<Sessions.Shells.ShellManager>();
         // Extra folders attached to a session's working directory, browsable from its Files panel.
         builder.Services.AddSingleton<LinkedFolderStore>();
         // Web Push: the VAPID keypair, the subscription store, and the notifier that fires a push on
@@ -363,9 +373,53 @@ internal static class Program
             }
         });
 
-        // Stop the claude process and forget the session (also forgets a Restorable entry).
-        app.MapDelete("/api/sessions/{id}", (string id, SessionManager mgr) =>
-            mgr.Remove(id, stopProcess: true) ? Results.Ok() : Results.NotFound());
+        // Stop the claude process and forget the session (also forgets a Restorable entry). Its shell
+        // tabs go with it — they were opened against this session, and nothing would list them again.
+        app.MapDelete("/api/sessions/{id}", async (string id, SessionManager mgr, Sessions.Shells.ShellManager shells) =>
+        {
+            var removed = mgr.Remove(id, stopProcess: true);
+            await shells.CloseForSessionAsync(id);
+            return removed ? Results.Ok() : Results.NotFound();
+        });
+
+        // ---- Shell tabs -----------------------------------------------------------------------
+        // A plain interactive shell in a folder, streamed over the same terminal socket the Claude
+        // session uses. See Sessions/Shells/ShellManager.cs.
+
+        // What this machine can run: cmd, Windows PowerShell, PowerShell 7, Git Bash, each installed
+        // WSL distribution. Probed rather than assumed, so the menu never offers a tab that can't open.
+        app.MapGet("/api/shells/options", (bool? refresh) => Results.Ok(new
+        {
+            shells = Sessions.Shells.ShellCatalog.Available(refresh == true),
+            @default = Sessions.Shells.ShellCatalog.DefaultId,
+        }));
+
+        // The open shells, optionally narrowed to one session's. Server-side, so every browser looking
+        // at a session sees the same tabs.
+        app.MapGet("/api/shells", (string? sessionId, Sessions.Shells.ShellManager shells) =>
+            Results.Ok(shells.List(sessionId)));
+
+        app.MapPost("/api/shells", async (Sessions.Shells.CreateShellRequest req, Sessions.Shells.ShellManager shells) =>
+        {
+            try { return Results.Ok(await shells.CreateAsync(req)); }
+            catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+        });
+
+        // Close a shell and kill what is running in it. Unlike a session there is no detach: a shell
+        // nobody has a tab for is just a stranded process.
+        app.MapDelete("/api/shells/{id}", async (string id, Sessions.Shells.ShellManager shells) =>
+            await shells.CloseAsync(id) ? Results.Ok() : Results.NotFound());
+
+        // Live terminal stream for a shell — same framing and same socket pump as a session's, under
+        // /hub so TokenAuthMiddleware guards it and the vite dev proxy forwards it.
+        app.Map("/hub/shells/{id}/terminal", async (string id, HttpContext ctx, Sessions.Shells.ShellManager shells) =>
+        {
+            if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
+            var term = shells.GetTerminal(id);
+            if (term is null) { ctx.Response.StatusCode = StatusCodes.Status404NotFound; return; }
+            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, ctx.RequestAborted);
+        });
 
         // Pty hosts still running for sessions this app no longer knows about — see PtyOrphanInfo.
         // Listing them is also what cleans up state files whose host is gone.

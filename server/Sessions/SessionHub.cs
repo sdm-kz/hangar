@@ -47,6 +47,7 @@ public sealed class SessionHub : BackgroundService
     private readonly SessionManager _mgr;
     private readonly HookEventStore _hooks;
     private readonly UpdateService _updates;
+    private readonly Shells.ShellManager _shells;
     private readonly ILogger<SessionHub> _log;
     private readonly ConcurrentDictionary<Guid, Client> _clients = new();
     // Released by Poke and awaited (with a timeout) by the broadcast loop, so we wake on either an
@@ -54,11 +55,13 @@ public sealed class SessionHub : BackgroundService
     private readonly SemaphoreSlim _wake = new(0, 1);
     private string? _last;
 
-    public SessionHub(SessionManager mgr, HookEventStore hooks, UpdateService updates, ILogger<SessionHub> log)
+    public SessionHub(SessionManager mgr, HookEventStore hooks, UpdateService updates,
+        Shells.ShellManager shells, ILogger<SessionHub> log)
     {
         _mgr = mgr;
         _hooks = hooks;
         _updates = updates;
+        _shells = shells;
         _log = log;
         _mgr.Changed += Poke;
         // A hook event (busy/idle/waiting transition) should push to the browser at once, not wait
@@ -67,6 +70,9 @@ public sealed class SessionHub : BackgroundService
         // A newly staged build should light the "Update available" button up straight away — and the
         // "updating..." state has to reach the browser before the app stops to install it.
         _updates.Changed += Poke;
+        // A shell opened or closed anywhere (another browser, a session being stopped) changes the
+        // revision below, which is what tells a browser its tab strip is stale.
+        _shells.Changed += Poke;
     }
 
     /// <summary>Request an immediate recompute + broadcast (coalesced with any pending wake).</summary>
@@ -111,6 +117,10 @@ public sealed class SessionHub : BackgroundService
                 waiting = _mgr.AwaitingInputIds(),
                 compacting = _mgr.CompactingSessionIds(),
                 update = _updates.Status,
+                // Only the number rides the snapshot, not the shells: a browser holding an older one
+                // re-fetches the session's own tabs, and the rest never hear about it. Same trick as
+                // SessionInfo.UiRev.
+                shellsRev = _shells.Revision,
             },
             JsonOpts);
 

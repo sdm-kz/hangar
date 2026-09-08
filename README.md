@@ -68,6 +68,14 @@ The web UI is a **session manager with a full terminal**:
   - **Linked folders** — attach extra folders to a session and browse/edit them from the same panel
     via the root picker. Saved server-side against the session's working folder, so they survive a
     restart (and a resumed session's new id).
+- **Shell tabs** per session — a real shell in the session's folder, beside the Claude terminal and
+  the files, opened from the **+** at the end of the tab bar. The chevron next to it lists what the
+  *server machine* actually has: **PowerShell 7**, **Windows PowerShell**, **Command Prompt**,
+  **Git Bash**, and one entry per installed **WSL distribution** (a WSL tab opens with `--cd`, so it
+  starts in the same folder as `/mnt/c/…`). A bare **+** reopens whichever you picked last. The tabs
+  live server-side, so they show up on every device looking at that session — and each one runs in
+  its own pty host, so a build left running in a shell **survives a restart of the app** exactly as a
+  session does. Closing a tab kills what's in it; stopping the session closes its shells with it.
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile.
 - **Light / dark** theme toggle.
 - **Start / stop** — stop kills the process; the app just manages lifecycle.
@@ -108,7 +116,7 @@ Browser (React + Vite + TS + Tailwind + shadcn/ui)
 .NET 10 (ASP.NET Core Minimal API, in-process)   ← also runnable as a Windows service
    │  named pipe \\.\pipe\claudeweb-pty-<instance>-<sessionId>
    ▼
-ClaudeWeb.PtyHost.exe   (one per session, detached — owns the pseudoconsole)
+ClaudeWeb.PtyHost.exe   (one per session — and one per shell tab — detached; owns the pseudoconsole)
    │  ConPTY + 512 KB scrollback ring + fan-out + the hang watchdog
    ▼
 claude --remote-control <name> --name <name>
@@ -254,6 +262,17 @@ the whole thing off and go back to `deploy.ps1` only.
   or during an in-app update, is recovered whether or not the app is running, and you see what
   happened when the browser reconnects. A host keeps the options it was launched with, so a change
   under `Watchdog:` in `appsettings.json` applies to sessions started after it.
+- **Shells survive an app restart too**, for the same reason sessions do — each shell tab is its own
+  pty host — so a build or a `tail -f` left running in one is still going, and still streaming, after
+  an update. They are namespaced separately (`<instance>-sh`), which is what keeps a shell from
+  showing up in the sidebar's orphaned-session list. What they do *not* get is auto-resume: a shell
+  whose process is gone (a reboot) is simply forgotten, since its value was the scrollback and the
+  state in it, and both died with it.
+- **Shell arguments go out verbatim.** The pty library quotes every argument, which most programs
+  unquote again — but `wsl.exe` parses its own command line and reads `"-d"` as a *command* to run,
+  so a WSL tab came up as `bash: -d: command not found`. Shells are therefore spawned with
+  `PtySpawnRequest.VerbatimArguments`, quoting only the tokens that need it (a path with spaces).
+  The `claude` launch is unchanged and still uses the quoted path.
 - **Keep the process alive.** Remote Control lives in the launched `claude` process; stopping it
   (or the machine going offline for ~10 min) ends the session in the app.
 - **`ANTHROPIC_BASE_URL`** must be unset / pointed at `api.anthropic.com`, or Remote Control is

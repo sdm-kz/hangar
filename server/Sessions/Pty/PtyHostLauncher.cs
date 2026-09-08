@@ -71,7 +71,8 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     public async Task<PtyHostClient> StartAsync(
         string sessionId, string fileName, IReadOnlyList<string> arguments, string workingDirectory,
         IReadOnlyDictionary<string, string> environment, short cols, short rows,
-        WatchdogOptions watchdog, bool watchdogEnabled, CancellationToken ct = default)
+        WatchdogOptions watchdog, bool watchdogEnabled, bool verbatimArguments = false,
+        CancellationToken ct = default)
     {
         var exe = ResolveLaunchPath();
         var pipeName = PtyStateStore.PipeName(InstanceKey, sessionId);
@@ -98,7 +99,8 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
             // The watchdog runs host-side, so its tunables travel with the spawn. A host keeps the
             // ones it started with: a config change reaches an existing session only when it relaunches.
             Watchdog: watchdog,
-            WatchdogEnabled: watchdogEnabled));
+            WatchdogEnabled: watchdogEnabled,
+            VerbatimArguments: verbatimArguments));
 
         int hostPid;
         try

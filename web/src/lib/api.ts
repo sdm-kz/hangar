@@ -13,6 +13,8 @@ import type {
   Project,
   PtyOrphan,
   SessionInfo,
+  ShellInfo,
+  ShellOption,
   UpdateStatus,
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
@@ -125,6 +127,24 @@ export const api = {
   // Forgets the session but leaves its Remote Control process running.
   detachSession(id: string): Promise<void> {
     return request(`/api/sessions/${id}/detach`, { method: "POST" });
+  },
+
+  // ---- Shell tabs -------------------------------------------------------------------------
+  // Which shells the SERVER machine can run (cmd, PowerShell, Git Bash, each WSL distribution) —
+  // probed there, so the menu only ever offers a tab that can actually open.
+  shellOptions(): Promise<{ shells: ShellOption[]; default: string }> {
+    return request("/api/shells/options");
+  },
+  // The shells open for a session. Server-side, so every browser on that session sees the same tabs.
+  listShells(sessionId: string): Promise<ShellInfo[]> {
+    return request(`/api/shells?sessionId=${encodeURIComponent(sessionId)}`);
+  },
+  createShell(req: { sessionId?: string; workingDirectory: string; shell?: string }): Promise<ShellInfo> {
+    return request("/api/shells", { method: "POST", body: JSON.stringify(req) });
+  },
+  // Closes the tab and kills what is running in it — there is no detach for a shell.
+  closeShell(id: string): Promise<void> {
+    return request(`/api/shells/${id}`, { method: "DELETE" });
   },
   /**
    * Pin/unpin a session. The server keys the pin by the session's conversation (so it outlives a

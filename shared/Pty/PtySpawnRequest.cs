@@ -32,7 +32,18 @@ public sealed record PtySpawnRequest(
     /// machine-wide <see cref="WatchdogOptions.Enabled"/> master switch; re-sent over the pipe
     /// whenever the user toggles it, and again on every re-attach so sessions.json stays authoritative.
     /// </summary>
-    bool WatchdogEnabled = false);
+    bool WatchdogEnabled = false,
+    /// <summary>
+    /// Hand the arguments to the child as a <b>verbatim</b> command line — joined with spaces,
+    /// already quoted by the caller — instead of letting the pty library quote each one.
+    /// <para>Load-bearing for shells. Porta.Pty quotes every argument unconditionally, which most
+    /// programs shrug off (the CRT unquotes them again) but <c>wsl.exe</c> does not: it parses its
+    /// own command line and reads <c>"-d"</c> as a command to run rather than as its distribution
+    /// flag, so a WSL tab silently became "bash: -d: command not found". The claude launch keeps the
+    /// quoted path — nothing there needs this — so an older host that ignores this field still
+    /// starts sessions correctly.</para>
+    /// </summary>
+    bool VerbatimArguments = false);
 
 /// <summary>Reading and writing <see cref="PtySpawnRequest"/> files.</summary>
 public static class PtySpawnRequestStore

@@ -52,14 +52,20 @@ public sealed class PtySession : IDisposable
         _conn.ProcessExited += (_, e) => Exited?.Invoke(e.ExitCode);
     }
 
+    /// <param name="verbatim">
+    /// Pass <paramref name="arguments"/> as an already-quoted command line (joined with spaces)
+    /// rather than letting Porta.Pty quote each one. See <c>PtySpawnRequest.VerbatimArguments</c>:
+    /// <c>wsl.exe</c> parses its own command line and rejects a quoted <c>"-d"</c>.
+    /// </param>
     public static PtySession Start(string fileName, IReadOnlyList<string> arguments, string workingDirectory, short cols, short rows,
-        IReadOnlyDictionary<string, string> environment)
+        IReadOnlyDictionary<string, string> environment, bool verbatim = false)
     {
         var options = new PtyOptions
         {
             Name = "xterm-256color",
             App = fileName,
             CommandLine = arguments as string[] ?? arguments.ToArray(),
+            VerbatimCommandLine = verbatim,
             Cwd = string.IsNullOrWhiteSpace(workingDirectory) ? Environment.CurrentDirectory : workingDirectory,
             Cols = Math.Max(1, (int)cols),
             Rows = Math.Max(1, (int)rows),
