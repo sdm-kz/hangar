@@ -7,6 +7,7 @@ import { useHtml } from "@/lib/useHtml";
 import { readUrlState, previewUrl } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
 import { fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type PreviewGuard } from "@/lib/useFileTabs";
+import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm";
@@ -115,6 +116,13 @@ function readTreeHeight() {
 const ROW_LAYOUT_QUERY = "(min-width: 48rem)";
 function isRowLayout() {
   return window.matchMedia(ROW_LAYOUT_QUERY).matches;
+}
+
+// Whether the preview header's Preview/Diff toggle is on screen — it is `sm:`-gated, and opening a
+// file straight into its diff on a narrower screen would strand the user there.
+const DIFF_TOGGLE_QUERY = "(min-width: 40rem)";
+function hasDiffToggle() {
+  return window.matchMedia(DIFF_TOGGLE_QUERY).matches;
 }
 
 export type GitFiles = Record<string, string>;
@@ -714,6 +722,19 @@ export const FileBrowser = forwardRef<
   // Where the tree pane is scrolled to, remembered per session and per view so switching sessions (or
   // reloading) comes back to the same place rather than the top of the tree.
   const treeScrollRef = useRef<HTMLDivElement>(null);
+
+  // Arrow-key walking of whichever tree the pane is showing. Landing on a file previews it (the
+  // same as clicking it), so ↑/↓ steps through a folder the way an image viewer does; folders are
+  // opened with → / Enter.
+  const treeKeys = useTreeKeyNav({
+    containerRef: treeScrollRef,
+    onFocusFile: (path) => selectFile(fileEntryFromPath(path)),
+    onToggleDir: (path) => {
+      if (changesView && changesTree) return toggleChangesDir(path);
+      toggleFilesDir(path);
+      setUploadDir(path); // clicking a folder does this too — the keys mirror it
+    },
+  });
   const restoredScrollRef = useRef(false);
   const saveScrollRef = useRef<number | undefined>(undefined);
   const searchActive = !changesView && !!query.trim(); // results are transient — no offset kept
@@ -1019,7 +1040,12 @@ export const FileBrowser = forwardRef<
           </div>
         </div>
 
-        <div ref={treeScrollRef} onScroll={onTreeScroll} className="flex-1 overflow-auto px-1 pb-2">
+        <div
+          ref={treeScrollRef}
+          onScroll={onTreeScroll}
+          {...treeKeys}
+          className="flex-1 overflow-auto px-1 pb-2 outline-none"
+        >
           {changesView ? (
             changesTree ? (
               <ChangesTree
@@ -1125,6 +1151,7 @@ export const FileBrowser = forwardRef<
               workingDirectory={workingDirectory}
               file={selected}
               gitStatus={selected ? effectiveGitFiles?.[selected.path] : undefined}
+              preferDiff={showChanges}
               dir={rootDir || undefined}
               readOnly={readOnly}
               refreshToken={refreshToken}
@@ -1383,6 +1410,7 @@ function ChangeDirNode({ dir, depth, ...rest }: { dir: ChangeDir; depth: number 
     <>
       <div className="group relative flex items-center rounded-sm text-xs hover:bg-accent">
         <button
+          {...navRowProps({ path: dir.path, isDir: true, open, depth })}
           onClick={() => rest.onToggle(dir.path)}
           style={{ paddingLeft: depth * 12 + 8 }}
           className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left"
@@ -1530,6 +1558,7 @@ function TreeDir({
       <Row
         depth={depth}
         selected={uploadDir === entry.path}
+        open={open}
         entry={entry}
         actions={actions}
         onClick={() => {
@@ -1633,6 +1662,7 @@ const Row = forwardRef<
   {
     depth: number;
     selected?: boolean;
+    open?: boolean; // dir-only: whether it is expanded, for the arrow keys
     onClick: () => void;
     onOpenNewTab?: () => void; // file-only: middle-/double-/modifier-click opens a pinned tab
     entry: FileEntry;
@@ -1640,7 +1670,7 @@ const Row = forwardRef<
     extraActions?: React.ReactNode; // dir-only: "new folder here"
     children: React.ReactNode;
   }
->(function Row({ depth, selected, onClick, onOpenNewTab, entry, actions, extraActions, children }, ref) {
+>(function Row({ depth, selected, open, onClick, onOpenNewTab, entry, actions, extraActions, children }, ref) {
   const renaming = actions.renamingPath === entry.path;
   return (
     <div
@@ -1661,6 +1691,14 @@ const Row = forwardRef<
       ) : (
         <>
           <button
+            // Focus target for the tree's arrow keys; a selected file is where they resume from.
+            {...navRowProps({
+              path: entry.path,
+              isDir: entry.isDir,
+              open,
+              current: !!selected && !entry.isDir,
+              depth,
+            })}
             // Cmd/Ctrl+click opens a pinned tab like middle-click (no middle button on trackpads).
             onClick={(e) => {
               if ((e.metaKey || e.ctrlKey) && onOpenNewTab) onOpenNewTab();
@@ -1737,6 +1775,7 @@ function FilePreview({
   workingDirectory,
   file,
   gitStatus,
+  preferDiff,
   dir,
   readOnly,
   refreshToken,
@@ -1748,6 +1787,9 @@ function FilePreview({
   workingDirectory: string;
   file: FileEntry | null;
   gitStatus?: string;
+  // Whether the file was picked out of the changes view, where what changed is the point: such a
+  // file opens on its diff rather than its contents.
+  preferDiff?: boolean;
   // The root the file lives in when it isn't the session's own working dir — another worktree of
   // its repo, or a folder linked to it. Every read (and any save) is scoped to it.
   dir?: string;
@@ -1836,7 +1878,9 @@ function FilePreview({
   useEffect(() => {
     setText(null);
     setStatus("idle");
-    setView("preview");
+    // Straight to the diff for a changed file picked in the changes view — but only for text (a
+    // binary's diff says nothing) and only where the toggle back to Preview is on screen.
+    setView(preferDiff && gitStatus && kind === "text" && hasDiffToggle() ? "diff" : "preview");
     setDiff(null);
     setMdView("rendered");
     setEditing(false);
@@ -1857,6 +1901,9 @@ function FilePreview({
     return () => {
       cancelled = true;
     };
+    // gitStatus/preferDiff are read for the opening view only: listing them would re-run this — and
+    // wipe the loaded text — every time git's view of the file changed under it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, file, kind, dir]);
 
   // Auto-refresh: when the working dir changes, re-fetch the current file's content and

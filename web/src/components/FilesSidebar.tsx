@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import type { DirEntry, FsNode } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
+import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
 import { CopyPathButton } from "./CopyPathButton";
@@ -324,6 +325,14 @@ export function FilesSidebar({
     [children, listDir]
   );
 
+  // Walk the tree with the arrow keys: ↑/↓ step row to row (opening each file they land on, so a
+  // folder of files can be read through without the mouse), → / Enter open a folder, ← close it.
+  const treeKeys = useTreeKeyNav({
+    containerRef: scrollRef,
+    onFocusFile: onOpenFile,
+    onToggleDir: toggle,
+  });
+
   // Reload a directory that's currently visible (after a create/rename/upload) so the tree reflects it.
   const reload = useCallback(
     (path: string | null) => {
@@ -482,7 +491,12 @@ export function FilesSidebar({
         </div>
       )}
 
-      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-auto py-1">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        {...treeKeys}
+        className="min-h-0 flex-1 overflow-auto py-1 outline-none"
+      >
         {drives.map((d) => (
           <TreeNode
             key={d.path}
@@ -564,6 +578,7 @@ function TreeNode({
     <div>
       <div
         data-fspath={path}
+        {...navRowProps({ path, isDir, open: isOpen, current: active || selected, depth })}
         className={cn(
           "group flex items-center gap-1 rounded px-1 py-0.5 text-sm",
           "cursor-pointer hover:bg-accent",
