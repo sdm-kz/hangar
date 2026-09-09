@@ -36,6 +36,9 @@
   /* Fallback for the real value, which index.html works out from the device pixel ratio before the
      first paint -- see the comment there for why a plain 1px does not survive on a 1.5x display. */
   --hairline: 1px;
+  /* Fallback for the measured scrollbar width (index.html again): assume an overlay scrollbar, so a
+     control parked in a pane's corner sits where its own offset puts it until the answer arrives. */
+  --scrollbar-w: 0px;
   --input: oklch(0.87 0 0);
   --ring: oklch(0.708 0 0);
 }

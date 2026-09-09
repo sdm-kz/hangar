@@ -188,7 +188,16 @@ export function ZoomControls({
   const widthIndex = Math.max(0, READING_WIDTHS.indexOf(width ?? null));
   const nextWidthIndex = (widthIndex + 1) % READING_WIDTHS.length;
   return (
-    <div className={cn("absolute z-10 flex items-center rounded-md border bg-background/90 p-0.5 shadow-sm backdrop-blur", className)}>
+    // The margin is the scrollbar's, not spacing: `right-3` measures from the pane's padding edge,
+    // which runs under the scrollbar track, so without it the box sits a couple of pixels on top of
+    // the track it is parked beside. --scrollbar-w is 0 where scrollbars overlay the content, and
+    // margin-right does nothing at all where the caller pins the box by its left edge instead.
+    <div
+      className={cn(
+        "absolute z-10 mr-[var(--scrollbar-w,0px)] flex items-center rounded-md border bg-background/90 p-0.5 shadow-sm backdrop-blur",
+        className
+      )}
+    >
       {onWidthChange && (
         <div className="hidden items-center sm:flex">
           <Button

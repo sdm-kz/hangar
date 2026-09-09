@@ -71,6 +71,29 @@
         apply();
       })();
     </script>
+    <script>
+      // Width of a classic scrollbar, once, into --scrollbar-w. The overlay controls that park in
+      // the corner of a scrolling pane (the zoom box) are positioned against the pane's padding
+      // edge, which on Windows and Linux runs *under* the scrollbar track -- so `right: 12px` puts
+      // them a couple of pixels on top of it. Measuring beats guessing here because the answer is
+      // 0 wherever scrollbars overlay the content (macOS, and any touch device), and padding the
+      // controls away from an edge that has nothing on it would just look like a mistake.
+      (function () {
+        var apply = function () {
+          var probe = document.createElement("div");
+          probe.style.cssText =
+            "position:absolute;top:-9999px;width:100px;height:100px;overflow:scroll";
+          document.body.appendChild(probe);
+          document.documentElement.style.setProperty(
+            "--scrollbar-w",
+            probe.offsetWidth - probe.clientWidth + "px"
+          );
+          probe.remove();
+        };
+        if (document.body) apply();
+        else document.addEventListener("DOMContentLoaded", apply);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
