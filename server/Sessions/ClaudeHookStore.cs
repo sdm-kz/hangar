@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -31,7 +33,13 @@ public static class ClaudeHookStore
 
     private const string UrlPath = "/api/hooks"; // discriminates our handler within the settings file
 
-    public static void EnsureConfigured(int port, ILogger log)
+    /// <param name="port">The port this instance is bound to; hooks are pointed at it.</param>
+    /// <param name="force">
+    /// Take the registration over even when another instance is live on the port it currently names
+    /// (<c>Hooks:Force=true</c>). The guard below is right almost always; this is the way out of the
+    /// case where it isn't — a stale registration whose port some unrelated process now holds.
+    /// </param>
+    public static void EnsureConfigured(int port, ILogger log, bool force = false)
     {
         try
         {
@@ -53,6 +61,26 @@ public static class ClaudeHookStore
             {
                 hooks = new JsonObject();
                 root["hooks"] = hooks;
+            }
+
+            // Stand down if the registration already belongs to an instance that is still up.
+            //
+            // This file is GLOBAL — one ~/.claude/settings.json for every Claude Code session on the
+            // machine — while the handler is identified only by its /api/hooks path, so any second
+            // instance used to silently repoint all of them at itself. Start a debug build beside the
+            // live app and stop it again, and every session on the machine then fails every tool call
+            // with "hook error connect ECONNREFUSED" against a port nothing answers on any more. The
+            // instance that is actually running is the one whose hooks should be live, and a port with
+            // a listener on it is the only evidence of that available from here.
+            if (!force && OwnedByLiveInstance(hooks, port) is { } owner)
+            {
+                log.LogWarning(
+                    "Leaving the Claude hooks in ~/.claude/settings.json pointed at port {Owner}: something is " +
+                    "listening there, so another ClaudeWeb is live and owns them. This instance ({Port}) will not " +
+                    "receive hook events, so its session status falls back to terminal heuristics. Set " +
+                    "Hooks:Force=true to take them over, or Hooks:Enabled=false to stop asking.",
+                    owner, port);
+                return;
             }
 
             bool changed = false;
@@ -116,6 +144,52 @@ public static class ClaudeHookStore
         catch (Exception ex)
         {
             log.LogWarning(ex, "Could not register ClaudeWeb hooks");
+        }
+    }
+
+    /// <summary>
+    /// The port an already-registered handler names, when that is a <b>different</b> instance and
+    /// something is still listening there — i.e. the registration is in use and not ours to move.
+    /// Null when there is no registration, when it already points at us, or when whatever wrote it
+    /// is gone (the ordinary case of a port change, which we then take over as before).
+    /// </summary>
+    private static int? OwnedByLiveInstance(JsonObject hooks, int ourPort)
+    {
+        foreach (var evt in Events)
+        {
+            if (hooks[evt] is not JsonArray groups) continue;
+            if (FindOurHandler(groups) is not { } handler) continue;
+            if (PortOf(handler["url"]?.GetValue<string>()) is not { } other) continue;
+            if (other == ourPort) return null; // already ours — nothing to guard
+            return IsListening(other) ? other : null;
+        }
+        return null;
+    }
+
+    private static int? PortOf(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Port > 0 ? u.Port : null;
+
+    /// <summary>
+    /// Whether a local socket is accepting on <paramref name="port"/>. Read from the OS listener
+    /// table rather than by connecting: this runs on the startup path, and a connect to a port that
+    /// blackholes would sit there for the whole handshake timeout.
+    /// </summary>
+    private static bool IsListening(int port)
+    {
+        try
+        {
+            return IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners().Any(e =>
+                e.Port == port &&
+                // Match how a server binds rather than how a client reaches it: "0.0.0.0" and "::"
+                // both answer on loopback, which is where the hook URL points.
+                (IPAddress.IsLoopback(e.Address) || e.Address.Equals(IPAddress.Any) ||
+                 e.Address.Equals(IPAddress.IPv6Any)));
+        }
+        catch
+        {
+            // No listener table to read (locked-down host): assume nothing is there rather than
+            // refusing to register, which would leave the hooks broken for a reason nobody can see.
+            return false;
         }
     }
 

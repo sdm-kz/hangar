@@ -1,10 +1,11 @@
 {
   "profiles": {
-    "ClaudeWeb (debug 5199)": {
+    "ClaudeWeb (debug 5199, no hooks)": {
       "commandName": "Project",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "Server__Urls": "http://0.0.0.0:5199"
+        "Server__Urls": "http://0.0.0.0:5199",
+        "Hooks__Enabled": "false"
       }
     }
   }

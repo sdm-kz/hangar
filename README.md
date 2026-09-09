@@ -176,6 +176,28 @@ directly at its port — no Vite needed:
 powershell -ExecutionPolicy Bypass -File scripts\run.ps1
 ```
 
+### Running a second instance beside the installed app
+
+`~/.claude/settings.json` is **global**: every Claude Code session on the machine posts its tool-use
+events to whichever `/api/hooks` port is registered there. A second instance on another port used to
+claim that registration silently, so stopping it left every session on the machine failing every
+tool call with `hook error connect ECONNREFUSED`.
+
+Two things now prevent that, and it is worth knowing both:
+
+- **The instance stands down.** Before registering, it checks whether something is still listening on
+  the port the hooks currently name. If so it leaves them alone and logs why — its own session status
+  falls back to terminal heuristics, which is the right trade. A registration whose port is dead is
+  still taken over as before, so an ordinary port change needs no intervention. `Hooks:Force=true`
+  overrides the check.
+- **The debug paths don't ask.** The `ClaudeWeb (debug 5199, no hooks)` launch profile sets
+  `Hooks__Enabled=false`, and `scripts\dev.ps1 -Port <other>` passes `--Hooks:Enabled=false` for any
+  port that isn't the app's own `5099` (`-Hooks` forces it back on). On 5099 it registers normally,
+  since that is the registration the installed app wants anyway.
+
+Note that `dotnet run` applies the launch profile by default — that env-var `Server__Urls` is what
+the hook port is read from, so `--urls` on the command line alone does **not** change it.
+
 Set the login password by putting it in `server/appsettings.json` (`Auth:Password`) and starting
 the app once — it hashes the password to `%LocalAppData%\ClaudeWeb\auth.json` and logs a reminder
 to clear the plaintext. After that first run, blank `Auth:Password`; the persisted hash is used
@@ -312,6 +334,8 @@ the whole thing off and go back to `deploy.ps1` only.
 | `Sessions:ResumeDelayMs`    | Settling delay before auto-resume starts (lets a booting PC come up)| `5000`  |
 | `Sessions:ResumeStaggerMs`  | Pause between consecutive auto-resumed launches      | `2000`               |
 | `Sessions:SelfUrl`          | URL a session calls back on (`CLAUDEWEB_URL`); empty = derived from the bound port | `""` |
+| `Hooks:Enabled`             | Register this instance's hooks in `~/.claude/settings.json` (drives busy/waiting status). Off = terminal heuristics only | `true` |
+| `Hooks:Force`               | Claim that registration even when another instance is live on the port it currently names — see below | `false` |
 | `Pty:InstanceKey`           | Namespaces this instance's pty pipes and state dir; empty = the bound port. Keeps a dev instance from adopting the live app's sessions | `""` |
 | `Pty:HostExecutable`        | Path to `ClaudeWeb.PtyHost.exe`; empty = beside the app | `""`                 |
 | `Pty:AttachTimeoutMs`       | How long a host has to answer its pipe before its state file is called stale | `3000` |

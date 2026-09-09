@@ -50,7 +50,10 @@ internal static class Program
         if (app.Configuration.GetValue("Hooks:Enabled", true))
         {
             var hookLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Hooks");
-            Sessions.ClaudeHookStore.EnsureConfigured(port, hookLog);
+            // Hooks:Force overrides the "another instance is live on the registered port" guard —
+            // see ClaudeHookStore.EnsureConfigured.
+            Sessions.ClaudeHookStore.EnsureConfigured(
+                port, hookLog, app.Configuration.GetValue("Hooks:Force", false));
         }
 
         // Freeze the session state file the moment anything says we're going down, so the entries stay
