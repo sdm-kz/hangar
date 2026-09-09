@@ -26,6 +26,7 @@ import {
   sortPinnedFirst,
   type SessionOrder,
 } from "@/lib/sessionOrder";
+import { type ActivityIds } from "@/lib/sessionActivity";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
@@ -47,6 +48,7 @@ import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import { writeToClipboard } from "@/lib/clipboard";
 import {
+  type LucideIcon,
   Boxes,
   Check,
   Copy,
@@ -139,9 +141,10 @@ function folderLabel(dir: string): string {
 }
 
 /**
- * The dot a heading wears for the most urgent thing happening inside it, pinned to the corner of
- * the heading's own icon — the folder, the box, the project — so what is busy is said by the thing
- * that is busy, the way a badge sits on an app's icon.
+ * The mark a heading wears for the most urgent thing happening inside it — or, when nothing is,
+ * for the work that finished there — pinned to the corner of the heading's own icon: the folder,
+ * the box, the project. So what is busy is said by the thing that is busy, the way a badge sits on
+ * an app's icon.
  *
  * Out of the flow rather than in the line: a heading's line starts with its chevron, so an inline
  * dot would either hold a gutter open on every idle heading or shove the name sideways the moment
@@ -151,15 +154,33 @@ function folderLabel(dir: string): string {
  *
  * Expects a positioned parent: wrap the icon, not the row.
  */
-function HeadingActivityDot({ activity }: { activity: Activity | null }) {
+function HeadingActivityMark({ activity }: { activity: Activity | null }) {
   if (!activity) return null;
   return (
     <span className="pointer-events-none absolute -left-1 -top-1 rounded-full bg-background p-[2px] leading-none">
-      <span
-        className={cn("block size-1.5 rounded-full", ACTIVITY_DOT[activity].className)}
-        aria-label={ACTIVITY_DOT[activity].label}
-      />
+      <ActivityMark activity={activity} />
     </span>
+  );
+}
+
+/**
+ * The glyph an activity is drawn as. Live states are a coloured dot — the smallest thing that can
+ * still say "something is happening here" — but "finished, unseen" is not a live state, and drawn
+ * as a sixth dot it would be one more colour to learn on a list that is mostly quiet. A tick reads
+ * as past tense at a glance and needs no legend, so it is the one activity with a shape of its own.
+ *
+ * One element, used both in a row's corner and on a heading's icon, so the two can't drift apart.
+ */
+function ActivityMark({ activity }: { activity: Activity }) {
+  const { className, label, Icon } = ACTIVITY_MARK[activity];
+  return Icon ? (
+    // 8px with a heavy stroke, not the 14px these icons are usually drawn at. Bigger reads better in
+    // isolation and worse here: the badge is opaque, so every pixel it gains is taken out of the
+    // session name behind it on a row, and off the folder glyph it is pinned to on a heading. At
+    // lucide's default weight a tick this small thins out to a smudge, hence the stroke.
+    <Icon className={cn("block size-2", className)} strokeWidth={4} aria-label={label} />
+  ) : (
+    <span className={cn("block size-1.5 rounded-full", className)} aria-label={label} />
   );
 }
 
@@ -188,11 +209,11 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
 }
 
 /**
- * What an activity dot can say, and how it looks — one definition, so a session row and the folder
+ * What an activity mark can say, and how it looks — one definition, so a session row and the folder
  * header above it can never disagree about what amber means.
  */
-type Activity = "busy" | "compacting" | "waiting" | "attention" | "recovering";
-const ACTIVITY_DOT: Record<Activity, { className: string; label: string }> = {
+type Activity = "busy" | "compacting" | "waiting" | "attention" | "recovering" | "done";
+const ACTIVITY_MARK: Record<Activity, { className: string; label: string; Icon?: LucideIcon }> = {
   busy: { className: "bg-emerald-500 animate-pulse", label: "Claude is working" },
   // A flavour of busy, so it stays in the working family — a slower pulse and a cooler green, because
   // "still here, but not on your task" is the useful thing to read off it from across the room.
@@ -206,27 +227,32 @@ const ACTIVITY_DOT: Record<Activity, { className: string; label: string }> = {
   },
   attention: { className: "bg-red-500", label: "Session needs attention" },
   recovering: { className: "bg-amber-500 animate-pulse", label: "Watchdog is auto-recovering this session" },
+  // The green pulse's own past tense, so the two read as one story: the same green, no longer
+  // moving. It is the only activity you can clear by looking at it — see useDoneSessions.
+  done: {
+    className: "text-emerald-500",
+    label: "Claude finished here — you haven’t looked yet",
+    Icon: Check,
+  },
 };
 
-/** A session's own dot: what it is doing right now, with the live signal (busy) winning. */
-function sessionActivity(
-  s: SessionInfo,
-  busy: boolean,
-  waiting: boolean,
-  compacting: boolean
-): Activity | null {
+/** A session's own mark: what it is doing right now — or, failing that, what it just finished. */
+function sessionActivity(s: SessionInfo, ids: ActivityIds): Activity | null {
   // Ahead of plain busy: it's the more specific reading of the same "working" state, and it explains
   // a session that has gone quiet for a minute or two without having stalled.
-  if (compacting) return "compacting";
-  if (busy) return "busy";
-  if (waiting) return "waiting";
+  if (ids.compacting.has(s.id)) return "compacting";
+  if (ids.busy.has(s.id)) return "busy";
+  if (ids.waiting.has(s.id)) return "waiting";
   if (s.watchdogStatus === "attention") return "attention";
   if (s.watchdogStatus === "recovering") return "recovering";
+  // Last, because it is the only one in past tense: anything the session is doing *now* is the more
+  // useful thing to say about it, and a finished turn keeps its tick until you go and look.
+  if (ids.done.has(s.id)) return "done";
   return null;
 }
 
 /**
- * A folder's dot: the most urgent thing inside it, which is a different question from what any one
+ * A folder's mark: the most urgent thing inside it, which is a different question from what any one
  * session is doing. Waiting-on-you outranks merely working, so a collapsed folder can't hide a
  * prompt behind a session that happens to be generating — the whole point of surfacing it up here.
  */
@@ -236,6 +262,10 @@ const FOLDER_URGENCY: Record<Activity, number> = {
   recovering: 3,
   compacting: 2,
   busy: 1,
+  // Bottom of the pile, which is exactly the rule asked of it: a heading only ticks once nothing
+  // inside it is still going. A folder with one session finished and another still working has
+  // more to say than "something finished" — and the tick will be there when the work stops.
+  done: 0,
 };
 /**
  * Postponed messages waiting across a set of sessions. Closed sessions count: their pool is still
@@ -245,16 +275,11 @@ function folderPostponed(items: SessionInfo[]): number {
   return items.reduce((n, s) => n + s.postponedCount, 0);
 }
 
-function folderActivity(
-  items: SessionInfo[],
-  busyIds: Set<string>,
-  waitingIds: Set<string>,
-  compactingIds: Set<string>
-): Activity | null {
+function folderActivity(items: SessionInfo[], ids: ActivityIds): Activity | null {
   let top: Activity | null = null;
   for (const s of items) {
     if (s.state === "Restorable") continue; // a closed session isn't doing anything
-    const a = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id), compactingIds.has(s.id));
+    const a = sessionActivity(s, ids);
     if (a && (!top || FOLDER_URGENCY[a] > FOLDER_URGENCY[top])) top = a;
   }
   return top;
@@ -410,7 +435,7 @@ function GroupHeader({
         )}
         <span className="relative inline-flex shrink-0">
           <FolderTree className="size-3.5" />
-          <HeadingActivityDot activity={activity ?? null} />
+          <HeadingActivityMark activity={activity ?? null} />
         </span>
         <span className="truncate font-mono text-xs font-medium">{folderLabel(dir)}</span>
         {/* Session count, right after the name rather than pinned to the row's edge: it reads as
@@ -669,7 +694,7 @@ function VirtualFolderHeader({
             name doesn't fight the session names below it. */}
         <span className="relative inline-flex shrink-0">
           <Icon className="size-3.5" style={accent ? { color: accent } : undefined} />
-          <HeadingActivityDot activity={activity ?? null} />
+          <HeadingActivityMark activity={activity ?? null} />
         </span>
         {/* Not renameable in place, unlike a session row. A rename box here would have to live
             inside the fold button — an input nested in a button, and two stray folds fired by the
@@ -745,7 +770,7 @@ function ProjectHeader({
           ) : (
             <Minus className="size-3.5" />
           )}
-          <HeadingActivityDot activity={activity ?? null} />
+          <HeadingActivityMark activity={activity ?? null} />
         </span>
         <span
           className={cn(
@@ -1221,9 +1246,7 @@ function useDragReorder(onReorder: (from: number, to: number, list: string) => v
 
 export function SessionSidebar({
   sessions,
-  busyIds,
-  waitingIds,
-  compactingIds,
+  activityIds,
   activeId,
   onSelect,
   onNewInFolder,
@@ -1247,9 +1270,8 @@ export function SessionSidebar({
   onProjectsChange,
 }: {
   sessions: SessionInfo[];
-  busyIds: Set<string>;
-  waitingIds: Set<string>; // sessions where Claude is waiting on a prompt/dialog
-  compactingIds: Set<string>; // sessions where Claude is compacting its conversation
+  // Who is busy / waiting on you / compacting / finished-but-unseen, in one bag — see ActivityIds.
+  activityIds: ActivityIds;
   activeId: string | null;
   onSelect: (id: string) => void;
   onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
@@ -1697,7 +1719,7 @@ export function SessionSidebar({
           backgroundRepeat: "no-repeat",
         }
       : undefined;
-    const activity = sessionActivity(s, busyIds.has(s.id), waitingIds.has(s.id), compactingIds.has(s.id));
+    const activity = sessionActivity(s, activityIds);
     // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Enough of a step that a fork reads as sitting under its parent at a glance, but capped after
@@ -1738,7 +1760,13 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           restorable ? "text-muted-foreground" : "cursor-pointer",
           activeId === s.id && !restorable && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
-          !restorable && waitingIds.has(s.id) && "ring-1 ring-amber-400/70"
+          !restorable && activityIds.waiting.has(s.id) && "ring-1 ring-amber-400/70",
+          // Softer than waiting's ring, and deliberately so: one is a request, the other a receipt.
+          // It is what makes a finished session findable in a long list without reading every row.
+          // Guarded like the ring above rather than trusting `done` to be free of closed sessions:
+          // what keeps them out of it is a prune that runs in an effect, so a mark restored from
+          // storage is on screen for a paint before the prune has had a chance to drop it.
+          !restorable && activity === "done" && "ring-1 ring-emerald-400/40"
         )}
       >
         {/* Where a dragged row would land. A bar of its own rather than the row's top border: a
@@ -1749,16 +1777,13 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
         )}
         {/* Activity dot, in the top-left corner rather than sitting in the name's line: an inline
             gutter would have to stay reserved on every idle row — most of them — just so the title
-            wouldn't shift when the dot appears. What it can say lives in ACTIVITY_DOT, so this row
-            and its folder header always mean the same thing by the same colour. It sits ON the colour
-            band deliberately, with a ring of the page background around it so the two colours stay
-            legible where they meet. */}
+            wouldn't shift when the mark appears. What it can say lives in ACTIVITY_MARK and is drawn
+            by ActivityMark, so this row and its folder header always say it the same way. It sits ON
+            the colour band deliberately, with a ring of the page background around it so the two
+            colours stay legible where they meet. */}
         {!restorable && activity && (
           <span className="pointer-events-none absolute left-0.5 top-0.5 rounded-full bg-background p-[2px] leading-none">
-            <span
-              className={cn("block size-1.5 rounded-full", ACTIVITY_DOT[activity].className)}
-              aria-label={ACTIVITY_DOT[activity].label}
-            />
+            <ActivityMark activity={activity} />
           </span>
         )}
         <div className="flex items-center justify-between gap-1">
@@ -1943,7 +1968,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           count={vg.count}
           collapsed={isCollapsed}
           onToggle={() => toggleGroup(vg.key)}
-          activity={folderActivity(vg.items, busyIds, waitingIds, compactingIds)}
+          activity={folderActivity(vg.items, activityIds)}
           onEdit={() => setEditing({ id: project.id, group: vg.group.id })}
         />
         {!isCollapsed && renderGroupRows(vg)}
@@ -1971,7 +1996,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           onToggle={() => toggleGroup(g.dir)}
           onNewSession={() => onNewInFolder(g.dir)}
           onRemove={() => setRemoveDir(g.key)}
-          activity={folderActivity(g.items, busyIds, waitingIds, compactingIds)}
+          activity={folderActivity(g.items, activityIds)}
           projects={projects}
           projectId={projectForDir(g.dir, projects)?.id ?? null}
           onMoveToProject={(id) => void moveFolderToProject(g.dir, id)}
@@ -2138,9 +2163,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
               activityOf={(gs, project) =>
                 folderActivity(
                   [...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)],
-                  busyIds,
-                  waitingIds,
-                  compactingIds
+                  activityIds
                 )
               }
               postponedOf={(gs, project) =>
@@ -2181,12 +2204,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
               ss.length + shownGroups(project).reduce((n, g) => n + g.count, 0)
             }
             activityOf={(ss, project) =>
-              folderActivity(
-                [...ss, ...shownGroups(project).flatMap((g) => g.items)],
-                busyIds,
-                waitingIds,
-                compactingIds
-              )
+              folderActivity([...ss, ...shownGroups(project).flatMap((g) => g.items)], activityIds)
             }
             postponedOf={(ss, project) =>
               folderPostponed([...ss, ...shownGroups(project).flatMap((g) => g.items)])

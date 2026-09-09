@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
 import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
+import { useDoneSessions } from "@/lib/sessionActivity";
 import { setFaviconStatus } from "@/lib/favicon";
 import type { Project, SessionInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
@@ -221,6 +222,25 @@ export function App() {
     const name = sessions.find((s) => s.id === activeId)?.name;
     document.title = name ? `${name} - Claude Web` : "Claude Web";
   }, [activeId, sessions]);
+
+  // Sessions that finished something you haven't seen yet — the gap the green pulse leaves behind
+  // when it simply stops. Owned here, beside the sets it is derived from, because the sidebar is
+  // mounted twice (desktop column and mobile drawer) and a mark cleared in one has been seen in both.
+  const doneIds = useDoneSessions({
+    sessions,
+    busyIds,
+    waitingIds,
+    compactingIds,
+    // A file or a folder's shells take the main area from the session pane without touching the
+    // selection, so `activeId` alone would clear the mark of a session you never actually saw.
+    shownSessionId: openFile || shellFolder ? null : activeId,
+    streamUp,
+  });
+  // One bag for the four sets, so the sidebar takes a single prop instead of four parallel ones.
+  const activityIds = useMemo(
+    () => ({ busy: busyIds, waiting: waitingIds, compacting: compactingIds, done: doneIds }),
+    [busyIds, waitingIds, compactingIds, doneIds]
+  );
 
   // Badge the favicon with the busiest state across *all* sessions, so a backgrounded tab shows at a
   // glance that something is happening. Waiting-on-you (amber) outranks working (green) here — unlike
@@ -790,9 +810,7 @@ export function App() {
           sessions={
             <SessionSidebar
               sessions={sessions}
-              busyIds={busyIds}
-              waitingIds={waitingIds}
-              compactingIds={compactingIds}
+              activityIds={activityIds}
               activeId={activeId}
               onSelect={selectSession}
               onNewInFolder={newSessionInFolder}
@@ -854,9 +872,7 @@ export function App() {
               sessions={
                 <SessionSidebar
                   sessions={sessions}
-                  busyIds={busyIds}
-                  waitingIds={waitingIds}
-                  compactingIds={compactingIds}
+                  activityIds={activityIds}
                   activeId={activeId}
                   onSelect={(id) => {
                     selectSession(id);
