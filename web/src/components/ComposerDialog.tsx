@@ -111,18 +111,23 @@ export function ComposerDialog({
   }, [canSubmit, sending, text, images, onSend, onClose]);
 
   const postpone = useCallback(() => {
-    if (!canSubmit) return;
+    // Guards on `sending` as well as the button does: a send in flight owns the dialog, and stashing
+    // the same draft underneath it would close the dialog out from under the reply.
+    if (!canSubmit || sending) return;
     onPostpone(draft());
     onClose();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSubmit, text, images, onPostpone, onClose]);
+  }, [canSubmit, sending, text, images, onPostpone, onClose]);
 
-  // Enter is a newline here (this is the long-text surface); Ctrl/Cmd+Enter is the submit.
+  // Enter is a newline here (this is the long-text surface), so both exits are chords on it:
+  // Ctrl/Cmd+Enter sends, and the same chord with Shift takes the other one -- postpone, or Save
+  // when this is an already-stashed message being edited. Shift for "not the default action" is the
+  // pairing every send box uses, and it keeps the second exit off a key of its own.
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-      e.preventDefault();
-      void send();
-    }
+    if (!(e.ctrlKey || e.metaKey) || e.key !== "Enter") return;
+    e.preventDefault();
+    if (e.shiftKey) postpone();
+    else void send();
   };
 
   return (
@@ -137,7 +142,8 @@ export function ComposerDialog({
           <DialogHeader className="shrink-0">
             <DialogTitle>{isEditing ? "Edit postponed message" : "Compose message"}</DialogTitle>
             <DialogDescription>
-              Send it into the terminal now, or postpone it for later. Ctrl+Enter sends.
+              Send it into the terminal now, or postpone it for later. Ctrl+Enter sends, Ctrl+Shift+Enter{" "}
+              {isEditing ? "saves" : "postpones"}.
             </DialogDescription>
           </DialogHeader>
 
@@ -212,7 +218,7 @@ export function ComposerDialog({
             onChange={(e) => setText(e.target.value)}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
-            placeholder="Write your message — Enter for a newline, Ctrl+Enter to send, paste an image to attach it"
+            placeholder="Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste an image to attach"
             className="min-h-[35vh] flex-1 resize-none leading-6"
           />
 
@@ -223,11 +229,16 @@ export function ComposerDialog({
               <Button variant="ghost" onClick={onClose} disabled={sending}>
                 Cancel
               </Button>
-              <Button variant="outline" onClick={postpone} disabled={!canSubmit || sending}>
+              <Button
+                variant="outline"
+                onClick={postpone}
+                disabled={!canSubmit || sending}
+                title={`${isEditing ? "Save" : "Postpone"} (Ctrl+Shift+Enter)`}
+              >
                 <Inbox className="size-4" />
                 {isEditing ? "Save" : "Postpone"}
               </Button>
-              <Button onClick={send} disabled={!canSubmit || sending}>
+              <Button onClick={send} disabled={!canSubmit || sending} title="Send (Ctrl+Enter)">
                 {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                 Send
               </Button>
