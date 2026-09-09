@@ -1657,8 +1657,10 @@ const Row = forwardRef<
         selected && "bg-accent font-medium"
       )}
     >
+      {/* The rename box carries the same padding as the row button opposite it, so a row keeps its
+          height -- and every row below it keeps its place -- while it is being renamed. */}
       {renaming ? (
-        <div className="min-w-0 flex-1 py-0.5 pr-2" style={{ paddingLeft: depth * 12 + 8 }}>
+        <div className="min-w-0 flex-1 py-1 pr-2" style={{ paddingLeft: depth * 12 + 8 }}>
           <RenameField
             value={entry.name}
             onSubmit={(name) => actions.onRename(entry.path, name)}
