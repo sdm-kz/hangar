@@ -20,6 +20,7 @@ import {
   dirKey,
   loadSessionOrder,
   move,
+  pinAfterMove,
   saveSessionOrder,
   sortFolderSessions,
   sortPinnedFirst,
@@ -1557,7 +1558,14 @@ export function SessionSidebar({
   // flat one. The list key scopes the drag, so a row can't be dropped into a list it isn't part of.
   const dnd = useDragReorder((from, to, list) => {
     const ids = rootIdsByList[list];
-    if (ids) reorderFolder(list, from, to, ids);
+    if (!ids) return;
+    // Pins outrank the manual order, so a row dropped on the other side of the pinned block would
+    // be sorted straight back where it came from. It carries its pin across instead — see
+    // pinAfterMove — which is what makes the drop stick.
+    const id = ids[from];
+    const pin = pinAfterMove(ids, from, to, pinned);
+    if (id && pin !== pinned.has(id)) togglePin(id, pin);
+    reorderFolder(list, from, to, ids);
   });
 
   /**

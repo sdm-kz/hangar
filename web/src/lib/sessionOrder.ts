@@ -105,3 +105,28 @@ export function sortPinnedFirst(sessions: SessionInfo[], pinned: ReadonlySet<str
   if (!pinned.size) return sessions;
   return [...sessions].sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)));
 }
+
+/**
+ * The pin a row should be left carrying once it has been dragged to `to` — the index it is inserted
+ * at in the list with itself taken out, which is what `move` does with the same argument.
+ *
+ * Pinned rows sort above unpinned ones no matter what the manual order says, so a drag that crosses
+ * the line between the two blocks used to be written to the order and then quietly undone by the
+ * next sort: the row sprang back and the whole gesture read as broken. Refusing those drops would be
+ * honest but useless — a mostly-pinned folder would have almost nowhere left to drop a row. So the
+ * pin travels with the drag instead: a row takes the state of the row it lands under (or, dropped at
+ * the very top, of the row it lands above), which is the only reading of "put it here" that leaves
+ * the row where it was put. The pin icon appearing or vanishing is what says so.
+ */
+export function pinAfterMove(
+  ids: readonly string[],
+  from: number,
+  to: number,
+  pinned: ReadonlySet<string>
+): boolean {
+  const others = ids.filter((_, i) => i !== from);
+  // Landing at the top there is no row above, so the one it displaces speaks for the block instead.
+  const neighbour = to > 0 ? others[to - 1] : others[0];
+  // A list of one has no neighbour to take a state from: nothing moved, so nothing changes.
+  return neighbour === undefined ? pinned.has(ids[from]) : pinned.has(neighbour);
+}
