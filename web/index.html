@@ -45,6 +45,32 @@
         apply();
       })();
     </script>
+    <script>
+      // Chrome floors a border to whole device pixels, so on a fractional device pixel ratio -- any
+      // of Windows' 125/150/175% display scalings -- the 1px asked for here comes out *one* device
+      // pixel thin. A popup then lands at a fractional device position, that single pixel is split
+      // across two, and neither is drawn solid: the line dissolves into the surface behind it. It
+      // survives on whichever side happened to land near a whole pixel and vanishes on the other,
+      // and it moves from side to side as the popup is resized -- which is what "the border is
+      // hidden by white, sometimes left, sometimes right" was.
+      //
+      // Rounding the hairline up to a whole number of device pixels leaves at least one fully
+      // covered pixel wherever the edge falls, which is what makes it a line again. ceil(dpr) is
+      // the thinnest that holds: 1 device pixel at 100%, 2 at anything above it. Re-read whenever
+      // the ratio changes -- a move to another monitor, or a browser zoom.
+      (function () {
+        var apply = function () {
+          var dpr = window.devicePixelRatio || 1;
+          document.documentElement.style.setProperty("--hairline", Math.ceil(dpr) / dpr + "px");
+          try {
+            matchMedia("(resolution: " + dpr + "dppx)").addEventListener("change", apply, {
+              once: true,
+            });
+          } catch (e) {}
+        };
+        apply();
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

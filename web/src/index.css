@@ -21,8 +21,22 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  /* Hairlines inside the page: dividers, card edges, the outline of an input. The shadcn default
+     of oklch(0.922) is a 10% step off white -- it renders perfectly crisply, there is just almost
+     nothing there to see, which on a white form reads as an edge that has been painted over. A
+     little darker is all it takes; the hierarchy is kept by --popover-border below, which is
+     darker still because it carries the boundary of a whole surface rather than a line within one. */
+  --border: oklch(0.87 0 0);
+  /* The edge of a floating surface -- a dialog, a menu, a popover -- drawn by the popover-edge
+     utility below. Even a visible --border is the wrong weight here: it separates two shades of
+     the same near-white, while this has to be the boundary of a whole surface against whatever is
+     behind it. Over a scrim the eye reads the step from dark to white and a grey line sitting
+     inside that step registers as nothing, so a floating edge is darker again. */
+  --popover-border: oklch(0.84 0 0);
+  /* Fallback for the real value, which index.html works out from the device pixel ratio before the
+     first paint -- see the comment there for why a plain 1px does not survive on a 1.5x display. */
+  --hairline: 1px;
+  --input: oklch(0.87 0 0);
   --ring: oklch(0.708 0 0);
 }
 
@@ -43,6 +57,7 @@
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
+  --popover-border: oklch(1 0 0 / 22%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
 }
@@ -64,6 +79,7 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
+  --color-popover-border: var(--popover-border);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --radius-sm: calc(var(--radius) - 4px);
@@ -260,4 +276,26 @@
     -webkit-font-smoothing: antialiased;
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
+}
+
+/*
+ * The edge of a floating surface: a dialog, a menu, a popover. One utility rather than the usual
+ * `border border-popover-border` so the width and the colour can never come apart -- and so the
+ * width is settled here, where the reason for it is written down, instead of at eight call sites.
+ */
+/*
+ * The outline of a form control: an input, a textarea, a select, a checkbox. Same bargain as
+ * popover-edge -- the hairline width belongs with the colour, so a control drawn inside a dialog
+ * that happens to sit on a fractional device pixel keeps a solid line rather than half of one.
+ */
+@utility field-edge {
+  border-width: var(--hairline, 1px);
+  border-style: solid;
+  border-color: var(--input);
+}
+
+@utility popover-edge {
+  border-width: var(--hairline, 1px);
+  border-style: solid;
+  border-color: var(--popover-border);
 }

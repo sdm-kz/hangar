@@ -130,7 +130,7 @@ export function FolderPicker({
       </div>
 
       {open && (
-        <div className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
+        <div className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-md popover-edge bg-popover p-1 shadow-md">
           {loading && (
             <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 animate-spin" /> Loading…

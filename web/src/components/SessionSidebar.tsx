@@ -522,7 +522,7 @@ function FolderMenu({
         <div
           style={{ maxHeight }}
           className={cn(
-            "absolute right-0 z-50 w-52 overflow-y-auto rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
+            "absolute right-0 z-50 w-52 overflow-y-auto rounded-md popover-edge bg-popover py-1 text-popover-foreground shadow-md",
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >
@@ -2378,7 +2378,7 @@ function RowActionsMenu({
           className={cn(
             // As wide as the folder menu, which now lists the same projects: a name plus its tick
             // needs the room, and two menus offering one action shouldn't be two different widths.
-            "absolute right-0 z-50 w-52 overflow-y-auto rounded-md border bg-popover py-1 text-popover-foreground shadow-md",
+            "absolute right-0 z-50 w-52 overflow-y-auto rounded-md popover-edge bg-popover py-1 text-popover-foreground shadow-md",
             dropUp ? "bottom-full mb-1" : "top-full mt-1"
           )}
         >

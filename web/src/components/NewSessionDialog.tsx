@@ -301,7 +301,7 @@ export function NewSessionDialog({
                 id="model"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md field-edge bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 {MODELS.map((m) => (
                   <option key={m.value} value={m.value} className="bg-popover text-popover-foreground">
@@ -391,7 +391,7 @@ export function NewSessionDialog({
             <select
               value={permissionMode}
               onChange={(e) => setPermissionMode(e.target.value)}
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md field-edge bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               {PERMISSION_MODES.map((m) => (
                 <option key={m.value} value={m.value} className="bg-popover text-popover-foreground">

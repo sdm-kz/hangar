@@ -906,7 +906,7 @@ function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTic
         <Info className="size-3.5" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-3 text-popover-foreground shadow-md">
+        <div className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md popover-edge bg-popover p-3 text-popover-foreground shadow-md">
           <SessionInfoList session={session} nowTick={nowTick} />
         </div>
       )}
@@ -981,7 +981,7 @@ function SessionActionsMenu({
         <MoreVertical className="size-5" />
       </Button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md">
+        <div className="absolute right-0 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md popover-edge bg-popover text-popover-foreground shadow-md">
           {running && (
             <div className="border-b px-3 py-2 font-mono text-[11px] text-muted-foreground">
               up {formatUptime(nowTick - new Date(session.createdAt).getTime())}

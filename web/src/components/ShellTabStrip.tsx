@@ -217,7 +217,7 @@ export function ShellTabStrip({
         {menuOpen && (
           <div
             role="menu"
-            className="absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-md border bg-popover p-1 shadow-md"
+            className="absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-md popover-edge bg-popover p-1 shadow-md"
           >
             {optionsFailed ? (
               <div className="px-2 py-1.5 text-sm text-muted-foreground">

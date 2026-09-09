@@ -129,7 +129,7 @@ export function TocPanel({
       {open && (
         <nav
           ref={listRef}
-          className="mt-2 max-h-[min(24rem,60vh)] w-60 max-w-[70vw] overflow-y-auto rounded-md border bg-background/95 pb-1 shadow-md backdrop-blur"
+          className="mt-2 max-h-[min(24rem,60vh)] w-60 max-w-[70vw] overflow-y-auto rounded-md popover-edge bg-background/95 pb-1 shadow-md backdrop-blur"
         >
           {/* Sticky so the filter stays reachable while the section list scrolls under it. */}
           <div className="sticky top-0 border-b bg-background/95 p-1 backdrop-blur">
