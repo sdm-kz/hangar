@@ -6,8 +6,9 @@
 // Which surface the session view is showing. "file" is one of the open file tabs in the session
 // tab bar, filling the pane on its own (which one is the session's saved `file`); "files" and
 // "split" show the tree beside it. "shell" is one of the session's shell tabs, filling the pane the
-// same way a file tab does (which one is the session's saved `shell`).
-export type TabName = "terminal" | "files" | "split" | "file" | "shell";
+// same way a file tab does (which one is the session's saved `shell`). "link" is one of the web
+// pages linked to the session, shown in a frame (which one is the session's saved `link`).
+export type TabName = "terminal" | "files" | "split" | "file" | "shell" | "link";
 
 // Which sidebar tab is showing: the session list (default) or the server Files tree.
 export type PanelName = "sessions" | "files";
@@ -91,7 +92,12 @@ export function readUrlState(): UrlState {
   return {
     session: p.get("session") || undefined,
     tab:
-      tab === "files" || tab === "terminal" || tab === "split" || tab === "file" || tab === "shell"
+      tab === "files" ||
+      tab === "terminal" ||
+      tab === "split" ||
+      tab === "file" ||
+      tab === "shell" ||
+      tab === "link"
         ? tab
         : undefined,
     file: p.get("file") || undefined,

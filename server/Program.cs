@@ -218,6 +218,9 @@ internal static class Program
         builder.Services.AddSingleton<Sessions.Shells.ShellManager>();
         // Extra folders attached to a session's working directory, browsable from its Files panel.
         builder.Services.AddSingleton<LinkedFolderStore>();
+        // Reads the title, icon and — the part a browser is not allowed to see — the framing policy of
+        // a web page a session links to. The links themselves are UI state; only this needs a server.
+        builder.Services.AddSingleton<Web.LinkProbeService>();
         // Web Push: the VAPID keypair, the subscription store, and the notifier that fires a push on
         // the same attention/waiting transitions the UI shows — so alerts arrive with every tab closed.
         builder.Services.AddSingleton<VapidKeyStore>();
@@ -659,6 +662,20 @@ internal static class Program
 
         app.MapPost("/api/fs/delete", (FsPathRequest body) =>
             ServerFileBrowser.Delete(body.Path) ? Results.Ok() : Results.BadRequest(new { error = "could not delete" }));
+
+        // ---- Web pages linked to a session. The links themselves ride the session's UI bag, like its
+        //      open file tabs do; only this needs the server, because the one thing that decides
+        //      whether a page can be shown in a tab at all — its framing headers — is invisible to a
+        //      browser. See Web/LinkProbe.cs.
+        //
+        //      This fetches a caller-named URL from the server, so it is an SSRF surface, and
+        //      deliberately does not filter private addresses: a self-hosted Jira or wiki on the LAN
+        //      is the case it exists for. It reads a title and a set of headers with no credentials
+        //      of ours attached, and the caller is already authenticated to an API that launches
+        //      processes and reads the whole disk — so it grants nothing that caller did not have.
+        //      Keep it that way: never let it forward a request body, a header, or a cookie. --------
+        app.MapGet("/api/web/link-probe", async (string url, Web.LinkProbeService probe, CancellationToken ct) =>
+            Results.Ok(await probe.ProbeAsync(url, ct)));
 
         // ---- Folders linked to a session (persisted per working directory, so they survive a restart
         //      and a resumed session's new id). Each mutation returns the updated list. --------------

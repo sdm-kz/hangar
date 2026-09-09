@@ -10,6 +10,7 @@ import type {
   GitRefs,
   GitStatus,
   GitWorktree,
+  LinkProbe,
   Project,
   PtyOrphan,
   SessionInfo,
@@ -150,6 +151,16 @@ export const api = {
   // Closes the tab and kills what is running in it — there is no detach for a shell.
   closeShell(id: string): Promise<void> {
     return request(`/api/shells/${id}`, { method: "DELETE" });
+  },
+
+  // ---- Web link tabs ----------------------------------------------------------------------
+  /**
+   * Look at a URL from the SERVER: its title and icon, and whether it lets itself be framed. The
+   * last part is the reason this is not done here — a browser is not allowed to see why an iframe
+   * came up blank, and the headers that decide it are only readable by something that isn't one.
+   */
+  probeLink(url: string): Promise<LinkProbe> {
+    return request(`/api/web/link-probe?url=${encodeURIComponent(url)}`);
   },
   /**
    * Pin/unpin a session. The server keys the pin by the session's conversation (so it outlives a

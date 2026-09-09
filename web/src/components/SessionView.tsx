@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { GitStatus, SessionInfo } from "@/types";
+import type { GitStatus, SessionInfo, SessionLink } from "@/types";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
 import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
@@ -12,10 +12,14 @@ import {
   syncSessionUi,
 } from "@/lib/sessionUi";
 import { fileEntryFromPath, useFileTabs } from "@/lib/useFileTabs";
+import { MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
 import { useShells } from "@/lib/useShells";
 import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
 import { FileTabStrip } from "./FileTabStrip";
+import { LinkDialog } from "./LinkDialog";
+import { LinkTabStrip } from "./LinkTabStrip";
 import { ShellTabStrip } from "./ShellTabStrip";
+import { WebLinkView } from "./WebLinkView";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
 import { RenameField } from "./RenameField";
@@ -156,6 +160,17 @@ export function SessionView({
         destructive: false,
       }),
   });
+
+  // The web pages pinned to this session — a Jira issue, a PR, a doc — as tabs beside the shells.
+  // Unlike the shells there is no process behind them, so they live in the session's UI bag and the
+  // hook is the whole of the feature's state.
+  const links = useSessionLinks(session.id);
+  // The add/edit dialog: null when closed, `{}` when adding, `{ edit }` when changing one.
+  const [linkDialog, setLinkDialog] = useState<{ edit?: SessionLink } | null>(null);
+  // Link ids whose frame has been mounted at least once. A frame is kept alive behind the other
+  // tabs so coming back to a page finds it where it was left, but mounting every link on open would
+  // fetch every pinned page whether or not anyone looked at one.
+  const [mountedLinks, setMountedLinks] = useState<string[]>([]);
 
   useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
 
@@ -363,6 +378,47 @@ export function SessionView({
       if (await shells.open(shell)) setView("shell");
     },
     [shells.open]
+  );
+
+  // Showing a linked page. Both writes land in one request — saveSessionUi coalesces what a single
+  // click queues — so the session comes back to this page on its other devices too.
+  const showLink = useCallback(
+    (id: string) => {
+      links.activate(id);
+      changeView("link");
+    },
+    [links.activate, changeView]
+  );
+
+  // Mount the frame of whichever link is being looked at, and leave it mounted from then on.
+  useEffect(() => {
+    if (view !== "link" || !links.activeId) return;
+    const id = links.activeId;
+    setMountedLinks((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, [view, links.activeId]);
+
+  // Forget frames for links that are gone (removed here, or on another device), so their iframes
+  // are unmounted rather than kept alive behind a tab that no longer exists.
+  useEffect(() => {
+    setMountedLinks((prev) => {
+      const next = prev.filter((id) => links.links.some((l) => l.id === id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [links.links]);
+
+  // The last link closed: the pane goes back to the terminal, the way it does for the shells.
+  useEffect(() => {
+    if (view === "link" && !links.links.length) changeView("terminal");
+  }, [view, links.links.length, changeView]);
+
+  // Pinning a page gives it the pane straight away — adding it is asking to look at it. `add` picks
+  // the tab itself (it may have landed on one that was already there), so this only moves the view.
+  const addLink = useCallback(
+    (link: Omit<SessionLink, "id">) => {
+      links.add(link);
+      changeView("link");
+    },
+    [links.add, changeView]
   );
 
   // No shells left: the pane goes back to the terminal. Keyed on the LIST being empty rather than on
@@ -687,8 +743,8 @@ export function SessionView({
             onClose={(p) => void fileTabs.close(p)}
             onCloseAll={() => void fileTabs.closeAll()}
           />
-          {/* Shells in the same folder, and the "+" that opens another. Last in the row so the
-              views that are always there keep their places as shells come and go. */}
+          {/* Shells in the same folder, and the "+" that opens another. After the views that are
+              always there, so those keep their places as shells come and go. */}
           <ShellTabStrip
             shells={shells.shells}
             activeId={shells.activeId}
@@ -697,6 +753,17 @@ export function SessionView({
             onActivate={showShell}
             onOpen={(sh) => void openShell(sh)}
             onClose={(id) => void shells.close(id)}
+          />
+          {/* The pages this session is working from, and the "+" that pins another — last in the
+              row, so that "+" is always in the same place at the end of the bar. */}
+          <LinkTabStrip
+            links={links.links}
+            activeId={links.activeId}
+            showingLink={view === "link"}
+            onActivate={showLink}
+            onEdit={(id) => setLinkDialog({ edit: links.links.find((l) => l.id === id) })}
+            onAdd={() => setLinkDialog({})}
+            onClose={links.remove}
           />
         </div>
       </header>
@@ -783,7 +850,37 @@ export function SessionView({
             />
           </div>
         ))}
+
+        {/* A linked page stays mounted behind the other tabs once it has been opened, so returning
+            to it finds it where it was left rather than reloading — the same reason the shells and
+            the terminal stay mounted. Only pages actually visited are here (see mountedLinks). */}
+        {links.links
+          .filter((l) => mountedLinks.includes(l.id))
+          .map((l) => (
+            <div
+              key={l.id}
+              className={cn(
+                "flex min-h-0 min-w-0 flex-1 flex-col",
+                !(view === "link" && l.id === links.activeId) && "hidden"
+              )}
+            >
+              <WebLinkView link={l} onEdit={() => setLinkDialog({ edit: l })} />
+            </div>
+          ))}
       </div>
+
+      {/* Pin a web page to this session, or change one already pinned. */}
+      {linkDialog && (
+        <LinkDialog
+          edit={linkDialog.edit}
+          full={!linkDialog.edit && links.links.length >= MAX_LINKS}
+          onSave={(l) => {
+            if (linkDialog.edit) links.update(linkDialog.edit.id, l);
+            else addLink(l);
+          }}
+          onClose={() => setLinkDialog(null)}
+        />
+      )}
 
       {/* Save-changes prompt shown when a tab with unsaved edits is about to close. */}
       <Dialog open={!!closeGuard} onOpenChange={(o) => !o && settleCloseGuard("cancel")}>

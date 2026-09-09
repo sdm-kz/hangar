@@ -244,3 +244,42 @@ export interface ShellInfo {
   /** False once the shell process has ended; the tab stays until it is closed. */
   running: boolean;
 }
+
+/**
+ * A web page pinned to a session — the Jira issue it is working from, the doc it is following, the
+ * dashboard it is watching — shown as a tab beside the terminal and the files.
+ *
+ * Stored in the session's UI bag (see lib/sessionUi.ts), keyed by conversation, so the links follow
+ * the session to every device and survive a reopen. They are the user's own notes about the work,
+ * not state of a process, which is why they need no server-side store of their own.
+ */
+export interface SessionLink {
+  /** Stable id, so a tab keeps its identity when the URL behind it is edited. */
+  id: string;
+  url: string;
+  /** What the tab says: the page's own title, or whatever the user renamed it to. */
+  title: string;
+  /** Favicon URL, loaded straight from the site by the browser. */
+  icon?: string;
+  /**
+   * Show the page inside a tab. False sends it to a browser tab instead — the user's choice, or the
+   * standing answer for a site whose headers refuse to be framed.
+   */
+  embed: boolean;
+  /** The probe's verdict when the link was added, so the tab can explain a blank frame. */
+  blockedBy?: string;
+}
+
+/** What the server could learn about a URL — see server/Web/LinkProbe.cs. */
+export interface LinkProbe {
+  /** The URL after redirects; this is what the tab should point at. */
+  url: string;
+  title?: string | null;
+  icon?: string | null;
+  /** Whether the page allows framing. Null when it could not be reached at all. */
+  embeddable?: boolean | null;
+  /** The header refusing to be framed, quoted, when one does. */
+  blockedBy?: string | null;
+  /** Why the probe failed, when it did — the link is still addable. */
+  error?: string | null;
+}

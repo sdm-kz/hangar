@@ -82,6 +82,21 @@ The web UI is a **session manager with a full terminal**:
   where a previewed file would go. It starts one straight away and takes the same **+** for more.
   A folder's shells are its own — a session running in the same folder keeps its tabs in its own tab
   bar — and closing the last one hands the main area back.
+- **Web links** — the page a session is working *from* — the Jira issue, the PR, the spec — pinned
+  to its tab bar by the **+** at the end of the row. Paste an address (the `https://` is optional);
+  the page is named and given its favicon automatically, and clicking its tab shows it in the pane
+  beside the terminal. Links live server-side against the conversation, like the open file tabs, so
+  they follow the session to every device and survive a reopen. Double-click a tab (or the pencil in
+  its toolbar) to rename or re-point it.
+
+  **Not every site can be shown.** Most SaaS worth linking to — Atlassian, GitHub, Google — sends
+  `X-Frame-Options` or a CSP `frame-ancestors` that forbids being framed by anyone else, and a
+  browser obeys that by drawing nothing at all, with no error a page can catch. So the server reads
+  those headers before the tab exists (`GET /api/web/link-probe`) and says so in the add dialog: a
+  page that refuses framing becomes a **bookmark tab** instead, marked with an arrow, whose pane
+  names the page and opens it in a browser tab in one click. You can force either behaviour with the
+  *Show the page in the tab* checkbox. A page that does frame but needs you signed in may still ask
+  again — a frame is a separate context as far as the browser's cookie rules go.
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile.
 - **Light / dark** theme toggle.
 - **Start / stop** — stop kills the process; the app just manages lifecycle.
