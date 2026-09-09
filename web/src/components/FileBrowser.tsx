@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
+import { RootPicker, rootOptions } from "./RootPicker";
 import { FolderPicker } from "./FolderPicker";
 import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
@@ -135,12 +136,6 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-// Trailing segment of an absolute server path — the display name of a root folder in the picker.
-function baseName(p: string): string {
-  const parts = p.split(/[/\\]+/).filter(Boolean);
-  return parts[parts.length - 1] ?? p;
-}
-
 // Whether two absolute server paths name the same folder. Compared loosely (case- and
 // trailing-separator-insensitive) because a path can arrive from the server, storage or a picker.
 function samePath(a: string, b: string): boolean {
@@ -214,6 +209,11 @@ export const FileBrowser = forwardRef<
   const [rootDir, setRootDir] = useState(() => loadSessionUi(sessionId).worktree ?? "");
   const [altStatus, setAltStatus] = useState<GitStatus | null>(null);
   const isLinkedRoot = !!rootDir && (linked ?? []).some((f) => samePath(f, rootDir));
+  // The roots the picker offers, in one list: worktrees first, then the folders linked by hand.
+  const rootChoices = useMemo(
+    () => rootOptions(worktrees, linked, workingDirectory),
+    [worktrees, linked, workingDirectory]
+  );
   const readOnly = !!rootDir && !isLinkedRoot; // browsing another worktree
   // Root that writes (upload / rename / delete / new folder / save) target; undefined = the
   // session's own working dir.
@@ -953,35 +953,12 @@ export const FileBrowser = forwardRef<
         {((worktrees?.length ?? 0) > 1 || (linked?.length ?? 0) > 0) && (
           <div className="flex items-center gap-1 px-3 pb-1 text-[10px] text-muted-foreground">
             <span className="shrink-0">Folder:</span>
-            <select
+            <RootPicker
               value={rootDir}
-              onChange={(e) => pickRoot(e.target.value)}
+              options={rootChoices}
+              onPick={(dir) => void pickRoot(dir)}
               title={rootDir || workingDirectory}
-              className="min-w-0 flex-1 truncate rounded border bg-background px-1 py-0.5 text-foreground outline-none focus:ring-1 focus:ring-primary"
-            >
-              {worktrees && worktrees.length > 1 ? (
-                worktrees.map((w) => (
-                  <option key={w.path} value={w.isCurrent ? "" : w.path} title={w.path}>
-                    {baseName(w.path)}
-                    {w.branch ? ` · ${w.branch}` : ""}
-                    {w.isCurrent ? " (this session)" : ""}
-                  </option>
-                ))
-              ) : (
-                <option value="" title={workingDirectory}>
-                  {baseName(workingDirectory)} (this session)
-                </option>
-              )}
-              {linked && linked.length > 0 && (
-                <optgroup label="Linked folders">
-                  {linked.map((f) => (
-                    <option key={f} value={f} title={f}>
-                      {baseName(f)}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
+            />
             {isLinkedRoot && (
               <button
                 onClick={() => unlinkFolder(rootDir)}
