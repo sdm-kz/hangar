@@ -162,7 +162,11 @@ export function GroupDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain">
+        {/* -mx-1 px-1 is not spacing: a scroller clips on both axes, and a control whose edge
+              is flush with this box loses whatever it paints *outside* itself there -- which is
+              its focus ring, cut clean off down the left while the rest of it draws. The padding
+              buys the ring a gutter and the negative margin gives it back, so nothing moves. */}
+        <div className="-mx-1 flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-1">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="group-name">Name</Label>
             <Input

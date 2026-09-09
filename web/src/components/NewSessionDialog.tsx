@@ -207,7 +207,11 @@ export function NewSessionDialog({
           }}
           className="flex min-h-0 flex-1 flex-col gap-4"
         >
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+          {/* -mx-1 px-1 is not spacing: a scroller clips on both axes, and a control whose edge
+              is flush with this box loses whatever it paints *outside* itself there -- which is
+              its focus ring, cut clean off down the left while the rest of it draws. The padding
+              buys the ring a gutter and the negative margin gives it back, so nothing moves. */}
+          <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
           <div className="space-y-2">
             <Label>Working folder</Label>
             <FolderPicker value={dir} onChange={setDir} />
