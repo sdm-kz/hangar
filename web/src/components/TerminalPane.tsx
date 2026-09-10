@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { ArrowDown, RefreshCw } from "lucide-react";
+import { ArrowDown, Check, Copy, RefreshCw, TextSelect, X } from "lucide-react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
@@ -11,6 +11,7 @@ import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
 import { writeToClipboard } from "@/lib/clipboard";
 import { uploadImageFile } from "@/lib/upload";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "@/components/ZoomControls";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 // The terminal zooms by font size rather than CSS `zoom`: the grid is measured from the font, so a
@@ -19,6 +20,31 @@ import { cn } from "@/lib/utils";
 // the app-wide zoom stops, so a percentage here means what it means in the file viewers.
 const BASE_FONT_SIZE = 13;
 const fontSizeFor = (zoom: number) => Math.max(6, Math.round(BASE_FONT_SIZE * zoom));
+
+/**
+ * The terminal's text, for the selection overlay: scrollback and screen from the normal buffer, and
+ * just the screen from the alternate one -- an alt-screen app (Claude Code's TUI) has no scrollback
+ * by definition, and the rows behind it belong to whatever ran before.
+ *
+ * A soft-wrapped row is joined back onto the line it continues rather than emitted as its own line,
+ * so a long command copies as the one command you typed instead of arriving pre-broken at the width
+ * of the window it happened to be read in.
+ */
+function bufferText(term: Terminal): string {
+  const buf = term.buffer.active;
+  const end = buf.type === "alternate" ? term.rows : buf.baseY + term.rows;
+  const lines: string[] = [];
+  for (let i = 0; i < end; i++) {
+    const line = buf.getLine(i);
+    if (!line) continue;
+    const text = line.translateToString(true);
+    if (line.isWrapped && lines.length > 0) lines[lines.length - 1] += text;
+    else lines.push(text);
+  }
+  // Blank rows below the last output are the empty part of the screen, not content.
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines.join("\n");
+}
 
 // How much ctrl-wheel travel makes one zoom step. A mouse notch (~100px) steps immediately; a
 // trackpad pinch, which fires a stream of small deltas, ramps instead of shooting to either end.
@@ -261,6 +287,10 @@ export const TerminalPane = forwardRef<
   // reloads. Held in a ref too so a fresh terminal — a session switch, a reattach — is built at the
   // current size instead of flashing 100% first.
   const [zoom, setZoom] = usePersistentZoom("terminal");
+  // Snapshot of the buffer as plain text while the selection overlay is open; null = closed. Taken
+  // once on open rather than followed live: text that reflows under a finger cannot be selected.
+  const [selectionText, setSelectionText] = useState<string | null>(null);
+  const [copiedAll, setCopiedAll] = useState(false);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   // Move `delta` stops along ZOOM_LEVELS from wherever we are now, clamped at both ends. Reads the
@@ -909,19 +939,93 @@ export const TerminalPane = forwardRef<
         ref={hostRef}
         className="flex h-full w-full flex-col justify-end overscroll-contain overflow-hidden"
       />
-      {/* Zoom for the terminal alone (the browser's own zoom takes the whole app with it). Kept out
-          of sight until the pointer is over the pane, so it isn't permanently parked on top of the
-          TUI's top-right corner — but pinned open once zoomed, since a non-default size should say
-          so and offer the way back, and always visible on touch, where there is no hover. */}
-      <ZoomControls
-        zoom={zoom}
-        onChange={setZoom}
-        className={cn(
-          "right-4 top-3 transition-opacity",
-          zoom === 1 &&
-            "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
-        )}
-      />
+      {/* The pane's own controls, in one row so they cannot land on top of each other. Kept out of
+          sight until the pointer is over the pane, so nothing is permanently parked on the TUI's
+          top-right corner — and always visible on touch, where there is no hover to reveal them. */}
+      <div className="absolute right-4 top-3 z-10 flex items-center gap-1.5">
+        {/* The grid is drawn into a canvas, so there is nothing for a finger to select: no DOM text
+            for the OS to grab, and xterm's own selection runs on mouse events that iOS only
+            synthesizes for a tap. Rather than reimplement a selection UI badly, hand the buffer to
+            the browser as text and let the platform's own one — magnifier, handles, Copy — do it. */}
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => {
+            const term = termRef.current;
+            if (!term) return;
+            setCopiedAll(false);
+            setSelectionText(bufferText(term));
+          }}
+          title="Select text — opens the terminal's text so you can select and copy it"
+          aria-label="Select text"
+          className={cn(
+            "size-8 bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-opacity hover:text-foreground",
+            "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          )}
+        >
+          <TextSelect className="size-4" />
+        </Button>
+        {/* Zoom for the terminal alone (the browser's own zoom takes the whole app with it). Pinned
+            open once zoomed, since a non-default size should say so and offer the way back. */}
+        <ZoomControls
+          zoom={zoom}
+          onChange={setZoom}
+          className={cn(
+            "static transition-opacity",
+            zoom === 1 &&
+              "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          )}
+        />
+      </div>
+
+      {/* Selection overlay: the buffer as real text, over the pane rather than beside it so the
+          reading position is unchanged. It covers the host, which is what stands the pane's own
+          touch-scroll handler down — those listeners are on the host, and nothing reaches it now,
+          so a drag here scrolls and selects exactly the way it does on any other page. */}
+      {selectionText !== null && (
+        <div className="absolute inset-0 z-20 flex flex-col bg-background">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
+            <span className="min-w-0 truncate text-xs text-muted-foreground">
+              A snapshot — select and copy, then close.
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {/* Selecting ten thousand lines of scrollback by hand is not a thing anyone should be
+                  asked to do on a phone, so the whole snapshot is one tap away. */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  await writeToClipboard(selectionText);
+                  setCopiedAll(true);
+                  setTimeout(() => setCopiedAll(false), 1500);
+                }}
+              >
+                {copiedAll ? (
+                  <Check className="size-4 text-emerald-500" />
+                ) : (
+                  <Copy className="size-4" />
+                )}
+                {copiedAll ? "Copied" : "Copy all"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setSelectionText(null)}>
+                <X className="size-4" />
+                Close
+              </Button>
+            </div>
+          </div>
+          {/* Opened scrolled to the end: what you came to copy is nearly always the last thing that
+              happened, and on a phone a thousand rows of scrollback is a long way back up. */}
+          <pre
+            ref={(el) => {
+              if (el) el.scrollTop = el.scrollHeight;
+            }}
+            style={{ fontSize: fontSizeFor(zoom) }}
+            className="min-h-0 flex-1 select-text overflow-auto overscroll-contain whitespace-pre px-3 py-2 font-mono leading-5"
+          >
+            {selectionText}
+          </pre>
+        </div>
+      )}
       {/* The socket dropped (sleep, a backgrounded tab, a network blip). Automatic re-attach is
           already backing off behind this chip; the button is the escape hatch for when it gave up
           or you'd rather not wait — the same effect as the page reload people did by hand. */}
