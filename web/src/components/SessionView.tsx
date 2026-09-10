@@ -512,7 +512,10 @@ export function SessionView({
             right — h-14 so it lines up with the sidebar's app header. On a phone the width goes to
             the name instead: the folder and branch drop to a second line and the right-hand cluster
             collapses into a "⋯" menu. */}
-        <div className="relative flex min-h-10 min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1 md:h-10 md:py-0">
+        {/* A container, so what the row drops when it runs out of width is decided by the width the
+            row actually has -- which is the window minus a sidebar the user can resize or collapse,
+            and nothing a viewport breakpoint can see. */}
+        <div className="@container relative flex min-h-10 min-w-0 shrink-0 items-center gap-2 border-b px-3 py-1 md:h-10 md:py-0">
           {/* Session color (set via `/color`) as a left accent border, the same color the sidebar row
               shows. Scoped to this row rather than the whole header: run down the header and it lines
               up alongside the Terminal/Split/Files tabs too, which the colour says nothing about. */}
@@ -620,8 +623,12 @@ export function SessionView({
           {/* Right side of the title row: uptime · info popup · RC badge — desktop only; the phone
               gets the same set through the "⋯" menu below. */}
           <div className="ml-auto hidden shrink-0 items-center gap-2 md:flex">
+              {/* First to go when the row is tight. The right-hand cluster does not shrink, so every
+                  pixel it holds is taken off the branch and the folder opposite -- and those name the
+                  thing you are looking at, where uptime is a number you glance at. It is in the info
+                  popup beside it either way, so nothing is actually lost by dropping it here. */}
               {session.state === "Running" && (
-                <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground @min-[64rem]:inline">
                   up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
                 </span>
               )}
