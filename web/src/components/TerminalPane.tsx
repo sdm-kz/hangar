@@ -799,11 +799,23 @@ export const TerminalPane = forwardRef<
       lastInbound = Date.now() - (HEARTBEAT_DEAD_MS - HEARTBEAT_INTERVAL_MS);
       ping();
       // The socket stayed open across the tab switch, so xterm's buffer is intact — just refit and
-      // repaint the existing cells. No size nudge here: forcing Claude to reflow would jump the
-      // scroll position. The nudge only belongs on a fresh reattach (see ws.onopen).
+      // repaint the existing cells.
       sendResize();
       requestAnimationFrame(sendResize);
       setTimeout(sendResize, 150);
+      // One PTY serves every viewer of a session, so the same session open on a second machine has
+      // been driving its size while we were away, and Claude last painted its frame to fit THAT
+      // screen. Re-asserting our own size usually changes nothing at the PTY -- often it is already
+      // the size we are asking for -- so there is no SIGWINCH, no repaint, and we come back to
+      // someone else's screen laid into our grid: blank rows under a frame drawn for fewer, or text
+      // running off the edge of one drawn for more. Nudging the size forces the redraw.
+      //
+      // Only from the live tail. Scrolled back into history, a reflow moves the ground under what
+      // you were reading, which is the reason this used to be skipped here altogether.
+      setTimeout(() => {
+        const buf = term.buffer.active;
+        if (buf.baseY - buf.viewportY <= 2) nudgeRepaint();
+      }, 250);
     };
     document.addEventListener("visibilitychange", onVisible);
 
