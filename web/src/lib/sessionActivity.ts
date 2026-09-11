@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionInfo } from "@/types";
 
 /**
@@ -100,7 +100,7 @@ export function useDoneSessions({
    * what says whether a session leaving the working set can be read as "finished" — see below.
    */
   streamUp: boolean;
-}): Set<string> {
+}): { done: Set<string>; markSeen: (ids: Iterable<string>) => void } {
   const [done, setDone] = useState<Set<string>>(loadDone);
   // The working set as of the previous frame. A turn has finished when an id drops out of it, which
   // is a transition — it cannot be read off any single snapshot.
@@ -197,5 +197,16 @@ export function useDoneSessions({
     };
   }, [shownSessionId, shownDone]);
 
-  return done;
+  // Clearing by hand, for a heading's "mark all seen": the same removal the viewing timer makes, for
+  // a batch you have decided you don't need to open. It writes through the same set, so the storage
+  // sync above carries it to the other tab like any other clear.
+  const markSeen = useCallback((ids: Iterable<string>) => {
+    setDone((cur) => {
+      let next = cur;
+      for (const id of ids) next = without(next, id);
+      return next;
+    });
+  }, []);
+
+  return { done, markSeen };
 }

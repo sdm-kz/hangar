@@ -226,7 +226,7 @@ export function App() {
   // Sessions that finished something you haven't seen yet — the gap the green pulse leaves behind
   // when it simply stops. Owned here, beside the sets it is derived from, because the sidebar is
   // mounted twice (desktop column and mobile drawer) and a mark cleared in one has been seen in both.
-  const doneIds = useDoneSessions({
+  const { done: doneIds, markSeen } = useDoneSessions({
     sessions,
     busyIds,
     waitingIds,
@@ -811,6 +811,7 @@ export function App() {
             <SessionSidebar
               sessions={sessions}
               activityIds={activityIds}
+              onMarkSeen={markSeen}
               activeId={activeId}
               onSelect={selectSession}
               onNewInFolder={newSessionInFolder}
@@ -873,6 +874,7 @@ export function App() {
                 <SessionSidebar
                   sessions={sessions}
                   activityIds={activityIds}
+                  onMarkSeen={markSeen}
                   activeId={activeId}
                   onSelect={(id) => {
                     selectSession(id);

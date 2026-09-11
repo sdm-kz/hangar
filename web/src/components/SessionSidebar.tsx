@@ -51,6 +51,7 @@ import {
   type LucideIcon,
   Boxes,
   Check,
+  CheckCheck,
   Copy,
   Filter,
   FolderPlus,
@@ -382,6 +383,50 @@ function useMenuPlacement(minHeight = 160) {
 }
 
 /** Collapsible folder header shared by the grouped session and recent lists. */
+/**
+ * "Mark all seen" on a heading: clears the finished tick on every session under it without opening
+ * any of them — for the afternoon you already know how those runs went, where opening each one just
+ * to dismiss a tick is busywork. Offered only while there is something to clear, so its appearing is
+ * itself the signal, and it leads the heading's hover actions, where the eye already is after reading
+ * the tick on the icon.
+ *
+ * The hover class is looked up rather than built: each heading reveals its actions under its own
+ * named group, and Tailwind only generates classes it can find spelled out in the source.
+ */
+const MARK_SEEN_REVEAL = {
+  ph: "group-hover/ph:inline-flex",
+  vf: "group-hover/vf:inline-flex",
+  gh: "group-hover/gh:inline-flex",
+} as const;
+
+function MarkSeenButton({
+  count,
+  onMarkSeen,
+  reveal,
+}: {
+  count: number;
+  onMarkSeen?: () => void;
+  reveal: keyof typeof MARK_SEEN_REVEAL;
+}) {
+  if (!onMarkSeen || count <= 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onMarkSeen();
+      }}
+      title={`Mark ${count} finished session${count === 1 ? "" : "s"} as seen`}
+      className={cn(
+        "hidden shrink-0 text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 [@media(hover:none)]:inline-flex",
+        MARK_SEEN_REVEAL[reveal]
+      )}
+    >
+      <CheckCheck className="size-3.5" />
+    </button>
+  );
+}
+
 function GroupHeader({
   dir,
   count,
@@ -395,6 +440,8 @@ function GroupHeader({
   onMoveToProject,
   onNewProject,
   dragProps,
+  doneCount = 0,
+  onMarkSeen,
 }: {
   dir: string;
   count: number;
@@ -415,6 +462,9 @@ function GroupHeader({
   onNewProject: () => void;
   // Makes the header the drag source for "drop this folder on a project".
   dragProps?: Record<string, unknown>;
+  // Finished-but-unseen sessions in this folder, and the way to clear them all. Sessions view only.
+  doneCount?: number;
+  onMarkSeen?: () => void;
 }) {
   return (
     <div
@@ -442,6 +492,7 @@ function GroupHeader({
             part of the folder's label, and never drifts away from it on a wide sidebar. */}
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
       </button>
+      <MarkSeenButton count={doneCount} onMarkSeen={onMarkSeen} reveal="gh" />
       {onNewSession && (
         <button
           type="button"
@@ -667,6 +718,8 @@ function VirtualFolderHeader({
   onToggle,
   activity,
   onEdit,
+  doneCount = 0,
+  onMarkSeen,
 }: {
   group: ProjectGroup;
   count: number;
@@ -674,6 +727,9 @@ function VirtualFolderHeader({
   onToggle: () => void;
   activity?: Activity | null;
   onEdit: () => void;
+  // Finished-but-unseen sessions filed in here, and the way to clear them all — see MarkSeenButton.
+  doneCount?: number;
+  onMarkSeen?: () => void;
 }) {
   const Icon = groupIcon(group.icon);
   const accent = sessionColor(group.color);
@@ -703,6 +759,7 @@ function VirtualFolderHeader({
         <span className="truncate text-xs font-medium">{group.name}</span>
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
       </button>
+      <MarkSeenButton count={doneCount} onMarkSeen={onMarkSeen} reveal="vf" />
       <button
         type="button"
         onClick={(e) => {
@@ -733,6 +790,8 @@ function ProjectHeader({
   onNewSession,
   activity,
   postponed = 0,
+  doneCount = 0,
+  onMarkSeen,
 }: {
   project: Project | null;
   count: number;
@@ -747,6 +806,11 @@ function ProjectHeader({
   // Postponed messages stashed across the whole project, so a collapsed one still says they are
   // there — the per-session badges it is a total of are hidden inside it.
   postponed?: number;
+  // Sessions in here that finished while you were away, and the way to acknowledge all of them at
+  // once. Only offered while there is at least one, so the button is itself the "there's something
+  // to clear" signal rather than a control that is usually inert.
+  doneCount?: number;
+  onMarkSeen?: () => void;
 }) {
   const accent = project ? sessionColor(project.color) : null;
   return (
@@ -795,6 +859,7 @@ function ProjectHeader({
           </Badge>
         )}
       </button>
+      <MarkSeenButton count={doneCount} onMarkSeen={onMarkSeen} reveal="ph" />
       {onNewSession && (
         <button
           type="button"
@@ -849,6 +914,8 @@ function ProjectSections<T>({
   countOf,
   activityOf,
   postponedOf,
+  doneOf,
+  onMarkSeen,
 }: {
   sections: ProjectSection<T>[];
   /** Collapsed project ids ("" for the "No project" section). */
@@ -893,6 +960,9 @@ function ProjectSections<T>({
   activityOf?: (items: T[], project: Project | null) => Activity | null;
   /** Postponed messages stashed inside the section. Sessions view only; a recent preset has none. */
   postponedOf?: (items: T[], project: Project | null) => number;
+  /** Finished-but-unseen sessions inside the section, for its "mark all seen". Sessions view only. */
+  doneOf?: (items: T[], project: Project | null) => string[];
+  onMarkSeen?: (ids: string[]) => void;
 }) {
   return (
     <div className="space-y-2">
@@ -902,6 +972,7 @@ function ProjectSections<T>({
         const drop = sessionDrop?.(project);
         const groups = before?.(project) ?? null;
         const over = (dnd?.isOver(project?.id ?? null) ?? false) || (drop?.over ?? false);
+        const done = doneOf?.(items, project) ?? [];
         return (
           <div
             key={key}
@@ -922,6 +993,8 @@ function ProjectSections<T>({
               onNewSession={project && onNewSession ? () => onNewSession(project) : undefined}
               activity={activityOf?.(items, project) ?? null}
               postponed={postponedOf?.(items, project) ?? 0}
+              doneCount={done.length}
+              onMarkSeen={onMarkSeen && done.length > 0 ? () => onMarkSeen(done) : undefined}
             />
             {!isCollapsed && groups && (
               // The virtual folders sit at the project's own indent in both views, not the body's:
@@ -1247,6 +1320,7 @@ function useDragReorder(onReorder: (from: number, to: number, list: string) => v
 export function SessionSidebar({
   sessions,
   activityIds,
+  onMarkSeen,
   activeId,
   onSelect,
   onNewInFolder,
@@ -1272,6 +1346,9 @@ export function SessionSidebar({
   sessions: SessionInfo[];
   // Who is busy / waiting on you / compacting / finished-but-unseen, in one bag — see ActivityIds.
   activityIds: ActivityIds;
+  // Clear the finished-but-unseen tick on these sessions without opening them (a heading's
+  // "mark all seen"). Owned by App with the set itself, so both sidebar mounts agree.
+  onMarkSeen: (ids: Iterable<string>) => void;
   activeId: string | null;
   onSelect: (id: string) => void;
   onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
@@ -1667,6 +1744,11 @@ export function SessionSidebar({
     return (groupForSession(s, projects)?.id ?? null) !== groupId;
   };
 
+  // The sessions in a set that have a finished-but-unseen tick. Closed ones are skipped for the same
+  // reason folderActivity skips them: a closed session is not showing a tick to clear.
+  const doneIn = (items: SessionInfo[]) =>
+    items.filter((s) => s.state !== "Restorable" && activityIds.done.has(s.id)).map((s) => s.id);
+
   const sessionDnd = useSessionDrag((id, groupId) => void moveSessionToGroup(id, groupId));
 
   /** Dropping a row on the project itself is how it leaves a box — see ProjectSections.sessionDrop. */
@@ -1970,6 +2052,8 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           onToggle={() => toggleGroup(vg.key)}
           activity={folderActivity(vg.items, activityIds)}
           onEdit={() => setEditing({ id: project.id, group: vg.group.id })}
+          doneCount={doneIn(vg.items).length}
+          onMarkSeen={() => onMarkSeen(doneIn(vg.items))}
         />
         {!isCollapsed && renderGroupRows(vg)}
       </div>
@@ -1997,6 +2081,8 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           onNewSession={() => onNewInFolder(g.dir)}
           onRemove={() => setRemoveDir(g.key)}
           activity={folderActivity(g.items, activityIds)}
+          doneCount={doneIn(g.items).length}
+          onMarkSeen={() => onMarkSeen(doneIn(g.items))}
           projects={projects}
           projectId={projectForDir(g.dir, projects)?.id ?? null}
           onMoveToProject={(id) => void moveFolderToProject(g.dir, id)}
@@ -2166,6 +2252,10 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
                   activityIds
                 )
               }
+              doneOf={(gs, project) =>
+                doneIn([...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)])
+              }
+              onMarkSeen={onMarkSeen}
               postponedOf={(gs, project) =>
                 folderPostponed([
                   ...gs.flatMap((g) => g.items),
@@ -2209,6 +2299,8 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
             postponedOf={(ss, project) =>
               folderPostponed([...ss, ...shownGroups(project).flatMap((g) => g.items)])
             }
+            doneOf={(ss, project) => doneIn([...ss, ...shownGroups(project).flatMap((g) => g.items)])}
+            onMarkSeen={onMarkSeen}
           />
         ) : (
           // Plain flat list: no projects to head it, but the same one arrangeable list underneath —
