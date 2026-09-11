@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type RefObject } from "react";
-import { ArrowDown, ArrowUp, FoldHorizontal, UnfoldHorizontal, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowDown, ArrowUp, FoldHorizontal, UnfoldHorizontal, WrapText, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +74,36 @@ export function usePersistentReadingWidth(key: string): [number | null, (width: 
     [storageKey]
   );
   return [width, set];
+}
+
+/**
+ * Word wrap for text previews, persisted under `claudeweb.wordWrap:<key>` beside the zoom and the
+ * reading width. Off by default: source is laid out in lines by whoever wrote it, and wrapping quietly
+ * changes what a line looks like, so it is something you turn on for the file that needs it -- a log,
+ * a minified bundle, prose in a .txt -- rather than the resting state.
+ */
+export function usePersistentWordWrap(key: string): [boolean, (wrap: boolean) => void] {
+  const storageKey = `claudeweb.wordWrap:${key}`;
+  const [wrap, setWrap] = useState(() => {
+    try {
+      return localStorage.getItem(storageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const set = useCallback(
+    (w: boolean) => {
+      setWrap(w);
+      try {
+        if (w) localStorage.setItem(storageKey, "1");
+        else localStorage.removeItem(storageKey);
+      } catch {
+        /* storage unavailable — persistence is best-effort */
+      }
+    },
+    [storageKey]
+  );
+  return [wrap, set];
 }
 
 // Hide the jump buttons this close to the respective end — a jump that saves less than half a
@@ -165,12 +195,17 @@ export function ScrollJumpButtons({
  * Pass `width`/`onWidthChange` to prepend the reading-width toggle (see READING_WIDTHS): one button
  * that cycles full width → wide → medium → narrow, applied by the caller as a `maxWidth` on the
  * centered content. Hidden on phones, where nothing is wide enough to need margins.
+ *
+ * Pass `wrap`/`onWrapChange` to lead with the word-wrap toggle. Unlike the width toggle it stays on
+ * phones: a narrow screen is exactly where a long line runs off the edge.
  */
 export function ZoomControls({
   zoom,
   onChange,
   width,
   onWidthChange,
+  wrap,
+  onWrapChange,
   className = "right-3 top-3",
 }: {
   zoom: number;
@@ -178,6 +213,9 @@ export function ZoomControls({
   /** Current reading width; pass together with onWidthChange to show the margins toggle. */
   width?: number | null;
   onWidthChange?: (width: number | null) => void;
+  /** Whether long lines wrap; pass together with onWrapChange to show the toggle. */
+  wrap?: boolean;
+  onWrapChange?: (wrap: boolean) => void;
   /** Position within the nearest relative ancestor, e.g. "bottom-3 right-3". */
   className?: string;
 }) {
@@ -198,6 +236,23 @@ export function ZoomControls({
         className
       )}
     >
+      {onWrapChange && (
+        <>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-pressed={!!wrap}
+            // Highlighted while on, the same way a capped reading width is: a mode that changes how
+            // the text is laid out should look switched on, not just have been clicked once.
+            className={cn("size-7 text-muted-foreground", wrap && "bg-accent text-foreground")}
+            title={wrap ? "Word wrap: on — click to turn off" : "Word wrap: off — click to wrap long lines"}
+            onClick={() => onWrapChange(!wrap)}
+          >
+            <WrapText className="size-4" />
+          </Button>
+          <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
+        </>
+      )}
       {onWidthChange && (
         <div className="hidden items-center sm:flex">
           <Button

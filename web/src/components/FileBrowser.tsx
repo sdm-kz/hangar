@@ -72,6 +72,7 @@ import {
   ScrollJumpButtons,
   ZoomControls,
   usePersistentReadingWidth,
+  usePersistentWordWrap,
   usePersistentZoom,
 } from "./ZoomControls";
 
@@ -1794,6 +1795,7 @@ function FilePreview({
   // monitor, where full-width lines get hard to read. Shared (and persisted) with the standalone
   // preview tab's viewer.
   const [readingWidth, setReadingWidth] = usePersistentReadingWidth("text");
+  const [wordWrap, setWordWrap] = usePersistentWordWrap("text");
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -2169,6 +2171,9 @@ function FilePreview({
               onChange={setZoom}
               width={readingWidth}
               onWidthChange={setReadingWidth}
+              wrap={wordWrap}
+              // Rendered markdown flows as paragraphs already; a wrap switch there would do nothing.
+              onWrapChange={isMarkdown && mdView === "rendered" ? undefined : setWordWrap}
               className="bottom-3 right-3"
             />
           )}
@@ -2248,11 +2253,11 @@ function FilePreview({
                   className="h-full w-full border-0 bg-white"
                 />
               ) : highlighted ? (
-                <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
+                <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
                   <code className="hljs bg-transparent p-0" dangerouslySetInnerHTML={highlighted} />
                 </pre>
               ) : (
-                <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
+                <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>{text}</pre>
               ))}
 
             {kind === "office" && file.size <= MAX_OFFICE_PREVIEW && (

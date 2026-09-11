@@ -13,6 +13,7 @@ import {
   ScrollJumpButtons,
   ZoomControls,
   usePersistentReadingWidth,
+  usePersistentWordWrap,
   usePersistentZoom,
 } from "./ZoomControls";
 import { CopyPathButton } from "./CopyPathButton";
@@ -97,6 +98,7 @@ export function ServerFileViewer({
   // content, which is what makes a full-page preview readable on a wide monitor. Persisted like
   // zoom, so the choice sticks across files, reloads and preview tabs.
   const [readingWidth, setReadingWidth] = usePersistentReadingWidth("text");
+  const [wordWrap, setWordWrap] = usePersistentWordWrap("text");
   // Bumped by the header refresh button: re-runs the text fetch and cache-busts media URLs.
   const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -332,6 +334,9 @@ export function ServerFileViewer({
             onChange={setZoom}
             width={readingWidth}
             onWidthChange={setReadingWidth}
+            wrap={wordWrap}
+            // Rendered markdown flows as paragraphs already; a wrap switch there would do nothing.
+            onWrapChange={isMarkdown && rendered ? undefined : setWordWrap}
             className="bottom-3 right-3"
           />
         )}
@@ -408,11 +413,11 @@ export function ServerFileViewer({
             className="h-full w-full border-0 bg-white"
           />
         ) : highlighted ? (
-          <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">
+          <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
             <code className="hljs" dangerouslySetInnerHTML={highlighted} />
           </pre>
         ) : (
-          <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className="mx-auto overflow-auto whitespace-pre p-4 font-mono text-xs leading-relaxed">{text}</pre>
+          <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>{text}</pre>
         )}
         </div>
       </div>
