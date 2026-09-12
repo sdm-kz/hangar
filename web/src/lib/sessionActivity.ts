@@ -100,6 +100,18 @@ function without(done: Set<string>, id: string) {
 }
 
 /**
+ * How long after attaching to a session a burst of work is disbelieved. It has to outlast the whole
+ * round trip, not just the repaint: the terminal heuristic holds busy for 1.5s after the last byte,
+ * the host samples it about once a second, and the frame still has to reach us — so the idle edge
+ * can land three seconds after the click that caused it.
+ *
+ * Nothing is lost when this does swallow a real turn. It can only swallow one on the session you are
+ * looking at, and that session's mark is cleared a moment later anyway, by the same "you have seen
+ * it" rule that makes the tick worth having on all the others.
+ */
+const ATTACH_SETTLE_MS = 5000;
+
+/**
  * Which sessions have finished something you haven't seen yet.
  *
  * The green pulse says "Claude is working here" and then simply stops, which is the one moment the
@@ -147,6 +159,23 @@ export function useDoneSessions({
   // is a transition — it cannot be read off any single snapshot.
   const prevWorking = useRef<Set<string> | null>(null);
 
+  // When we last attached to a session, and which. Opening one makes its terminal repaint, and a
+  // repaint can read as a turn: where the server has no hook status for a session it scrapes the
+  // terminal instead, and that heuristic is "output very recently ⇒ working". The pty host stopped
+  // counting a resize as work (a viewer attaching nudges the size on purpose, to force exactly that
+  // repaint), but a host already running when that shipped keeps the old behaviour for as long as
+  // its session lives — so the window is held here too, where it protects sessions that are running
+  // right now rather than only the ones started from here on.
+  const attached = useRef<{ id: string; at: number } | null>(null);
+  if (shownSessionId && attached.current?.id !== shownSessionId)
+    attached.current = { id: shownSessionId, at: Date.now() };
+
+  // True while a session is inside the settling window after we attached to it. Deliberately keyed
+  // to the one session we attached to: a repaint we caused cannot make any other session look busy,
+  // so nothing else is disbelieved.
+  const justAttached = (id: string) =>
+    attached.current?.id === id && Date.now() - attached.current.at < ATTACH_SETTLE_MS;
+
   useEffect(() => {
     // Compacting is work: a session mid-compact hasn't finished anything, and treating it as idle
     // would tick it the moment the compaction started.
@@ -171,7 +200,8 @@ export function useDoneSessions({
           // is the thing to show there, and it outranks this one anyway. Nor is stopping because the
           // turn errored out: a green tick on a session that hit its rate limit is a lie, and the
           // red mark it gets instead is the one you want to see.
-          if (!working.has(id) && !waitingIds.has(id) && !failedIds.has(id)) next.add(id);
+          if (!working.has(id) && !waitingIds.has(id) && !failedIds.has(id) && !justAttached(id))
+            next.add(id);
         }
       }
       for (const id of next) {

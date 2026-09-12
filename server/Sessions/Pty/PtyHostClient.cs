@@ -294,6 +294,25 @@ public sealed class PtyHostClient : ITerminal
     public void InjectInput(string text) =>
         _ = WriteAsync(Encoding.UTF8.GetBytes(text), CancellationToken.None);
 
+    // Attaching a viewer nudges the pseudoconsole size on purpose — TerminalPane sends cols-1 and then
+    // cols back, so Ink redraws its whole frame rather than leaving the input box unpainted — and a
+    // redraw is a burst of output. The host's IsBusy is "output very recently", so without a guard
+    // merely opening an idle session reported it working for a beat and then finished again.
+    //
+    // The host guards this itself, which is the real repair. This one exists because a pty host
+    // already running when that shipped keeps the old behaviour for the whole life of its session,
+    // and hosts outlive the app: after an update there can be dozens of them still on the old build.
+    // This process is the one that updates, so the guard here reaches sessions running right now.
+    //
+    // Longer than the host's own window: what is read here is a value the host sampled up to a second
+    // ago and pushed, so the guard has to outlast the repaint (1.5s of output window) plus that
+    // sampling lag, or busy simply flips true the moment it lifts.
+    private const long ResizeRepaintMs = 3000;
+    private long _lastResizeTick;
+
+    public bool IsRepaintingAfterResize =>
+        Environment.TickCount64 - Volatile.Read(ref _lastResizeTick) < ResizeRepaintMs;
+
     public void Resize(short cols, short rows)
     {
         cols = Math.Max((short)1, cols);
@@ -304,6 +323,9 @@ public sealed class PtyHostClient : ITerminal
             _cols = cols;
             _rows = rows;
         }
+        // After the early return, so a viewer that reattaches at the size the terminal already has
+        // repaints nothing and blinds nothing.
+        Volatile.Write(ref _lastResizeTick, Environment.TickCount64);
         _ = SendControlAsync(new PtyControl { Type = "resize", Cols = cols, Rows = rows });
     }
 

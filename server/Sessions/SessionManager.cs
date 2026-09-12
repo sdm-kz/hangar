@@ -302,8 +302,16 @@ public sealed class SessionManager : IDisposable
     /// the pty host and pushed to us — for sessions that haven't produced a hook event yet (e.g. hooks
     /// disabled, or the brief window before SessionStart).
     /// </summary>
+    /// <remarks>
+    /// The fallback is load-bearing far more often than "hooks disabled" suggests: the hook store is
+    /// in memory, so a restart drops every session's status, and an idle session emits no hook to
+    /// rebuild it — after an update, every session that survived it is on the heuristic until you
+    /// next type in one. That is exactly when a repaint must not read as a turn, hence the guard.
+    /// </remarks>
     private bool IsBusy(ClaudeSession s) =>
-        _hooks.TryGetStatus(s.Id, out var st) ? st.Busy : s.Terminal?.IsBusy == true;
+        _hooks.TryGetStatus(s.Id, out var st)
+            ? st.Busy
+            : s.Terminal is { IsBusy: true, IsRepaintingAfterResize: false };
 
     /// <summary>
     /// Ids of live sessions where Claude is compacting its conversation — auto-compaction or an

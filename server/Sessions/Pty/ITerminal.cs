@@ -43,6 +43,13 @@ public interface ITerminal : IDisposable
     /// <summary>True when Claude appears to be actively generating (not just echoing your typing).</summary>
     bool IsBusy { get; }
 
+    /// <summary>
+    /// True while a resize we sent is still expected to be repainting the screen. <see cref="IsBusy"/>
+    /// is an output-timing heuristic in the host, and a repaint is a burst of output we asked for —
+    /// so the two are indistinguishable without this. See the guard in <c>SessionManager.IsBusy</c>.
+    /// </summary>
+    bool IsRepaintingAfterResize { get; }
+
     /// <summary>True when a permission/confirmation prompt appears to be waiting on the user.</summary>
     bool IsAwaitingInput { get; }
 
