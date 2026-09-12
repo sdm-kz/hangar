@@ -1,35 +1,43 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
-using System.Windows.Forms;
 using ClaudeWeb.Pty;
 using ClaudeWeb.Server.Auth;
+using ClaudeWeb.Server.Diagnostics;
 using ClaudeWeb.Server.FileSystem;
 using ClaudeWeb.Server.Logging;
 using ClaudeWeb.Server.Push;
 using ClaudeWeb.Server.Sessions;
-using ClaudeWeb.Server.Tray;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
 namespace ClaudeWeb.Server;
 
+/// <summary>
+/// The daemon: a headless web host that owns every session, store and endpoint. It has no UI of its own —
+/// the browser is the UI, and the Windows tray (<c>tray\</c>) is just another client of this API. It runs
+/// as the user: started at logon (scripts\register-autostart.ps1), or as a Windows service under the
+/// user's own account when it has to keep running while nobody is signed in.
+/// </summary>
 internal static class Program
 {
-    [STAThread]
+    // No [STAThread], on purpose: SystemEvents (below) only creates its hidden window on a thread of its
+    // own — one that pumps messages — when the thread that first touches it is MTA. On an STA thread it
+    // would put the window here, where nothing pumps, and a logoff would never be heard.
     private static void Main(string[] args)
     {
         // Install the runtime-wide crash handlers before anything else runs, so any fault during
         // startup (or later, on a background thread) is written to crash.log instead of vanishing.
         CrashHandler.Install(LogDirectory());
 
-        var isService = WindowsServiceHelpers.IsWindowsService();
+        var isService = OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService();
         var contentRoot = ResolveContentRoot();
         var port = GetPort(contentRoot);
-        // The address the tray icon (and a single-instance relaunch) opens. Defaults to the local
-        // loopback, but Server:PublicUrl overrides it with an externally reachable hostname.
+        // Where a person gets sent: the local loopback, unless Server:PublicUrl names an externally
+        // reachable hostname. Clients read it from the instance file; a second launch opens it.
         var openUrl = ResolveOpenUrl(contentRoot, port);
 
-        // Single-instance for the interactive tray: a second launch just opens the UI and exits.
+        // Single instance: a second launch just opens the UI and exits. (A service can't collide with
+        // itself — the SCM runs one — and has no desktop to open a browser on.)
         Mutex? mutex = null;
         if (!isService)
         {
@@ -58,13 +66,15 @@ internal static class Program
 
         // Freeze the session state file the moment anything says we're going down, so the entries stay
         // marked as running and are there to be matched against the live pty hosts on the next start.
-        // ApplicationStopping covers the service stop and Ctrl+C; SessionEnding covers shutdown/logoff
-        // — the latter still matters, because a Windows shutdown kills the claude children before we
-        // get there, and each of those deaths would otherwise persist "not running".
+        // ApplicationStopping covers a service stop, the tray's Stop server, the updater and Ctrl+C.
+        // SessionEnding covers shutdown/logoff for a daemon started at logon, which the host never hears
+        // about any other way (no console, no SCM) — and it matters, because a Windows shutdown kills the
+        // claude children before we get there, and each of those deaths would otherwise persist "not
+        // running". A service gets its stop from the SCM instead.
         {
             var sessionManager = app.Services.GetRequiredService<SessionManager>();
             app.Lifetime.ApplicationStopping.Register(sessionManager.BeginShutdown);
-            if (!isService)
+            if (!isService && OperatingSystem.IsWindows())
                 Microsoft.Win32.SystemEvents.SessionEnding += (_, _) => sessionManager.BeginShutdown();
         }
 
@@ -75,8 +85,8 @@ internal static class Program
         // Startup session recovery, in two steps that must happen in this order:
         //
         //   1. RE-ATTACH to every session whose pty host is still running. An in-app update, a
-        //      redeploy, tray Exit or a crash leaves those alive, and they come back with their
-        //      scrollback and their in-flight conversation intact — no relaunch, no --resume.
+        //      redeploy, a stop of this daemon or a crash leaves those alive, and they come back with
+        //      their scrollback and their in-flight conversation intact — no relaunch, no --resume.
         //   2. AUTO-RESUME whatever is genuinely gone (the machine rebooted: a ConPTY child can't
         //      survive that), relaunching each with --resume/--continue. On by default; turn it off
         //      with Sessions:ResumeOnStart=false or --no-resume-sessions, and --resume-sessions forces
@@ -90,7 +100,7 @@ internal static class Program
             var manager = app.Services.GetRequiredService<SessionManager>();
             var startupLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
             // Off the startup path: adoption talks to each host over a pipe and resuming staggers its
-            // launches, neither of which may hold up the tray message loop (or the service's start
+            // launches, neither of which may hold up the host's startup (or the service's start
             // handshake).
             _ = Task.Run(async () =>
             {
@@ -113,33 +123,101 @@ internal static class Program
             });
         });
 
-        if (isService)
-        {
-            app.Run(); // headless: block on the web host
-            return;
-        }
+        // The port of the instance file this run wrote, if it wrote one (see OnStarted).
+        int? instancePort = null;
+        app.Lifetime.ApplicationStarted.Register(() => instancePort = OnStarted(app, port, openUrl));
 
-        // Interactive: start the host, then run the tray message loop on this STA thread.
-        app.Start();
-        var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
-        CrashHandler.AttachLogger(app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Crash"));
+        // Blocks until the host stops, then disposes it. Disposal runs SessionManager.Dispose(), which
+        // only DETACHES from each session's pty host — the claude processes are meant to keep running
+        // past a stop of this daemon and be re-attached on the next start.
+        app.Run();
+
+        // Release the single-instance lock, then remove the instance file — in that order, and only now that
+        // the host is fully disposed. A client offers to start a server the moment the file is gone, and a
+        // start that still met the lock would just open a browser and exit. (Delete checks the pid, so a
+        // daemon that took the lock in between keeps its own file.)
+        mutex?.Dispose();
+        if (instancePort is { } written) DaemonInstance.Delete(written, Environment.ProcessId);
+    }
+
+    /// <summary>
+    /// The host is listening. Publish the instance file the tray (or anything else local) finds this daemon
+    /// by, then say who we are running as — the first thing to read when sessions misbehave.
+    /// </summary>
+    /// <returns>The port the instance file was written for; null when none was.</returns>
+    private static int? OnStarted(WebApplication app, int port, string openUrl)
+    {
+        var loggers = app.Services.GetRequiredService<ILoggerFactory>();
+        CrashHandler.AttachLogger(loggers.CreateLogger("Crash"));
+        var log = loggers.CreateLogger("Startup");
         log.LogInformation("ClaudeWeb started on port {Port}. Logs: {LogDir} (crash log: {CrashLog}).",
             port, LogDirectory(), CrashHandler.CrashLogPath);
-        Application.SetHighDpiMode(HighDpiMode.SystemAware);
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        // Route UI-thread exceptions to the crash log and keep the tray alive rather than terminating.
-        CrashHandler.InstallWinForms();
-        using (var tray = new TrayApplicationContext(app, openUrl))
-            Application.Run(tray);
 
-        try { app.StopAsync(TimeSpan.FromSeconds(3)).GetAwaiter().GetResult(); } catch { }
-        // Dispose the host so the DI container tears down cleanly. This runs SessionManager.Dispose(),
-        // which now only DETACHES from each session's pty host — the claude processes are meant to keep
-        // running past a tray "Exit" and be re-attached on the next start. (It used to kill each
-        // session's process tree here, which is exactly the behaviour this app no longer wants.)
-        try { (app as IDisposable)?.Dispose(); } catch { }
-        mutex?.Dispose();
+        // The instance file first, and on its own: it is what the tray is waiting for.
+        int? written = null;
+        var local = LoopbackUrl(app.Urls);
+        if (local is null)
+        {
+            log.LogWarning("No instance file written: none of {Urls} is reachable on loopback, and a local client only " +
+                           "sends its token to this machine. Include 0.0.0.0 or a loopback address in Server:Urls.",
+                string.Join(", ", app.Urls));
+        }
+        else
+        {
+            try
+            {
+                using var me = Process.GetCurrentProcess();
+                new DaemonInstance(
+                    Environment.ProcessId,
+                    local.Port,
+                    LocalUrl: local.GetLeftPart(UriPartial.Authority),
+                    OpenUrl: openUrl,
+                    Token: app.Services.GetRequiredService<TokenStore>().LocalToken,
+                    ExePath: Environment.ProcessPath,
+                    BuildId: app.Services.GetRequiredService<Update.UpdateService>().Status.Current?.BuildId,
+                    StartedAt: new DateTimeOffset(me.StartTime)).Write();
+                written = local.Port;
+            }
+            catch (Exception ex)
+            {
+                log.LogWarning(ex, "Could not write {InstanceFile}; the tray won't find this daemon.", DaemonInstance.PathFor(local.Port));
+            }
+        }
+
+        // Off the startup thread: it walks PATH, and an entry on a share that isn't there can take seconds a
+        // lookup — while the other startup callbacks, session adoption among them, wait their turn.
+        var claudeExecutable = app.Services.GetRequiredService<SessionManagerOptions>().ClaudeExecutable;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var environment = EnvironmentReport.Collect(claudeExecutable);
+                log.LogInformation("Environment: {Summary}", environment.Summary());
+                foreach (var problem in environment.Problems) log.LogWarning("Environment: {Problem}", problem);
+            }
+            catch (Exception ex) { log.LogWarning(ex, "Could not collect the environment report."); }
+        });
+        return written;
+    }
+
+    /// <summary>
+    /// A loopback URL this host is really listening on, taken from the addresses it bound rather than
+    /// assumed from the configured port: the instance file's token goes wherever this points, so it has to
+    /// be this process. A wildcard binding (0.0.0.0, [::]) answers on loopback too. Null when every binding
+    /// is some other specific address.
+    /// </summary>
+    private static Uri? LoopbackUrl(IEnumerable<string> addresses)
+    {
+        foreach (var address in addresses)
+        {
+            if (!Uri.TryCreate(address, UriKind.Absolute, out var uri)) continue;
+            var host = uri.IsLoopback ? uri.Host
+                : uri.Host == "0.0.0.0" ? "127.0.0.1"
+                : uri.Host == "[::]" ? "[::1]"
+                : null;
+            if (host is not null) return new UriBuilder(uri) { Host = host }.Uri;
+        }
+        return null;
     }
 
     private static WebApplication BuildApp(string[] args, string contentRoot)
@@ -264,6 +342,28 @@ internal static class Program
         app.MapGet("/api/auth/config", (TokenStore tokens) =>
             Results.Ok(new { authRequired = !tokens.AuthDisabled }));
 
+        // Who this daemon is running as, and whether claude's files are where that identity looks for
+        // them — the report it also logs at startup (see EnvironmentReport). Behind auth: it names paths.
+        app.MapGet("/api/health/environment", (SessionManagerOptions options) =>
+            Results.Ok(EnvironmentReport.Collect(options.ClaudeExecutable)));
+
+        // Shut the daemon down. Its sessions keep running in their pty hosts and are re-attached on the
+        // next start. Only the local token may ask — it is the tray's Stop server — because a browser
+        // that stopped the daemon would be left with nothing to start it again from, auth or no auth.
+        // Answered before stopping, so the caller hears back.
+        app.MapPost("/api/daemon/stop", (HttpContext ctx, TokenStore tokens, IHostApplicationLifetime lifetime, ILoggerFactory lf) =>
+        {
+            if (!tokens.IsLocalToken(TokenAuthMiddleware.ExtractToken(ctx.Request)))
+                return Results.Json(new { error = "only a local client can stop the server" }, statusCode: StatusCodes.Status403Forbidden);
+            lf.CreateLogger("Daemon").LogInformation("Stopping: requested by a local client.");
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(500);
+                lifetime.StopApplication();
+            });
+            return Results.Accepted();
+        });
+
         app.MapGet("/api/sessions", (SessionManager mgr) => Results.Ok(mgr.List()));
 
         // Claude hook callback: each launched session's http hooks POST their event JSON here, tagged
@@ -295,22 +395,29 @@ internal static class Program
         // Live session-list stream: pushes { sessions, busy } whenever it changes, so the UI reflects
         // new/renamed/exited sessions and busy/idle transitions without polling. Under /hub so the
         // existing TokenAuthMiddleware guards it (via ?access_token=) and the vite dev proxy forwards it.
-        app.Map("/hub/events", async (HttpContext ctx, SessionHub hub) =>
+        //
+        // Every socket runs until the client leaves OR the app stops (SocketLifetime). Kestrel lets the
+        // host stop only once in-flight requests finish, and a socket never finishes on its own — so
+        // tied to the request alone, one open tab (or the tray) held every stop for the host's whole
+        // shutdown timeout, 30 s. Ending them on stop is also how the viewers find out straight away.
+        app.Map("/hub/events", async (HttpContext ctx, SessionHub hub, IHostApplicationLifetime lifetime) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-            await hub.ServeAsync(ws, ctx.RequestAborted);
+            using var life = SocketLifetime(ctx, lifetime);
+            await hub.ServeAsync(ws, life.Token);
         });
 
         // Live terminal stream for a session. Under /hub so the existing TokenAuthMiddleware guards
         // it (accepting ?access_token= for the WS handshake) and the vite dev proxy forwards the ws.
-        app.Map("/hub/sessions/{id}/terminal", async (string id, HttpContext ctx, SessionManager mgr) =>
+        app.Map("/hub/sessions/{id}/terminal", async (string id, HttpContext ctx, SessionManager mgr, IHostApplicationLifetime lifetime) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
             var term = mgr.GetTerminal(id);
             if (term is null) { ctx.Response.StatusCode = StatusCodes.Status404NotFound; return; }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, ctx.RequestAborted);
+            using var life = SocketLifetime(ctx, lifetime);
+            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, life.Token);
         });
 
         app.MapGet("/api/sessions/{id}", (string id, SessionManager mgr) =>
@@ -419,14 +526,19 @@ internal static class Program
 
         // Live terminal stream for a shell — same framing and same socket pump as a session's, under
         // /hub so TokenAuthMiddleware guards it and the vite dev proxy forwards it.
-        app.Map("/hub/shells/{id}/terminal", async (string id, HttpContext ctx, Sessions.Shells.ShellManager shells) =>
+        app.Map("/hub/shells/{id}/terminal", async (string id, HttpContext ctx, Sessions.Shells.ShellManager shells, IHostApplicationLifetime lifetime) =>
         {
             if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
             var term = shells.GetTerminal(id);
             if (term is null) { ctx.Response.StatusCode = StatusCodes.Status404NotFound; return; }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, ctx.RequestAborted);
+            using var life = SocketLifetime(ctx, lifetime);
+            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, life.Token);
         });
+
+        // A socket's lifetime: until the client leaves or the app stops — see the note above /hub/events.
+        static CancellationTokenSource SocketLifetime(HttpContext ctx, IHostApplicationLifetime lifetime) =>
+            CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, lifetime.ApplicationStopping);
 
         // Pty hosts still running for sessions this app no longer knows about — see PtyOrphanInfo.
         // Listing them is also what cleans up state files whose host is gone.
@@ -594,7 +706,7 @@ internal static class Program
         app.MapPost("/api/update/apply", (Update.UpdateService updates) =>
         {
             var status = updates.Apply();
-            return status.State == Update.UpdateState.Applying
+            return status.State == UpdateState.Applying
                 ? Results.Accepted("/api/update", status)
                 : Results.BadRequest(new { error = status.Error ?? "could not apply the update", status });
         });
@@ -983,7 +1095,7 @@ internal static class Program
     private static string LogDirectory() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "logs");
 
-    // Published/tray: exe + wwwroot together → base dir. `dotnet run`: bin has no wwwroot → project dir.
+    // Published: exe + wwwroot together → base dir. `dotnet run`: bin has no wwwroot → project dir.
     private static string ResolveContentRoot()
     {
         var baseDir = AppContext.BaseDirectory;
@@ -992,9 +1104,10 @@ internal static class Program
             : Directory.GetCurrentDirectory();
     }
 
-    // The URL the tray icon and single-instance relaunch open. Server:PublicUrl (e.g. a reverse-proxied
-    // public hostname) wins when set; otherwise fall back to the local loopback on the bound port. The
-    // web host itself still binds to Server:Urls — this only changes where the tray navigates.
+    // The URL a person is sent to — by the tray (through the instance file) and by a second launch.
+    // Server:PublicUrl (e.g. a reverse-proxied public hostname) wins when set; otherwise fall back to the
+    // local loopback on the bound port. The web host itself still binds to Server:Urls — this only
+    // changes where people are sent.
     private static string ResolveOpenUrl(string contentRoot, int port)
     {
         try

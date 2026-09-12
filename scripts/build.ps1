@@ -1,4 +1,5 @@
-# Builds the SPA and publishes the tray app (single self-contained exe) into ./publish
+# Builds the SPA and publishes Claude Web into ./publish: the daemon, the tray and the pty host, each a
+# single self-contained exe.
 # Usage:  powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -9,7 +10,7 @@ if (-not (Test-Path "node_modules")) { npm install }
 npm run build            # emits into ../server/wwwroot
 Pop-Location
 
-Write-Host "==> Publishing tray app (server)" -ForegroundColor Cyan
+Write-Host "==> Publishing daemon (server)" -ForegroundColor Cyan
 $publish = Join-Path $root "publish"
 if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
 Push-Location (Join-Path $root "server")
@@ -20,15 +21,18 @@ dotnet publish -c Release -r win-x64 --self-contained true `
   -o $publish
 Pop-Location
 
+# The other two projects are each published into a scratch folder and then copied in: publishing them
+# straight into ./publish would let one project's runtime files land on top of another's.
+
 # The per-session pty host. It owns each session's pseudoconsole, which is what lets a claude session
-# outlive this app -- so it ships alongside ClaudeWeb.exe and the app refuses to launch a session
-# without it. Self-contained for the same reason the app is (no .NET runtime assumed), but a much
-# smaller image: no ASP.NET, no WinForms.
+# outlive the daemon -- so it ships alongside ClaudeWeb.exe and the daemon refuses to launch a session
+# without it. Self-contained for the same reason the daemon is (no .NET runtime assumed), but a much
+# smaller image: no ASP.NET.
 Write-Host "==> Publishing pty host (ptyhost)" -ForegroundColor Cyan
 $ptyOut = Join-Path $root "publish-ptyhost"
 if (Test-Path $ptyOut) { Remove-Item $ptyOut -Recurse -Force }
 Push-Location (Join-Path $root "ptyhost")
-# Trimmed, unlike the app: it is a tiny console program, and trimming takes it from ~70 MB to ~14 MB.
+# Trimmed, unlike the daemon: it is a tiny console program, and trimming takes it from ~70 MB to ~14 MB.
 # Safe because everything crossing the pipe goes through a source-generated JSON context
 # (shared\Pty\PtyJson.cs) rather than reflection -- if you add a wire type, add it there too.
 dotnet publish -c Release -r win-x64 --self-contained true `
@@ -37,10 +41,24 @@ dotnet publish -c Release -r win-x64 --self-contained true `
   -p:IncludeNativeLibrariesForSelfExtract=true `
   -o $ptyOut
 Pop-Location
-# Staged separately, then copied in: publishing both projects straight into ./publish would let the
-# second one's runtime files land on top of the first's.
 Copy-Item (Join-Path $ptyOut "*") $publish -Recurse -Force
 Remove-Item $ptyOut -Recurse -Force
+
+# The tray icon: a client of the daemon's API, and the one project that needs WinForms. WinForms can't
+# be trimmed, so it is compressed instead -- a moment more at startup, for something that starts once
+# per logon.
+Write-Host "==> Publishing tray (tray)" -ForegroundColor Cyan
+$trayOut = Join-Path $root "publish-tray"
+if (Test-Path $trayOut) { Remove-Item $trayOut -Recurse -Force }
+Push-Location (Join-Path $root "tray")
+dotnet publish -c Release -r win-x64 --self-contained true `
+  -p:PublishSingleFile=true `
+  -p:IncludeNativeLibrariesForSelfExtract=true `
+  -p:EnableCompressionInSingleFile=true `
+  -o $trayOut
+Pop-Location
+Copy-Item (Join-Path $trayOut "*") $publish -Recurse -Force
+Remove-Item $trayOut -Recurse -Force
 
 # --- Build stamp ------------------------------------------------------------------------------
 # Names this exact build so a running app can tell a staged update apart from itself. deploy.ps1
@@ -59,7 +77,9 @@ $stamp | ConvertTo-Json | Set-Content (Join-Path $publish "build.json") -Encodin
 
 Write-Host "==> Done. Published to: $publish" -ForegroundColor Green
 Write-Host "    Build stamp: $($stamp.buildId)" -ForegroundColor DarkGray
-if (-not (Test-Path (Join-Path $publish "ClaudeWeb.PtyHost.exe"))) {
-  throw "ClaudeWeb.PtyHost.exe is missing from '$publish'. The app cannot launch a session without it."
+foreach ($exe in @("ClaudeWeb.exe", "ClaudeWeb.PtyHost.exe", "ClaudeWeb.Tray.exe")) {
+  if (-not (Test-Path (Join-Path $publish $exe))) { throw "$exe is missing from '$publish'." }
 }
-Write-Host "    Run the desktop app:  $publish\ClaudeWeb.exe   (starts in the system tray)"
+Write-Host "    Run the server:      $publish\ClaudeWeb.exe        (headless; browse to its port)"
+Write-Host "    Run the tray icon:   $publish\ClaudeWeb.Tray.exe"
+Write-Host "    Both at sign-in:     scripts\register-autostart.ps1 -ExePath $publish\ClaudeWeb.exe"

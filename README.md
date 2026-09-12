@@ -4,20 +4,24 @@
 > from). The rename (repo, `ClaudeWeb.exe`, namespaces) is not done yet — for now the executable is
 > still `ClaudeWeb.exe`.
 
-A .NET 10 **Windows tray application** (backend + web UI in one `.exe`) that **launches Claude Code
-CLI sessions with Remote Control enabled** so you can drive them from the **Claude Code app**
-(claude.ai/code and mobile) — from any device on your LAN.
+A .NET 10 app for Windows that **launches Claude Code CLI sessions with Remote Control enabled** so
+you can drive them from the **Claude Code app** (claude.ai/code and mobile) — from any device on your
+LAN. It is two programs:
 
-Run `ClaudeWeb.exe` and it starts the web host in-process and drops an icon in the system tray:
-
-- **Left-click** the tray icon → opens the web UI in your browser.
-- **Right-click** → menu listing running sessions, plus **Exit**. Each project is a submenu, and
-  inside it the sessions are laid out the way the sidebar's grouped view lays them out with its
-  active-only filter on: virtual folders first, then folder groups (dropped where the project links
-  only that folder and there is no virtual folder to tell it apart from), forks under the session
-  they came from, and no submenu for a project with nothing running in it. Click a session to open it.
-- Runs as a single instance; launching it again just reopens the UI.
-- The same exe also runs headless as a **Windows service** (auto-detected) if you prefer.
+- **`ClaudeWeb.exe` — the server.** A headless daemon that owns everything: the sessions, the web UI
+  and its API, every store. It starts at sign-in as you — or, when it has to run while nobody is
+  signed in, as a Windows service under your account — and there is one per port: launching it again
+  just opens the UI.
+- **`ClaudeWeb.Tray.exe` — the tray icon.** A client of the server's API, and nothing more:
+  - **Left-click** → opens the web UI in your browser.
+  - **Right-click** → menu listing running sessions. Each project is a submenu, and inside it the
+    sessions are laid out the way the sidebar's grouped view lays them out with its active-only filter
+    on: virtual folders first, then folder groups (dropped where the project links only that folder
+    and there is no virtual folder to tell it apart from), forks under the session they came from, and
+    no submenu for a project with nothing running in it. Click a session to open it.
+  - **Exit tray** closes the icon; **Stop server…** stops the server. Neither ends a session (see
+    *Sessions survive an app restart* below). The icon greys out while the server isn't running, and
+    the menu then offers **Start server**.
 
 The web UI is a **session manager with a full terminal**:
 
@@ -125,16 +129,14 @@ otherwise block startup, so the app pre-accepts it.
 ## Architecture
 
 ```
-ClaudeWeb.exe  (Windows tray app — WinForms NotifyIcon + in-process web host)
-   │                                        ↑ restarts, updates and crashes freely
-   ├─ system tray: left-click → open UI · right-click → sessions + Exit
-   │
-   ▼
-Browser (React + Vite + TS + Tailwind + shadcn/ui)
-   │  REST /api/*     ──►  auth, session create/list/stop, filesystem browse
-   │  WS /hub/events  ──►  live session list · WS /hub/sessions/{id}/terminal ──► xterm.js
-   ▼
-.NET 10 (ASP.NET Core Minimal API, in-process)   ← also runnable as a Windows service
+Browser (React + Vite + TS + Tailwind + shadcn/ui)       ClaudeWeb.Tray.exe  (tray icon, WinForms)
+   │  REST /api/*     ──►  auth, session create/list/stop,  │  the same REST + /hub/events, with a
+   │                       filesystem browse                │  per-run token from the instance file
+   │  WS /hub/events  ──►  live session list                │
+   │  WS /hub/sessions/{id}/terminal  ──►  xterm.js         │
+   ▼                                                        ▼
+ClaudeWeb.exe  (the daemon: ASP.NET Core Minimal API, headless)   ← restarts, updates and crashes freely
+   │  started at sign-in as the user, or as a Windows service under the user's account
    │  named pipe \\.\pipe\claudeweb-pty-<instance>-<sessionId>
    ▼
 ClaudeWeb.PtyHost.exe   (one per session — and one per shell tab — detached; owns the pseudoconsole)
@@ -149,7 +151,16 @@ You drive it from the in-app terminal, claude.ai/code, or the Claude mobile app
 The pty host is the reason a session **survives a restart of the app**. A pseudoconsole (`HPCON`)
 cannot be handed to another process, and its `conhost` is bound to whoever created it — so the only
 way to keep a session alive across an update is for the process that owns the pseudoconsole not to be
-the process that restarts. The app attaches and detaches; the host holds the session.
+the process that restarts. The daemon attaches and detaches; the host holds the session.
+
+The tray is split off from the daemon for a similar reason, one level up. The daemon has nothing to
+draw, so it can run before anyone signs in, and a tray that crashes or is closed takes nothing with it.
+The tray finds the daemon through an **instance file**: once listening, the daemon writes
+`%LocalAppData%\ClaudeWeb\instances\<port>.json` — its pid, its loopback and public URLs, and a bearer
+token minted for that run — and removes it on the way down. The file is created readable by your account
+alone (an explicit ACL, not whatever the folder passes down), the token grants nothing that account
+couldn't already read in the same folder (the browser tokens live there too), and loopback stays
+authenticated for every other process on the machine.
 
 ## Prerequisites
 
@@ -174,6 +185,13 @@ directly at its port — no Vite needed:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\run.ps1
+```
+
+Neither starts the tray. It follows a server by port, and picks one up whenever it starts listening:
+
+```powershell
+dotnet run --project tray                  # follows 5099
+dotnet run --project tray -- --port 5199   # follows a dev server on 5199
 ```
 
 ### Running a second instance beside the installed app
@@ -203,30 +221,46 @@ the app once — it hashes the password to `%LocalAppData%\ClaudeWeb\auth.json` 
 to clear the plaintext. After that first run, blank `Auth:Password`; the persisted hash is used
 for login and no recoverable password is left on disk.
 
-## Build the desktop app
+## Build and install
 
 ```powershell
-# Builds the SPA and publishes a single self-contained ClaudeWeb.exe into .\publish
+# Builds the SPA and publishes ClaudeWeb.exe, ClaudeWeb.Tray.exe and ClaudeWeb.PtyHost.exe into .\publish
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
-Output: `publish\ClaudeWeb.exe` (self-contained — no .NET runtime needed) plus `wwwroot\` and
-`appsettings.json` beside it. Edit `appsettings.json` to set `Auth:Password` (hashed on first
-launch — see above) and `Server:Urls` (port), then **double-click `ClaudeWeb.exe`**. It appears
-in the tray; left-click to open.
+Output: three self-contained exes in `publish\` (no .NET runtime needed) plus `wwwroot\` and
+`appsettings.json` beside them. Edit `appsettings.json` to set `Auth:Password` (hashed on first
+launch — see above) and `Server:Urls` (port). The tray reads its port from the same file, so the two
+stay paired; a tray for another port takes `--port <n>`.
 
-**Start on login** (current user, no admin needed):
+**Start at sign-in** — the recommended setup (current user, no admin needed):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath .\publish\ClaudeWeb.exe
-# remove it later:
+# the server only, no tray icon:
+powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath .\publish\ClaudeWeb.exe -NoTray
+# remove both later:
 powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -Remove
 ```
+
+That adds `ClaudeWeb` and `ClaudeWeb.Tray` to your per-user Run key. To start them now, run
+`ClaudeWeb.exe` and then `ClaudeWeb.Tray.exe`; the icon lights up once the server is listening.
+
+Why at sign-in rather than as a service: the server never logs in to anything — it *inherits* a login.
+`claude`'s credentials, its settings and its trust list all live in your profile, as does every store
+this app keeps. Started at sign-in it runs as you, in your session: the same profile, the same PATH,
+and a desktop to open a browser on if `claude` ever needs you to log in again.
 
 Browse to `http://<this-pc>:5099` from any device on your network, launch a session, and pick it up
 in the Claude Code app.
 
-## Optional: run as a Windows service (headless, no tray)
+**Upgrading from the single-exe build.** `ClaudeWeb.exe` used to be the tray and the server in one.
+An existing `ClaudeWeb` autostart entry keeps working — it now starts the server — but nothing starts
+the tray until you run `register-autostart.ps1` once more.
+
+## Optional: run as a Windows service
+
+For a server that has to keep running while nobody is signed in:
 
 ```powershell
 # Install as a service under your user account (elevated prompt; prompts for your password)
@@ -235,7 +269,29 @@ powershell -ExecutionPolicy Bypass -File scripts\install-service.ps1 -PublishPat
 powershell -ExecutionPolicy Bypass -File scripts\uninstall-service.ps1
 ```
 
-The same exe detects it's running under the service manager and skips the tray, running headless.
+The same exe detects it's running under the service manager, and the tray works against it just the
+same (the tray itself still starts at sign-in, in your session). Two things to know first:
+
+- **Log in to `claude` interactively before installing.** A service runs in session 0, where `claude`
+  can't open a browser, so the service should only ever read a login you have already made.
+- **Mapped drives aren't visible** to a service — they belong to a logon session. Use UNC paths for
+  project folders and for `FileSystem:DefaultFolder`.
+
+## Checking what the server runs as
+
+Sessions that won't authenticate, a `claude` that "isn't installed", folders that come up empty: these
+usually mean the server is running as a different identity, or with a different environment, than the
+one you use `claude` from. The server reports its own at startup — one `Environment:` line in
+`%LocalAppData%\ClaudeWeb\logs\claudeweb.log`, plus a warning for each problem it finds — and on demand:
+
+```bash
+# any logged-in browser's token, or the "token" in %LocalAppData%\ClaudeWeb\instances\<port>.json
+curl -H "Authorization: Bearer <token>" http://localhost:5099/api/health/environment
+```
+
+It names the user, whether it is a service (and which Windows session), the `claude` and `git` it
+resolved, the profile and app-data folders, and whether `~/.claude/settings.json`, `~/.claude.json` and
+`claude`'s credentials file exist there and can be read.
 
 ## Updating from inside the app
 
@@ -253,14 +309,16 @@ The running app watches that folder, compares the staged `build.json` with its o
 **Update** button next to the "Claude Web" title in the sidebar as soon as they differ. Clicking it
 shows both build stamps and, on confirmation:
 
-1. the app answers the request, then stops itself — gracefully, so each session's process tree goes
-   down with it rather than being orphaned;
-2. a detached `apply-update.ps1` (embedded in the exe, extracted to `%LocalAppData%\ClaudeWeb\update`)
-   waits for the process to exit, mirrors the payload over the install folder and restarts the app the
-   same way it was running — the service if there is one, otherwise the tray exe;
-3. the sessions that were running come back on their own, exactly as after a `deploy.ps1` redeploy
-   (see `Sessions:ResumeOnStart`);
-4. the browser sits behind an "Installing the update…" overlay until the new build answers, then
+1. the server answers the request, then stops itself — gracefully, detaching from each session's pty
+   host, so the sessions themselves keep running;
+2. the tray hears the update coming over `/hub/events` and steps aside: it exits so its exe can be
+   replaced, leaving a small detached PowerShell to start it again once the new server answers;
+3. a detached `apply-update.ps1` (embedded in the exe, extracted to `%LocalAppData%\ClaudeWeb\update`)
+   waits for the server to exit, mirrors the payload over the install folder and restarts the server
+   the same way it was running — the service if there is one, otherwise `ClaudeWeb.exe`;
+4. the sessions that were running are re-attached, exactly as after a `deploy.ps1` redeploy (one
+   that did die is resumed instead — see `Sessions:ResumeOnStart`);
+5. the browser sits behind an "Installing the update…" overlay until the new build answers, then
    reloads so it picks up the new frontend assets too.
 
 `appsettings*.json` in the install folder are preserved, never overwritten by the payload. The
@@ -280,8 +338,9 @@ the whole thing off and go back to `deploy.ps1` only.
   atomically, and only adds entries for folders not already present). Set it to `false` to disable
   and accept the prompt manually from the Claude Code app instead.
 - **Sessions survive an app restart.** Each session's pseudoconsole lives in its own detached
-  `ClaudeWeb.PtyHost.exe`, so an in-app update, a `deploy.ps1`, tray **Exit** or even a crash leaves
-  the session running. On the next start the app **re-attaches** to it: same session id, scrollback
+  `ClaudeWeb.PtyHost.exe`, so an in-app update, a `deploy.ps1`, the tray's **Stop server** or even a
+  crash of the server leaves the session running — and closing the tray never touches a session at
+  all. On the next start the server **re-attaches** to it: same session id, scrollback
   replayed into the terminal, and a conversation that was mid-turn simply carries on. Nothing is
   relaunched and no `--resume` is issued. What ends a session is **Stop** in the UI, `claude` exiting
   on its own, or the machine rebooting.
@@ -436,8 +495,11 @@ read that session's environment. Same trust boundary as the `/api/hooks` callbac
 ## Layout
 
 ```
-server/   .NET 10 tray app + Minimal API host (Program.cs, Tray/, Sessions/, Auth/, FileSystem/, Logging/, Update/)
+server/   .NET 10 daemon, the Minimal API host (Program.cs, Sessions/, Auth/, FileSystem/, Diagnostics/, Logging/, Update/)
+tray/     Windows tray icon — a client of the daemon's API (WinForms)
+ptyhost/  the per-session pty host that owns each pseudoconsole
+shared/   source compiled into two projects: Pty/ (daemon ↔ pty host), Contract/ (daemon ↔ tray)
 web/      React + Vite + TS + Tailwind + shadcn/ui launcher UI
-scripts/  dev.ps1, run.ps1, build.ps1, install-service.ps1, uninstall-service.ps1,
+scripts/  dev.ps1, run.ps1, build.ps1, register-autostart.ps1, install-service.ps1, uninstall-service.ps1,
           stage-update.ps1 + apply-update.ps1 (the two halves of the in-app updater)
 ```

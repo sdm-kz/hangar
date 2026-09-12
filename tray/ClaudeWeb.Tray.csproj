@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- The only Windows-only project, by design: a tray icon is Windows UI, and everything behind it is
+         the daemon's. It talks to the daemon over HTTP and /hub/events exactly as a browser does. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Windows GUI subsystem: no console window when it starts at logon. -->
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ClaudeWeb.Tray</RootNamespace>
+    <AssemblyName>ClaudeWeb.Tray</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The session and project records, and the membership rules the running-sessions menu is built
+         from. Shared source with the daemon, so the two describe the same world. -->
+    <Compile Include="..\shared\Contract\*.cs" LinkBase="Contract" />
+    <Using Include="ClaudeWeb.Contract" />
+  </ItemGroup>
+
+</Project>

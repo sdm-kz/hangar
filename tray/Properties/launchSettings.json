@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "ClaudeWeb.Tray (follows 5099)": {
+      "commandName": "Project"
+    },
+    "ClaudeWeb.Tray (follows debug 5199)": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 5199"
+    }
+  }
+}

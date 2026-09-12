@@ -115,7 +115,20 @@ public sealed class TokenStore
     }
 
     public bool IsValid(string? token) =>
-        AuthDisabled || (token is not null && _tokens.ContainsKey(token));
+        AuthDisabled || (token is not null && (_tokens.ContainsKey(token) || IsLocalToken(token)));
+
+    /// <summary>
+    /// Bearer token for local clients of this daemon — the tray. Minted per run and handed out only through
+    /// the instance file (<c>DaemonInstance</c>), which only this user can read. Never persisted: a client
+    /// re-reads the file after a restart, so a stale copy has nothing left to unlock.
+    /// </summary>
+    public string LocalToken { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+
+    /// <summary>Whether <paramref name="token"/> is this run's <see cref="LocalToken"/>. Constant-time compare.</summary>
+    public bool IsLocalToken(string? token) =>
+        !string.IsNullOrEmpty(token)
+        && CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(token), System.Text.Encoding.UTF8.GetBytes(LocalToken));
 
     /// <summary>True when an API key is configured (external endpoints enabled).</summary>
     public bool ApiKeyEnabled => !string.IsNullOrEmpty(_options.ApiKey);

@@ -1,13 +1,27 @@
 <#
 .SYNOPSIS
-  Register (or remove) ClaudeWeb.exe in the CURRENT USER's autostart so it launches at login.
-  Uses the per-user Run key (HKCU) — no admin rights required, affects only your account.
+  Register (or remove) Claude Web in the CURRENT USER's autostart, so the daemon (ClaudeWeb.exe) and
+  the tray icon (ClaudeWeb.Tray.exe) both launch at sign-in.
+  Uses the per-user Run key (HKCU) -- no admin rights required, affects only your account.
+
+.DESCRIPTION
+  Starting at sign-in is the recommended way to run the daemon. It runs as you, in your session: the
+  same profile, PATH and credential files an interactive `claude` uses, and a desktop to open a browser
+  on for a first-run login. The Windows service (scripts\install-service.ps1) is the exception, for a
+  daemon that has to keep running while nobody is signed in.
+
+  The two entries are independent. The daemon doesn't need the tray, and the tray only follows the
+  daemon on its port -- it never starts one by itself -- so -NoTray gives a headless setup.
 
 .PARAMETER ExePath
-  Path to ClaudeWeb.exe. Defaults to .\publish\ClaudeWeb.exe next to the repo.
+  Path to the daemon, ClaudeWeb.exe. Defaults to .\publish\ClaudeWeb.exe next to the repo. The tray is
+  expected beside it.
+
+.PARAMETER NoTray
+  Register the daemon only (and remove a tray entry left from an earlier registration).
 
 .PARAMETER Remove
-  Remove the autostart entry instead of adding it.
+  Remove both autostart entries instead of adding them.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath "C:\Apps\ClaudeWeb\ClaudeWeb.exe"
@@ -18,19 +32,25 @@
 param(
   [string]$ExePath = "$PSScriptRoot\..\publish\ClaudeWeb.exe",
   [string]$Name = "ClaudeWeb",
+  [switch]$NoTray,
   [switch]$Remove
 )
 $ErrorActionPreference = "Stop"
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$trayName = "$Name.Tray"
+
+function Remove-Entry([string]$entry) {
+  if (Get-ItemProperty -Path $runKey -Name $entry -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty -Path $runKey -Name $entry
+    Write-Host "Removed '$entry' from autostart." -ForegroundColor Green
+  } else {
+    Write-Host "'$entry' is not in autostart."
+  }
+}
 
 if ($Remove) {
-  $existing = Get-ItemProperty -Path $runKey -Name $Name -ErrorAction SilentlyContinue
-  if ($existing) {
-    Remove-ItemProperty -Path $runKey -Name $Name
-    Write-Host "Removed '$Name' from autostart." -ForegroundColor Green
-  } else {
-    Write-Host "'$Name' is not in autostart."
-  }
+  Remove-Entry $Name
+  Remove-Entry $trayName
   return
 }
 
@@ -38,12 +58,24 @@ $resolved = Resolve-Path $ExePath -ErrorAction SilentlyContinue
 if (-not $resolved -or -not (Test-Path $resolved.Path)) {
   throw "ClaudeWeb.exe not found at '$ExePath'. Build it first (scripts\build.ps1) or pass -ExePath <path>."
 }
-$full = $resolved.Path
+$daemon = $resolved.Path
+$tray = Join-Path (Split-Path -Parent $daemon) "ClaudeWeb.Tray.exe"
+$withTray = -not $NoTray -and (Test-Path $tray)
 
-# Value is the quoted exe path (quotes handle spaces in the path).
-Set-ItemProperty -Path $runKey -Name $Name -Value ('"{0}"' -f $full)
-
+# Values are quoted exe paths (quotes handle spaces in the path).
+Set-ItemProperty -Path $runKey -Name $Name -Value ('"{0}"' -f $daemon)
 Write-Host "Registered autostart for the current user:" -ForegroundColor Green
-Write-Host "  $Name = `"$full`""
-Write-Host "It will start automatically at your next sign-in (system tray)."
-Write-Host "Start it now with:  & `"$full`""
+Write-Host "  $Name = `"$daemon`"   (server)"
+
+if ($withTray) {
+  Set-ItemProperty -Path $runKey -Name $trayName -Value ('"{0}"' -f $tray)
+  Write-Host "  $trayName = `"$tray`"   (tray icon)"
+} elseif ($NoTray) {
+  if (Get-ItemProperty -Path $runKey -Name $trayName -ErrorAction SilentlyContinue) { Remove-Entry $trayName }
+} else {
+  Write-Warning "No ClaudeWeb.Tray.exe beside the daemon ('$tray'); registered the server only."
+}
+
+Write-Host "It starts automatically at your next sign-in. Start it now with:"
+Write-Host "  & `"$daemon`""
+if ($withTray) { Write-Host "  & `"$tray`"" }

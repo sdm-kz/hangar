@@ -360,7 +360,7 @@ public sealed class ShellManager : IDisposable
 
     /// <summary>
     /// Detach from every shell without stopping it — the same contract session teardown has, and for
-    /// the same reason: a tray Exit or an in-app update must leave a running build alone.
+    /// the same reason: a stop of the daemon or an in-app update must leave a running build alone.
     /// </summary>
     public void Dispose()
     {

@@ -3,15 +3,17 @@
   Builds and deploys Claude Web to an install folder (default C:\apps\claude-web).
 
   Settings are preserved: the target's appsettings.json / appsettings.*.json are NEVER
-  overwritten. Everything else (the single-file exe, web.config, wwwroot) is replaced, and
+  overwritten. Everything else (the single-file exes, web.config, wwwroot) is replaced, and
   wwwroot is mirrored so stale hashed assets from previous builds are pruned.
 
-  The running instance (Windows service "ClaudeWeb" or the tray ClaudeWeb.exe) is stopped so
-  its files unlock, then restarted the same way it was running. Running sessions survive this: each
-  one's pseudoconsole lives in its own ClaudeWeb.PtyHost.exe, which is left alone (the process match
-  below is by exact name and does not catch "ClaudeWeb.PtyHost"), so the restarted app re-attaches to
-  them rather than relaunching them. A session that genuinely died still comes back by resuming its
-  conversation (Sessions:ResumeOnStart, on by default); pass -ResumeSessions:$false to launch with
+  The running daemon (Windows service "ClaudeWeb", or ClaudeWeb.exe started at logon) and this
+  install's tray (ClaudeWeb.Tray.exe) are stopped so their files unlock; then the daemon is restarted
+  the same way it was running, and the tray is started again if it was running. Running sessions
+  survive this: each one's pseudoconsole lives in its own ClaudeWeb.PtyHost.exe, which is left alone
+  (the process matches below are by exact name and catch neither "ClaudeWeb.PtyHost" nor, for the
+  daemon, "ClaudeWeb.Tray"), so the restarted daemon re-attaches to them rather than relaunching them.
+  A session that genuinely died still comes back by resuming its conversation
+  (Sessions:ResumeOnStart, on by default); pass -ResumeSessions:$false to launch with
   --no-resume-sessions and leave those as manual "Reopen" entries for this deploy instead.
 
 .EXAMPLE
@@ -30,14 +32,28 @@ $ErrorActionPreference = "Stop"
 $root    = Split-Path -Parent $PSScriptRoot
 $publish = Join-Path $root "publish"
 
-# --- 1) Build + publish (single self-contained exe into ./publish) ---------------------------
+# --- 1) Build + publish (single self-contained exes into ./publish) --------------------------
 if (-not $SkipBuild) {
   & (Join-Path $PSScriptRoot "build.ps1")
 } elseif (-not (Test-Path (Join-Path $publish "ClaudeWeb.exe"))) {
   throw "No published build at '$publish'. Run without -SkipBuild first."
 }
 
-# --- 2) Stop the running instance so the single-file exe unlocks; remember how to restart -----
+# --- 2) Stop what holds the install's files; remember how the daemon was running ---------------
+# The tray first: it is only a client, nothing is lost by closing it, and closing it before the daemon
+# spares it announcing that the server went away. Only this install's tray, matched by its exe path: a
+# tray running from anywhere else (a dev build following another port) is not ours to close, and would
+# not be started again below.
+$trayExe = [IO.Path]::GetFullPath((Join-Path $Target "ClaudeWeb.Tray.exe"))
+$trays = @(Get-Process -Name "ClaudeWeb.Tray" -ErrorAction SilentlyContinue | Where-Object {
+  # .Path throws for a process we can't open; such a process isn't ours to stop either.
+  try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $trayExe) } catch { $false }
+})
+if ($trays.Count -gt 0) {
+  Write-Host "==> Closing the tray ($($trays.Count) process(es))" -ForegroundColor Cyan
+  $trays | Stop-Process -Force
+}
+
 $restart = "none"
 $svc = Get-Service -Name "ClaudeWeb" -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -eq "Running") {
@@ -49,9 +65,9 @@ $procs = Get-Process -Name "ClaudeWeb" -ErrorAction SilentlyContinue
 if ($procs) {
   Write-Host "==> Stopping running ClaudeWeb.exe ($($procs.Count) process(es))" -ForegroundColor Cyan
   $procs | Stop-Process -Force
-  if ($restart -eq "none") { $restart = "tray" }
+  if ($restart -eq "none") { $restart = "process" }
 }
-if ($restart -ne "none") { Start-Sleep -Seconds 1 }  # let the OS release file locks
+if ($restart -ne "none" -or $trays.Count -gt 0) { Start-Sleep -Seconds 1 }  # let the OS release file locks
 
 # --- 3) Deploy, preserving settings ----------------------------------------------------------
 Write-Host "==> Deploying to $Target (preserving appsettings*.json)" -ForegroundColor Cyan
@@ -64,7 +80,7 @@ function Invoke-Robocopy([string]$src, [string]$dst, [string[]]$roboArgs) {
   if ($LASTEXITCODE -ge 8) { $out; throw "robocopy failed (exit $LASTEXITCODE): $src -> $dst" }
 }
 
-# Top-level files (exe, pdb, web.config, endpoints json). No /MIR here so unrelated files the
+# Top-level files (exes, pdbs, web.config, endpoints json). No /MIR here so unrelated files the
 # target may have (e.g. aspnetcorev2_inprocess.dll) are left alone. Settings are excluded.
 Invoke-Robocopy $publish $Target @("/E", "/XD", "wwwroot", "/XF", "appsettings.json", "appsettings.*.json")
 
@@ -82,7 +98,7 @@ if (-not (Test-Path $targetSettings)) {
 
 # --- 4) Launch the app so it's running after every deploy (unless -NoRestart) ----------------
 # Prefer the service when one is installed (whether or not it was running before); otherwise the
-# tray exe. This also covers a deploy that started with the app stopped — it still comes back up.
+# daemon exe. This also covers a deploy that started with the app stopped — it still comes back up.
 if (-not $NoRestart) {
   if ($restart -eq "service" -or $svc) {
     Write-Host "==> Starting ClaudeWeb service" -ForegroundColor Cyan
@@ -92,15 +108,23 @@ if (-not $NoRestart) {
     # opts this launch out of that.
     $exe = Join-Path $Target "ClaudeWeb.exe"
     if ($ResumeSessions) {
-      Write-Host "==> Launching ClaudeWeb.exe (system tray, resuming sessions)" -ForegroundColor Cyan
+      Write-Host "==> Launching ClaudeWeb.exe (daemon, resuming sessions)" -ForegroundColor Cyan
       Start-Process $exe -ArgumentList "--resume-sessions"
     } else {
-      Write-Host "==> Launching ClaudeWeb.exe (system tray, not resuming sessions)" -ForegroundColor Cyan
+      Write-Host "==> Launching ClaudeWeb.exe (daemon, not resuming sessions)" -ForegroundColor Cyan
       Start-Process $exe -ArgumentList "--no-resume-sessions"
     }
   }
+
+  # The tray comes back if it was running — whichever way the daemon runs, since it finds the daemon on
+  # its own and waits for it to listen. An install set up without one (register-autostart -NoTray)
+  # stays without one.
+  if ($trays.Count -gt 0 -and (Test-Path $trayExe)) {
+    Write-Host "==> Launching ClaudeWeb.Tray.exe" -ForegroundColor Cyan
+    Start-Process $trayExe
+  }
 } else {
-  Write-Host "    (-NoRestart) App left stopped. Start it with: $Target\ClaudeWeb.exe" -ForegroundColor DarkGray
+  Write-Host "    (-NoRestart) App left stopped. Start it with: $Target\ClaudeWeb.exe (and $Target\ClaudeWeb.Tray.exe)" -ForegroundColor DarkGray
 }
 
 # Surface the URL from the (preserved) settings for convenience.

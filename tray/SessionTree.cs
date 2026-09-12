@@ -1,6 +1,4 @@
-using ClaudeWeb.Server.Sessions;
-
-namespace ClaudeWeb.Server.Tray;
+namespace ClaudeWeb.Tray;
 
 /// <summary>One session in the tray menu, and how deep it hangs off its folder (0 = not a fork).</summary>
 internal sealed record TreeSession(SessionInfo Session, int ForkDepth);
@@ -34,7 +32,7 @@ internal sealed record TreeSection(Project? Project, IReadOnlyList<TreeFolder> F
         Project is { Folders.Count: 1 }
         && Folders.Count == 1
         && !Folders[0].Virtual
-        && ProjectStore.DirKey(Folders[0].Dir) == ProjectStore.DirKey(Project.Folders[0]);
+        && ProjectMembership.DirKey(Folders[0].Dir) == ProjectMembership.DirKey(Project.Folders[0]);
 }
 
 /// <summary>
@@ -140,13 +138,13 @@ internal static class SessionTree
         IReadOnlyList<Project> projects)
     {
         // Sessions filed by hand, under the group that actually holds them — a membership pointing at
-        // some other project's group doesn't apply (see ProjectStore.GroupFor) and falls through to
+        // some other project's group doesn't apply (see ProjectMembership.GroupFor) and falls through to
         // the folder grouping below, exactly as if it had never been filed.
         var byGroup = new Dictionary<string, List<SessionInfo>>(StringComparer.Ordinal);
         var unfiled = new List<SessionInfo>();
         foreach (var s in sessions)
         {
-            if (ProjectStore.GroupFor(projects, s) is not { } g) unfiled.Add(s);
+            if (ProjectMembership.GroupFor(projects, s) is not { } g) unfiled.Add(s);
             else if (byGroup.TryGetValue(g.Id, out var list)) list.Add(s);
             else byGroup[g.Id] = [s];
         }
@@ -157,7 +155,7 @@ internal static class SessionTree
         var loose = new List<TreeFolder>();
         foreach (var folder in folders)
         {
-            var p = ProjectStore.ForDirectory(projects, folder.Dir);
+            var p = ProjectMembership.ForDirectory(projects, folder.Dir);
             if (p is null) loose.Add(folder);
             else if (byProject.TryGetValue(p.Id, out var list)) list.Add(folder);
             else byProject[p.Id] = [folder];
@@ -189,7 +187,7 @@ internal static class SessionTree
         var byDir = new Dictionary<string, (string Dir, List<SessionInfo> Items)>(StringComparer.Ordinal);
         foreach (var s in sessions)
         {
-            var key = ProjectStore.DirKey(s.WorkingDirectory);
+            var key = ProjectMembership.DirKey(s.WorkingDirectory);
             if (!byDir.TryGetValue(key, out var g))
             {
                 // Keep the first-seen spelling for the heading, so its casing stays readable.

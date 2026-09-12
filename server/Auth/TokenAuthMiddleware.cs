@@ -55,7 +55,7 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
         await next(ctx);
     }
 
-    private static string? ExtractToken(HttpRequest req)
+    internal static string? ExtractToken(HttpRequest req)
     {
         var header = req.Headers.Authorization.ToString();
         if (header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))

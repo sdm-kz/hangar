@@ -4,7 +4,7 @@ using System.Text;
 namespace ClaudeWeb.Server.Logging;
 
 /// <summary>
-/// Tiny append-only file logger. The tray build runs without a console, so this keeps a
+/// Tiny append-only file logger. On Windows the daemon runs without a console, so this keeps a
 /// diagnostic trail (session launches, errors) in a log file the user can open.
 /// </summary>
 public sealed class FileLoggerProvider : ILoggerProvider

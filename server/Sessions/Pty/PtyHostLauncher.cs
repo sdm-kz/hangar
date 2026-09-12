@@ -236,7 +236,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// <remarks>
     /// The set to keep is taken from the state files of <b>every instance on the machine</b>, not just
     /// ours: <c>%LocalAppData%\ClaudeWeb\ptyhost</c> is shared, and deleting a build a dev instance
-    /// (or a service alongside the tray app) still has live hosts on would be destructive. Windows
+    /// (or a service alongside a daemon started at logon) still has live hosts on would be destructive. Windows
     /// would refuse to delete a running exe anyway, but relying on a file lock to enforce that is a
     /// thin guarantee to hang sessions on. Best-effort throughout — a folder that won't delete is
     /// simply retried on the next launch.
