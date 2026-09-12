@@ -118,7 +118,14 @@ internal sealed class DaemonConnection(int port) : IDisposable
         using var ws = new ClientWebSocket();
         ws.Options.SetRequestHeader("Authorization", $"Bearer {instance.Token}");
         var local = new Uri(instance.LocalUrl);
-        var hub = new UriBuilder(local) { Scheme = local.Scheme == Uri.UriSchemeHttps ? "wss" : "ws", Path = "/hub/events" }.Uri;
+        // client=tray: the hub keeps its fast tick for browsers, and takes a slower one when the only
+        // thing connected is this menu.
+        var hub = new UriBuilder(local)
+        {
+            Scheme = local.Scheme == Uri.UriSchemeHttps ? "wss" : "ws",
+            Path = "/hub/events",
+            Query = "client=tray",
+        }.Uri;
         using (var connect = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
             connect.CancelAfter(TimeSpan.FromSeconds(10));

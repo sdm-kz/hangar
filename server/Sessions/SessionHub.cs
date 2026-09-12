@@ -24,6 +24,13 @@ public sealed class SessionHub : BackgroundService
     {
         public required WebSocket Socket { get; init; }
 
+        /// <summary>
+        /// A status client — the tray — rather than a browser looking at the app. It holds its socket
+        /// open for the whole logon but only draws anything when someone opens its menu, so it doesn't
+        /// need a browser's tick. See <see cref="NextTick"/>.
+        /// </summary>
+        public bool Indicator { get; init; }
+
         // Bounded + DropOldest: each message is a full snapshot, so a slow client should just get the
         // latest — never a backlog. One reader (its write loop) drains it.
         public Channel<byte[]> Outbox { get; } = Channel.CreateBounded<byte[]>(
@@ -32,6 +39,13 @@ public sealed class SessionHub : BackgroundService
 
     // Recompute at least this often to catch transitions that don't flow through Changed.
     private static readonly TimeSpan TickInterval = TimeSpan.FromMilliseconds(1000);
+
+    // ...but not for a tray on its own. It is connected from logon to logoff, which is what stopped the
+    // "nobody is listening" shortcut below from ever applying again: the list was rebuilt every second all
+    // day, and rebuilding it opens a process handle per running session — fifty sessions, a hundred handle
+    // opens a second, with no browser open. A real change still goes out at once (Poke), so the only thing
+    // this costs is how soon a poll-only transition reaches a menu nobody is looking at.
+    private static readonly TimeSpan IndicatorTickInterval = TimeSpan.FromSeconds(5);
 
     // Re-send the snapshot at least this often even when nothing changed, as a keepalive: it lets a
     // client detect a half-open socket (silence => dead => reconnect) and self-heals any dropped frame.
@@ -88,10 +102,18 @@ public sealed class SessionHub : BackgroundService
             try { BroadcastIfChanged(); }
             catch (Exception ex) { _log.LogDebug(ex, "session broadcast failed"); }
 
-            try { await _wake.WaitAsync(TickInterval, ct); }
+            try { await _wake.WaitAsync(NextTick(), ct); }
             catch (OperationCanceledException) { break; }
         }
     }
+
+    /// <summary>
+    /// How long to wait before recomputing: what a browser needs while anyone has one open, the slower
+    /// tick when the only thing connected is a status client (and either way, no longer than it takes
+    /// <see cref="Poke"/> to wake us).
+    /// </summary>
+    private TimeSpan NextTick() =>
+        _clients.Values.Any(c => !c.Indicator) ? TickInterval : IndicatorTickInterval;
 
     private void BroadcastIfChanged()
     {
@@ -125,11 +147,16 @@ public sealed class SessionHub : BackgroundService
             JsonOpts);
 
     /// <summary>Register a browser socket: seed it with the current snapshot, then pump updates until it closes.</summary>
-    public async Task ServeAsync(WebSocket ws, CancellationToken hostCt)
+    /// <param name="indicator">
+    /// Whether this is a status client (<c>?client=tray</c>) rather than a browser — see <see cref="NextTick"/>.
+    /// </param>
+    public async Task ServeAsync(WebSocket ws, bool indicator, CancellationToken hostCt)
     {
         var id = Guid.NewGuid();
-        var client = new Client { Socket = ws };
+        var client = new Client { Socket = ws, Indicator = indicator };
         _clients[id] = client;
+        // A browser arriving wants the faster tick, and the loop only re-reads that when it wakes.
+        if (!indicator) Poke();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(hostCt);
         try
         {

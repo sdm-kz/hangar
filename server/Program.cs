@@ -405,7 +405,8 @@ internal static class Program
             if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             using var life = SocketLifetime(ctx, lifetime);
-            await hub.ServeAsync(ws, life.Token);
+            // ?client=tray marks a status client: connected all logon, but only drawing on demand.
+            await hub.ServeAsync(ws, ctx.Request.Query["client"] == "tray", life.Token);
         });
 
         // Live terminal stream for a session. Under /hub so the existing TokenAuthMiddleware guards
