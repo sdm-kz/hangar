@@ -37,10 +37,23 @@ public sealed partial class TerminalChannel : IDisposable
     // Activity tracking: while Claude works its TUI spinner redraws continuously, so output keeps
     // flowing; at an idle prompt it stops. We treat "output very recently" as busy, but suppress the
     // signal right after input since the TUI echoes keystrokes as output (that's you typing, not Claude).
+    // A resize is suppressed for the same reason: it makes Ink repaint the entire frame, and a repaint
+    // is output we asked for, not a turn. That one is not hypothetical — the browser deliberately nudges
+    // the size (cols-1, then back) on every attach to force exactly that repaint, so without this guard
+    // merely opening an idle session reported it busy for a beat and then idle again, which reads
+    // downstream as a turn that started and finished on its own.
     private const long OutputWindowMs = 1500; // output seen this recently ⇒ Claude is emitting
     private const long InputGuardMs = 1000;   // ...unless you typed within this window (echo)
+    // Has to outlast the output window, not merely match the input guard: the guard must still be up
+    // when the repaint's last bytes age out of OutputWindowMs, or busy just flips true the moment it
+    // lifts and the blip is delayed rather than removed. The slack is how long a repaint may take and
+    // still be covered — a frame that keeps writing past it reopens the window it closes. The cost is
+    // paid by the other case: attaching to a session that really is generating leaves its dot dark for
+    // this long. That is the better way round, since the terminal itself is right there saying so.
+    private const long ResizeGuardMs = OutputWindowMs + 1000;
     private long _lastOutputTick;
     private long _lastInputTick;
+    private long _lastResizeTick;
 
     /// <summary>True when Claude appears to be actively generating output (not just echoing your typing).</summary>
     public bool IsBusy
@@ -49,7 +62,8 @@ public sealed partial class TerminalChannel : IDisposable
         {
             var now = Environment.TickCount64;
             return now - Volatile.Read(ref _lastOutputTick) < OutputWindowMs
-                && now - Volatile.Read(ref _lastInputTick) > InputGuardMs;
+                && now - Volatile.Read(ref _lastInputTick) > InputGuardMs
+                && now - Volatile.Read(ref _lastResizeTick) > ResizeGuardMs;
         }
     }
 
@@ -431,6 +445,10 @@ public sealed partial class TerminalChannel : IDisposable
             Cols = cols;
             Rows = rows;
         }
+        // Stamped only for a size that actually changed — the early return above is what makes a
+        // same-size resize free, and it must stay free: a viewer that reattaches without changing
+        // the size has caused no repaint and should not blind the busy signal for two seconds.
+        Volatile.Write(ref _lastResizeTick, Environment.TickCount64);
         _pty.Resize(cols, rows);
     }
 
