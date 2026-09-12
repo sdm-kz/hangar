@@ -1,37 +1,42 @@
 <#
 .SYNOPSIS
-  Installs a staged update over a Claude Web install folder and restarts the app.
+  Installs a staged update over a Claude Web install folder and restarts the daemon.
 
 .DESCRIPTION
-  The app cannot overwrite its own running exe, so it launches this script as a detached process and
-  then shuts itself down. From here on the app is gone and this script owns the update:
+  The daemon cannot overwrite its own running exe, so it launches this script as a detached process and
+  then shuts itself down. From here on the daemon is gone and this script owns the update:
 
-    1. wait for the app's process to exit (it is stopping itself); force it down if it hangs
+    1. wait for the daemon's process to exit (it is stopping itself); force it down if it hangs
     2. mirror <Staging> over <Target>, preserving the installed appsettings*.json
-    3. start the app again the same way it was running (service or tray exe)
+    3. start the daemon again the same way it was running (service or process)
 
   Running sessions are NOT interrupted. Each one's pseudoconsole lives in its own
-  ClaudeWeb.PtyHost.exe, which this script never touches: the app detaches on the way down, the hosts
-  and their claude processes keep running throughout, and the restarted app re-attaches to them with
-  their scrollback and their in-flight conversations intact. Only a session that genuinely died comes
-  back the old way, by resuming its conversation (Sessions:ResumeOnStart, or the explicit
-  --resume-sessions this script passes to the tray exe).
+  ClaudeWeb.PtyHost.exe, which this script never touches: the daemon detaches on the way down, the
+  hosts and their claude processes keep running throughout, and the restarted daemon re-attaches to
+  them with their scrollback and their in-flight conversations intact. Only a session that genuinely
+  died comes back the old way, by resuming its conversation (Sessions:ResumeOnStart, or the explicit
+  --resume-sessions this script passes to the daemon exe).
 
   Two details make that work, and both must be preserved if this script is edited:
     * The process matching below is by exact name ("ClaudeWeb"), which does not catch
       "ClaudeWeb.PtyHost" -- stopping the hosts would kill the very sessions we are protecting.
-    * The app launches each host from a per-build copy under %LocalAppData%\ClaudeWeb\ptyhost, so
+    * The daemon launches each host from a per-build copy under %LocalAppData%\ClaudeWeb\ptyhost, so
       the ClaudeWeb.PtyHost.exe this script mirrors into <Target> is never a running, locked file.
+
+  The tray (ClaudeWeb.Tray.exe) is a separate process that holds its own exe open. It steps aside by
+  itself: when the daemon reports the update, the tray exits and arranges to start again once the new
+  daemon answers. As a backstop, a tray still running from <Target> when the copy is due is stopped --
+  it is only a client, so nothing is lost, but that one stays closed until it is next started.
 
   Everything is logged to -LogPath, since nobody is watching a detached window. On any failure the
   script still tries to start the old build back up rather than leaving the machine with no app.
 
-  The app embeds this file and extracts it outside the install folder before running it -- it must not
-  live in <Target>, which step 2 mirrors.
+  The daemon embeds this file and extracts it outside the install folder before running it -- it must
+  not live in <Target>, which step 2 mirrors.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File apply-update.ps1 `
-    -Staging C:\apps\claude-web-updates\payload -Target C:\apps\claude-web -ProcessId 1234 -Mode tray
+    -Staging C:\apps\claude-web-updates\payload -Target C:\apps\claude-web -ProcessId 1234 -Mode process
 #>
 # Keep this file pure ASCII. Windows PowerShell 5.1 reads a .ps1 as ANSI, so a UTF-8 em-dash arrives
 # as bytes including 0x94 -- a CP1252 smart quote, which closes a double-quoted string early and turns
@@ -39,11 +44,11 @@
 param(
   [Parameter(Mandatory)][string]$Staging,               # folder holding the staged build (the payload)
   [Parameter(Mandatory)][string]$Target,                # install folder to update in place
-  [Parameter(Mandatory)][int]$ProcessId,                # the app process to wait for; it is stopping itself
-  [ValidateSet("service", "tray")][string]$Mode = "tray",
+  [Parameter(Mandatory)][int]$ProcessId,                # the daemon process to wait for; it is stopping itself
+  [ValidateSet("service", "process")][string]$Mode = "process",
   [string]$ServiceName = "ClaudeWeb",
   [string]$LogPath,
-  [int]$WaitSeconds = 45                                # how long to let the app close gracefully
+  [int]$WaitSeconds = 45                                # how long to let the daemon close gracefully
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,10 +70,26 @@ function Start-App {
     Start-Service -Name $ServiceName
   } else {
     $exe = Join-Path $Target "ClaudeWeb.exe"
-    Write-Log "Launching $exe (tray, resuming sessions)"
-    # The app auto-resumes what was running, but say so explicitly: this launch must resume even if
+    Write-Log "Launching $exe (daemon, resuming sessions)"
+    # The daemon auto-resumes what was running, but say so explicitly: this launch must resume even if
     # the installed appsettings.json has Sessions:ResumeOnStart turned off.
     Start-Process $exe -ArgumentList "--resume-sessions"
+  }
+}
+
+# Stop processes named $name that run from this install. Match on the executable's path, never on the
+# process name alone: other Claude Web installs (a second port, a test build, a colleague's copy) are
+# none of our business and must be left alone.
+function Stop-FromTarget([string]$name) {
+  $exe = [IO.Path]::GetFullPath((Join-Path $Target "$name.exe"))
+  $procs = @(Get-Process -Name $name -ErrorAction SilentlyContinue | Where-Object {
+    # .Path throws for a process we can't open; such a process isn't ours to stop either.
+    try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq $exe) } catch { $false }
+  })
+  if ($procs.Count -gt 0) {
+    Write-Log "Stopping $($procs.Count) $name process(es) running from $Target"
+    $procs | Stop-Process -Force
+    Start-Sleep -Seconds 1   # let the OS release the file locks
   }
 }
 
@@ -82,7 +103,7 @@ try {
     throw "Target is not a Claude Web install: $Target"
   }
 
-  # --- 1) Wait the app out, then insist -------------------------------------------------------
+  # --- 1) Wait the daemon out, then insist ----------------------------------------------------
   $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
   if ($proc) {
     Write-Log "Waiting up to ${WaitSeconds}s for pid $ProcessId to exit"
@@ -112,24 +133,17 @@ try {
     }
   }
 
-  # A leftover instance of THIS install still holds a lock on the single-file exe and would fail the
-  # copy. Match on the executable's path, never on the process name alone: other Claude Web installs
-  # (a second port, a test build, a colleague's copy) are none of our business and must be left alone.
-  $targetExe = (Join-Path $Target "ClaudeWeb.exe")
-  $strays = @(Get-Process -Name "ClaudeWeb" -ErrorAction SilentlyContinue | Where-Object {
-    # .Path throws for a process we can't open; such a process isn't ours to stop either.
-    try { $_.Path -and ([IO.Path]::GetFullPath($_.Path) -ieq [IO.Path]::GetFullPath($targetExe)) } catch { $false }
-  })
-  if ($strays.Count -gt 0) {
-    Write-Log "Stopping $($strays.Count) leftover process(es) from $Target"
-    $strays | Stop-Process -Force
-    Start-Sleep -Seconds 1   # let the OS release the file locks
-  }
+  # Anything of THIS install still holding its exe open would fail the copy: a leftover daemon, or a
+  # tray that did not step aside on its own (an older tray, or one that had lost its connection).
+  Stop-FromTarget "ClaudeWeb"
+  Stop-FromTarget "ClaudeWeb.Tray"
 
   # --- 2) Mirror the payload over the install, preserving settings -----------------------------
   # Same shape as deploy.ps1: top-level files copied without /MIR (so unrelated files the target may
   # have are left alone) and settings excluded; wwwroot mirrored so stale hashed assets are pruned.
-  $quiet = @("/NFL", "/NDL", "/NP", "/NJH", "/NJS")
+  # /R and /W keep a file that is still locked from stalling the update: robocopy's defaults retry a
+  # million times, 30 seconds apart. Failing quickly lands in the catch below, which brings the app back.
+  $quiet = @("/NFL", "/NDL", "/NP", "/NJH", "/NJS", "/R:3", "/W:2")
 
   Write-Log "Copying program files (preserving appsettings*.json)"
   robocopy $Staging $Target /E /XD "wwwroot" /XF "appsettings.json" "appsettings.*.json" @quiet | Out-Null

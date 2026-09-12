@@ -4,18 +4,7 @@ using Microsoft.Extensions.Hosting.WindowsServices;
 
 namespace ClaudeWeb.Server.Update;
 
-/// <summary>Where an update is in its lifecycle, as far as the app that's being replaced can tell.</summary>
-public enum UpdateState
-{
-    /// <summary>Nothing in flight. There may or may not be a staged build to offer.</summary>
-    Idle,
-
-    /// <summary>The updater has been handed off to; this app is going down and will be replaced.</summary>
-    Applying,
-
-    /// <summary>The hand-off itself failed, so this app is still the one running.</summary>
-    Failed,
-}
+// UpdateState lives in shared\Contract\Update.cs: the tray reads it off the event stream too.
 
 /// <summary>What the UI needs to decide whether to offer an update, and what to say about it.</summary>
 /// <param name="Enabled">Whether the updater is switched on at all (Update:Enabled).</param>
@@ -191,7 +180,7 @@ public sealed class UpdateService : BackgroundService
             try
             {
                 var script = ExtractUpdater();
-                var mode = WindowsServiceHelpers.IsWindowsService() ? "service" : "tray";
+                var mode = OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService() ? "service" : "process";
                 StartUpdater(script, mode);
                 _state = UpdateState.Applying;
                 _error = null;

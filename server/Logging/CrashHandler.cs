@@ -1,15 +1,12 @@
-using System.Windows.Forms;
-
 namespace ClaudeWeb.Server.Logging;
 
 /// <summary>
-/// Process-wide last line of defence. The tray build is a <c>WinExe</c> with no console, so an
-/// exception that escapes normal flow — a background-thread fault (<see cref="AppDomain"/>), a stray
-/// unobserved <see cref="Task"/> fault, or a WinForms UI-thread exception — otherwise terminates the
-/// process silently, leaving nothing in the Windows event log for this app. These handlers write
-/// every such fault to <c>crash.log</c> (and swallow it where the runtime allows the app to keep
-/// running). The web request pipeline already logs its own exceptions via <c>ILogger</c>; this
-/// covers everything outside it.
+/// Process-wide last line of defence. On Windows the daemon is a <c>WinExe</c> with no console, so an
+/// exception that escapes normal flow — a background-thread fault (<see cref="AppDomain"/>) or a stray
+/// unobserved <see cref="Task"/> fault — otherwise terminates the process silently, leaving nothing in
+/// the Windows event log for this app. These handlers write every such fault to <c>crash.log</c> (and
+/// swallow it where the runtime allows the app to keep running). The web request pipeline already logs
+/// its own exceptions via <c>ILogger</c>; this covers everything outside it.
 /// </summary>
 public static class CrashHandler
 {
@@ -38,17 +35,6 @@ public static class CrashHandler
             Write("TaskScheduler.UnobservedTaskException", "observed + suppressed", e.Exception);
             e.SetObserved();
         };
-    }
-
-    /// <summary>
-    /// Route WinForms UI-thread exceptions here — log and keep the tray running — instead of the
-    /// default error dialog / termination. Call after Application.EnableVisualStyles, before Run.
-    /// </summary>
-    public static void InstallWinForms()
-    {
-        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-        Application.ThreadException += (_, e) =>
-            Write("Application.ThreadException", "UI thread — kept alive", e.Exception);
     }
 
     /// <summary>Once the host is up, mirror crash entries into the main ILogger trail as well.</summary>

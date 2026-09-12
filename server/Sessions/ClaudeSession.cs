@@ -8,7 +8,7 @@ namespace ClaudeWeb.Server.Sessions;
 /// A launched interactive <c>claude</c> session. The process runs attached to a pseudoconsole
 /// (ConPTY) — but the pseudoconsole is owned by a per-session <c>ClaudeWeb.PtyHost.exe</c>, not by
 /// this app, and we reach it over a named pipe (see <see cref="Terminal"/>). That indirection is the
-/// whole point: <b>a session outlives this app</b>. An in-app update, a redeploy, tray Exit or a
+/// whole point: <b>a session outlives this app</b>. An in-app update, a redeploy, a stop of the daemon or a
 /// crash leaves the host and its <c>claude</c> running, and the next start re-attaches to the live
 /// session with its scrollback and its conversation intact, rather than relaunching it with
 /// <c>--resume</c>. <c>--remote-control</c> still works as an optional secondary control channel.

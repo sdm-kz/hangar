@@ -24,8 +24,8 @@ public sealed class SessionManagerOptions
     public string? StateFile { get; set; }
 
     /// <summary>
-    /// Relaunch every session that was running when the app last closed (PC shutdown, redeploy, tray
-    /// Exit) as soon as the app starts again, resuming each conversation. On by default; set false to
+    /// Relaunch every session that was running when the app last closed (PC shutdown, redeploy, a
+    /// daemon stop) as soon as the app starts again, resuming each conversation. On by default; set false to
     /// have them wait as manual "Reopen" entries instead.
     /// </summary>
     public bool ResumeOnStart { get; set; } = true;
@@ -189,7 +189,7 @@ public sealed class SessionManager : IDisposable
     ///
     /// <para>The project check is here rather than in the store because it is the manager that knows
     /// where a session runs. It is not a formality: a group only ever applies inside the project that
-    /// owns the folder (see <see cref="ProjectStore.GroupFor"/>), so filing a session into some other
+    /// owns the folder (see <see cref="ProjectMembership.GroupFor"/>), so filing a session into some other
     /// project's group would clear the membership it had and write one that can never be read back —
     /// the session would come out ungrouped and the caller would have been told it worked.</para>
     /// </summary>
@@ -202,7 +202,7 @@ public sealed class SessionManager : IDisposable
 
         if (groupId is not null)
         {
-            var owner = ProjectStore.ForDirectory(_projects.List(), dir);
+            var owner = ProjectMembership.ForDirectory(_projects.List(), dir);
             if (owner is null || !owner.Groups.Any(g => g.Id == groupId)) return null;
         }
 
@@ -854,7 +854,7 @@ public sealed class SessionManager : IDisposable
     /// (<see cref="PersistedSession.WasRunning"/>), resuming each conversation with
     /// <c>--resume &lt;id&gt;</c> (or <c>--continue</c>). Called once at startup unless
     /// <see cref="SessionManagerOptions.ResumeOnStart"/> is off, so a PC shutdown/boot, a redeploy or a
-    /// tray Exit brings the working set back by itself instead of leaving manual "Reopen" entries.
+    /// daemon stop brings the working set back by itself instead of leaving manual "Reopen" entries.
     /// Best-effort: a session whose folder is gone or that fails to launch simply stays Restorable.
     /// Launches are staggered, so run this off the startup path.
     /// </summary>

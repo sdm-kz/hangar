@@ -3,6 +3,7 @@ bin/
 obj/
 publish/
 publish-ptyhost/
+publish-tray/
 *.user
 
 # Node / frontend
