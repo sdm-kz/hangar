@@ -2,8 +2,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionInfo } from "@/types";
 
 /**
+ * The words behind a mark, for the states that have any — the server's `SessionActivityDetail`, as
+ * it arrives on the hub snapshot. A dot can only say that something is happening; these say what.
+ */
+export interface ActivityDetail {
+  /** What a waiting session is blocked on: "Wants to run Bash: git push origin main". */
+  waitingOn?: string | null;
+  /** Why a failed turn stopped, as the hook names it: "rate_limit". */
+  failure?: string | null;
+  /** The failed turn's parting message, where it left one. */
+  failureMessage?: string | null;
+}
+
+/**
  * The id sets a session's activity mark is read from. Bundled into one bag rather than passed as
- * four parallel `Set<string>` arguments: every call site wants all of them, and a positional list
+ * five parallel `Set<string>` arguments: every call site wants all of them, and a positional list
  * that long is one transposed pair away from a folder header disagreeing with the rows under it.
  */
 export interface ActivityIds {
@@ -13,8 +26,30 @@ export interface ActivityIds {
   waiting: Set<string>;
   /** Claude is compacting the conversation: still working, just not on your task. */
   compacting: Set<string>;
+  /**
+   * The last turn ended on an API error — a rate limit, an overload — rather than on an answer.
+   * Hook-derived (`StopFailure`), because the screen can't tell you: a turn that died and a turn
+   * that finished both just stop printing. Cleared by the next prompt.
+   */
+  failed: Set<string>;
   /** Claude has finished a turn here and you haven't looked since. See useDoneSessions. */
   done: Set<string>;
+  /** What the waiting/failed marks are about, keyed by session id — only the ones with anything to say. */
+  detail: Record<string, ActivityDetail>;
+}
+
+/**
+ * One line for why a turn ended badly: Claude's own parting message when it left one, and failing
+ * that the hook's error name spelled out — `rate_limit` is a phrase, not a sentence. Mirrors the
+ * server's `PushNotifier.FailureLine`, so the alert you get on the phone and the one you get in the
+ * tab say the same thing.
+ */
+export function failureLine(detail: ActivityDetail | undefined): string {
+  if (detail?.failureMessage) return detail.failureMessage;
+  if (detail?.failure === "rate_limit") return "Hit the rate limit — the turn didn’t finish.";
+  return detail?.failure
+    ? `The turn ended on an error (${detail.failure}).`
+    : "The turn ended on an error.";
 }
 
 /**
@@ -82,6 +117,7 @@ export function useDoneSessions({
   busyIds,
   waitingIds,
   compactingIds,
+  failedIds,
   shownSessionId,
   streamUp,
 }: {
@@ -89,6 +125,11 @@ export function useDoneSessions({
   busyIds: Set<string>;
   waitingIds: Set<string>;
   compactingIds: Set<string>;
+  /**
+   * Sessions whose last turn died on an API error. They leave the working set like any other, but
+   * "finished" is the one thing they didn't do — and the red mark they carry instead says more.
+   */
+  failedIds: Set<string>;
   /**
    * The session whose terminal is actually on screen — null while a file or a folder's shells have
    * the main area, which they take without changing the selected session. Having a session selected
@@ -127,13 +168,15 @@ export function useDoneSessions({
       if (prev && streamUp) {
         for (const id of prev) {
           // Stopping because Claude is now blocked on you is not finishing — the amber waiting dot
-          // is the thing to show there, and it outranks this one anyway.
-          if (!working.has(id) && !waitingIds.has(id)) next.add(id);
+          // is the thing to show there, and it outranks this one anyway. Nor is stopping because the
+          // turn errored out: a green tick on a session that hit its rate limit is a lie, and the
+          // red mark it gets instead is the one you want to see.
+          if (!working.has(id) && !waitingIds.has(id) && !failedIds.has(id)) next.add(id);
         }
       }
       for (const id of next) {
-        // A new turn (or a prompt to answer) supersedes the last one's result.
-        if (working.has(id) || waitingIds.has(id)) next.delete(id);
+        // A new turn (or a prompt to answer, or a turn that died) supersedes the last one's result.
+        if (working.has(id) || waitingIds.has(id) || failedIds.has(id)) next.delete(id);
         // Prune sessions that have exited or been closed since — but only against a list we
         // actually have. Before the first fetch lands `sessions` is empty, and pruning against it
         // would throw away everything restored from storage.
@@ -142,7 +185,7 @@ export function useDoneSessions({
       }
       return sameSet(next, cur) ? cur : next;
     });
-  }, [sessions, busyIds, waitingIds, compactingIds, streamUp]);
+  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, streamUp]);
 
   useEffect(() => {
     saveDone(done);

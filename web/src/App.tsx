@@ -4,7 +4,8 @@ import { type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
-import { useDoneSessions } from "@/lib/sessionActivity";
+import { failureLine, useDoneSessions, type ActivityDetail } from "@/lib/sessionActivity";
+import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
 import type { Project, SessionInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
@@ -44,6 +45,10 @@ export function App() {
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
   const [waitingIds, setWaitingIds] = useState<Set<string>>(() => new Set()); // waiting on a prompt
   const [compactingIds, setCompactingIds] = useState<Set<string>>(() => new Set()); // compacting the conversation
+  const [failedIds, setFailedIds] = useState<Set<string>>(() => new Set()); // last turn died on an API error
+  // What the waiting/failed marks are about, keyed by session id — see SessionActivityDetail on the
+  // server. Only the sessions with something to say are in here.
+  const [activityDetail, setActivityDetail] = useState<Record<string, ActivityDetail>>({});
   const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
   // The updater's view of itself, from the hub snapshot (or the poll below when it's down).
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
@@ -231,15 +236,23 @@ export function App() {
     busyIds,
     waitingIds,
     compactingIds,
+    failedIds,
     // A file or a folder's shells take the main area from the session pane without touching the
     // selection, so `activeId` alone would clear the mark of a session you never actually saw.
     shownSessionId: openFile || shellFolder ? null : activeId,
     streamUp,
   });
-  // One bag for the four sets, so the sidebar takes a single prop instead of four parallel ones.
+  // One bag for the sets, so the sidebar takes a single prop instead of five parallel ones.
   const activityIds = useMemo(
-    () => ({ busy: busyIds, waiting: waitingIds, compacting: compactingIds, done: doneIds }),
-    [busyIds, waitingIds, compactingIds, doneIds]
+    () => ({
+      busy: busyIds,
+      waiting: waitingIds,
+      compacting: compactingIds,
+      failed: failedIds,
+      done: doneIds,
+      detail: activityDetail,
+    }),
+    [busyIds, waitingIds, compactingIds, failedIds, doneIds, activityDetail]
   );
 
   // Badge the favicon with the busiest state across *all* sessions, so a backgrounded tab shows at a
@@ -279,6 +292,8 @@ export function App() {
             busy: string[];
             waiting?: string[];
             compacting?: string[];
+            failed?: string[];
+            activity?: Record<string, ActivityDetail>;
             update?: UpdateStatus;
             shellsRev?: number;
           };
@@ -286,6 +301,8 @@ export function App() {
           setBusyIds(new Set(msg.busy));
           setWaitingIds(new Set(msg.waiting ?? []));
           setCompactingIds(new Set(msg.compacting ?? []));
+          setFailedIds(new Set(msg.failed ?? []));
+          setActivityDetail(msg.activity ?? {});
           // Only the revision travels; the open session re-fetches its own tabs when it moves (see
           // SessionView). A server that predates shells sends none, which reads as "never changed".
           setShellsRev(msg.shellsRev ?? 0);
@@ -414,30 +431,15 @@ export function App() {
     const newlyStuck = sessions.filter(
       (s) => s.watchdogStatus === "attention" && prev.get(s.id) !== "attention"
     );
-    if (newlyStuck.length === 0 || !("Notification" in window)) return;
-
-    const fire = () => {
-      for (const s of newlyStuck) {
-        try {
-          const n = new Notification(`${s.name} — needs attention`, {
-            body: "Claude stopped recovering after repeated API errors.",
-            tag: `watchdog-${s.id}`,
-          });
-          // Click the notification to jump to that session.
-          n.onclick = () => {
-            window.focus();
-            setActiveId(s.id);
-            clearMainArea();
-            n.close();
-          };
-        } catch {
-          /* ignore — notifications are best-effort */
-        }
-      }
-    };
-    if (Notification.permission === "granted") fire();
-    else if (Notification.permission !== "denied")
-      Notification.requestPermission().then((p) => p === "granted" && fire());
+    osNotify(
+      newlyStuck.map((s) => ({
+        id: s.id,
+        title: `${s.name} — needs attention`,
+        body: "Claude stopped recovering after repeated API errors.",
+        tag: `watchdog-${s.id}`,
+      })),
+      openFromNotification
+    );
   }, [sessions, auth]);
 
   // Notify when a session newly starts waiting on a prompt (idle -> waiting), mirroring the watchdog
@@ -451,32 +453,46 @@ export function App() {
     if (prev === null) return; // first run: seed only
 
     const newly = [...waitingIds].filter((id) => !prev.has(id));
-    if (newly.length === 0 || !("Notification" in window)) return;
+    osNotify(
+      newly.map((id) => ({
+        id,
+        title: `${sessions.find((x) => x.id === id)?.name ?? "Session"} — Claude needs your input`,
+        // What it is blocked on, when the permission hook said — "Wants to run Bash: git push
+        // --force" is a decision you can take from the notification itself.
+        body: activityDetail[id]?.waitingOn ?? "Waiting on a prompt.",
+        tag: `waiting-${id}`,
+      })),
+      openFromNotification
+    );
+  }, [waitingIds, sessions, activityDetail, auth]);
 
-    const fire = () => {
-      for (const id of newly) {
-        const s = sessions.find((x) => x.id === id);
-        try {
-          const n = new Notification(`${s?.name ?? "Session"} — Claude needs your input`, {
-            body: "Waiting on a prompt.",
-            tag: `waiting-${id}`,
-          });
-          // Click the notification to jump to that session.
-          n.onclick = () => {
-            window.focus();
-            setActiveId(id);
-            clearMainArea();
-            n.close();
-          };
-        } catch {
-          /* ignore — notifications are best-effort */
-        }
-      }
-    };
-    if (Notification.permission === "granted") fire();
-    else if (Notification.permission !== "denied")
-      Notification.requestPermission().then((p) => p === "granted" && fire());
-  }, [waitingIds, sessions, auth]);
+  // Notify when a turn newly ends on an API error rather than on an answer. It is the one ending
+  // that looks exactly like nothing happening — the session goes quiet and stays quiet — so it is
+  // also the one worth saying out loud; everything else you find by looking.
+  const prevFailedRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (auth !== "authed") return;
+    const prev = prevFailedRef.current;
+    prevFailedRef.current = new Set(failedIds);
+    if (prev === null) return; // first run: seed only
+
+    // A session the watchdog is minding is about to retry the error by itself, so an alert here would
+    // be about a problem already in hand — it has its own for when it gives up. Same rule as the push
+    // notifier's, so the phone and the tab agree about which failures are worth interrupting you for.
+    const newly = [...failedIds]
+      .filter((id) => !prev.has(id))
+      .map((id) => sessions.find((s) => s.id === id))
+      .filter((s): s is SessionInfo => s !== undefined && !s.watchdogEnabled);
+    osNotify(
+      newly.map((s) => ({
+        id: s.id,
+        title: `${s.name} — Claude stopped early`,
+        body: failureLine(activityDetail[s.id]),
+        tag: `failed-${s.id}`,
+      })),
+      openFromNotification
+    );
+  }, [failedIds, sessions, activityDetail, auth]);
 
   // When a push notification is tapped while a window is already open, the service worker posts the
   // session id here so we can jump to it (the cold-open case is handled by readUrlState's ?session=).
@@ -573,6 +589,16 @@ export function App() {
     setOpenFile(null);
     setShellFolder(null);
   }, []);
+
+  // Where a notification's click lands: the session it was about, with whatever had the main area
+  // out of the way — the alert is asking you to look at that session, not at a file you left open.
+  const openFromNotification = useCallback(
+    (id: string) => {
+      setActiveId(id);
+      clearMainArea();
+    },
+    [clearMainArea]
+  );
 
   // Open a server file (from the Files tab) in the main content area; close the mobile drawer.
   const openServerFile = useCallback((path: string) => {

@@ -35,6 +35,7 @@ public sealed class PushNotifier : BackgroundService
 
     private HashSet<string>? _prevAttention;
     private HashSet<string>? _prevWaiting;
+    private HashSet<string>? _prevFailed;
 
     public PushNotifier(SessionManager mgr, HookEventStore hooks, PushSubscriptionStore subs,
         VapidKeyStore vapid, ILogger<PushNotifier> log)
@@ -70,12 +71,20 @@ public sealed class PushNotifier : BackgroundService
         var sessions = _mgr.List();
         var attention = sessions.Where(s => s.WatchdogStatus == "attention").Select(s => s.Id).ToHashSet();
         var waiting = _mgr.AwaitingInputIds().ToHashSet();
+        var failed = _mgr.FailedSessionIds().ToHashSet();
+        // What the waiting/failed sets are about, where the hooks said: a permission dialog names the
+        // command it wants to run, and a failed turn names the error it died on. On a phone that detail
+        // is most of the value — "Wants to run Bash: git push --force" is a decision you can take from
+        // the lock screen; "Waiting on a prompt." only tells you to go and look.
+        var details = _mgr.ActivityDetails();
 
         var prevAttention = _prevAttention;
         var prevWaiting = _prevWaiting;
+        var prevFailed = _prevFailed;
         _prevAttention = attention;
         _prevWaiting = waiting;
-        if (prevAttention is null || prevWaiting is null) return; // first tick: seed only
+        _prevFailed = failed;
+        if (prevAttention is null || prevWaiting is null || prevFailed is null) return; // first tick: seed only
 
         // No subscriptions => nothing to send; still keep the snapshots current above so the first
         // transition after a subscribe doesn't retroactively fire for a pre-existing state.
@@ -92,10 +101,36 @@ public sealed class PushNotifier : BackgroundService
             if (waiting.Contains(s.Id) && !prevWaiting.Contains(s.Id))
                 await SendToAllAsync(
                     $"{s.Name} — Claude needs your input",
-                    "Waiting on a prompt.",
+                    details.GetValueOrDefault(s.Id)?.WaitingOn ?? "Waiting on a prompt.",
                     $"waiting-{s.Id}", s.Id);
+
+            // A turn that died on a rate limit stops exactly like one that finished, so nothing else
+            // here would ever fire for it — and it is the case where knowing early matters most, since
+            // the session sits there doing nothing until someone comes back and retries it.
+            //
+            // Unless the watchdog has the session, in which case it is about to try the error again
+            // and this alert would be telling you about a problem that is already being handled. That
+            // one has its own alert for when it gives up, which is the point at which you are needed.
+            if (failed.Contains(s.Id) && !prevFailed.Contains(s.Id) && !s.WatchdogEnabled)
+                await SendToAllAsync(
+                    $"{s.Name} — Claude stopped early",
+                    FailureLine(details.GetValueOrDefault(s.Id)),
+                    $"failed-{s.Id}", s.Id);
         }
     }
+
+    /// <summary>
+    /// One line for why a turn ended badly: Claude's own parting message when it left one, and failing
+    /// that the hook's error name spelled out — <c>rate_limit</c> is a phrase, not a sentence.
+    /// </summary>
+    private static string FailureLine(SessionActivityDetail? detail) =>
+        detail?.FailureMessage
+        ?? detail?.Failure switch
+        {
+            "rate_limit" => "Hit the rate limit — the turn didn’t finish.",
+            null => "The turn ended on an error.",
+            var other => $"The turn ended on an error ({other}).",
+        };
 
     private async Task SendToAllAsync(string title, string body, string tag, string sessionId)
     {

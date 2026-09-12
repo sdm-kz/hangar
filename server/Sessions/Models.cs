@@ -79,3 +79,17 @@ public sealed record PersistedSession(
     string? ParentSessionId = null,
     /// <summary>The parent's display name at fork time, so the link survives the parent's removal.</summary>
     string? ParentName = null);
+
+/// <summary>
+/// What one session's activity mark is about, where there is anything to say beyond the mark itself.
+/// Rides the hub snapshot next to the id sets (busy / waiting / failed), not on <c>SessionInfo</c>:
+/// what Claude is doing changes several times a minute and belongs with the rest of the fast-moving
+/// state, while the session record is metadata that mostly doesn't move.
+/// </summary>
+public sealed record SessionActivityDetail(
+    /// <summary>What a waiting session is blocked on ("Wants to run Bash: git push"). Null unless waiting.</summary>
+    string? WaitingOn,
+    /// <summary>Why a failed turn stopped, as the hook names it ("rate_limit"). Null unless it failed.</summary>
+    string? Failure,
+    /// <summary>The failed turn's parting message, where it had one.</summary>
+    string? FailureMessage);

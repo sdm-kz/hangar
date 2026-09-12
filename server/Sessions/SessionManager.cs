@@ -341,6 +341,39 @@ public sealed class SessionManager : IDisposable
             ? st.Waiting
             : s.Terminal is { IsAwaitingInput: true };
 
+    /// <summary>
+    /// Ids of live sessions whose last turn ended on an API error — a rate limit, an overload — rather
+    /// than on an answer. Hook-derived only, with no heuristic fallback: a failed turn and a finished
+    /// one look identical on screen (both stop printing), which is the whole reason this is worth
+    /// surfacing. Cleared by the next prompt, so it says "this one needs picking back up", not "this
+    /// one errored at some point today".
+    /// </summary>
+    public IReadOnlyCollection<string> FailedSessionIds() =>
+        _sessions.Values
+            .Where(s => s.State == SessionState.Running
+                        && _hooks.TryGetStatus(s.Id, out var st) && st.Failure is not null)
+            .Select(s => s.Id)
+            .ToArray();
+
+    /// <summary>
+    /// The words behind the activity marks, for the sessions that have any: what a waiting session is
+    /// blocked on, and why a failed one stopped. Keyed by session id and sent alongside the id sets in
+    /// the hub snapshot — a dot can only say <em>that</em> something is happening, and on a phone in
+    /// another room the useful half is <em>what</em>.
+    /// </summary>
+    public IReadOnlyDictionary<string, SessionActivityDetail> ActivityDetails()
+    {
+        var details = new Dictionary<string, SessionActivityDetail>();
+        foreach (var s in _sessions.Values)
+        {
+            if (s.State != SessionState.Running) continue;
+            if (!_hooks.TryGetStatus(s.Id, out var st)) continue;
+            if (st.WaitingOn is null && st.Failure is null) continue;
+            details[s.Id] = new SessionActivityDetail(st.WaitingOn, st.Failure, st.FailureMessage);
+        }
+        return details;
+    }
+
     public SessionInfo? Get(string id)
     {
         if (!_sessions.TryGetValue(id, out var s)) return null;

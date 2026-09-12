@@ -26,7 +26,7 @@ import {
   sortPinnedFirst,
   type SessionOrder,
 } from "@/lib/sessionOrder";
-import { type ActivityIds } from "@/lib/sessionActivity";
+import { failureLine, type ActivityIds } from "@/lib/sessionActivity";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
@@ -172,8 +172,9 @@ function HeadingActivityMark({ activity }: { activity: Activity | null }) {
  *
  * One element, used both in a row's corner and on a heading's icon, so the two can't drift apart.
  */
-function ActivityMark({ activity }: { activity: Activity }) {
-  const { className, label, Icon } = ACTIVITY_MARK[activity];
+function ActivityMark({ activity, label: detail }: { activity: Activity; label?: string }) {
+  const { className, label: generic, Icon } = ACTIVITY_MARK[activity];
+  const label = detail ?? generic;
   return Icon ? (
     // 8px with a heavy stroke, not the 14px these icons are usually drawn at. Bigger reads better in
     // isolation and worse here: the badge is opaque, so every pixel it gains is taken out of the
@@ -213,7 +214,7 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
  * What an activity mark can say, and how it looks — one definition, so a session row and the folder
  * header above it can never disagree about what amber means.
  */
-type Activity = "busy" | "compacting" | "waiting" | "attention" | "recovering" | "done";
+type Activity = "busy" | "compacting" | "waiting" | "failed" | "attention" | "recovering" | "done";
 const ACTIVITY_MARK: Record<Activity, { className: string; label: string; Icon?: LucideIcon }> = {
   busy: { className: "bg-emerald-500 animate-pulse", label: "Claude is working" },
   // A flavour of busy, so it stays in the working family — a slower pulse and a cooler green, because
@@ -225,6 +226,14 @@ const ACTIVITY_MARK: Record<Activity, { className: string; label: string; Icon?:
   waiting: {
     className: "bg-amber-400 animate-pulse ring-2 ring-amber-400/40",
     label: "Claude is waiting for your input",
+  },
+  // The tick's opposite number, and drawn like it for the same reason: a turn that died is over, not
+  // happening, and a seventh dot would be one more colour to learn. A cross says "this stopped, and
+  // not well" with no legend — the session is sitting there waiting to be picked back up.
+  failed: {
+    className: "text-red-500",
+    label: "Claude’s last turn ended on an error",
+    Icon: X,
   },
   attention: { className: "bg-red-500", label: "Session needs attention" },
   recovering: { className: "bg-amber-500 animate-pulse", label: "Watchdog is auto-recovering this session" },
@@ -245,10 +254,30 @@ function sessionActivity(s: SessionInfo, ids: ActivityIds): Activity | null {
   if (ids.busy.has(s.id)) return "busy";
   if (ids.waiting.has(s.id)) return "waiting";
   if (s.watchdogStatus === "attention") return "attention";
+  // Above the failed turn it is presumably retrying: the watchdog having the session in hand is the
+  // newer fact, and the one that says whether you have to do anything about the error yourself.
   if (s.watchdogStatus === "recovering") return "recovering";
+  if (ids.failed.has(s.id)) return "failed";
   // Last, because it is the only one in past tense: anything the session is doing *now* is the more
   // useful thing to say about it, and a finished turn keeps its tick until you go and look.
   if (ids.done.has(s.id)) return "done";
+  return null;
+}
+
+/**
+ * What a mark is actually about, where the hooks said more than the state itself does: which command
+ * a permission dialog is asking to run, or what a failed turn died on. Null for the states that have
+ * nothing to add — their one-line label in ACTIVITY_MARK is the whole story.
+ *
+ * It rides the row's tooltip rather than the row itself. There is nowhere on a row to put a sentence
+ * that isn't taken by the session's name, and a line of it appearing under half the rows in a busy
+ * sidebar would reflow the list every time a permission dialog opened.
+ */
+function activityDetail(activity: Activity, id: string, ids: ActivityIds): string | null {
+  const detail = ids.detail[id];
+  if (!detail) return null;
+  if (activity === "waiting") return detail.waitingOn ?? null;
+  if (activity === "failed") return failureLine(detail);
   return null;
 }
 
@@ -258,9 +287,13 @@ function sessionActivity(s: SessionInfo, ids: ActivityIds): Activity | null {
  * prompt behind a session that happens to be generating — the whole point of surfacing it up here.
  */
 const FOLDER_URGENCY: Record<Activity, number> = {
-  waiting: 5,
-  attention: 4,
-  recovering: 3,
+  waiting: 6,
+  attention: 5,
+  recovering: 4,
+  // Above the working states, unlike the tick below them: a finished turn resolves itself the moment
+  // you look at it, while a turn that died on an error stays dead until someone retries it. A folder
+  // must not hide that behind a session that happens to be generating.
+  failed: 3,
   compacting: 2,
   busy: 1,
   // Bottom of the pile, which is exactly the rule asked of it: a heading only ticks once nothing
@@ -1802,6 +1835,7 @@ export function SessionSidebar({
         }
       : undefined;
     const activity = sessionActivity(s, activityIds);
+    const detail = activity ? activityDetail(activity, s.id, activityIds) : null;
     // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Enough of a step that a fork reads as sitting under its parent at a glance, but capped after
@@ -1830,10 +1864,9 @@ export function SessionSidebar({
         title={
           restorable
             ? undefined
-            : showPath
-              ? "Middle-click or Ctrl/⌘-click to open in a new tab"
-              : `${s.workingDirectory}
-Middle-click or Ctrl/⌘-click to open in a new tab`
+            : [detail, showPath ? null : s.workingDirectory, "Middle-click or Ctrl/⌘-click to open in a new tab"]
+                .filter(Boolean)
+                .join("\n")
         }
         className={cn(
           "group relative flex flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-2 text-sm hover:bg-accent",
@@ -1848,7 +1881,10 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
           // Guarded like the ring above rather than trusting `done` to be free of closed sessions:
           // what keeps them out of it is a prune that runs in an effect, so a mark restored from
           // storage is on screen for a paint before the prune has had a chance to drop it.
-          !restorable && activity === "done" && "ring-1 ring-emerald-400/40"
+          !restorable && activity === "done" && "ring-1 ring-emerald-400/40",
+          // Same weight as the tick's ring, in the colour of the cross: the other receipt, for the
+          // ending you probably want to do something about.
+          !restorable && activity === "failed" && "ring-1 ring-red-400/40"
         )}
       >
         {/* Where a dragged row would land. A bar of its own rather than the row's top border: a
@@ -1865,7 +1901,7 @@ Middle-click or Ctrl/⌘-click to open in a new tab`
             colours stay legible where they meet. */}
         {!restorable && activity && (
           <span className="pointer-events-none absolute left-0.5 top-0.5 rounded-full bg-background p-[2px] leading-none">
-            <ActivityMark activity={activity} />
+            <ActivityMark activity={activity} label={detail ?? undefined} />
           </span>
         )}
         <div className="flex items-center justify-between gap-1">

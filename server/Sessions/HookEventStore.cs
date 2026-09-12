@@ -4,7 +4,26 @@ using System.Text.Json;
 namespace ClaudeWeb.Server.Sessions;
 
 /// <summary>Authoritative, hook-derived view of one session: what Claude is doing right now.</summary>
-public sealed record HookStatus(bool Busy, bool Waiting, string? CurrentTool, DateTimeOffset LastEventAt);
+public sealed record HookStatus(
+    bool Busy,
+    bool Waiting,
+    string? CurrentTool,
+    DateTimeOffset LastEventAt,
+    /// <summary>
+    /// What Claude is blocked on, in words — "Wants to run Bash: git push origin main", or whatever
+    /// the notification said. Null unless <paramref name="Waiting"/>; a dot can only say that someone
+    /// is blocked, and the thing you actually want to know from the next room is on what.
+    /// </summary>
+    string? WaitingOn,
+    /// <summary>
+    /// Why the last turn ended badly, as Claude's <c>StopFailure</c> hook names it ("rate_limit"), or
+    /// null when it ended normally. A turn that died on a rate limit and one that finished both stop
+    /// emitting, so without this the two are the same silence.
+    /// </summary>
+    string? Failure,
+    /// <summary>The failed turn's last assistant message, where there was one — the human sentence behind
+    /// <paramref name="Failure"/>'s machine name.</summary>
+    string? FailureMessage);
 
 /// <summary>
 /// Collects Claude Code hook callbacks (delivered to <c>POST /api/hooks</c>) and turns them into a
@@ -24,6 +43,9 @@ public sealed class HookEventStore
         public bool Busy;
         public bool Waiting;
         public string? CurrentTool;
+        public string? WaitingOn;
+        public string? Failure;
+        public string? FailureMessage;
         public DateTimeOffset LastEventAt;
         public string? ClaudeSessionId; // Claude Code's own session id (for --resume of the exact convo)
         public readonly Queue<string> Recent = new(); // last few "event[:tool]" strings, for debug/logging
@@ -54,7 +76,8 @@ public sealed class HookEventStore
         if (_byId.TryGetValue(sessionId, out var s))
         {
             lock (s.Gate)
-                status = new HookStatus(s.Busy, s.Waiting, s.CurrentTool, s.LastEventAt);
+                status = new HookStatus(
+                    s.Busy, s.Waiting, s.CurrentTool, s.LastEventAt, s.WaitingOn, s.Failure, s.FailureMessage);
             return true;
         }
         status = default!;
@@ -78,8 +101,8 @@ public sealed class HookEventStore
 
     /// <summary>
     /// Apply one hook callback to a session's status. <paramref name="payload"/> is the raw hook JSON
-    /// body; we read <c>hook_event_name</c> and, where relevant, <c>tool_name</c> /
-    /// <c>notification_type</c>. Unknown events just refresh the timestamp.
+    /// body; we read <c>hook_event_name</c> and, where relevant, <c>tool_name</c> / <c>tool_input</c> /
+    /// <c>notification_type</c> / <c>message</c> / <c>error</c>. Unknown events just refresh the timestamp.
     /// </summary>
     public void Ingest(string sessionId, JsonElement payload)
     {
@@ -103,28 +126,38 @@ public sealed class HookEventStore
             {
                 case "SessionStart":
                     s.Busy = false; s.Waiting = false; s.CurrentTool = null;
+                    Unblock(s); ClearFailure(s);
                     break;
                 case "UserPromptSubmit":
                 case "UserPromptExpansion":
                     s.Busy = true; s.Waiting = false; s.CurrentTool = null;
+                    Unblock(s); ClearFailure(s);
                     break;
                 case "PreToolUse":
                     s.Busy = true; s.Waiting = false; s.CurrentTool = tool;
+                    Unblock(s); ClearFailure(s);
                     break;
                 case "PostToolUse":
                 case "PostToolUseFailure":
                 case "PostToolBatch":
-                    s.Busy = true; s.CurrentTool = null;
+                    // A tool that ran is also the answer to the permission dialog that was asking about
+                    // it: approving one is the one path out of Waiting that fires no event of its own.
+                    s.Busy = true; s.Waiting = false; s.CurrentTool = null;
+                    Unblock(s);
                     break;
                 case "SubagentStart":
                     s.Busy = true; s.Waiting = false;
+                    Unblock(s);
                     break;
                 case "PermissionRequest":
-                    // Paused on a permission dialog: not generating, waiting on the user.
+                    // Paused on a permission dialog: not generating, waiting on the user — and, unlike
+                    // every other waiting state, able to say exactly what it is asking to do.
                     s.Busy = false; s.Waiting = true;
+                    s.WaitingOn = PermissionSummary(tool, payload);
                     break;
                 case "PermissionDenied":
                     s.Waiting = false;
+                    Unblock(s);
                     break;
                 case "Notification":
                     // Map the notification type to a waiting transition: a genuine "needs you" prompt
@@ -132,15 +165,33 @@ public sealed class HookEventStore
                     // left untouched (a later Stop/tool event will reconcile the status).
                     switch (WaitingNotification(notif))
                     {
-                        case true: s.Busy = false; s.Waiting = true; break;
-                        case false: s.Waiting = false; break;
+                        case true:
+                            s.Busy = false; s.Waiting = true;
+                            // Claude writes this line for a human to read ("Claude needs your permission
+                            // to use Bash"), so prefer it to anything we could phrase ourselves — but
+                            // keep a permission summary we already have, which names the command.
+                            s.WaitingOn = s.WaitingOn ?? Truncate(Str(payload, "message"), DetailLimit);
+                            break;
+                        case false: s.Waiting = false; Unblock(s); break;
                         // null: unknown/untyped — no status change
                     }
                     break;
-                case "Stop":
                 case "StopFailure":
+                    // The turn ended on an API error rather than an answer. Same stop as below, plus the
+                    // reason — the one thing that distinguishes it from a job well done.
+                    s.Busy = false; s.Waiting = false; s.CurrentTool = null;
+                    Unblock(s);
+                    // Two spellings in the wild: the docs match this hook on `error_type`
+                    // (rate_limit, overloaded, server_error, …), while shipped integrations read
+                    // `error`. Take either, and still record the failure when neither is there —
+                    // that the turn ended badly is the part worth showing.
+                    s.Failure = Str(payload, "error_type") ?? Str(payload, "error") ?? "error";
+                    s.FailureMessage = Truncate(Str(payload, "last_assistant_message"), DetailLimit);
+                    break;
+                case "Stop":
                 case "SessionEnd":
                     s.Busy = false; s.Waiting = false; s.CurrentTool = null;
+                    Unblock(s); ClearFailure(s);
                     break;
                 // SubagentStop, PreCompact, etc.: no status change, just the timestamp refresh above.
             }
@@ -152,6 +203,49 @@ public sealed class HookEventStore
         _log.LogTrace("Hook {Event} for session {Id} (tool={Tool}, notif={Notif})", evt, sessionId, tool, notif);
         if (newClaudeSessionId) ClaudeSessionIdCaptured?.Invoke(sessionId, claudeSessionId!);
         Changed?.Invoke();
+    }
+
+    // Longest detail we keep. These are read in a sidebar tooltip and a phone's notification body,
+    // both of which cut off long before this — the limit is here so a pasted essay of a permission
+    // argument can't ride the snapshot to every connected client once a second.
+    private const int DetailLimit = 160;
+
+    // Leaving the waiting state drops what it was waiting on with it: a stale "Wants to run Bash: rm -rf
+    // build" outliving its dialog reads as a live question, and there is no event that retracts one.
+    private static void Unblock(State s) => s.WaitingOn = null;
+
+    // A new turn supersedes the last one's failure. Nothing retracts a StopFailure either, so without
+    // this the rate limit you already retried past stays on the row until the session is closed.
+    private static void ClearFailure(State s)
+    {
+        s.Failure = null;
+        s.FailureMessage = null;
+    }
+
+    /// <summary>
+    /// What a permission dialog is asking for, as a line to show: the tool, plus the part of its input
+    /// worth reading — the command for <c>Bash</c>, the path for an edit. Everything else is a shape we
+    /// can't summarise usefully, so it gets the tool name alone rather than a JSON blob.
+    /// </summary>
+    private static string? PermissionSummary(string? tool, JsonElement payload)
+    {
+        if (string.IsNullOrEmpty(tool)) return null;
+        var input = payload.ValueKind == JsonValueKind.Object
+                    && payload.TryGetProperty("tool_input", out var v)
+                    && v.ValueKind == JsonValueKind.Object
+            ? v
+            : default;
+        var preview = Truncate(Str(input, "command") ?? Str(input, "file_path"), DetailLimit);
+        return preview is null ? $"Wants to run {tool}" : $"Wants to run {tool}: {preview}";
+    }
+
+    // Trim to one readable line: collapse the newlines a heredoc'd command is full of, then cut.
+    private static string? Truncate(string? text, int max)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var flat = string.Join(" ", text.Split('\n', '\r', StringSplitOptions.RemoveEmptyEntries
+            | StringSplitOptions.TrimEntries));
+        return flat.Length <= max ? flat : flat[..(max - 1)] + "…";
     }
 
     // Whether a Notification of this type means Claude is *blocked* needing the user. Types are the

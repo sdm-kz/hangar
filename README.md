@@ -101,6 +101,18 @@ The web UI is a **session manager with a full terminal**:
   names the page and opens it in a browser tab in one click. You can force either behaviour with the
   *Show the page in the tab* checkbox. A page that does frame but needs you signed in may still ask
   again — a frame is a separate context as far as the browser's cookie rules go.
+- **What each session is doing** — every row carries a mark, read off Claude's own hook callbacks
+  rather than scraped off the terminal: a green pulse while it works, a cooler one while it compacts,
+  an **amber ring** when it is blocked on you, a **red cross** when the last turn died on an API
+  error, and a green tick for a turn that finished while you were looking elsewhere (that one clears
+  once you have read it). The two that want you name themselves: hover a waiting row and it says
+  which command the permission dialog is asking to run — *Wants to run Bash: git push --force* — and
+  a failed one says what it died on, a rate limit being the usual answer. A failed turn is worth its
+  own mark because it is invisible otherwise: a turn that hit its limit stops printing exactly like
+  one that finished, so without this the session just looks done. Both also raise a notification —
+  in the page, and as a Web Push alert to every subscribed device, so the phone gets it with every
+  tab closed — carrying the same line. A folder or project heading shows the most urgent mark under
+  it, so a collapsed group can't hide a question.
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile.
 - **Light / dark** theme toggle.
 - **Start / stop** — stop kills the process; the app just manages lifecycle.
@@ -393,7 +405,7 @@ the whole thing off and go back to `deploy.ps1` only.
 | `Sessions:ResumeDelayMs`    | Settling delay before auto-resume starts (lets a booting PC come up)| `5000`  |
 | `Sessions:ResumeStaggerMs`  | Pause between consecutive auto-resumed launches      | `2000`               |
 | `Sessions:SelfUrl`          | URL a session calls back on (`CLAUDEWEB_URL`); empty = derived from the bound port | `""` |
-| `Hooks:Enabled`             | Register this instance's hooks in `~/.claude/settings.json` (drives busy/waiting status). Off = terminal heuristics only | `true` |
+| `Hooks:Enabled`             | Register this instance's hooks in `~/.claude/settings.json` (drives busy/waiting/failed status). Off = terminal heuristics only | `true` |
 | `Hooks:Force`               | Claim that registration even when another instance is live on the port it currently names — see below | `false` |
 | `Pty:InstanceKey`           | Namespaces this instance's pty pipes and state dir; empty = the bound port. Keeps a dev instance from adopting the live app's sessions | `""` |
 | `Pty:HostExecutable`        | Path to `ClaudeWeb.PtyHost.exe`; empty = beside the app | `""`                 |

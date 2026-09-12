@@ -138,6 +138,10 @@ public sealed class SessionHub : BackgroundService
                 busy = _mgr.BusySessionIds(),
                 waiting = _mgr.AwaitingInputIds(),
                 compacting = _mgr.CompactingSessionIds(),
+                failed = _mgr.FailedSessionIds(),
+                // Only the sessions with something to say are in here, so on a quiet machine it is an
+                // empty object and the snapshot is the size it always was.
+                activity = _mgr.ActivityDetails(),
                 update = _updates.Status,
                 // Only the number rides the snapshot, not the shells: a browser holding an older one
                 // re-fetches the session's own tabs, and the rest never hear about it. Same trick as
