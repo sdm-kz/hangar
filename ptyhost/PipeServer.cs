@@ -145,6 +145,7 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
             {
                 Type = "welcome",
                 Protocol = PtyFrame.Protocol,
+                CanRepaint = true,
                 ChildPid = terminal.ProcessId,
                 ChildStartTicks = Host.ChildStartTicks,
                 Cols = terminal.Cols,
@@ -241,6 +242,13 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
         {
             case "resize":
                 terminal.Resize((short)msg.Cols, (short)msg.Rows);
+                return false;
+
+            // A viewer has attached and wants the current screen drawn. Deliberately fire-and-forget:
+            // the redraw takes a couple of hundred milliseconds to play out and nothing waits on it,
+            // while this loop must stay free to carry the output it produces.
+            case "repaint":
+                _ = terminal.RepaintAsync();
                 return false;
 
             case "ping":

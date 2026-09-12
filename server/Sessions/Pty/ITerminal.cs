@@ -34,6 +34,14 @@ public interface ITerminal : IDisposable
     /// <summary>Resize the pseudoconsole (SIGWINCH-equivalent); the TUI repaints to the new size.</summary>
     void Resize(short cols, short rows);
 
+    /// <summary>
+    /// Ask the child to redraw its whole screen, for a viewer that has just attached — it would
+    /// otherwise get the replayed scrollback and no SIGWINCH, leaving the input box unpainted.
+    /// Where the host can do this itself the redraw is not counted as activity; against an older
+    /// host it falls back to nudging the size from here, which is.
+    /// </summary>
+    void RequestRepaint();
+
     /// <summary>Current pseudoconsole width.</summary>
     short Cols { get; }
 

@@ -10,7 +10,8 @@ namespace ClaudeWeb.Pty;
 /// a host left running by the previous build instead of orphaning (or killing) its session.
 /// </summary>
 /// <remarks>
-/// Client to host: <c>hello</c> · <c>resize</c> · <c>ping</c> · <c>watchdog</c> · <c>shutdown</c>.
+/// Client to host: <c>hello</c> · <c>resize</c> · <c>repaint</c> · <c>ping</c> · <c>watchdog</c> ·
+/// <c>shutdown</c>.
 /// Host to client: <c>welcome</c> · <c>pong</c> · <c>renamed</c> · <c>color</c> · <c>remoteUrl</c> ·
 /// <c>state</c> · <c>exited</c>.
 /// </remarks>
@@ -26,6 +27,17 @@ public sealed record PtyControl
     public int Cols { get; init; }
     /// <summary>welcome/resize: pseudoconsole size.</summary>
     public int Rows { get; init; }
+
+    /// <summary>
+    /// welcome: the host can redraw the child's screen on request (the <c>repaint</c> control), so a
+    /// viewer attaching does not have to fake a SIGWINCH by nudging the size from outside.
+    ///
+    /// A capability flag rather than a protocol bump on purpose. <see cref="PtyFrame.Protocol"/> is
+    /// what the web app refuses to attach below, and hosts outlive the app by design — raising it
+    /// would orphan every session still served by the previous build, which is the one thing the pty
+    /// host exists to prevent. Absent (false) means an older host: the caller falls back to nudging.
+    /// </summary>
+    public bool CanRepaint { get; init; }
 
     /// <summary>welcome: the pid of the process attached to the pseudoconsole.</summary>
     public int ChildPid { get; init; }

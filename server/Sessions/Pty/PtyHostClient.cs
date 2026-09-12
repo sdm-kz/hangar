@@ -91,6 +91,9 @@ public sealed class PtyHostClient : ITerminal
         ProcessId = welcome.ChildPid;
         ProcessStartTicks = welcome.ChildStartTicks;
         AlreadyExited = welcome.Exited;
+        // Absent on a host built before the repaint control existed, which is exactly what it has to
+        // mean: fall back to nudging (see RequestRepaint).
+        _canRepaint = welcome.CanRepaint;
         _remoteUrl = welcome.RemoteUrl;
         _cols = (short)Math.Max(1, welcome.Cols);
         _rows = (short)Math.Max(1, welcome.Rows);
@@ -309,9 +312,34 @@ public sealed class PtyHostClient : ITerminal
     // sampling lag, or busy simply flips true the moment it lifts.
     private const long ResizeRepaintMs = 3000;
     private long _lastResizeTick;
+    private readonly bool _canRepaint;
 
     public bool IsRepaintingAfterResize =>
         Environment.TickCount64 - Volatile.Read(ref _lastResizeTick) < ResizeRepaintMs;
+
+    /// <summary>
+    /// Hand the repaint to the host when it can do one, so the redraw it produces is known to be a
+    /// redraw and never counted as work. Against a host from before that existed — and hosts outlive
+    /// the app, so after an update there can be dozens — do the old thing from here: nudge the size
+    /// and let <see cref="IsRepaintingAfterResize"/> cover for it. Either way the browser just asks.
+    /// </summary>
+    public void RequestRepaint()
+    {
+        if (_canRepaint)
+        {
+            _ = SendControlAsync(new PtyControl { Type = "repaint" });
+            return;
+        }
+        short cols, rows;
+        lock (_lock) { cols = _cols; rows = _rows; }
+        if (cols <= 1) return;
+        _ = Task.Run(async () =>
+        {
+            Resize((short)(cols - 1), rows);
+            await Task.Delay(60);
+            Resize(cols, rows);
+        });
+    }
 
     public void Resize(short cols, short rows)
     {

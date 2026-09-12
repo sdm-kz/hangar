@@ -514,24 +514,20 @@ export const TerminalPane = forwardRef<
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     };
 
-    // Force Claude Code to repaint its full TUI by nudging the PTY size (cols-1, then back). The
-    // server shares one ConPTY across viewers and ignores a same-size resize, so a fresh xterm
-    // reattaching at the current size (e.g. after a session switch) gets only the replayed
-    // scrollback and no SIGWINCH — leaving Claude's input box unpainted until you manually resize.
-    // A one-column nudge guarantees a resize signal, which makes Ink redraw the whole frame. We
-    // nudge columns rather than rows so the redraw doesn't shift rows vertically (a row nudge bumps
-    // the input box up a line and back — a visible top/bottom jump).
-    const nudgeRepaint = () => {
+    // Ask for a full repaint. A fresh xterm reattaching at the size the PTY already has gets the
+    // replayed scrollback and no SIGWINCH — the server shares one ConPTY across viewers and ignores
+    // a same-size resize — which leaves Claude's input box unpainted until something resizes.
+    //
+    // This used to arrange the redraw from here, by sending two resizes it didn't actually want
+    // (cols-1, then back). It worked, but out here a repaint is indistinguishable from Claude
+    // working: the activity heuristic reads any output as a turn, so opening an idle session
+    // reported it busy and then finished. Naming the intent instead lets the pty host perform the
+    // redraw and, knowing what the burst is, not count it. Older hosts have no such control, so the
+    // server still nudges on their behalf — either way, one message from here.
+    const requestRepaint = () => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (host.clientWidth === 0 || host.clientHeight === 0) return;
-      const cols = term.cols;
-      const rows = term.rows;
-      if (cols <= 1) return;
-      ws.send(JSON.stringify({ type: "resize", cols: cols - 1, rows }));
-      setTimeout(() => {
-        if (ws.readyState === WebSocket.OPEN)
-          ws.send(JSON.stringify({ type: "resize", cols, rows }));
-      }, 60);
+      ws.send(JSON.stringify({ type: "repaint" }));
     };
 
     ws.onopen = () => {
@@ -545,7 +541,7 @@ export const TerminalPane = forwardRef<
       setTimeout(sendResize, 150);
       setTimeout(() => {
         sendResize();
-        nudgeRepaint(); // once the size has settled, force a fresh full-screen repaint from Claude
+        requestRepaint(); // once the size has settled, ask for a fresh full-screen repaint
       }, 400);
     };
     const decoder = new TextDecoder();
@@ -814,7 +810,7 @@ export const TerminalPane = forwardRef<
       // you were reading, which is the reason this used to be skipped here altogether.
       setTimeout(() => {
         const buf = term.buffer.active;
-        if (buf.baseY - buf.viewportY <= 2) nudgeRepaint();
+        if (buf.baseY - buf.viewportY <= 2) requestRepaint();
       }, 250);
     };
     document.addEventListener("visibilitychange", onVisible);

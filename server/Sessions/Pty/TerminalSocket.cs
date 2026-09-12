@@ -95,6 +95,13 @@ public static class TerminalSocket
             case { Type: "resize" }:
                 term.Resize((short)msg.Cols, (short)msg.Rows);
                 break;
+            // "I have attached and my screen is blank below the scrollback — draw it." The viewer used
+            // to arrange this itself by sending two resizes it did not want, which from out there is
+            // indistinguishable from the child working. Asking for it by name lets the layer that
+            // performs the redraw be the one that knows not to count it.
+            case { Type: "repaint" }:
+                term.RequestRepaint();
+                break;
             // Liveness probe. A browser can't send a protocol-level ping, so viewers poll with this
             // one and drop the socket once the answers stop — a half-open connection (a phone losing
             // signal, a NAT dropping the flow) otherwise stays "open" forever with a dead terminal.

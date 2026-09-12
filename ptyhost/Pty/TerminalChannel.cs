@@ -51,9 +51,14 @@ public sealed partial class TerminalChannel : IDisposable
     // paid by the other case: attaching to a session that really is generating leaves its dot dark for
     // this long. That is the better way round, since the terminal itself is right there saying so.
     private const long ResizeGuardMs = OutputWindowMs + 1000;
+    // How long a repaint gets to start, and then to finish, inside RepaintAsync.
+    private const int RepaintSettleMs = 60;
     private long _lastOutputTick;
     private long _lastInputTick;
     private long _lastResizeTick;
+    // Non-zero while a repaint we asked for is in flight. A counter, not a flag: two viewers can
+    // attach at once, and the second one finishing must not declare the first one's redraw over.
+    private int _repaintDepth;
 
     /// <summary>True when Claude appears to be actively generating output (not just echoing your typing).</summary>
     public bool IsBusy
@@ -342,7 +347,11 @@ public sealed partial class TerminalChannel : IDisposable
                 if (n <= 0) break; // EOF: child exited / pseudoconsole closed
                 var chunk = new byte[n];
                 Array.Copy(buf, chunk, n);
-                Volatile.Write(ref _lastOutputTick, Environment.TickCount64);
+                // Output produced by a repaint we asked for is not the child working, so it does not
+                // count towards the activity heuristic. Everything else about it is ordinary output:
+                // it still reaches the ring and every viewer, because it IS the screen.
+                if (Volatile.Read(ref _repaintDepth) == 0)
+                    Volatile.Write(ref _lastOutputTick, Environment.TickCount64);
                 string? rename;
                 string? color;
                 string? url;
@@ -450,6 +459,40 @@ public sealed partial class TerminalChannel : IDisposable
         // the size has caused no repaint and should not blind the busy signal for two seconds.
         Volatile.Write(ref _lastResizeTick, Environment.TickCount64);
         _pty.Resize(cols, rows);
+    }
+
+    /// <summary>
+    /// Make the child redraw its whole screen, for a viewer that has just attached.
+    ///
+    /// It is still a size nudge — a TUI built on Ink redraws when its stdout resizes and on nothing
+    /// else, so there is no politer way to ask. What changes is who does it. The browser used to nudge
+    /// from outside (cols-1, then back) because a viewer reattaching at the current size gets the
+    /// replayed scrollback and no SIGWINCH, leaving the input box unpainted; but from out there a
+    /// repaint is indistinguishable from a turn, and the busy heuristic below reads any output as
+    /// work. Asked for in here, the burst it produces is known to be a repaint and simply isn't
+    /// counted — no guard window, and nothing downstream has to disbelieve a signal after the fact.
+    ///
+    /// One column, not one row: a row nudge lifts the input box a line and drops it back, which is a
+    /// visible jump. Two steps with a gap between them, because a single same-size resize is dropped
+    /// by the pseudoconsole and back-to-back ones can coalesce into no SIGWINCH at all.
+    /// </summary>
+    public async Task RepaintAsync()
+    {
+        short cols, rows;
+        lock (_lock) { cols = Cols; rows = Rows; }
+        if (cols <= 1 || _pty.HasExited) return;
+
+        Interlocked.Increment(ref _repaintDepth);
+        try
+        {
+            Resize((short)(cols - 1), rows);
+            await Task.Delay(RepaintSettleMs).ConfigureAwait(false);
+            Resize(cols, rows);
+            // Hold the "this is a repaint" state until the redraw has actually been emitted. The
+            // resize returns as soon as the pseudoconsole has been told; the output follows.
+            await Task.Delay((int)(RepaintSettleMs + OutputWindowMs)).ConfigureAwait(false);
+        }
+        finally { Interlocked.Decrement(ref _repaintDepth); }
     }
 
     /// <summary>Whether the child has already ended (see <see cref="PtySession.HasExited"/>).</summary>
