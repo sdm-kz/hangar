@@ -72,3 +72,8 @@ Write-Host "==> Staged. The running app will offer this build in its UI." -Foreg
 Write-Host "    Build:  $($stamp.buildId)"
 Write-Host "    Commit: $($stamp.commit)  Branch: $($stamp.branch)"
 Write-Host "    If no button appears, check Update:StagingPath in the app's appsettings.json -- it must point at '$Staging'."
+
+# The robocopy above exits 1 for "files were copied" -- success, as far as robocopy is concerned, but it
+# would otherwise be left as this script's own exit code and read as a failure by whatever ran it.
+# Reaching this line means every step succeeded ($ErrorActionPreference = "Stop" ends the script otherwise).
+exit 0
