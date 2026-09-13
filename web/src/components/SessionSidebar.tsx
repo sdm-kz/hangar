@@ -1143,11 +1143,14 @@ function mergeProps(
  * then: letting a drop bubble out of the box it landed in is how reordering two rows inside a box
  * would quietly unfile the row instead.
  *
- * - `claims` — is this drag any of this target's business? (the session belongs to this project)
+ * - `claims` — is this drag any of this target's business? (a box: only its own project's rows; a
+ *   project heading: every row, since one it does not own is one it can adopt)
  * - `changes` — would dropping here actually alter anything? Only then does the target take the drop
  *   and light up; otherwise it stays quiet and the browser shows the "no" cursor.
+ * - `perform` — what the drop means here. It differs per target, not per drag, which is why it is
+ *   passed with the target rather than held by the hook.
  */
-function useSessionDrag(onDropSession: (sessionId: string, groupId: string | null) => void) {
+function useSessionDrag() {
   const dragged = useRef<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
 
@@ -1167,9 +1170,9 @@ function useSessionDrag(onDropSession: (sessionId: string, groupId: string | nul
     isOver: (key: string) => over === key,
     targetProps: (
       key: string,
-      groupId: string | null,
       claims: (sessionId: string) => boolean,
-      changes: (sessionId: string) => boolean
+      changes: (sessionId: string) => boolean,
+      perform: (sessionId: string) => void
     ) => ({
       onDragOver: (e: React.DragEvent) => {
         const id = dragged.current;
@@ -1195,7 +1198,7 @@ function useSessionDrag(onDropSession: (sessionId: string, groupId: string | nul
         if (!changes(id)) return;
         e.preventDefault();
         end();
-        onDropSession(id, groupId);
+        perform(id);
       },
     }),
   };
@@ -1867,18 +1870,92 @@ export function SessionSidebar({
   const doneIn = (items: SessionInfo[]) =>
     items.filter((s) => s.state !== "Restorable" && activityIds.done.has(s.id)).map((s) => s.id);
 
-  const sessionDnd = useSessionDrag((id, groupId) => void moveSessionToGroup(id, groupId));
+  const sessionDnd = useSessionDrag();
 
-  /** Dropping a row on the project itself is how it leaves a box — see ProjectSections.sessionDrop. */
-  const sectionSessionDrop = (project: Project | null) => ({
-    props: sessionDnd.targetProps(
-      `ungroup:${project?.id ?? ""}`,
-      null,
-      (id) => inProject(id, project),
-      (id) => canFile(id, project, null)
-    ),
-    over: sessionDnd.isOver(`ungroup:${project?.id ?? ""}`),
-  });
+  /** The project a session is in, which is the one that owns the folder it runs in. */
+  const projectOf = (sessionId: string) => {
+    const s = sessions.find((x) => x.id === sessionId);
+    return s ? projectForDir(s.workingDirectory, projects) : null;
+  };
+
+  /**
+   * Move a session to another project — or, with a null project, out of the one it is in.
+   *
+   * A session has no project of its own: it is in the one that owns its working directory. So what
+   * this actually moves is the folder, and anything else running in it travels along. That is the
+   * honest reading of the gesture rather than a limitation to work around — a per-session override
+   * would let a row and its own folder claim different projects — but it is worth saying out loud
+   * before it happens, whenever it is more than the row that was dragged.
+   */
+  const moveSessionToProject = async (sessionId: string, project: Project | null) => {
+    const s = sessions.find((x) => x.id === sessionId);
+    if (!s) return;
+    const dir = s.workingDirectory;
+    const current = projectForDir(dir, projects);
+    if ((current?.id ?? null) === (project?.id ?? null)) return;
+    // Leaving a project is the folder drag's business, dialog and all: a folder can be in a project
+    // through an ancestor, and only that ancestor can be unlinked.
+    if (!project) {
+      await moveFolderToProject(dir, null);
+      return;
+    }
+    const others = sessions.filter((x) => x.id !== sessionId && isUnder(x.workingDirectory, dir));
+    if (others.length > 0) {
+      const ok = await confirm({
+        title: `Move “${folderLabel(dir)}” to ${project.name}?`,
+        description: (
+          <>
+            A project holds folders, not sessions, so{" "}
+            <span className="font-mono text-foreground">{folderLabel(dir)}</span> moves — and the{" "}
+            {others.length === 1 ? "other session" : `${others.length} other sessions`} running in it
+            {others.length === 1 ? " moves" : " move"} with it.
+          </>
+        ),
+        confirmLabel: "Move",
+      });
+      if (!ok) return;
+    }
+    try {
+      // A folder belongs to whichever project links it deepest, so an exact link in the old project
+      // would tie with the one being added here and keep the folder where it was. That link has to
+      // go; an ancestor link can stay, since the new one is deeper and wins on its own.
+      const exact = current?.folders.find((f) => sameFolder(f, dir));
+      if (current && exact) onProjectsChange(await api.removeProjectFolder(current.id, exact));
+      onProjectsChange(await api.addProjectFolder(project.id, dir));
+    } catch {
+      /* the list is re-read on the next load; a failed drop isn't worth a dialog */
+    }
+  };
+
+  /**
+   * Dropping a row on a project heading. Which of two things it means depends on where the row came
+   * from, and both are the plain reading of the gesture:
+   *
+   * - a row already in this project is leaving a virtual folder (a box swallows drops inside itself,
+   *   so this only fires for a row that was in one);
+   * - anything else is being adopted — see moveSessionToProject.
+   *
+   * Which is why this claims every session drag, not just its own project's: a heading that ignored
+   * the rest would leave the browser showing "no" over the one place the row was being dragged to.
+   */
+  const sectionSessionDrop = (project: Project | null) => {
+    const key = `project:${project?.id ?? ""}`;
+    return {
+      props: sessionDnd.targetProps(
+        key,
+        () => true,
+        (id) =>
+          inProject(id, project)
+            ? canFile(id, project, null)
+            : (projectOf(id)?.id ?? null) !== (project?.id ?? null),
+        (id) =>
+          inProject(id, project)
+            ? void moveSessionToGroup(id, null)
+            : void moveSessionToProject(id, project)
+      ),
+      over: sessionDnd.isOver(key),
+    };
+  };
 
   const toggleGrouped = () =>
     setGrouped((v) => {
@@ -2173,9 +2250,9 @@ export function SessionSidebar({
         key={vg.key}
         {...sessionDnd.targetProps(
           vg.key,
-          vg.group.id,
           (id) => inProject(id, project),
-          (id) => canFile(id, project, vg.group.id)
+          (id) => canFile(id, project, vg.group.id),
+          (id) => void moveSessionToGroup(id, vg.group.id)
         )}
         className={cn(
           "rounded-md transition-colors",
