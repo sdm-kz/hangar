@@ -1749,6 +1749,55 @@ function IndentedNote({ depth, children }: { depth: number; children: React.Reac
   );
 }
 
+// Scroll bridge for the sandboxed HTML preview. The iframe runs without `allow-same-origin`, so its
+// document has an opaque origin and nothing out here can read or set its scrollTop — the frame has to
+// report its own position and be told where to go back to. Appended to the previewed HTML: the parser
+// relocates a trailing <script> into the body, so no rewriting of the document itself is needed. A
+// page with a script-blocking CSP simply won't run it, and that file loses scroll memory — the rest
+// of the preview is unaffected.
+//
+// The frame keeps quiet until it has been given a position: the scroll events a document fires while
+// it is still laying out are all zero, and reporting those would erase the offset we are about to
+// restore. It also waits for the page to be tall enough before scrolling, since images and late
+// scripts land after the ready message.
+const HTML_SCROLL_BRIDGE = `
+<script>
+(function () {
+  var w = window;
+  if (w.parent === w) return;
+  var want = null, deadline = 0, queued = 0;
+  var maxScroll = function () {
+    var d = document.documentElement, b = document.body;
+    return Math.max(0, Math.max(d ? d.scrollHeight : 0, b ? b.scrollHeight : 0) - w.innerHeight);
+  };
+  var apply = function () {
+    if (want === null) return;
+    var max = maxScroll();
+    if (max < want && Date.now() < deadline) { w.setTimeout(apply, 120); return; }
+    w.scrollTo(0, Math.min(want, max));
+    want = null;
+  };
+  w.addEventListener("message", function (e) {
+    if (!e.data || typeof e.data.cwScrollTo !== "number") return;
+    want = e.data.cwScrollTo;
+    deadline = Date.now() + 3000;
+    apply();
+  });
+  w.addEventListener("scroll", function () {
+    if (want !== null || queued) return; // still restoring, or a report is already pending
+    queued = w.requestAnimationFrame(function () {
+      queued = 0;
+      w.parent.postMessage({ cwScroll: w.scrollY || 0 }, "*");
+    });
+  }, { passive: true });
+  var ready = function () { w.parent.postMessage({ cwScrollReady: true }, "*"); };
+  // Twice: the frame can finish parsing before the listener out there is attached, and once more
+  // after load costs nothing — a second ready for a document already placed is ignored.
+  ready();
+  w.addEventListener("load", ready);
+})();
+</script>`;
+
 function FilePreview({
   sessionId,
   workingDirectory,
@@ -1807,6 +1856,15 @@ function FilePreview({
   const contentRef = useRef<HTMLDivElement>(null);
   // The preview root; focused when the full-page popup opens so Esc lands on it right away.
   const rootRef = useRef<HTMLDivElement>(null);
+  // The sandboxed HTML preview frame, for the scroll bridge below.
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  // False until this tab's remembered scroll offset has been put back. Scroll events before that are
+  // the content settling into place, not the user, and must not overwrite what we are restoring.
+  const scrollRestoredRef = useRef(false);
+  const saveScrollRef = useRef<number | undefined>(undefined);
+  // The debounced write still owed, so closing the tab (or the panel) keeps the last position
+  // instead of losing the final 200ms of scrolling.
+  const pendingScrollRef = useRef<(() => void) | null>(null);
 
   const copyPath = useCallback(async () => {
     if (!file) return;
@@ -2012,6 +2070,104 @@ function FilePreview({
     [guard]
   );
 
+  // Whether the pane is showing the sandboxed HTML frame, which scrolls its own document rather than
+  // the container below — the two restore paths are mutually exclusive.
+  const htmlPreview = isHtml && mdView === "rendered" && view === "preview" && !editing;
+
+  // --- Remembered scroll position, per open tab ------------------------------------------------
+  // Where a file was left off is part of "this file is open", so it lives in the session's UI bag
+  // alongside the tab list (see SessionUi.fileScroll) rather than in this component's state: that is
+  // what carries it across a tab switch, a switch to another session and back, and a page reload.
+
+  // Re-arm for each file the tab shows — and for each session, since switching sessions can leave
+  // the same path on screen.
+  useEffect(() => {
+    scrollRestoredRef.current = false;
+  }, [sessionId, file?.path]);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(saveScrollRef.current);
+      pendingScrollRef.current?.();
+    },
+    []
+  );
+
+  const rememberScroll = useCallback(
+    (top: number) => {
+      const path = file?.path;
+      if (!path) return;
+      const write = () => {
+        pendingScrollRef.current = null;
+        const rounded = Math.round(top);
+        const kept = { ...(loadSessionUi(sessionId).fileScroll ?? {}) };
+        // Back at the top is the default, so drop the entry rather than storing a zero — one fewer
+        // key in a map that is written in full on every change.
+        if (rounded > 0) kept[path] = rounded;
+        else delete kept[path];
+        saveSessionUi(sessionId, { fileScroll: kept });
+      };
+      pendingScrollRef.current = write;
+      window.clearTimeout(saveScrollRef.current);
+      saveScrollRef.current = window.setTimeout(write, 200);
+    },
+    [sessionId, file?.path]
+  );
+
+  // Put the offset back once there is something tall enough to scroll. Content arrives late and in
+  // stages — the fetch, then images and markdown diagrams sizing themselves — so this waits for the
+  // box to actually reach the target instead of scrolling to wherever it can and stopping there.
+  useEffect(() => {
+    if (!file || htmlPreview || editing || scrollRestoredRef.current) return;
+    const box = contentRef.current;
+    if (!box) return;
+    if (kind === "text" && (status !== "idle" || text === null)) return; // nothing rendered yet
+    const target = loadSessionUi(sessionId).fileScroll?.[file.path] ?? 0;
+    if (!(target > 0)) {
+      scrollRestoredRef.current = true;
+      return;
+    }
+    const deadline = Date.now() + 3000;
+    let timer = 0;
+    const apply = () => {
+      const max = Math.max(0, box.scrollHeight - box.clientHeight);
+      if (max < target && Date.now() < deadline) {
+        timer = window.setTimeout(apply, 120);
+        return;
+      }
+      box.scrollTop = Math.min(target, max);
+      scrollRestoredRef.current = true;
+    };
+    apply();
+    return () => window.clearTimeout(timer);
+  }, [sessionId, file, htmlPreview, editing, kind, status, text, view, mdView]);
+
+  // The HTML frame can't be read or driven from here (opaque origin), so it reports its own position
+  // and is handed the one to go back to. Re-runs whenever the frame reloads — a different file, the
+  // Source/Preview toggle, a manual or automatic content refresh — because each load starts a fresh
+  // document at the top that has to be placed again.
+  useEffect(() => {
+    if (!htmlPreview || !file) return;
+    const path = file.path;
+    let placed = false; // this document has been told where to go; later readies are duplicates
+    const onMessage = (e: MessageEvent) => {
+      const frame = frameRef.current?.contentWindow;
+      if (!frame || e.source !== frame) return; // only our own preview frame
+      const msg = e.data as { cwScrollReady?: boolean; cwScroll?: number } | null;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.cwScrollReady) {
+        if (placed) return;
+        placed = true;
+        frame.postMessage({ cwScrollTo: loadSessionUi(sessionId).fileScroll?.[path] ?? 0 }, "*");
+        scrollRestoredRef.current = true;
+      } else if (typeof msg.cwScroll === "number") {
+        rememberScroll(msg.cwScroll);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [htmlPreview, file, sessionId, text, reload, rememberScroll]);
+
   if (!file) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
@@ -2203,7 +2359,16 @@ function FilePreview({
         {fullscreen && !editing && (
           <ScrollJumpButtons containerRef={contentRef} watch={text ?? file.path} />
         )}
-        <div ref={contentRef} className="h-full overflow-auto">
+        <div
+          ref={contentRef}
+          className="h-full overflow-auto"
+          onScroll={(e) => {
+            // Not ours to record until the restore has run, and not while the editor is up: the
+            // textarea replaces the content, which collapses the box and clamps scrollTop to 0.
+            if (!scrollRestoredRef.current || editing || htmlPreview) return;
+            rememberScroll(e.currentTarget.scrollTop);
+          }}
+        >
         {editing ? (
           <Textarea
             value={draft}
@@ -2266,8 +2431,9 @@ function FilePreview({
                 // opaque origin, so page scripts can't reach this app's token or DOM. Relative
                 // asset URLs won't resolve (no base) — self-contained pages preview best.
                 <iframe
+                  ref={frameRef}
                   title={`Preview of ${file.name}`}
-                  srcDoc={text}
+                  srcDoc={text + HTML_SCROLL_BRIDGE}
                   sandbox="allow-scripts allow-forms allow-popups allow-modals"
                   className="h-full w-full border-0 bg-white"
                 />

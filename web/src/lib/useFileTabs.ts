@@ -104,10 +104,21 @@ export function useFileTabs(sessionId: string): {
   // Persist the open tabs + active + preview for this session, and mirror the active into the URL.
   const persist = useCallback(
     (nextTabs: FileEntry[], nextActive: string | null, nextPreview: string | null) => {
+      const paths = nextTabs.map((t) => t.path);
+      // Remembered scroll offsets belong to the open tabs (see SessionUi.fileScroll). Closing a tab
+      // is what drops its offset — so reopening the file starts at the top, and the map can't
+      // accumulate an entry for every file the session has ever previewed. Only written when
+      // something actually went away: an unchanged field is a no-op at the server, but sending it
+      // on every tab switch would make the bag's revision churn for nothing.
+      const scroll = loadSessionUi(sessionId).fileScroll;
+      const stale = scroll && Object.keys(scroll).some((p) => !paths.includes(p));
       saveSessionUi(sessionId, {
         file: nextActive ?? "",
-        files: nextTabs.map((t) => t.path),
+        files: paths,
         preview: nextPreview ?? "",
+        ...(stale
+          ? { fileScroll: Object.fromEntries(Object.entries(scroll!).filter(([p]) => paths.includes(p))) }
+          : {}),
       });
       patchUrlState({ file: nextActive ?? undefined });
     },

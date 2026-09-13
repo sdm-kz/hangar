@@ -21,7 +21,7 @@ const FLUSH_MS = 400; // coalesce bursts (a scroll settling, a tab open) into on
 // revision bump for each one would have every other browser re-fetching the bag all the way down the
 // tree. A write of only these goes up quiet (see api.patchSessionUi); mixed with anything else it
 // rides along with the rest.
-const QUIET_FIELDS = new Set<keyof SessionUi>(["filesScroll", "changesScroll"]);
+const QUIET_FIELDS = new Set<keyof SessionUi>(["filesScroll", "changesScroll", "fileScroll"]);
 
 export interface SessionUi {
   view?: TabName; // active tab: terminal | files | split | file | shell | link (a tab in the bar)
@@ -48,6 +48,10 @@ export interface SessionUi {
   // remembers its own; search results are transient and keep neither.
   filesScroll?: number;
   changesScroll?: number;
+  // Scroll offset (px) of each open file tab's preview, keyed by the same path as `files`. Pruned to
+  // the open tabs on every tab change (see useFileTabs), so it stays a fact about what is open
+  // rather than a log of everything this session has ever previewed.
+  fileScroll?: Record<string, number>;
 }
 
 type Store = Record<string, SessionUi>;
