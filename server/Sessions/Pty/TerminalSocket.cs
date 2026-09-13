@@ -8,8 +8,9 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 /// <list type="bullet">
 ///   <item>server → client: <b>Binary</b> = raw VT output (fed straight to xterm.js).</item>
 ///   <item>client → server: <b>Binary</b> = raw keystroke/paste bytes → PTY stdin;
-///         <b>Text</b> = JSON control, e.g. <c>{"type":"resize","cols":120,"rows":40}</c> or
-///         <c>{"type":"ping"}</c>, answered with a <c>{"type":"pong"}</c> text frame.</item>
+///         <b>Text</b> = JSON control, e.g. <c>{"type":"resize","cols":120,"rows":40}</c> (cols/rows of
+///         zero mean "hidden — do not count me") or <c>{"type":"ping"}</c>, answered with a
+///         <c>{"type":"pong"}</c> text frame.</item>
 ///   <item>server → client: <b>Text</b> <c>{"type":"size","cols":100,"rows":30}</c> = the size the
 ///         child is actually drawn at. A resize is a request, not a setting: one pseudoconsole serves
 ///         every viewer of a session and it is driven at the smallest of their grids, so a viewer
@@ -66,6 +67,9 @@ public static class TerminalSocket
                 catch (WebSocketException) { break; }
 
                 if (r.MessageType == WebSocketMessageType.Close) break;
+                // Anything at all proves this viewer is still on the other end, which is what keeps it
+                // counted in the session's size (see TerminalSubscription.Touch).
+                sub.Touch();
                 if (r.MessageType == WebSocketMessageType.Binary)
                     await term.WriteAsync(buf.AsMemory(0, r.Count), cts.Token);
                 else

@@ -562,6 +562,17 @@ export const TerminalPane = forwardRef<
         ws.send(JSON.stringify({ type: "resize", cols: desiredCols, rows: desiredRows }));
     };
 
+    // Stop counting towards the session's size. One pseudoconsole serves every viewer and it runs at
+    // the smallest grid among them, so a phone left on a session in a background tab would keep the
+    // desktop pinned to phone width for as long as it sat there. A tab that is not on screen is not
+    // showing the session, and says so; it declares its size again the moment it comes back.
+    const withdrawSize = () => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      desiredCols = 0;
+      desiredRows = 0;
+      ws.send(JSON.stringify({ type: "resize", cols: 0, rows: 0 }));
+    };
+
     // Ask for a full repaint. A fresh xterm reattaching at the size the PTY already has gets the
     // replayed scrollback and no SIGWINCH — the server shares one ConPTY across viewers and ignores
     // a same-size resize — which leaves Claude's input box unpainted until something resizes.
@@ -833,6 +844,10 @@ export const TerminalPane = forwardRef<
       // the screen shows characters Claude no longer has, and the way that happens is a grid and a
       // frame that disagree about their size — so saying again what we can show, and taking back
       // whatever the session settles on, is half the repair. The nudge is the other half.
+      //
+      // This is also the way back from a session still sized to a phone that has since gone: asking
+      // again makes the terminal work out afresh who is really watching, and the viewer that answered
+      // for that width is no longer among them.
       sendResize();
       requestRepaint();
     };
@@ -845,7 +860,10 @@ export const TerminalPane = forwardRef<
     // stays silent because the size never changed, so nothing refits on return. Refit across a
     // couple frames whenever we become visible again (also covers OS-level tab/app switches).
     const onVisible = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible") {
+        withdrawSize();
+        return;
+      }
       // A phone suspends the tab and the socket dies with it — often without the close event
       // landing until we're back. Re-attach right away instead of sitting out the backoff.
       if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
@@ -1052,7 +1070,7 @@ export const TerminalPane = forwardRef<
             window.clearTimeout(repaintTimerRef.current);
             repaintTimerRef.current = window.setTimeout(() => setRepainting(false), 600);
           }}
-          title="Redraw — clears leftover characters the terminal is showing but Claude no longer has"
+          title="Redraw — refit to this window and clear leftover characters Claude no longer has"
           aria-label="Redraw the terminal"
           className={cn(
             "size-8 bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-opacity hover:text-foreground",

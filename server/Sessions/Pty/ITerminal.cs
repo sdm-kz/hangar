@@ -92,13 +92,26 @@ public interface ITerminal : IDisposable
 /// line onto the front of the next row, and a TUI that paints differentially never takes it back.
 /// </remarks>
 public sealed class TerminalSubscription(
-    byte[] replay, ChannelReader<byte[]> reader, Action unsubscribe, Action<short, short> resize) : IDisposable
+    byte[] replay, ChannelReader<byte[]> reader, Action unsubscribe, Action<short, short> resize,
+    Action touch) : IDisposable
 {
     public byte[] Replay { get; } = replay;
     public ChannelReader<byte[]> Reader { get; } = reader;
 
-    /// <summary>Tell the terminal how big this viewer's grid is. It may settle on something smaller.</summary>
+    /// <summary>
+    /// Tell the terminal how big this viewer's grid is. It may settle on something smaller. A size of
+    /// zero withdraws: this viewer is not showing the session at all — its tab is hidden — and a grid
+    /// nobody is looking at has no business holding the session down to its width.
+    /// </summary>
     public void Resize(short cols, short rows) => resize(cols, rows);
+
+    /// <summary>
+    /// Note that this viewer is still there, on anything it sends. A viewer that has gone quiet is
+    /// dropped from the sizing: a socket can stay open long after the other end is gone (a phone out
+    /// of coverage, a laptop shut), and a session left at the width of a screen nobody is holding is
+    /// exactly the state this whole arrangement exists to avoid.
+    /// </summary>
+    public void Touch() => touch();
 
     /// <summary>
     /// The size the child is actually being drawn at, once it has been worked out: answered whenever

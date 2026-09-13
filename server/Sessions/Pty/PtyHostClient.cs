@@ -281,12 +281,22 @@ public sealed class PtyHostClient : ITerminal
     private sealed class Viewer(ChannelWriter<byte[]> writer)
     {
         public ChannelWriter<byte[]> Writer { get; } = writer;
-        // Zero until the viewer has said. An unspoken size joins no minimum — a tab that has attached
-        // but not yet measured itself must not shrink the session to whatever it would default to.
+        // Zero until the viewer has said, and zero again once it says it has stopped looking. An
+        // unspoken size joins no minimum — a tab that has attached but not yet measured itself must
+        // not shrink the session to whatever it would default to, and neither must a hidden one.
         public short Cols;
         public short Rows;
+        public long LastSeen = Environment.TickCount64;
         public TerminalSubscription? Handle;
     }
+
+    /// <summary>
+    /// How long a viewer can say nothing before it stops counting towards the size. Four missed
+    /// heartbeats: the browser probes every 15s, so anything still watching answers well inside this,
+    /// and what it catches is the socket that is open but abandoned — the reading end gone without a
+    /// close, which would otherwise hold every other viewer down to a screen nobody is looking at.
+    /// </summary>
+    private const long ViewerQuietMs = 60_000;
 
     /// <summary>Attach a viewer: the current scrollback plus a live stream of subsequent output.</summary>
     public TerminalSubscription Subscribe()
@@ -314,10 +324,26 @@ public sealed class PtyHostClient : ITerminal
                 {
                     lock (_lock)
                     {
-                        viewer.Cols = Math.Max((short)1, cols);
-                        viewer.Rows = Math.Max((short)1, rows);
+                        // Zero is a withdrawal, not a size — see TerminalSubscription.Resize.
+                        viewer.Cols = cols > 0 ? cols : (short)0;
+                        viewer.Rows = rows > 0 ? rows : (short)0;
+                        viewer.LastSeen = Environment.TickCount64;
                     }
                     AgreeSize(viewer);
+                },
+                touch: () =>
+                {
+                    bool wasQuiet;
+                    lock (_lock)
+                    {
+                        wasQuiet = Environment.TickCount64 - viewer.LastSeen > ViewerQuietMs;
+                        viewer.LastSeen = Environment.TickCount64;
+                    }
+                    // Only worth re-deciding when this changes who is counted: either a viewer has
+                    // just come back from being written off, or one of the others may have gone quiet
+                    // while this one was talking. The heartbeat is what makes the second case land
+                    // without anyone having to do anything.
+                    AgreeSize(wasQuiet ? viewer : null);
                 });
             viewer.Handle = sub;
         }
@@ -325,8 +351,8 @@ public sealed class PtyHostClient : ITerminal
     }
 
     /// <summary>
-    /// Settle on the size the child is drawn at: the smallest grid among the attached viewers, each
-    /// axis on its own. tmux's rule, for tmux's reason — every viewer can then show the whole screen,
+    /// Settle on the size the child is drawn at: the smallest grid among the viewers that are actually
+    /// watching — one that has hidden its tab or gone quiet is not one of them — each axis on its own. tmux's rule, for tmux's reason — every viewer can then show the whole screen,
     /// and the ones with room to spare letterbox rather than be sent a frame wider than they can
     /// hold, where each line's last cell spills onto the front of the next row and stays there.
     ///
@@ -339,9 +365,11 @@ public sealed class PtyHostClient : ITerminal
         List<TerminalSubscription> tell = [];
         lock (_lock)
         {
+            var now = Environment.TickCount64;
             foreach (var v in _subs.Values)
             {
                 if (v.Cols <= 0 || v.Rows <= 0) continue;
+                if (now - v.LastSeen > ViewerQuietMs) continue; // gone quiet; see ViewerQuietMs
                 cols = cols == 0 ? v.Cols : Math.Min(cols, v.Cols);
                 rows = rows == 0 ? v.Rows : Math.Min(rows, v.Rows);
             }
