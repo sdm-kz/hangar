@@ -56,7 +56,6 @@ import {
   ListTree,
   Loader2,
   Maximize2,
-  Minimize2,
   Pencil,
   RefreshCw,
   Save,
@@ -1969,7 +1968,7 @@ function FilePreview({
   // Esc leaves the full-page popup (but not while editing — Esc there could drop unsaved text).
   // Capture phase + focusing the popup on entry so the key still lands here after clicks inside
   // the preview. Keys pressed inside an embedded PDF/iframe can't reach this document at all, so
-  // the minimize button stays as the fallback there.
+  // the close button stays as the fallback there.
   useEffect(() => {
     if (!fullscreen || editing) return;
     rootRef.current?.focus();
@@ -2125,16 +2124,17 @@ function FilePreview({
               <RefreshCw className={cn("size-4", kind === "text" && status === "loading" && "animate-spin")} />
             </Button>
 
-            {/* Non-image previews open in a full-page popup instead of the image lightbox. */}
-            {kind !== "image" && (
+            {/* Non-image previews open in a full-page popup instead of the image lightbox. The way
+                back out is not here but at the end of the strip — see the close button below. */}
+            {kind !== "image" && !fullscreen && (
               <Button
                 variant="outline"
                 size="sm"
                 className="h-7 w-7 px-0"
-                onClick={() => setFullscreen((f) => !f)}
-                title={fullscreen ? "Exit full screen (Esc)" : "Full screen"}
+                onClick={() => setFullscreen(true)}
+                title="Full screen"
               >
-                {fullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+                <Maximize2 className="size-4" />
               </Button>
             )}
             {/* Standalone full-page preview in its own browser tab; survives a refresh there. */}
@@ -2157,6 +2157,25 @@ function FilePreview({
                 <Download className="size-4" />
               </a>
             </Button>
+
+            {/* The way out of full screen: a cross, last in the strip and held a little apart from
+                it. In full screen the preview is the whole window, so this is the one control you
+                may need in a hurry — and where a window's close sits is the first place the eye
+                goes. A pair of shrinking arrows in the middle of six other icons was neither.
+                Deliberately not gated on `kind`: whatever is on screen, there has to be a way out
+                that isn't Esc, which an embedded PDF or iframe can swallow. */}
+            {fullscreen && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-1 h-7 w-7 px-0"
+                onClick={() => setFullscreen(false)}
+                title="Exit full screen (Esc)"
+                aria-label="Exit full screen"
+              >
+                <X className="size-4" />
+              </Button>
+            )}
           </>
         )}
       </header>
