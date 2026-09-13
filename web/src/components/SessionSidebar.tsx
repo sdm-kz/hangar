@@ -46,6 +46,7 @@ import { NotificationToggle } from "./NotificationToggle";
 import { OrphanBar } from "./OrphanBar";
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
+import { navRowProps, useTreeKeyNav } from "@/lib/useTreeKeyNav";
 import { writeToClipboard } from "@/lib/clipboard";
 import {
   type LucideIcon,
@@ -473,6 +474,7 @@ function GroupHeader({
   onMoveToProject,
   onNewProject,
   dragProps,
+  navProps,
   doneCount = 0,
   onMarkSeen,
 }: {
@@ -495,6 +497,11 @@ function GroupHeader({
   onNewProject: () => void;
   // Makes the header the drag source for "drop this folder on a project".
   dragProps?: Record<string, unknown>;
+  /**
+   * Marks this header as a row of the sessions tree's keyboard navigation (see useTreeKeyNav).
+   * Absent on the recents list, which has no arrow navigation of its own.
+   */
+  navProps?: Record<string, unknown>;
   // Finished-but-unseen sessions in this folder, and the way to clear them all. Sessions view only.
   doneCount?: number;
   onMarkSeen?: () => void;
@@ -502,6 +509,7 @@ function GroupHeader({
   return (
     <div
       {...dragProps}
+      {...navProps}
       title={dragProps ? "Drag onto a project to move this folder into it" : undefined}
       className="group/gh flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
     >
@@ -609,6 +617,9 @@ function FolderMenu({
   return (
     <span
       ref={ref}
+      // Marks the whole menu — trigger included, since that is what holds focus while it is open —
+      // so the sessions tree's arrow keys leave it alone rather than roving off the row it stands on.
+      data-menu-open={open ? "1" : undefined}
       // Hidden rather than transparent while idle, so it takes no width and the count next to it
       // sits flush right. Touch devices never fire hover, so the menu's only entry point has to
       // stay on screen there.
@@ -751,6 +762,7 @@ function VirtualFolderHeader({
   onToggle,
   activity,
   onEdit,
+  navProps,
   doneCount = 0,
   onMarkSeen,
 }: {
@@ -760,6 +772,11 @@ function VirtualFolderHeader({
   onToggle: () => void;
   activity?: Activity | null;
   onEdit: () => void;
+  /**
+   * Marks this header as a row of the sessions tree's keyboard navigation (see useTreeKeyNav).
+   * Absent on the recents list, which has no arrow navigation of its own.
+   */
+  navProps?: Record<string, unknown>;
   // Finished-but-unseen sessions filed in here, and the way to clear them all — see MarkSeenButton.
   doneCount?: number;
   onMarkSeen?: () => void;
@@ -767,7 +784,10 @@ function VirtualFolderHeader({
   const Icon = groupIcon(group.icon);
   const accent = sessionColor(group.color);
   return (
-    <div className="group/vf flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+    <div
+      {...navProps}
+      className="group/vf flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
+    >
       <button
         type="button"
         onClick={onToggle}
@@ -822,6 +842,7 @@ function ProjectHeader({
   onSettings,
   onNewSession,
   activity,
+  navProps,
   postponed = 0,
   doneCount = 0,
   onMarkSeen,
@@ -836,6 +857,11 @@ function ProjectHeader({
   // project's folders offered as picks. Mirrors the plus on a folder header.
   onNewSession?: () => void;
   activity?: Activity | null;
+  /**
+   * Marks this header as a row of the sessions tree's keyboard navigation (see useTreeKeyNav).
+   * Absent on the recents list, which has no arrow navigation of its own.
+   */
+  navProps?: Record<string, unknown>;
   // Postponed messages stashed across the whole project, so a collapsed one still says they are
   // there — the per-session badges it is a total of are hidden inside it.
   postponed?: number;
@@ -847,7 +873,10 @@ function ProjectHeader({
 }) {
   const accent = project ? sessionColor(project.color) : null;
   return (
-    <div className="group/ph flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground">
+    <div
+      {...navProps}
+      className="group/ph flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
+    >
       <button
         type="button"
         onClick={onToggle}
@@ -944,6 +973,7 @@ function ProjectSections<T>({
   before,
   renderItems,
   bodyClassName,
+  navRow,
   countOf,
   activityOf,
   postponedOf,
@@ -986,6 +1016,12 @@ function ProjectSections<T>({
    */
   bodyClassName?: string;
   /**
+   * Keyboard-navigation props for a project heading (see useTreeKeyNav). Passed by the sessions
+   * list, whose headings are rows of its tree; the recents list has no arrow navigation and passes
+   * nothing, so its headings stay plain.
+   */
+  navRow?: (project: Project | null) => Record<string, unknown> | undefined;
+  /**
    * What the number after the project name counts. Defaults to the number of items — anything that
    * also draws virtual folders has to add those in itself, since their sessions are not in `items`.
    */
@@ -1025,6 +1061,7 @@ function ProjectSections<T>({
               onSettings={project ? () => onSettings(project) : undefined}
               onNewSession={project && onNewSession ? () => onNewSession(project) : undefined}
               activity={activityOf?.(items, project) ?? null}
+              navProps={navRow?.(project)}
               postponed={postponedOf?.(items, project) ?? 0}
               doneCount={done.length}
               onMarkSeen={onMarkSeen && done.length > 0 ? () => onMarkSeen(done) : undefined}
@@ -1293,6 +1330,26 @@ function useCollapsedSet(load: () => Set<string>, save: (set: Set<string>) => vo
 // by session id — and ids are minted fresh on every reopen/auto-resume, so the set is pruned against
 // the live list on each write to stop it accumulating entries for sessions that no longer exist.
 const COLLAPSED_FORKS_KEY = "claudeweb.collapsedForks";
+/**
+ * How a row of the sessions tree names itself to the keyboard navigation. Which fold a → or ← acts
+ * on can't be read off the row — a project heading, a folder header and a session each keep their
+ * collapsed state in a different set — so the kind rides in the key alongside the id.
+ *
+ * A folder's key is a path, which on Windows has a colon of its own, so the split below takes the
+ * first one only.
+ */
+const navKey = {
+  project: (id: string) => `project:${id}`,
+  /** A folder header or a virtual folder: both fold out of the same set, keyed the same way. */
+  fold: (key: string) => `fold:${key}`,
+  session: (id: string) => `session:${id}`,
+};
+
+function parseNavKey(key: string): { kind: string; id: string } {
+  const at = key.indexOf(":");
+  return { kind: key.slice(0, at), id: key.slice(at + 1) };
+}
+
 function loadCollapsedForks(): Set<string> {
   try {
     const raw = localStorage.getItem(COLLAPSED_FORKS_KEY);
@@ -1480,6 +1537,34 @@ export function SessionSidebar({
       saveCollapsedForks(next);
       return next;
     });
+
+  // The scrolling list, which is the tree's single tab stop — see useTreeKeyNav.
+  const treeRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Walk the list with the arrow keys. ↑/↓ step row to row over everything on screen — project
+   * headings, folder headers, virtual folders and the sessions themselves — → and ← unfold and fold
+   * whatever the row holds, Home/End jump to the ends, and Enter opens a session.
+   *
+   * Unlike the file trees, arrowing onto a row does *not* open it: a session is a terminal to attach
+   * to, not a file to preview, so stepping past one has to be free. Enter is the thing that opens.
+   */
+  const treeKeys = useTreeKeyNav({
+    containerRef: treeRef,
+    onToggleDir: (key) => {
+      const { kind, id } = parseNavKey(key);
+      if (kind === "project") toggleProject(id);
+      else if (kind === "fold") toggleGroup(id);
+      else if (kind === "session") toggleForks(id);
+    },
+    onActivateFile: (key) => {
+      const id = parseNavKey(key).id;
+      // A restorable session can't be opened in place — its row ignores clicks too, and reopening it
+      // is a real action that stays behind the menu entry saying so.
+      const s = sessions.find((x) => x.id === id);
+      if (s && s.state !== "Restorable") onSelect(id);
+    },
+  });
 
   // Sessions shown after applying the active/all filter ("active" = running only). Recents aren't
   // filtered (they're presets, not live sessions).
@@ -1817,7 +1902,10 @@ export function SessionSidebar({
     // Drag-to-reorder props for this row, plus whether it's the row a drag is hovering. Only passed
     // in grouped mode, and only for top-level rows: a fork is drawn under its parent wherever the
     // parent sits, so it has no place of its own to drag to.
-    drag?: { props: Record<string, unknown>; over: boolean }
+    drag?: { props: Record<string, unknown>; over: boolean },
+    // Depth of the header this row hangs off, for the keyboard tree — the row's own fork depth is
+    // added to it, so ← walks out of a branch and then on out of the folder above it.
+    base = 0
   ) => {
     const restorable = s.state === "Restorable";
     const color = sessionColor(s.color);
@@ -1850,6 +1938,16 @@ export function SessionSidebar({
         // folder, which any row can do. Neither may start while the row is being renamed: the
         // rename box has to stay selectable with the mouse.
         {...mergeProps(drag?.props, editingId === s.id ? undefined : sessionDnd.rowProps(s.id))}
+        // A session with forks folds like a directory but is still a session Enter opens, hence
+        // `expandable` rather than `isDir`. `current` is where the arrows resume from when focus
+        // has yet to land anywhere in the list.
+        {...navRowProps({
+          path: navKey.session(s.id),
+          expandable: hasChildren,
+          open: hasChildren && hiddenCount === 0,
+          current: activeId === s.id,
+          depth: base + depth,
+        })}
         style={{ ...(depth > 0 ? { marginLeft: indent } : null), ...colorEdge }}
         onClick={
           restorable
@@ -2041,7 +2139,9 @@ export function SessionSidebar({
    */
   const renderGroupRows = (
     g: { key: string; nodes: ForkNode[]; rootIds: string[] },
-    indent = "pl-[18px]"
+    indent = "pl-[18px]",
+    // Depth of the header above these rows in the keyboard tree — see renderRow.
+    base = 0
   ) => (
     <div className={cn("mt-0.5 space-y-0.5", indent)}>
       {/* A fork always shares its parent's folder, so nesting inside the group is the same
@@ -2054,7 +2154,8 @@ export function SessionSidebar({
         return renderRow(
           n,
           false,
-          draggable ? { props: dnd.rowProps(i, g.key), over: dnd.isOver(i, g.key) } : undefined
+          draggable ? { props: dnd.rowProps(i, g.key), over: dnd.isOver(i, g.key) } : undefined,
+          base
         );
       })}
     </div>
@@ -2090,10 +2191,29 @@ export function SessionSidebar({
           onEdit={() => setEditing({ id: project.id, group: vg.group.id })}
           doneCount={doneIn(vg.items).length}
           onMarkSeen={() => onMarkSeen(doneIn(vg.items))}
+          // A virtual folder only ever hangs off a project heading, so it always sits at depth 1.
+          navProps={navRowProps({
+            path: navKey.fold(vg.key),
+            isDir: true,
+            open: !isCollapsed,
+            depth: 1,
+          })}
         />
-        {!isCollapsed && renderGroupRows(vg)}
+        {!isCollapsed && renderGroupRows(vg, undefined, 2)}
       </div>
     );
+  };
+
+  // A project heading as a row of the keyboard tree: the top level of the list, holding the folder
+  // headers, virtual folders and sessions under it.
+  const projectNavRow = (project: Project | null) => {
+    const key = project?.id ?? "";
+    return navRowProps({
+      path: navKey.project(key),
+      isDir: true,
+      open: !collapsedProjects.has(key),
+      depth: 0,
+    });
   };
 
   /** A project's virtual folders, or null when it has none to draw (see ProjectSections.before). */
@@ -2107,6 +2227,9 @@ export function SessionSidebar({
   // of the list because it is now rendered from two places — inside a project, and loose below them.
   const renderFolderGroup = (g: (typeof groups)[number]) => {
     const isCollapsed = collapsed.has(g.dir);
+    // With projects on screen these headers hang off a project heading; with none they are the top
+    // level of the list, which is the only case the loose `groups.map` branch renders.
+    const headDepth = projects.length > 0 ? 1 : 0;
     return (
       <div key={g.key}>
         <GroupHeader
@@ -2124,8 +2247,14 @@ export function SessionSidebar({
           onMoveToProject={(id) => void moveFolderToProject(g.dir, id)}
           onNewProject={() => setEditing({ id: null, folder: g.dir })}
           dragProps={folderDnd.folderProps(g.dir)}
+          navProps={navRowProps({
+            path: navKey.fold(g.dir),
+            isDir: true,
+            open: !isCollapsed,
+            depth: headDepth,
+          })}
         />
-        {!isCollapsed && renderGroupRows(g)}
+        {!isCollapsed && renderGroupRows(g, undefined, headDepth + 1)}
       </div>
     );
   };
@@ -2149,7 +2278,9 @@ export function SessionSidebar({
         // Under a project heading the path is a line per row saying what the heading already says.
         // It stays where nothing above the row does: the "No project" section, and the plain list.
         !project,
-        draggable ? { props: dnd.rowProps(i, key), over: dnd.isOver(i, key) } : undefined
+        draggable ? { props: dnd.rowProps(i, key), over: dnd.isOver(i, key) } : undefined,
+        // A heading above them, or nothing at all — the plain list's rows are its own top level.
+        projects.length > 0 ? 1 : 0
       );
     });
   };
@@ -2254,7 +2385,14 @@ export function SessionSidebar({
           folderDnd={folderDnd}
         />
       ) : (
-      <div data-menu-bounds className="flex-1 overflow-auto pb-2 pl-2 pr-1">
+      <div
+        ref={treeRef}
+        data-menu-bounds
+        {...treeKeys}
+        // The list is the tree's one tab stop and focus roves over its rows from there, so the
+        // container itself must not draw a ring around everything when it takes focus.
+        className="flex-1 overflow-auto pb-2 pl-2 pr-1 outline-none"
+      >
         {sessions.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
         ) : visibleSessions.length === 0 ? (
@@ -2271,11 +2409,14 @@ export function SessionSidebar({
               dnd={folderDnd}
               sessionDrop={sectionSessionDrop}
               before={renderVirtualGroups}
+              navRow={projectNavRow}
               renderItems={(gs, project) =>
                 // A project that is just one folder draws its sessions itself: the folder header
                 // would only repeat the heading right above it.
                 mergesFolderHeader(project, gs.map((g) => g.dir), shownGroups(project).length > 0)
-                  ? renderGroupRows(gs[0], "pl-0")
+                  // No folder header of their own: the rows hang straight off the project heading,
+                  // so in the keyboard tree they are at its child level, not a header's.
+                  ? renderGroupRows(gs[0], "pl-0", 1)
                   : gs.map(renderFolderGroup)
               }
               countOf={(gs, project) =>
@@ -2316,6 +2457,7 @@ export function SessionSidebar({
             onNewSession={onNewInProject}
             sessionDrop={sectionSessionDrop}
             before={renderVirtualGroups}
+            navRow={projectNavRow}
             renderItems={(ss, project) => renderFlatSection(project, ss)}
             // No folder header stands between a project and its rows here, so they sit at the
             // project's own child level — level with the virtual folders beside them, which is what
@@ -2499,7 +2641,13 @@ function RowActionsMenu({
   );
 
   return (
-    <span ref={ref} className="relative flex items-center" onClick={(e) => e.stopPropagation()}>
+    <span
+      ref={ref}
+      // See FolderMenu: keeps the tree's arrow keys off a row whose menu is standing open.
+      data-menu-open={open ? "1" : undefined}
+      className="relative flex items-center"
+      onClick={(e) => e.stopPropagation()}
+    >
       <button
         type="button"
         onClick={toggle}

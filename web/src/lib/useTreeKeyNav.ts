@@ -3,8 +3,9 @@ import { useCallback, type KeyboardEvent, type RefObject } from "react";
 // Arrow-key navigation for the file trees: the scroll container is the single tab stop and focus
 // roves over its rows, which is how a tree is expected to behave (and the only way to walk a long
 // list of files without reaching for the mouse). Rows are found in the DOM rather than tracked in
-// state, so one hook serves every shape of tree — the lazy directory tree, the changes tree, and a
-// flat search result list — without any of them having to flatten themselves for it.
+// state, so one hook serves every shape of tree — the lazy directory tree, the changes tree, a flat
+// search result list, and the sessions list with its projects, folders and forks — without any of
+// them having to flatten themselves for it.
 const ROW_SELECTOR = "[data-nav-row]";
 
 /**
@@ -13,7 +14,17 @@ const ROW_SELECTOR = "[data-nav-row]";
  */
 export function navRowProps(opts: {
   path: string;
+  /**
+   * A row that is nothing but a container: Enter folds it, and arrowing onto it selects nothing —
+   * there is nothing to select. A directory is one, and so is a project or folder heading.
+   */
   isDir?: boolean;
+  /**
+   * A row that has a subtree but is still a thing in its own right: → and ← fold it, while Enter
+   * goes on activating the row. A session with forks hanging off it is one — the forks fold away,
+   * but the session is still there to open.
+   */
+  expandable?: boolean;
   open?: boolean; // expanded directory
   current?: boolean; // where the arrows resume from when nothing in the tree has focus
   depth: number;
@@ -22,6 +33,8 @@ export function navRowProps(opts: {
     tabIndex: -1,
     "data-nav-row": opts.path,
     "data-nav-dir": opts.isDir ? "1" : undefined,
+    // What → and ← act on. A container always folds; anything else says so for itself.
+    "data-nav-sub": opts.isDir || opts.expandable ? "1" : undefined,
     "data-nav-open": opts.open ? "1" : undefined,
     "data-nav-current": opts.current ? "1" : undefined,
     "data-nav-depth": String(opts.depth),
@@ -45,6 +58,7 @@ function currentIndex(list: HTMLElement[]): number {
 }
 
 const isDirRow = (el: HTMLElement) => el.dataset.navDir === "1";
+const foldsRow = (el: HTMLElement) => el.dataset.navSub === "1";
 const depthOf = (el: HTMLElement) => Number(el.dataset.navDepth ?? 0);
 
 export function useTreeKeyNav(opts: {
@@ -81,6 +95,9 @@ export function useTreeKeyNav(opts: {
       // Never steal keys from a rename field (or any other input) living inside a row.
       const target = e.target as HTMLElement;
       if (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      // Nor from a menu a row has open: its trigger button holds focus inside the row, so without
+      // this an arrow key would walk the tree out from under the menu still standing on it.
+      if (target.closest("[data-menu-open]")) return;
 
       const list = rowsIn(container);
       if (list.length === 0) return;
@@ -105,7 +122,7 @@ export function useTreeKeyNav(opts: {
           goTo(list, list.length - 1);
           return;
         case "ArrowRight":
-          if (!cur || !isDirRow(cur)) return;
+          if (!cur || !foldsRow(cur)) return;
           e.preventDefault();
           // Closed: open it. Already open: step into it, which is just the next row down.
           if (cur.dataset.navOpen !== "1") onToggleDir?.(cur.dataset.navRow ?? "", false);
@@ -114,7 +131,7 @@ export function useTreeKeyNav(opts: {
         case "ArrowLeft": {
           if (!cur) return;
           e.preventDefault();
-          if (isDirRow(cur) && cur.dataset.navOpen === "1") {
+          if (foldsRow(cur) && cur.dataset.navOpen === "1") {
             onToggleDir?.(cur.dataset.navRow ?? "", true);
             return;
           }
