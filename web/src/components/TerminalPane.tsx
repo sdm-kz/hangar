@@ -307,8 +307,16 @@ export const TerminalPane = forwardRef<
   // the socket); kept here so the zoom effect can trigger a resize the ResizeObserver never sees —
   // the pane's own box doesn't change when the font does.
   const refitRef = useRef<() => void>(() => {});
+  // Ask the host to make the TUI redraw its whole frame. Same ownership story as refitRef — it needs
+  // the socket — and exposed here for the toolbar's repaint button.
+  const repaintRef = useRef<() => void>(() => {});
   // True while the viewport sits above the live tail — gates the jump-to-bottom button.
   const [scrolledUp, setScrolledUp] = useState(false);
+  // Spins the repaint button for a moment after a press. A repaint that had nothing to fix looks
+  // like nothing happening, and without an acknowledgement the button just invites another press.
+  const [repainting, setRepainting] = useState(false);
+  const repaintTimerRef = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(repaintTimerRef.current), []);
   // Socket state, driving the reconnect chip. "connecting" is the first attach — no chip then, the
   // terminal is just blank for a moment; the chip only appears once a live socket has dropped.
   const [connection, setConnection] = useState<"connecting" | "open" | "closed" | "reconnecting">(
@@ -773,6 +781,10 @@ export const TerminalPane = forwardRef<
     });
 
     refitRef.current = sendResize;
+    repaintRef.current = () => {
+      term.refresh(0, term.rows - 1);
+      requestRepaint();
+    };
 
     // Refit + notify the PTY whenever the pane resizes.
     const ro = new ResizeObserver(() => sendResize());
@@ -823,6 +835,7 @@ export const TerminalPane = forwardRef<
 
     return () => {
       refitRef.current = () => {};
+      repaintRef.current = () => {};
       ro.disconnect();
       fileLinks.dispose();
       scrollSub.dispose();
@@ -972,6 +985,30 @@ export const TerminalPane = forwardRef<
           )}
         >
           <TextSelect className="size-4" />
+        </Button>
+        {/* Force a redraw. Claude's TUI paints differentially — only the rows it believes changed —
+            so a grid that has drifted from its model (a second viewer driving the size, a frame that
+            landed mid-resize) keeps showing characters the TUI has already dropped. They can't be
+            backspaced over, because they aren't in the input any more: they're only on screen. The
+            host answers this by nudging the PTY size, which is the one thing that makes Ink repaint
+            the whole frame. Local refresh first, for a stale cell that never left the renderer. */}
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => {
+            repaintRef.current();
+            setRepainting(true);
+            window.clearTimeout(repaintTimerRef.current);
+            repaintTimerRef.current = window.setTimeout(() => setRepainting(false), 600);
+          }}
+          title="Redraw — clears leftover characters the terminal is showing but Claude no longer has"
+          aria-label="Redraw the terminal"
+          className={cn(
+            "size-8 bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-opacity hover:text-foreground",
+            "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          )}
+        >
+          <RefreshCw className={cn("size-4", repainting && "animate-spin")} />
         </Button>
         {/* Zoom for the terminal alone (the browser's own zoom takes the whole app with it). Pinned
             open once zoomed, since a non-default size should say so and offer the way back. */}
