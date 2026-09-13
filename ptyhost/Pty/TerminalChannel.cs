@@ -310,6 +310,11 @@ public sealed partial class TerminalChannel : IDisposable
     public int ProcessId => _pty.ProcessId;
     public short Cols { get; private set; } = 120;
     public short Rows { get; private set; } = 30;
+    // The size the viewers actually asked for, which is only the same as Cols/Rows outside a repaint:
+    // the nudge below parks the pseudoconsole one column off on purpose, and what it has to come back
+    // to is whatever was asked for last — not the size it happened to be leaving.
+    private short _wantCols = 120;
+    private short _wantRows = 30;
 
 
     /// <summary>Raised when the child process ends, with its exit code.</summary>
@@ -450,6 +455,20 @@ public sealed partial class TerminalChannel : IDisposable
         rows = Math.Max((short)1, rows);
         lock (_lock)
         {
+            _wantCols = cols;
+            _wantRows = rows;
+        }
+        ApplySize(cols, rows);
+    }
+
+    /// <summary>
+    /// Put the pseudoconsole at a size without recording it as one anybody asked for — the repaint
+    /// nudge, which is passing through a size on its way back to the real one.
+    /// </summary>
+    private void ApplySize(short cols, short rows)
+    {
+        lock (_lock)
+        {
             if (cols == Cols && rows == Rows) return;
             Cols = cols;
             Rows = rows;
@@ -479,15 +498,22 @@ public sealed partial class TerminalChannel : IDisposable
     public async Task RepaintAsync()
     {
         short cols, rows;
-        lock (_lock) { cols = Cols; rows = Rows; }
+        lock (_lock) { cols = _wantCols; rows = _wantRows; }
         if (cols <= 1 || _pty.HasExited) return;
 
         Interlocked.Increment(ref _repaintDepth);
         try
         {
-            Resize((short)(cols - 1), rows);
+            ApplySize((short)(cols - 1), rows);
             await Task.Delay(RepaintSettleMs).ConfigureAwait(false);
-            Resize(cols, rows);
+            // Re-read the wanted size rather than restoring the one captured above: a viewer that
+            // resized during the gap has already been applied, and putting the old size back would
+            // undo it and leave the pseudoconsole permanently wider than the grid it is drawn into —
+            // where every line the TUI writes spills its last cell onto the next row, and Ink, whose
+            // model says otherwise, never erases it. That stray character is what this repaint exists
+            // to clear, so producing one here is the one thing it must not do.
+            lock (_lock) { cols = _wantCols; rows = _wantRows; }
+            ApplySize(cols, rows);
             // Hold the "this is a repaint" state until the redraw has actually been emitted. The
             // resize returns as soon as the pseudoconsole has been told; the output follows.
             await Task.Delay((int)(RepaintSettleMs + OutputWindowMs)).ConfigureAwait(false);

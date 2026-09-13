@@ -208,13 +208,19 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 const HEARTBEAT_DEAD_MS = 45_000;
 
 // Control frames arrive as text; PTY output is always binary, so a text frame is never terminal
-// content. Returns the frame's type, or null when it isn't one (then it's output after all).
-function controlFrameType(data: string): string | null {
+// content. Returns the parsed frame, or null when it isn't one (then it's output after all).
+type ControlFrame = { type: string; cols?: number; rows?: number };
+
+function controlFrame(data: string): ControlFrame | null {
   if (!data.startsWith("{")) return null;
   try {
-    const msg: unknown = JSON.parse(data);
-    const type = (msg as { type?: unknown } | null)?.type;
-    return typeof type === "string" ? type : null;
+    const msg = JSON.parse(data) as { type?: unknown; cols?: unknown; rows?: unknown } | null;
+    if (typeof msg?.type !== "string") return null;
+    return {
+      type: msg.type,
+      cols: typeof msg.cols === "number" ? msg.cols : undefined,
+      rows: typeof msg.rows === "number" ? msg.rows : undefined,
+    };
   } catch {
     return null; // not JSON — let xterm have it
   }
@@ -507,19 +513,53 @@ export const TerminalPane = forwardRef<
     };
     wsRef.current = ws; // expose to the imperative handle (sendMessage)
 
+    // What this box could show, and what the server settled on across every viewer of the session.
+    // They part company only while a smaller viewer is attached: one pseudoconsole serves them all,
+    // so it runs at the smallest grid among them and we letterbox into the difference. The grid
+    // follows the agreed size rather than our own, because that is the frame Claude is drawing — a
+    // grid narrower than the frame wraps the last cell of every line onto the front of the next row,
+    // and Ink, painting only the rows it believes changed, never takes those strays back. Zero means
+    // not known yet (or a server too old to say), where our own fit stands in as it always did.
+    let desiredCols = 0;
+    let desiredRows = 0;
+    let agreedCols = 0;
+    let agreedRows = 0;
+    const applyGrid = () => {
+      const cols = agreedCols || desiredCols;
+      const rows = agreedRows || desiredRows;
+      if (cols <= 0 || rows <= 0) return;
+      if (term.cols === cols && term.rows === rows) return;
+      const shrank = cols < term.cols;
+      term.resize(cols, rows);
+      // What fit() does for itself after resizing, in public API: the renderer caches the grid it
+      // last drew, and a cell it believes unchanged is not redrawn at its new place.
+      term.refresh(0, term.rows - 1);
+      // Narrowing is the one direction that can leave strays: output already on the wire when the
+      // grid shrank was drawn for the old width, and it lands here too wide and wraps. The child has
+      // no reason to draw those rows again — its own resize came and went before this frame arrived —
+      // so ask for the redraw that clears them.
+      if (shrank) requestRepaint();
+    };
+
     const sendResize = () => {
       // Skip while the pane is hidden (e.g. the Files full view keeps us mounted but
-      // display:none'd): fitting a 0-sized host would send a bogus 1x1 resize to the PTY.
+      // display:none'd): measuring a 0-sized host would send a bogus 1x1 resize to the PTY.
       if (host.clientWidth === 0 || host.clientHeight === 0) return;
+      let dims;
       try {
-        fit.fit();
+        dims = fit.proposeDimensions();
       } catch {
         return;
       }
+      if (!dims || !(dims.cols > 0) || !(dims.rows > 0)) return;
+      desiredCols = dims.cols;
+      desiredRows = dims.rows;
+      applyGrid();
       // Repaint xterm's own cells in case the renderer left them stale after being hidden.
       term.refresh(0, term.rows - 1);
+      // A request, not a setting — the answer comes back as a `size` frame, which may be smaller.
       if (ws.readyState === WebSocket.OPEN)
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+        ws.send(JSON.stringify({ type: "resize", cols: desiredCols, rows: desiredRows }));
     };
 
     // Ask for a full repaint. A fresh xterm reattaching at the size the PTY already has gets the
@@ -557,11 +597,18 @@ export const TerminalPane = forwardRef<
       lastInbound = Date.now(); // any frame proves the socket is still carrying traffic
       let text: string;
       if (typeof e.data === "string") {
-        const control = controlFrameType(e.data);
+        const control = controlFrame(e.data);
         if (control) {
           // The pong answering our heartbeat: it never belongs on screen, and seeing one is what
           // arms the silence check (this server speaks heartbeats).
-          if (control === "pong") pongSeen = true;
+          if (control.type === "pong") pongSeen = true;
+          // The size the child is really being drawn at (see `agreedCols`). Take it as given: it is
+          // the answer to our own resize, or word that another viewer has changed it.
+          if (control.type === "size" && (control.cols ?? 0) > 0 && (control.rows ?? 0) > 0) {
+            agreedCols = control.cols!;
+            agreedRows = control.rows!;
+            applyGrid();
+          }
           return;
         }
         term.write(e.data);
@@ -782,7 +829,11 @@ export const TerminalPane = forwardRef<
 
     refitRef.current = sendResize;
     repaintRef.current = () => {
-      term.refresh(0, term.rows - 1);
+      // Re-measure and re-declare this grid before asking for the redraw. The button is pressed when
+      // the screen shows characters Claude no longer has, and the way that happens is a grid and a
+      // frame that disagree about their size — so saying again what we can show, and taking back
+      // whatever the session settles on, is half the repair. The nudge is the other half.
+      sendResize();
       requestRepaint();
     };
 

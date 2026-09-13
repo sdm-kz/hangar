@@ -10,6 +10,10 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 ///   <item>client → server: <b>Binary</b> = raw keystroke/paste bytes → PTY stdin;
 ///         <b>Text</b> = JSON control, e.g. <c>{"type":"resize","cols":120,"rows":40}</c> or
 ///         <c>{"type":"ping"}</c>, answered with a <c>{"type":"pong"}</c> text frame.</item>
+///   <item>server → client: <b>Text</b> <c>{"type":"size","cols":100,"rows":30}</c> = the size the
+///         child is actually drawn at. A resize is a request, not a setting: one pseudoconsole serves
+///         every viewer of a session and it is driven at the smallest of their grids, so a viewer
+///         bigger than this must letterbox rather than paint cells the child does not have.</item>
 /// </list>
 /// </summary>
 public static class TerminalSocket
@@ -25,7 +29,17 @@ public static class TerminalSocket
         var sendGate = new SemaphoreSlim(1, 1);
         try
         {
-            // 1) Replay recent scrollback so a reconnecting viewer sees current screen state.
+            // Pushed when another viewer changes the agreed size, and echoed back whenever this one
+            // asks — so the grid here always matches the frame the child is drawing. Fire-and-forget:
+            // this runs on whichever viewer's thread did the resizing, and none of them may block on
+            // this socket.
+            sub.SizeChanged = (cols, rows) => _ = SendSizeAsync(ws, sendGate, cols, rows, cts.Token);
+
+            // 1) Replay recent scrollback so a reconnecting viewer sees current screen state. The size
+            // goes first: the replay was drawn at it, and a viewer that renders it in a grid of its
+            // own guess wraps every line that overruns, which is a mess it then has to be told to
+            // repaint out of.
+            await SendSizeAsync(ws, sendGate, term.Cols, term.Rows, cts.Token);
             if (sub.Replay.Length > 0)
                 await SendAsync(ws, sendGate, sub.Replay, WebSocketMessageType.Binary, cts.Token);
 
@@ -55,7 +69,7 @@ public static class TerminalSocket
                 if (r.MessageType == WebSocketMessageType.Binary)
                     await term.WriteAsync(buf.AsMemory(0, r.Count), cts.Token);
                 else
-                    await HandleControlAsync(buf.AsMemory(0, r.Count), term, ws, sendGate, cts.Token);
+                    await HandleControlAsync(buf.AsMemory(0, r.Count), term, sub, ws, sendGate, cts.Token);
             }
 
             cts.Cancel();
@@ -64,6 +78,7 @@ public static class TerminalSocket
         catch (OperationCanceledException) { }
         finally
         {
+            sub.SizeChanged = null; // nothing to tell a socket that is going away
             cts.Cancel();
             if (ws.State == WebSocketState.Open)
                 try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None); } catch { }
@@ -83,8 +98,18 @@ public static class TerminalSocket
         finally { gate.Release(); }
     }
 
+    /// <summary>Tell this viewer the size the child is drawn at (see the framing note above).</summary>
+    private static async Task SendSizeAsync(
+        WebSocket ws, SemaphoreSlim gate, short cols, short rows, CancellationToken ct)
+    {
+        var frame = JsonSerializer.SerializeToUtf8Bytes(new { type = "size", cols, rows });
+        try { await SendAsync(ws, gate, frame, WebSocketMessageType.Text, ct); }
+        catch { /* socket gone — the read loop will see it next */ }
+    }
+
     private static async Task HandleControlAsync(
-        ReadOnlyMemory<byte> json, ITerminal term, WebSocket ws, SemaphoreSlim gate, CancellationToken ct)
+        ReadOnlyMemory<byte> json, ITerminal term, TerminalSubscription sub, WebSocket ws, SemaphoreSlim gate,
+        CancellationToken ct)
     {
         ControlMessage? msg;
         try { msg = JsonSerializer.Deserialize<ControlMessage>(json.Span, ControlJson); }
@@ -92,8 +117,10 @@ public static class TerminalSocket
 
         switch (msg)
         {
+            // What this viewer can show, not what the session becomes: the terminal answers with the
+            // size it settled on across every viewer, which may be smaller.
             case { Type: "resize" }:
-                term.Resize((short)msg.Cols, (short)msg.Rows);
+                sub.Resize((short)msg.Cols, (short)msg.Rows);
                 break;
             // "I have attached and my screen is blank below the scrollback — draw it." The viewer used
             // to arrange this itself by sending two resizes it did not want, which from out there is

@@ -30,7 +30,7 @@ public sealed class PtyHostClient : ITerminal
     // browser tab that opens later gets the whole picture — the host replays per CLIENT, not per
     // viewer. (The host keeps its own ring; this one exists purely to fan out to several tabs.)
     private readonly RingBuffer _ring = new(RingCapacity);
-    private readonly Dictionary<Guid, ChannelWriter<byte[]>> _subs = new();
+    private readonly Dictionary<Guid, Viewer> _subs = new();
     private readonly object _lock = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _closing = new();
@@ -38,8 +38,14 @@ public sealed class PtyHostClient : ITerminal
     private bool _completed;
     private bool _disposed;
     private string? _remoteUrl;
+    // Where the pseudoconsole actually is, which outside a repaint is the agreed size below: the
+    // nudge parks it one column off on purpose and has to come back to what was agreed, not to
+    // wherever it happened to be leaving from.
     private short _cols;
     private short _rows;
+    // The size every viewer is drawn at: the smallest grid among them (see AgreeSize).
+    private short _wantCols;
+    private short _wantRows;
 
     // Last `state` push from the host. The defaults are the safe reading for a session we have not
     // heard about yet: not busy, not waiting, not compacting, healthy.
@@ -59,8 +65,8 @@ public sealed class PtyHostClient : ITerminal
     /// <summary>Whether the host reported the child as already gone when we attached.</summary>
     public bool AlreadyExited { get; }
 
-    public short Cols { get { lock (_lock) return _cols; } }
-    public short Rows { get { lock (_lock) return _rows; } }
+    public short Cols { get { lock (_lock) return _wantCols; } }
+    public short Rows { get { lock (_lock) return _wantRows; } }
 
     public string? RemoteUrl { get { lock (_lock) return _remoteUrl; } }
 
@@ -95,8 +101,8 @@ public sealed class PtyHostClient : ITerminal
         // mean: fall back to nudging (see RequestRepaint).
         _canRepaint = welcome.CanRepaint;
         _remoteUrl = welcome.RemoteUrl;
-        _cols = (short)Math.Max(1, welcome.Cols);
-        _rows = (short)Math.Max(1, welcome.Rows);
+        _cols = _wantCols = (short)Math.Max(1, welcome.Cols);
+        _rows = _wantRows = (short)Math.Max(1, welcome.Rows);
         // Seed the ring from the replay, so a viewer attaching now sees the screen as it stands rather
         // than only what happens to arrive from here on.
         if (replay.Length > 0) _ring.Append(replay);
@@ -200,7 +206,7 @@ public sealed class PtyHostClient : ITerminal
             {
                 notify = !_completed;
                 _completed = true;
-                foreach (var w in _subs.Values) w.TryComplete();
+                foreach (var v in _subs.Values) v.Writer.TryComplete();
             }
             if (notify && !_disposed)
             {
@@ -215,7 +221,7 @@ public sealed class PtyHostClient : ITerminal
         lock (_lock)
         {
             _ring.Append(chunk);
-            foreach (var w in _subs.Values) w.TryWrite(chunk);
+            foreach (var v in _subs.Values) v.Writer.TryWrite(chunk);
         }
     }
 
@@ -261,7 +267,7 @@ public sealed class PtyHostClient : ITerminal
                 lock (_lock)
                 {
                     _completed = true;
-                    foreach (var w in _subs.Values) w.TryComplete();
+                    foreach (var v in _subs.Values) v.Writer.TryComplete();
                 }
                 try { Exited?.Invoke(msg.ExitCode); } catch { }
                 break;
@@ -271,23 +277,85 @@ public sealed class PtyHostClient : ITerminal
         }
     }
 
+    /// <summary>One attached viewer: where its output goes, and how big a grid it has to put it in.</summary>
+    private sealed class Viewer(ChannelWriter<byte[]> writer)
+    {
+        public ChannelWriter<byte[]> Writer { get; } = writer;
+        // Zero until the viewer has said. An unspoken size joins no minimum — a tab that has attached
+        // but not yet measured itself must not shrink the session to whatever it would default to.
+        public short Cols;
+        public short Rows;
+        public TerminalSubscription? Handle;
+    }
+
     /// <summary>Attach a viewer: the current scrollback plus a live stream of subsequent output.</summary>
     public TerminalSubscription Subscribe()
     {
+        TerminalSubscription sub;
         lock (_lock)
         {
             // Bounded + DropOldest so a stalled viewer degrades only itself, never the shared reader.
             var ch = Channel.CreateBounded<byte[]>(
                 new BoundedChannelOptions(2048) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
             var id = Guid.NewGuid();
-            _subs[id] = ch.Writer;
+            var viewer = new Viewer(ch.Writer);
+            _subs[id] = viewer;
             if (_completed) ch.Writer.TryComplete();
-            return new TerminalSubscription(_ring.Snapshot(), ch.Reader, () =>
-            {
-                lock (_lock) _subs.Remove(id);
-                ch.Writer.TryComplete();
-            });
+            sub = new TerminalSubscription(
+                _ring.Snapshot(), ch.Reader,
+                unsubscribe: () =>
+                {
+                    lock (_lock) _subs.Remove(id);
+                    ch.Writer.TryComplete();
+                    // The viewer that just left may be the one that was holding the size down.
+                    AgreeSize(null);
+                },
+                resize: (cols, rows) =>
+                {
+                    lock (_lock)
+                    {
+                        viewer.Cols = Math.Max((short)1, cols);
+                        viewer.Rows = Math.Max((short)1, rows);
+                    }
+                    AgreeSize(viewer);
+                });
+            viewer.Handle = sub;
         }
+        return sub;
+    }
+
+    /// <summary>
+    /// Settle on the size the child is drawn at: the smallest grid among the attached viewers, each
+    /// axis on its own. tmux's rule, for tmux's reason — every viewer can then show the whole screen,
+    /// and the ones with room to spare letterbox rather than be sent a frame wider than they can
+    /// hold, where each line's last cell spills onto the front of the next row and stays there.
+    ///
+    /// The <paramref name="asker"/> is told the answer even when it did not change it, which is how a
+    /// viewer that has just joined — or just asked for more than it can have — learns to letterbox.
+    /// </summary>
+    private void AgreeSize(Viewer? asker)
+    {
+        short cols = 0, rows = 0;
+        List<TerminalSubscription> tell = [];
+        lock (_lock)
+        {
+            foreach (var v in _subs.Values)
+            {
+                if (v.Cols <= 0 || v.Rows <= 0) continue;
+                cols = cols == 0 ? v.Cols : Math.Min(cols, v.Cols);
+                rows = rows == 0 ? v.Rows : Math.Min(rows, v.Rows);
+            }
+            // Nobody has a grid to fit: the last viewer has gone, or none has measured itself yet.
+            // Leave the child at the size it has rather than resize it to nothing on the way out.
+            if (cols <= 0 || rows <= 0) return;
+            bool changed = cols != _wantCols || rows != _wantRows;
+            _wantCols = cols;
+            _wantRows = rows;
+            foreach (var v in _subs.Values)
+                if (v.Handle is not null && (changed || ReferenceEquals(v, asker))) tell.Add(v.Handle);
+        }
+        Nudge(cols, rows);
+        foreach (var t in tell) t.SizeChanged?.Invoke(cols, rows);
     }
 
     public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct) =>
@@ -331,20 +399,24 @@ public sealed class PtyHostClient : ITerminal
             return;
         }
         short cols, rows;
-        lock (_lock) { cols = _cols; rows = _rows; }
+        lock (_lock) { cols = _wantCols; rows = _wantRows; }
         if (cols <= 1) return;
         _ = Task.Run(async () =>
         {
-            Resize((short)(cols - 1), rows);
+            Nudge((short)(cols - 1), rows);
             await Task.Delay(60);
-            Resize(cols, rows);
+            // Whatever is wanted now, not the size captured before the gap — a resize that landed
+            // during it has already gone out, and restoring over it would leave the pseudoconsole
+            // wider than the grid it is drawn into, which is how a line's last cell ends up spilled
+            // onto the front of the next row with nothing to erase it.
+            lock (_lock) { cols = _wantCols; rows = _wantRows; }
+            Nudge(cols, rows);
         });
     }
 
-    public void Resize(short cols, short rows)
+    /// <summary>Move the pseudoconsole. The agreed size is <see cref="AgreeSize"/>'s to set.</summary>
+    private void Nudge(short cols, short rows)
     {
-        cols = Math.Max((short)1, cols);
-        rows = Math.Max((short)1, rows);
         lock (_lock)
         {
             if (cols == _cols && rows == _rows) return;
@@ -401,7 +473,7 @@ public sealed class PtyHostClient : ITerminal
         lock (_lock)
         {
             _completed = true;
-            foreach (var w in _subs.Values) w.TryComplete();
+            foreach (var v in _subs.Values) v.Writer.TryComplete();
             _subs.Clear();
         }
         try { _pipe.Dispose(); } catch { }

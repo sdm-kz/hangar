@@ -31,9 +31,6 @@ public interface ITerminal : IDisposable
     /// <summary>Type text as if the user entered it — used to inject a <c>/rename</c>.</summary>
     void InjectInput(string text);
 
-    /// <summary>Resize the pseudoconsole (SIGWINCH-equivalent); the TUI repaints to the new size.</summary>
-    void Resize(short cols, short rows);
-
     /// <summary>
     /// Ask the child to redraw its whole screen, for a viewer that has just attached — it would
     /// otherwise get the replayed scrollback and no SIGWINCH, leaving the input box unpainted.
@@ -42,10 +39,10 @@ public interface ITerminal : IDisposable
     /// </summary>
     void RequestRepaint();
 
-    /// <summary>Current pseudoconsole width.</summary>
+    /// <summary>The width every viewer is being drawn at — the narrowest attached grid.</summary>
     short Cols { get; }
 
-    /// <summary>Current pseudoconsole height.</summary>
+    /// <summary>The height every viewer is being drawn at — the shortest attached grid.</summary>
     short Rows { get; }
 
     /// <summary>True when Claude appears to be actively generating (not just echoing your typing).</summary>
@@ -83,10 +80,33 @@ public interface ITerminal : IDisposable
     event Action<int>? Exited;
 }
 
-/// <summary>A viewer's handle: initial <see cref="Replay"/> scrollback then a live <see cref="Reader"/>.</summary>
-public sealed class TerminalSubscription(byte[] replay, ChannelReader<byte[]> reader, Action unsubscribe) : IDisposable
+/// <summary>
+/// A viewer's handle: initial <see cref="Replay"/> scrollback then a live <see cref="Reader"/>, plus
+/// the size of the grid this particular viewer is showing it in.
+/// </summary>
+/// <remarks>
+/// Sizing belongs to the viewer rather than to the terminal because one pseudoconsole serves all of
+/// them, and they are not the same shape. Each says what it can show; the terminal drives the child
+/// at the smallest of those and tells everyone what it settled on, which is tmux's rule and exists
+/// for the same reason: a grid narrower than the child is drawing for wraps the last cell of every
+/// line onto the front of the next row, and a TUI that paints differentially never takes it back.
+/// </remarks>
+public sealed class TerminalSubscription(
+    byte[] replay, ChannelReader<byte[]> reader, Action unsubscribe, Action<short, short> resize) : IDisposable
 {
     public byte[] Replay { get; } = replay;
     public ChannelReader<byte[]> Reader { get; } = reader;
+
+    /// <summary>Tell the terminal how big this viewer's grid is. It may settle on something smaller.</summary>
+    public void Resize(short cols, short rows) => resize(cols, rows);
+
+    /// <summary>
+    /// The size the child is actually being drawn at, once it has been worked out: answered whenever
+    /// this viewer asks, and pushed to every viewer when another one changes it. A viewer larger than
+    /// this letterboxes — it must not paint the extra cells, or it is back to drawing a grid the child
+    /// does not have.
+    /// </summary>
+    public Action<short, short>? SizeChanged { get; set; }
+
     public void Dispose() => unsubscribe();
 }
