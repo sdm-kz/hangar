@@ -540,6 +540,14 @@ export const FileBrowser = forwardRef<
     [tabs]
   );
 
+  // Which repo's changes to show: the session's own (gitFiles) or the picked worktree's (altStatus).
+  // A linked folder is an unrelated tree, so it has none — the changes view and history hide there,
+  // and `changesView` (not the raw `showChanges`) drives the render so a remembered changes view
+  // simply comes back when the session's own folder is selected again.
+  const effectiveGitFiles = isLinkedRoot ? undefined : rootDir ? altStatus?.files : gitFiles;
+  const gitAvailable = !!gitFiles && !isLinkedRoot;
+  const changesView = showChanges && gitAvailable;
+
   // ---- Per-node file operations (rename / delete / new folder inside a folder) ----
   const confirm = useConfirm();
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -572,12 +580,17 @@ export const FileBrowser = forwardRef<
 
   const doDelete = useCallback(
     async (entry: FileEntry) => {
+      const staged = hasStagedAdd(effectiveGitFiles, entry);
       const ok = await confirm({
         title: `Delete ${entry.isDir ? "folder" : "file"}?`,
         description: (
           <>
             Permanently delete <span className="font-medium text-foreground">{entry.name}</span>
             {entry.isDir && " and everything inside it"}.
+            {staged &&
+              (entry.isDir
+                ? " Staged-but-uncommitted files inside it are unstaged as well — otherwise a commit would still add them."
+                : " It is staged but not committed, so it is unstaged as well — otherwise a commit would still add it.")}
           </>
         ),
         confirmLabel: "Delete",
@@ -602,7 +615,7 @@ export const FileBrowser = forwardRef<
         /* ignore — best effort */
       }
     },
-    [sessionId, writeDir, tabs, confirm, onRefresh]
+    [sessionId, writeDir, tabs, confirm, onRefresh, effectiveGitFiles]
   );
 
   // Open the new-folder creator targeting a specific directory ("" = repo root).
@@ -675,14 +688,6 @@ export const FileBrowser = forwardRef<
     setNewFolder("");
     setFolderError(null);
   }, [sessionId]);
-
-  // Which repo's changes to show: the session's own (gitFiles) or the picked worktree's (altStatus).
-  // A linked folder is an unrelated tree, so it has none — the changes view and history hide there,
-  // and `changesView` (not the raw `showChanges`) drives the render so a remembered changes view
-  // simply comes back when the session's own folder is selected again.
-  const effectiveGitFiles = isLinkedRoot ? undefined : rootDir ? altStatus?.files : gitFiles;
-  const gitAvailable = !!gitFiles && !isLinkedRoot;
-  const changesView = showChanges && gitAvailable;
 
   const changeCount = effectiveGitFiles ? Object.keys(effectiveGitFiles).length : 0;
   const changeEntries = useMemo<FileEntry[]>(
@@ -1172,6 +1177,17 @@ function GitMarker({ status }: { status?: string }) {
       {status}
     </span>
   );
+}
+
+/** Whether deleting this entry would strip a staged addition — a file `git add`ed but never
+ * committed, whose index copy would outlive the file on disk (status "A"). A folder counts when
+ * anything inside it is staged that way. */
+function hasStagedAdd(gitFiles: GitFiles | undefined, entry: FileEntry): boolean {
+  if (!gitFiles) return false;
+  if (!entry.isDir) return gitFiles[entry.path] === "A";
+  const prefix = entry.path + "/";
+  for (const p in gitFiles) if (gitFiles[p] === "A" && p.startsWith(prefix)) return true;
+  return false;
 }
 
 function dirHasChanges(gitFiles: GitFiles | undefined, dirPath: string): boolean {

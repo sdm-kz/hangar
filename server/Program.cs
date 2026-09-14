@@ -943,9 +943,11 @@ internal static class Program
             if (info is null) return Results.NotFound();
             var root = WriteRoot(info, body.Dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
-            return !string.IsNullOrEmpty(body.Path) && SessionFileBrowser.Delete(root, body.Path)
-                ? Results.Ok()
-                : Results.BadRequest(new { error = "could not delete" });
+            if (string.IsNullOrEmpty(body.Path) || !SessionFileBrowser.Delete(root, body.Path))
+                return Results.BadRequest(new { error = "could not delete" });
+            // A file that was staged but never committed also sits in the index: unlink it alone and
+            // the next commit still records it, as a file that isn't there. Drop those entries too.
+            return Results.Ok(new { unstaged = GitService.UnstageAdditions(root, body.Path) });
         });
 
         // Create a folder (possibly nested, e.g. "a/b/c") under the write root.

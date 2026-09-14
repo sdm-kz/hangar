@@ -52,7 +52,11 @@ public static class GitService
         }
 
         var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var porcelain = Run(workingDir, out _, "status", "--porcelain", "--untracked-files=all");
+        // -c core.quotepath=false: without it git C-quotes every non-ASCII path into octal escapes,
+        // and those escapes become the keys this map is looked up by — so a file with a Cyrillic
+        // name never matches the path the tree asked about.
+        var porcelain = Run(workingDir, out _,
+            "-c", "core.quotepath=false", "status", "--porcelain", "--untracked-files=all");
         foreach (var raw in porcelain.Split('\n'))
         {
             var line = raw.TrimEnd('\r');
@@ -67,6 +71,59 @@ public static class GitService
             files[pathPart] = MapStatus(xy);
         }
         return new GitStatus(true, branch, files);
+    }
+
+    /// <summary>
+    /// Drop from the index everything under <paramref name="rel"/> that is staged as an addition —
+    /// in the index, but not yet in HEAD. Meant to run right after the path has been deleted from
+    /// disk: a file that was <c>git add</c>ed but never committed also lives in the index, and
+    /// unlinking only the disk copy would leave a commit recording a file that isn't there.
+    /// A committed file's deletion is left unstaged, the way deleting a file in any editor leaves it.
+    /// The one place that isn't the whole story is a staged rename: its target counts as an addition,
+    /// so dropping it leaves the old name's deletion staged — which is the honest end state, the file
+    /// being gone under both names. An empty <paramref name="rel"/> does nothing — this only ever
+    /// cleans up after one delete, and "everything staged in the repo" is never what that means.
+    /// Returns how many staged paths git accepted.
+    /// </summary>
+    public static int UnstageAdditions(string workingDir, string rel)
+    {
+        if (string.IsNullOrEmpty(rel) || !IsRepo(workingDir)) return 0;
+
+        // --literal-pathspecs: these paths are names, not patterns. Without it a file called
+        // "a*.txt" would match — and unstage — every other staged addition beside it.
+        // --relative reports the paths relative to workingDir (which may sit below the repo root),
+        // so they can go straight back to git as pathspecs. --cached compares index to HEAD, so the
+        // now-missing file is still listed.
+        var staged = Run(workingDir, out var exit,
+                "--literal-pathspecs", "diff", "--cached", "--name-only", "--relative",
+                "--diff-filter=A", "-z", "--", rel.Replace('\\', '/'))
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (exit != 0 || staged.Length == 0) return 0;
+
+        // Chunked so a big folder can't outgrow the command line. git rm is all-or-nothing per call,
+        // so a batch that fails anyway — a held index.lock, say — is retried a path at a time, rather
+        // than letting one bad path cost the other 49.
+        var dropped = 0;
+        foreach (var batch in staged.Chunk(50))
+        {
+            if (Rm(batch)) { dropped += batch.Length; continue; }
+            foreach (var one in batch) if (Rm(new[] { one })) dropped++;
+        }
+        return dropped;
+
+        // --cached leaves the working tree alone (the file is already gone); --force because the
+        // index copy matches neither HEAD nor the file; --ignore-unmatch so a path the session's own
+        // git touched in between is a no-op instead of an error that takes the batch down with it.
+        bool Rm(string[] paths)
+        {
+            var rm = new List<string>
+            {
+                "--literal-pathspecs", "rm", "--cached", "--force", "--quiet", "--ignore-unmatch", "--",
+            };
+            rm.AddRange(paths);
+            Run(workingDir, out var rmExit, rm.ToArray());
+            return rmExit == 0;
+        }
     }
 
     public static GitDiff Diff(string workingDir, string relPath, string status)
