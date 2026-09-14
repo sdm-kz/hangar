@@ -686,6 +686,24 @@ internal static class Program
                 : Results.NotFound();
         });
 
+        // Putting a session under another in the list; a blank/absent parent takes it back out to the
+        // top level. The same link a fork gets, drawn by hand — see SessionManager.SetParent. A move
+        // the list cannot draw (a loop) is the request's fault, not a missing session, so it is told
+        // apart from one naming a session that is gone.
+        app.MapPost("/api/sessions/{id}/parent", (string id, SessionParentRequest body, SessionManager mgr) =>
+        {
+            try
+            {
+                return mgr.SetParent(id, string.IsNullOrWhiteSpace(body.ParentId) ? null : body.ParentId)
+                    ? Results.NoContent()
+                    : Results.NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
         // ---- Web Push subscriptions (background notifications when the tab/PWA is closed) ----------
         // The VAPID public key is not secret and is needed before the browser can subscribe, so its
         // config endpoint is on the public allowlist in TokenAuthMiddleware; subscribe/unsubscribe are
@@ -1194,6 +1212,8 @@ internal record GroupRequest(string? Name, string? Color = null, string? Icon = 
 // of the one they are in. Ids is a branch — a session and the forks drawn under it — which is why it
 // is a list; filing one session is a list of one.
 internal record SessionGroupRequest(string[]? Ids, string? GroupId);
+// The session to put this one under; blank/absent takes it out to the top level.
+internal record SessionParentRequest(string? ParentId);
 internal record FolderCreateRequest(string? Path, string? Dir = null);
 internal record FsWriteRequest(string Path, string? Content);
 internal record FsPathRequest(string Path);

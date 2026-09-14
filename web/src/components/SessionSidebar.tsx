@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Project, ProjectGroup, SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
-import { forkDescendants, forkTree, type ForkNode } from "@/lib/sessionTree";
+import { forkDescendants, forkTree, parentOf, type ForkNode } from "@/lib/sessionTree";
 import {
   groupForSession,
   isUnder,
@@ -54,6 +54,7 @@ import {
   Check,
   CheckCheck,
   Copy,
+  CornerLeftUp,
   Filter,
   FolderPlus,
   FolderSearch,
@@ -1153,17 +1154,25 @@ function mergeProps(
 function useSessionDrag() {
   const dragged = useRef<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  // Whether a session is in flight — state, unlike the ref above, because the row targets are drawn
+  // only while one is: an overlay that sat on every row permanently would swallow the clicks meant
+  // for the row underneath it. One render at each end of a drag, which is what the ref avoids
+  // paying per dragover.
+  const [active, setActive] = useState(false);
 
   const end = () => {
     dragged.current = null;
+    setActive(false);
     setOver(null);
   };
 
   return {
+    active,
     rowProps: (id: string) => ({
       draggable: true,
       onDragStart: () => {
         dragged.current = id;
+        setActive(true);
       },
       onDragEnd: end,
     }),
@@ -1383,6 +1392,13 @@ function useDragReorder(onReorder: (from: number, to: number, list: string) => v
   const [over, setOver] = useState<{ index: number; list: string } | null>(null);
   return {
     isOver: (index: number, list = "") => over?.index === index && over.list === list,
+    /**
+     * Drop the pending indicator because something else is answering for this drag — a target drawn
+     * over a row takes the event before the row sees it, and the line the row drew on the way in
+     * would otherwise stay up beside the other target's own mark. A no-op when nothing is showing:
+     * the same state back means React has no render to do, and dragover fires continuously.
+     */
+    clearOver: () => setOver((cur) => (cur === null ? cur : null)),
     rowProps: (index: number, list = "") => ({
       draggable: true,
       onDragStart: (e: React.DragEvent) => {
@@ -1862,6 +1878,67 @@ export function SessionSidebar({
   };
 
   /**
+   * Put a session under another in the list, or (with a null parent) take it back out — which leaves
+   * it where forking left it: under the session it branched from, or at the top level.
+   *
+   * Nothing comes back: the link rides the session list, which the server pushes to every browser as
+   * it writes, exactly like a pin or a group. Anything nested under the row travels with it without
+   * being mentioned — those rows point at it, not at where it sits.
+   */
+  const nestUnder = async (sessionId: string, parentId: string | null) => {
+    try {
+      await api.setSessionParent(sessionId, parentId);
+    } catch {
+      /* the list is re-read on the next load; a failed drop isn't worth a dialog */
+    }
+  };
+
+  /**
+   * Whether two sessions are drawn in the same list, which is the only place nesting shows: a tree is
+   * built per list, so a parent sitting in another one is simply not there to hang off, and the row
+   * would come out at the top level of its own list as if nothing had happened.
+   *
+   * Which lists exist depends on the view. A virtual folder is one list whatever folder its rows run
+   * in; outside one, the grouped view draws a list per folder and the flat view a list per project.
+   */
+  const sameList = (a: SessionInfo, b: SessionInfo) => {
+    const ga = groupForSession(a, projects)?.id ?? null;
+    const gb = groupForSession(b, projects)?.id ?? null;
+    if (ga !== gb) return false;
+    if (ga !== null) return true;
+    return grouped
+      ? dirKey(a.workingDirectory) === dirKey(b.workingDirectory)
+      : (projectForDir(a.workingDirectory, projects)?.id ?? null) ===
+        (projectForDir(b.workingDirectory, projects)?.id ?? null);
+  };
+
+  /**
+   * Whether a row is any of this dragged session's business (see useSessionDrag): the two are drawn
+   * in the same list, so arranging one against the other is what the gesture can mean at all.
+   *
+   * It has to be this and not "any row but me". A row sits inside its project's section, which is a
+   * drop target for the same drag — dropping a session there moves it to that project — so a row that
+   * claimed every drag would swallow the ones aimed past it at the section around it, and dropping a
+   * session onto another project's rows would quietly stop working.
+   */
+  const inSameList = (sessionId: string, row: SessionInfo) => {
+    const s = sessions.find((x) => x.id === sessionId);
+    return !!s && s.id !== row.id && sameList(s, row);
+  };
+
+  /**
+   * Whether dropping one row on another would put it somewhere new: not where it already hangs, not
+   * in a list that cannot draw it, and not inside its own branch — a session under its own descendant
+   * is a loop, which the server refuses and which would take both rows off the list.
+   */
+  const canNest = (sessionId: string, parent: SessionInfo) => {
+    const s = sessions.find((x) => x.id === sessionId);
+    if (!s || s.id === parent.id || parentOf(s) === parent.id) return false;
+    if (!sameList(s, parent)) return false;
+    return !forkDescendants(sessions, sessionId).some((x) => x.id === parent.id);
+  };
+
+  /**
    * Whether a project's boxes are any of this dragged session's business at all: a session can only
    * be filed under the project its own folder belongs to — a group refines the path rule, it never
    * overrules it. This is `claims` for both targets (see useSessionDrag), which is why a box swallows
@@ -2032,6 +2109,12 @@ export function SessionSidebar({
     // a few levels: a fork of a fork of a fork would otherwise squeeze the name out of a narrow
     // sidebar entirely (it can be dragged down to 220px).
     const indent = Math.min(depth, 4) * 14;
+    // Dropping a row on this one puts it under this one. The target is drawn as an overlay rather
+    // than handlers on the row itself because the row is already a drop target for the reorder drag:
+    // an overlay is hit-tested first and stops the event there, so the two gestures divide the row
+    // between them instead of both answering for the same pixel.
+    const nestKey = `nest:${s.id}`;
+    const nestOver = sessionDnd.isOver(nestKey);
     return (
       <div
         key={s.id}
@@ -2084,9 +2167,33 @@ export function SessionSidebar({
           !restorable && activity === "done" && "ring-1 ring-emerald-400/40",
           // Same weight as the tick's ring, in the colour of the cross: the other receipt, for the
           // ending you probably want to do something about.
-          !restorable && activity === "failed" && "ring-1 ring-red-400/40"
+          !restorable && activity === "failed" && "ring-1 ring-red-400/40",
+          // Where a dropped row would land: inside this one. The box a session is filed into lights
+          // up the same way, because it is the same kind of answer — this thing swallows that one.
+          nestOver && "bg-accent ring-1 ring-primary"
         )}
       >
+        {/* Only while a session is in flight: an overlay that sat here permanently would swallow the
+            clicks meant for the row under it. It takes the lower half of a row that also reorders, so
+            both gestures fit — aim at the top of a row to put something above it, at the bottom to
+            put it inside — and the whole of a row that does not (a nested row has no place of its own
+            in the order to move to, so nothing else wants its pixels). */}
+        {sessionDnd.active && (
+          <span
+            {...mergeProps(
+              sessionDnd.targetProps(
+                nestKey,
+                (id) => inSameList(id, s),
+                (id) => canNest(id, s),
+                (id) => void nestUnder(id, s.id)
+              ),
+              // The row drew a line above itself on the way in here; from inside this half of it, the
+              // drop is no longer the one that line describes.
+              { onDragOver: () => dnd.clearOver() }
+            )}
+            className={cn("absolute inset-x-0 z-10", drag ? "bottom-0 h-1/2" : "inset-y-0")}
+          />
+        )}
         {/* Where a dragged row would land. A bar of its own rather than the row's top border: a
             border follows the rounded corners around the sides, which reads as a box half-drawn
             instead of a line between two rows. Inset and pill-ended so it stays a line. */}
@@ -2106,10 +2213,11 @@ export function SessionSidebar({
         )}
         <div className="flex items-center justify-between gap-1">
           <span className="flex min-w-0 flex-1 items-center gap-0.5">
-            {/* Fold this session's forks away. Only a row that actually has forks gets the toggle —
-                no gutter is reserved elsewhere, so a childless row starts at its name. How much a
-                collapsed row is hiding rides in the tooltip rather than an inline count, which would
-                cost a reserved slot on every parent row just to keep the name from jumping. */}
+            {/* Fold away whatever is nested under this session — its forks, and anything put under it
+                by hand. Only a row that actually has some gets the toggle: no gutter is reserved
+                elsewhere, so a childless row starts at its name. How much a collapsed row is hiding
+                rides in the tooltip rather than an inline count, which would cost a reserved slot on
+                every parent row just to keep the name from jumping. */}
             {hasChildren && (
               <button
                 type="button"
@@ -2120,8 +2228,8 @@ export function SessionSidebar({
                 aria-expanded={hiddenCount === 0}
                 title={
                   hiddenCount > 0
-                    ? `Show ${hiddenCount} fork${hiddenCount === 1 ? "" : "s"}`
-                    : "Hide this session's forks"
+                    ? `Show ${hiddenCount} nested session${hiddenCount === 1 ? "" : "s"}`
+                    : "Hide the sessions nested under this one"
                 }
                 className="flex shrink-0 items-center text-muted-foreground hover:text-foreground"
               >
@@ -2133,8 +2241,11 @@ export function SessionSidebar({
               </button>
             )}
             {/* Nested fork: mark the row as a branch of the one above it. The parent's name is right
-                there in the list, so the tooltip carries it rather than the row spending width on it. */}
-            {depth > 0 && (
+                there in the list, so the tooltip carries it rather than the row spending width on it.
+                A row put under another by hand is nested too, but it is not a fork and gets no mark —
+                the indent already says where it sits, and the icon would be claiming its conversation
+                came from the row above. */}
+            {depth > 0 && !s.nestedUnderId && (
               <span
                 className="flex shrink-0 items-center text-muted-foreground"
                 title={s.parentName ? `Forked from “${s.parentName}”` : "Forked session"}
@@ -2208,6 +2319,8 @@ export function SessionSidebar({
                 onNewProject={() => setEditing({ id: null, folder: s.workingDirectory })}
                 groups={projectForDir(s.workingDirectory, projects)?.groups ?? []}
                 groupId={groupForSession(s, projects)?.id ?? null}
+                nested={!!s.nestedUnderId}
+                onUnnest={() => void nestUnder(s.id, null)}
                 onMoveToGroup={(id) => void moveSessionToGroup(s.id, id)}
                 onNewGroup={() => {
                   const p = projectForDir(s.workingDirectory, projects);
@@ -2654,6 +2767,8 @@ export function SessionSidebar({
  */
 function RowActionsMenu({
   canFork,
+  nested,
+  onUnnest,
   restorable,
   pinned,
   dir,
@@ -2674,6 +2789,9 @@ function RowActionsMenu({
   onClose,
 }: {
   canFork: boolean;
+  /** Whether this row was put under another by hand — the only nesting there is anything to undo. */
+  nested: boolean;
+  onUnnest: () => void;
   restorable: boolean;
   pinned: boolean;
   /** The session's folder — what "move to project" actually moves. */
@@ -2870,6 +2988,10 @@ function RowActionsMenu({
               {item("Rename", <Pencil className="size-3.5" />, onRename)}
               {item("Clone", <Copy className="size-3.5" />, onClone)}
               {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
+              {/* Only for a row put under another by hand, and only that is undone: a fork goes back
+                  to hanging off the session it was forked from, which is where it belongs and was
+                  never the user's arrangement to begin with. */}
+              {nested && item("Move out", <CornerLeftUp className="size-3.5" />, onUnnest)}
               {restorable && item("Reopen", <RotateCcw className="size-3.5" />, onRestore)}
 
               <div className="my-1 border-t" />

@@ -59,6 +59,8 @@ public sealed class ClaudeSession : IDisposable
     public string? ParentSessionId { get; internal set; }
     /// <summary>The parent's display name at fork time (kept so a fork can name a parent that's gone).</summary>
     public string? ParentName { get; internal set; }
+    /// <summary>The session this one was put under by hand; null leaves it under the fork link above.</summary>
+    public string? NestedUnderId { get; internal set; }
 
     /// <summary>
     /// This session's own conversation id as best we know it before any hook has reported one — used as
@@ -196,6 +198,7 @@ public sealed class ClaudeSession : IDisposable
         ForkSession = req.ForkSession && (ResumeSessionId is not null || req.Continue);
         ParentSessionId = string.IsNullOrWhiteSpace(req.ParentSessionId) ? null : req.ParentSessionId;
         ParentName = string.IsNullOrWhiteSpace(req.ParentName) ? null : SanitizeName(req.ParentName);
+        NestedUnderId = string.IsNullOrWhiteSpace(req.NestedUnderId) ? null : req.NestedUnderId;
         WatchdogEnabled = req.WatchdogEnabled;
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
@@ -214,7 +217,8 @@ public sealed class ClaudeSession : IDisposable
         ClaudeSessionId: p.ClaudeSessionId,
         CanFork: p.ClaudeSessionId is not null,
         ParentSessionId: p.ParentSessionId,
-        ParentName: p.ParentName);
+        ParentName: p.ParentName,
+        NestedUnderId: p.NestedUnderId);
 
     /// <summary>
     /// Snapshot for the UI. <paramref name="claudeSessionId"/> is the conversation id the manager holds
@@ -231,7 +235,8 @@ public sealed class ClaudeSession : IDisposable
         CanFork: (claudeSessionId ?? OwnConversationId) is not null,
         ParentSessionId: ParentSessionId,
         ParentName: ParentName,
-        Adopted: Adopted);
+        Adopted: Adopted,
+        NestedUnderId: NestedUnderId);
 
     public PersistedSession ToPersisted() => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, InitialPrompt, PermissionMode, ProcessId, _processStartTicks, CreatedAt, Color,
@@ -241,7 +246,8 @@ public sealed class ClaudeSession : IDisposable
         WasRunning: State == SessionState.Running,
         WatchdogEnabled: WatchdogEnabled,
         ParentSessionId: ParentSessionId,
-        ParentName: ParentName);
+        ParentName: ParentName,
+        NestedUnderId: NestedUnderId);
 
     /// <summary>Coerce an incoming/persisted mode string to a known value; anything unknown → "default".</summary>
     public static string NormalizeMode(string? mode) => mode switch

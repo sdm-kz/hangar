@@ -113,4 +113,11 @@ public sealed record SessionInfo(
     /// <see cref="Pinned"/>. It only takes effect inside the project that owns the group; whether it
     /// applies right now is <see cref="ProjectMembership.GroupFor"/>'s question, not this field's.
     /// </summary>
-    string? GroupId = null);
+    string? GroupId = null,
+    /// <summary>
+    /// The session this one was put under by hand, by dragging its row onto another — an arrangement
+    /// of the list, and nothing about the conversation, which is why it is not
+    /// <see cref="ParentSessionId"/>. Null means the list draws it where forking left it: under
+    /// <see cref="ParentSessionId"/>, or at the top level when it has none.
+    /// </summary>
+    string? NestedUnderId = null);

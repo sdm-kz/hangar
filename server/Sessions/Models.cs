@@ -38,7 +38,12 @@ public sealed record CreateSessionRequest(
     /// The parent's display name at fork time. Kept alongside the id so a fork can still say where it
     /// came from after the parent is closed and forgotten.
     /// </summary>
-    string? ParentName = null);
+    string? ParentName = null,
+    /// <summary>
+    /// The session this one was put under by hand, which is where the list draws it instead of under
+    /// the fork parent above. See <see cref="SessionInfo.NestedUnderId"/>.
+    /// </summary>
+    string? NestedUnderId = null);
 
 /// <summary>
 /// On-disk record of a launched session, used to re-attach to still-running Remote Control
@@ -78,7 +83,9 @@ public sealed record PersistedSession(
     /// <summary>Our id of the session this one was forked from (null when not a fork).</summary>
     string? ParentSessionId = null,
     /// <summary>The parent's display name at fork time, so the link survives the parent's removal.</summary>
-    string? ParentName = null);
+    string? ParentName = null,
+    /// <summary>The session this one was put under by hand; null leaves it under the fork link above.</summary>
+    string? NestedUnderId = null);
 
 /// <summary>
 /// What one session's activity mark is about, where there is anything to say beyond the mark itself.

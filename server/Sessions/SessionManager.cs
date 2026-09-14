@@ -228,6 +228,65 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
+    /// The session a row is drawn under, live or Restorable: where it was put by hand, and otherwise
+    /// the session it was forked from. Null when it sits at the top level, or is unknown.
+    /// </summary>
+    private string? ParentOf(string id) =>
+        _sessions.TryGetValue(id, out var live) ? live.NestedUnderId ?? live.ParentSessionId
+            : _restorable.TryGetValue(id, out var p) ? p.NestedUnderId ?? p.ParentSessionId
+            : null;
+
+    /// <summary>Whether a session exists at all, live or Restorable.</summary>
+    private bool Knows(string id) => _sessions.ContainsKey(id) || _restorable.ContainsKey(id);
+
+    /// <summary>
+    /// Put a session under another in the list — or, with a null <paramref name="parentId"/>, leave it
+    /// where forking left it (under the session it branched from, or at the top level).
+    ///
+    /// <para>Written beside the fork link rather than over it. A fork says the conversation came from
+    /// its parent; dragging a row onto another says only where it is drawn. Keeping them apart is what
+    /// lets a fork be moved without the move rewriting its history, and what lets moving it back out
+    /// mean something — it goes home to the session it was forked from.</para>
+    ///
+    /// <para>Nesting is arrangement, so it is deliberately free: any session under any other, to any
+    /// depth, across folders. The one rule is that the result has to be a tree — a session put under
+    /// its own descendant would close a loop, and neither row could then be drawn.</para>
+    ///
+    /// <para>Returns false when either id names no session we know; throws when the move itself is the
+    /// problem, so the caller can say which it was.</para>
+    /// </summary>
+    public bool SetParent(string id, string? parentId)
+    {
+        var live = _sessions.TryGetValue(id, out var s) ? s : null;
+        var stored = _restorable.TryGetValue(id, out var p) ? p : null;
+        if (live is null && stored is null) return false;
+
+        if (parentId is not null)
+        {
+            if (parentId == id) throw new InvalidOperationException("A session cannot go under itself.");
+            if (!Knows(parentId)) return false;
+            // Walk up from the new parent: meeting this session means the move would close a loop. The
+            // walk is guarded against one that is already there rather than trusting it isn't — this
+            // is the check that keeps loops out, so it cannot assume its own work was done.
+            var seen = new HashSet<string>(StringComparer.Ordinal) { parentId };
+            for (var up = ParentOf(parentId); up is not null; up = ParentOf(up))
+            {
+                if (up == id) throw new InvalidOperationException("That session is already under this one.");
+                if (!seen.Add(up)) break;
+            }
+        }
+
+        if (live is not null) live.NestedUnderId = parentId;
+        if (stored is not null) _restorable[id] = stored with { NestedUnderId = parentId };
+
+        SavePersisted();
+        // The link rides the session list (SessionInfo.NestedUnderId), so every browser has to be told
+        // the list changed — this is a move in the list, and the list is what draws it.
+        RaiseChanged();
+        return true;
+    }
+
+    /// <summary>
     /// Revision of a session's saved UI state, under whichever key holds it — the conversation, or
     /// the fallback a session too young to have reported one writes under. See
     /// <see cref="SessionUiStore"/>.
@@ -668,7 +727,8 @@ public sealed class SessionManager : IDisposable
                 // was — but it keeps its place in the fork tree.
                 ForkSession: false,
                 ParentSessionId: p.ParentSessionId,
-                ParentName: p.ParentName), ct);
+                ParentName: p.ParentName,
+                NestedUnderId: p.NestedUnderId), ct);
             // The reopened session has a brand-new id, so anything forked from the old one would be
             // orphaned. Move those links over to the replacement.
             Reparent(id, info.Id);
@@ -683,23 +743,38 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
-    /// Point every fork of <paramref name="oldParentId"/> at <paramref name="newParentId"/> — the session
-    /// that replaced it after a reopen. Without this the fork tree would flatten out on every restore
-    /// (and on the auto-resume that runs at startup), since a relaunch always gets a fresh id.
+    /// Point everything drawn under <paramref name="oldParentId"/> at <paramref name="newParentId"/> —
+    /// the session that replaced it after a reopen. Without this the tree would flatten out on every
+    /// restore (and on the auto-resume that runs at startup), since a relaunch always gets a fresh id.
+    ///
+    /// <para>Both links move: the fork one, and the one a row was put under by hand. They are separate
+    /// facts (see <see cref="SetParent"/>) but a reopen invalidates an id, which is neither of them.</para>
     /// </summary>
     private void Reparent(string oldParentId, string newParentId)
     {
         var changed = false;
         foreach (var s in _sessions.Values)
         {
-            if (s.ParentSessionId != oldParentId || s.Id == newParentId) continue;
-            s.ParentSessionId = newParentId;
-            changed = true;
+            if (s.Id == newParentId) continue;
+            if (s.ParentSessionId == oldParentId)
+            {
+                s.ParentSessionId = newParentId;
+                changed = true;
+            }
+            if (s.NestedUnderId == oldParentId)
+            {
+                s.NestedUnderId = newParentId;
+                changed = true;
+            }
         }
         foreach (var (key, p) in _restorable)
         {
-            if (p.ParentSessionId != oldParentId) continue;
-            _restorable[key] = p with { ParentSessionId = newParentId };
+            if (p.ParentSessionId != oldParentId && p.NestedUnderId != oldParentId) continue;
+            _restorable[key] = p with
+            {
+                ParentSessionId = p.ParentSessionId == oldParentId ? newParentId : p.ParentSessionId,
+                NestedUnderId = p.NestedUnderId == oldParentId ? newParentId : p.NestedUnderId,
+            };
             changed = true;
         }
         if (!changed) return;
@@ -886,7 +961,8 @@ public sealed class SessionManager : IDisposable
             WatchdogEnabled: p.WatchdogEnabled,
             ForkSession: false,
             ParentSessionId: p.ParentSessionId,
-            ParentName: p.ParentName),
+            ParentName: p.ParentName,
+            NestedUnderId: p.NestedUnderId),
         _exe,
         _hosts,
         _watchdog,

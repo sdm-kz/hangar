@@ -20,6 +20,10 @@ export interface SessionInfo {
   canFork: boolean; // its conversation id is known, so it can be forked (false for the first seconds)
   parentSessionId: string | null; // the session this one was forked from; null for an ordinary session
   parentName: string | null; // the parent's name at fork time — shown even once the parent is gone
+  // The session this one was put under by hand, by dragging its row onto another. An arrangement of
+  // the list and nothing about the conversation, which is why it is not parentSessionId; null leaves
+  // the row where forking left it. What the tree is actually built from — see lib/sessionTree.ts.
+  nestedUnderId: string | null;
   adopted: boolean; // the app re-attached to this session at startup instead of launching it
   // Pinned to the top of its folder. Server-side and keyed by conversation id, so a pin survives a
   // reopen (which mints a new session id) and is the same in every browser.

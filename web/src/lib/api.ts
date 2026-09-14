@@ -379,6 +379,19 @@ export const api = {
     );
   },
 
+  /**
+   * Put a session under another in the sessions list, or (with null) take it back out to the top
+   * level. The same link forking makes, drawn by hand — the server marks which of the two it was.
+   *
+   * Nothing comes back: the link rides the session list, which the server pushes to every browser.
+   */
+  setSessionParent(sessionId: string, parentId: string | null): Promise<void> {
+    return request(`/api/sessions/${sessionId}/parent`, {
+      method: "POST",
+      body: JSON.stringify({ parentId }),
+    });
+  },
+
   // ---- In-app update (a build staged by scripts\stage-update.ps1) ----
   // Normally the status arrives on the /hub/events snapshot; this is the first read and the fallback
   // for when the stream is down.
