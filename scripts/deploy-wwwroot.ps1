@@ -40,3 +40,10 @@ robocopy $src $dst /MIR /NFL /NDL /NP /NJH /NJS | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed (exit $LASTEXITCODE): $src -> $dst" }
 
 Write-Host "==> Deployed wwwroot. Refresh the browser to pick up changes." -ForegroundColor Green
+
+# The robocopy above exits 1 for "files were copied" and 2 for "extras were pruned" -- success, as
+# far as robocopy is concerned, but it would otherwise be left as this script's own exit code and
+# read as a failure by whatever ran it. Reaching this line means every step succeeded (the check
+# above catches a real robocopy failure, and $ErrorActionPreference = "Stop" ends the script on any
+# other error).
+exit 0
