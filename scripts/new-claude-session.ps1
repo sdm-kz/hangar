@@ -23,6 +23,11 @@
     .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -Continue -PassThru
 
 .EXAMPLE
+    .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -NestUnderSessionId $env:CLAUDEWEB_SESSION_ID
+    Starts a session nested under the one this script is running inside. new-claude-child-session.ps1
+    does exactly this, and fails with something to read when there is no session to nest under.
+
+.EXAMPLE
     $prompt = Get-Content .\task.md -Raw
     pwsh -File .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -InitialPrompt $prompt
     A multi-line prompt. Written inline instead, a here-string works too, but its closing '@ has to
@@ -63,6 +68,11 @@ param(
     # Session color, as set by /color.
     [string] $Color,
 
+    # Put the new session under this one in the sessions list (its nestedUnderId). An arrangement of
+    # the list and nothing more — the new session gets its own conversation, so this is not a fork.
+    # new-claude-child-session.ps1 is the wrapper that fills it in from the session it runs inside.
+    [string] $NestUnderSessionId,
+
     # Let the hang watchdog auto-continue this session.
     [switch] $WatchdogEnabled,
 
@@ -98,6 +108,7 @@ if ($InitialPrompt)    { $payload.initialPrompt   = $InitialPrompt }
 if ($PermissionMode)   { $payload.permissionMode  = $PermissionMode }
 if ($ResumeSessionId)  { $payload.resumeSessionId = $ResumeSessionId }
 if ($Color)            { $payload.color           = $Color }
+if ($NestUnderSessionId) { $payload.nestedUnderId = $NestUnderSessionId }
 if ($Continue)         { $payload.continue        = $true }
 if ($WatchdogEnabled)  { $payload.watchdogEnabled = $true }
 if ($PSBoundParameters.ContainsKey('RemoteControl')) { $payload.remoteControl = $RemoteControl }

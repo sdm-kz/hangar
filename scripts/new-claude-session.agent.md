@@ -46,6 +46,7 @@ so the server's own default applies — omit rather than guess.
 | `-Continue` | switch | off | Resume the folder's **most recent** conversation (`claude --continue`) instead of starting fresh. |
 | `-ResumeSessionId` | string | none | Resume one **specific** conversation by its Claude session id (`claude --resume <id>`). Takes precedence over `-Continue`; prefer it when you know the id, since one folder can hold many conversations. |
 | `-Color` | string | none | Session color name (same values `/color` accepts), for visual grouping in the list. |
+| `-NestUnderSessionId` | string | none | Draw the new session under this one in the sessions list (its `nestedUnderId`). An arrangement of the list only — the new session has its own conversation and is not a fork. An id no session answers to is a 400, not a silently top-level session. `new-claude-child-session.ps1` is the wrapper that fills this in from `$env:CLAUDEWEB_SESSION_ID`. |
 | `-WatchdogEnabled` | switch | off | Lets the hang watchdog auto-continue this session if it stalls. |
 | `-BaseUrl` | string | `$env:CLAUDE_WEB_URL`, else `http://localhost:5099` | Server base URL — set it when targeting another machine. |
 | `-ApiKey` | string | `$env:CLAUDE_WEB_API_KEY` | Sent as the `X-Api-Key` header. |

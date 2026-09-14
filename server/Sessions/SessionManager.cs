@@ -237,7 +237,7 @@ public sealed class SessionManager : IDisposable
             : null;
 
     /// <summary>Whether a session exists at all, live or Restorable.</summary>
-    private bool Knows(string id) => _sessions.ContainsKey(id) || _restorable.ContainsKey(id);
+    public bool Exists(string id) => _sessions.ContainsKey(id) || _restorable.ContainsKey(id);
 
     /// <summary>
     /// Put a session under another in the list — or, with a null <paramref name="parentId"/>, leave it
@@ -264,7 +264,7 @@ public sealed class SessionManager : IDisposable
         if (parentId is not null)
         {
             if (parentId == id) throw new InvalidOperationException("A session cannot go under itself.");
-            if (!Knows(parentId)) return false;
+            if (!Exists(parentId)) return false;
             // Walk up from the new parent: meeting this session means the move would close a loop. The
             // walk is guarded against one that is already there rather than trusting it isn't — this
             // is the check that keeps loops out, so it cannot assume its own work was done.
