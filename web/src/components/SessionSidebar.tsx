@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Project, ProjectGroup, SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
-import { forkTree, type ForkNode } from "@/lib/sessionTree";
+import { forkDescendants, forkTree, type ForkNode } from "@/lib/sessionTree";
 import {
   groupForSession,
   isUnder,
@@ -1835,13 +1835,27 @@ export function SessionSidebar({
   /**
    * File a session into a virtual folder, or (with a null group) take it out of the one it is in.
    *
+   * The whole branch goes, in one call: a fork is drawn under the session it branched from, never in
+   * a place of its own, so one left behind in the old box would be torn off its parent and redrawn as
+   * a root there. Moving the row it hangs off is the only way to move it at all, and filing the rows
+   * one at a time would draw exactly that torn tree in the window between two writes.
+   *
    * Only the project list comes back on the response; which group a row is in rides the session list
    * (SessionInfo.groupId), which the server pushes to every browser as it writes — so there is
    * nothing to flip optimistically here, exactly as with a pin.
    */
   const moveSessionToGroup = async (sessionId: string, groupId: string | null) => {
+    const row = sessions.find((x) => x.id === sessionId);
+    if (!row) return;
+    // Only the ones the move would actually change. Filing a session where it already is still saves
+    // the project list and tells every browser the session list changed, and a branch is often mostly
+    // in place already — a fork filed with its parent, then dropped there again.
+    const branch = [row, ...forkDescendants(sessions, sessionId)].filter(
+      (x) => (groupForSession(x, projects)?.id ?? null) !== groupId
+    );
+    if (branch.length === 0) return;
     try {
-      onProjectsChange(await api.setSessionGroup(sessionId, groupId));
+      onProjectsChange(await api.setSessionGroup(branch.map((x) => x.id), groupId));
     } catch {
       /* the list is re-read on the next load; a failed drop isn't worth a dialog */
     }
@@ -1858,11 +1872,17 @@ export function SessionSidebar({
     return !!s && !!project && projectForDir(s.workingDirectory, projects)?.id === project.id;
   };
 
-  /** Whether dropping it there would move it — a box it is already in is not somewhere to drop it. */
+  /**
+   * Whether dropping it there would move it — a box it is already in is not somewhere to drop it.
+   * Its forks count too, since they travel with it: a branch left half-filed by an earlier drop that
+   * failed partway is repaired by dropping it there again, which a row-only check would refuse.
+   */
   const canFile = (sessionId: string, project: Project | null, groupId: string | null) => {
     const s = sessions.find((x) => x.id === sessionId);
     if (!s || !inProject(sessionId, project)) return false;
-    return (groupForSession(s, projects)?.id ?? null) !== groupId;
+    return [s, ...forkDescendants(sessions, sessionId)].some(
+      (x) => (groupForSession(x, projects)?.id ?? null) !== groupId
+    );
   };
 
   // The sessions in a set that have a finished-but-unseen tick. Closed ones are skipped for the same
@@ -1885,7 +1905,11 @@ export function SessionSidebar({
    * this actually moves is the folder, and anything else running in it travels along. That is the
    * honest reading of the gesture rather than a limitation to work around — a per-session override
    * would let a row and its own folder claim different projects — but it is worth saying out loud
-   * before it happens, whenever it is more than the row that was dragged.
+   * before it happens, whenever it is more than the branch that was dragged.
+   *
+   * The row's own forks are not part of that "more": a fork runs in its parent's folder and is drawn
+   * hanging off it, so it was always coming along, and a dialog about it would be asking whether the
+   * gesture means what it plainly means.
    */
   const moveSessionToProject = async (sessionId: string, project: Project | null) => {
     const s = sessions.find((x) => x.id === sessionId);
@@ -1899,7 +1923,8 @@ export function SessionSidebar({
       await moveFolderToProject(dir, null);
       return;
     }
-    const others = sessions.filter((x) => x.id !== sessionId && isUnder(x.workingDirectory, dir));
+    const branch = new Set([sessionId, ...forkDescendants(sessions, sessionId).map((x) => x.id)]);
+    const others = sessions.filter((x) => !branch.has(x.id) && isUnder(x.workingDirectory, dir));
     if (others.length > 0) {
       const ok = await confirm({
         title: `Move “${folderLabel(dir)}” to ${project.name}?`,

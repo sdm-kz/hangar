@@ -182,10 +182,16 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
-    /// File a session into a virtual folder, or (with a null <paramref name="groupId"/>) take it out
-    /// of the one holding it. Keyed by conversation so the grouping survives a reopen, exactly as a
-    /// pin does. Returns the updated project list, or null when there is no such session, or the
-    /// group is one this session cannot go in.
+    /// File sessions into a virtual folder, or (with a null <paramref name="groupId"/>) take them out
+    /// of the ones holding them. Keyed by conversation so the grouping survives a reopen, exactly as a
+    /// pin does. Returns the updated project list, or null when none of the ids is a session we know,
+    /// or the group is one of them cannot go in.
+    ///
+    /// <para>Several at once because a branch of forks is filed as a unit — see
+    /// <see cref="ProjectStore.SetSessionGroup"/>. Ids that name no session are skipped rather than
+    /// failing the move: the caller worked from a session list that may have lost a row since, and
+    /// filing the rest is better than a drop that silently does nothing. A session that cannot take
+    /// the group is a different matter and refuses the whole call — see below.</para>
     ///
     /// <para>The project check is here rather than in the store because it is the manager that knows
     /// where a session runs. It is not a formality: a group only ever applies inside the project that
@@ -193,20 +199,28 @@ public sealed class SessionManager : IDisposable
     /// project's group would clear the membership it had and write one that can never be read back —
     /// the session would come out ungrouped and the caller would have been told it worked.</para>
     /// </summary>
-    public IReadOnlyList<Project>? SetGroup(string id, string? groupId)
+    public IReadOnlyList<Project>? SetGroup(IReadOnlyList<string> ids, string? groupId)
     {
-        var dir = _sessions.TryGetValue(id, out var live) ? live.WorkingDirectory
-            : _restorable.TryGetValue(id, out var restorable) ? restorable.WorkingDirectory
-            : null;
-        if (dir is null) return null;
-
-        if (groupId is not null)
+        var keys = new List<IReadOnlyList<string>>(ids.Count);
+        // Deduplicated: the same id twice would write the same membership key twice into the group.
+        foreach (var id in ids.Distinct(StringComparer.Ordinal))
         {
-            var owner = ProjectMembership.ForDirectory(_projects.List(), dir);
-            if (owner is null || !owner.Groups.Any(g => g.Id == groupId)) return null;
-        }
+            var dir = _sessions.TryGetValue(id, out var live) ? live.WorkingDirectory
+                : _restorable.TryGetValue(id, out var restorable) ? restorable.WorkingDirectory
+                : null;
+            if (dir is null) continue;
 
-        var list = _projects.SetSessionGroup(GroupKeys(id), groupId);
+            if (groupId is not null)
+            {
+                var owner = ProjectMembership.ForDirectory(_projects.List(), dir);
+                if (owner is null || !owner.Groups.Any(g => g.Id == groupId)) return null;
+            }
+
+            keys.Add(GroupKeys(id));
+        }
+        if (keys.Count == 0) return null;
+
+        var list = _projects.SetSessionGroup(keys, groupId);
         // The membership rides the session list (SessionInfo.GroupId), so every browser has to be
         // told the list changed — the project list this returns only reaches the one that asked.
         if (list is not null) RaiseChanged();

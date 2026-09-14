@@ -670,13 +670,21 @@ internal static class Program
                     : Results.NotFound());
         app.MapDelete("/api/projects/groups/{groupId}", (string groupId, ProjectStore store) =>
             store.DeleteGroup(groupId) is { } list ? Results.Ok(list) : Results.NotFound());
-        // Filing a session into one (a null groupId takes it out). It goes through the manager rather
+        // Filing sessions into one (a null groupId takes them out). It goes through the manager rather
         // than the store because the membership is keyed by the session's conversation, which only the
         // manager can resolve — and because every browser has to be told the session list changed.
-        app.MapPost("/api/sessions/{id}/group", (string id, SessionGroupRequest body, SessionManager mgr) =>
-            mgr.SetGroup(id, string.IsNullOrWhiteSpace(body.GroupId) ? null : body.GroupId) is { } list
+        //
+        // A list rather than the one session the route used to name: a fork is drawn under the session
+        // it branched from, so a branch is filed as a unit, and one call is one write and one push to
+        // every browser instead of the rows landing one at a time.
+        app.MapPost("/api/sessions/group", (SessionGroupRequest body, SessionManager mgr) =>
+        {
+            var ids = (body.Ids ?? []).Where(i => !string.IsNullOrWhiteSpace(i)).ToList();
+            if (ids.Count == 0) return Results.BadRequest(new { error = "No sessions to file." });
+            return mgr.SetGroup(ids, string.IsNullOrWhiteSpace(body.GroupId) ? null : body.GroupId) is { } list
                 ? Results.Ok(list)
-                : Results.NotFound());
+                : Results.NotFound();
+        });
 
         // ---- Web Push subscriptions (background notifications when the tab/PWA is closed) ----------
         // The VAPID public key is not secret and is needed before the browser can subscribe, so its
@@ -1182,8 +1190,10 @@ internal record ProjectRequest(string? Name, string? Color = null, List<string>?
 // Create/update a virtual folder. On update a null field means "leave it alone"; an empty colour or
 // icon clears it.
 internal record GroupRequest(string? Name, string? Color = null, string? Icon = null);
-// File a session into a virtual folder; a blank/absent id takes it out of the one it is in.
-internal record SessionGroupRequest(string? GroupId);
+// The sessions to file into a virtual folder, and which one; a blank/absent group id takes them out
+// of the one they are in. Ids is a branch — a session and the forks drawn under it — which is why it
+// is a list; filing one session is a list of one.
+internal record SessionGroupRequest(string[]? Ids, string? GroupId);
 internal record FolderCreateRequest(string? Path, string? Dir = null);
 internal record FsWriteRequest(string Path, string? Content);
 internal record FsPathRequest(string Path);

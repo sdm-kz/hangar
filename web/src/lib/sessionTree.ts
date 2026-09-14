@@ -68,3 +68,37 @@ export function forkTree(sessions: SessionInfo[], collapsed?: ReadonlySet<string
   for (const s of sessions) walk(s, 0);
   return out;
 }
+
+/**
+ * Every session forked from `id`, at any depth, parents before their own children.
+ *
+ * The tree a row is drawn with is built from the sessions currently on screen; this is built from
+ * all of them, because moving a session somewhere has to take the whole branch — including the forks
+ * the active-only filter is hiding, which would otherwise be left behind where nothing shows them.
+ *
+ * Guarded against cycles for the same reason forkTree is: re-parenting after a reopen writes ids in
+ * place, and a session is never its own descendant here regardless of what the ids say.
+ */
+export function forkDescendants(sessions: SessionInfo[], id: string): SessionInfo[] {
+  const childrenOf = new Map<string, SessionInfo[]>();
+  for (const s of sessions) {
+    const parent = s.parentSessionId;
+    if (!parent || parent === s.id) continue;
+    const siblings = childrenOf.get(parent);
+    if (siblings) siblings.push(s);
+    else childrenOf.set(parent, [s]);
+  }
+
+  const out: SessionInfo[] = [];
+  const seen = new Set<string>([id]);
+  const walk = (parentId: string) => {
+    for (const c of childrenOf.get(parentId) ?? []) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
+      walk(c.id);
+    }
+  };
+  walk(id);
+  return out;
+}

@@ -364,12 +364,17 @@ export const api = {
   deleteProjectGroup(groupId: string): Promise<Project[]> {
     return projects(request(`/api/projects/groups/${groupId}`, { method: "DELETE" }));
   },
-  /** File a session into a virtual folder, or (with null) take it out of the one it is in. */
-  setSessionGroup(sessionId: string, groupId: string | null): Promise<Project[]> {
+  /**
+   * File sessions into a virtual folder, or (with null) take them out of the ones they are in.
+   *
+   * Takes a list because a branch — a session and the forks drawn under it — is filed as a unit: one
+   * call is one write, so the rows land together rather than one at a time.
+   */
+  setSessionGroup(sessionIds: string[], groupId: string | null): Promise<Project[]> {
     return projects(
-      request(`/api/sessions/${sessionId}/group`, {
+      request(`/api/sessions/group`, {
         method: "POST",
-        body: JSON.stringify({ groupId }),
+        body: JSON.stringify({ ids: sessionIds, groupId }),
       })
     );
   },

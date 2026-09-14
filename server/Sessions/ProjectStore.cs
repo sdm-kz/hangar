@@ -222,20 +222,30 @@ public sealed class ProjectStore
     }
 
     /// <summary>
-    /// File a session into a virtual folder, or (with a null <paramref name="groupId"/>) take it out
-    /// of whichever one holds it. A session sits in at most one, so this clears the others first.
+    /// File sessions into a virtual folder, or (with a null <paramref name="groupId"/>) take them out
+    /// of whichever ones hold them. A session sits in at most one, so this clears the others first.
     ///
-    /// <para><paramref name="keys"/> is every key the session could be filed under — its conversation
-    /// id and the <c>session:</c> fallback — because a membership written before the conversation id
-    /// arrived may still be sitting under the fallback. All of them are cleared; the first is what a
-    /// new membership is written under.</para>
+    /// <para>One entry of <paramref name="sessionKeys"/> per session, holding every key that session
+    /// could be filed under — its conversation id and the <c>session:</c> fallback — because a
+    /// membership written before the conversation id arrived may still be sitting under the fallback.
+    /// All of them are cleared; the first is what a new membership is written under.</para>
     ///
-    /// Returns null when there is no such group (or no usable key).
+    /// <para>Several at once is not a convenience: a fork is drawn under the session it branched from,
+    /// so a branch moves as a unit or the tree it is drawn as comes apart. Written and saved once, and
+    /// so seen by every browser as one move rather than a row landing at a time.</para>
+    ///
+    /// Returns null when there is no such group, or when no entry has a usable key.
     /// </summary>
-    public IReadOnlyList<Project>? SetSessionGroup(IReadOnlyList<string> keys, string? groupId)
+    public IReadOnlyList<Project>? SetSessionGroup(
+        IReadOnlyList<IReadOnlyList<string>> sessionKeys, string? groupId)
     {
-        var usable = keys.Where(k => !string.IsNullOrEmpty(k)).ToList();
-        if (usable.Count == 0) return null;
+        // Per session, in the order given: what to clear is all of its keys, what to write is the first.
+        var sets = sessionKeys
+            .Select(keys => keys.Where(k => !string.IsNullOrEmpty(k)).ToList())
+            .Where(keys => keys.Count > 0)
+            .ToList();
+        if (sets.Count == 0) return null;
+        var usable = sets.SelectMany(keys => keys).ToHashSet(StringComparer.Ordinal);
 
         lock (_lock)
         {
@@ -264,8 +274,9 @@ public sealed class ProjectStore
                 var p = _projects[pi];
                 var g = p.Groups[gi];
                 // Newest last, and trimmed from the front: the oldest membership is the one whose
-                // conversation is most likely gone for good.
-                var members = g.Sessions.Append(usable[0]).ToList();
+                // conversation is most likely gone for good. The clearing pass above ran over the
+                // target group too, so nothing being written here is still in the list.
+                var members = g.Sessions.Concat(sets.Select(keys => keys[0])).ToList();
                 if (members.Count > MaxSessionsPerGroup) members.RemoveRange(0, members.Count - MaxSessionsPerGroup);
                 _projects[pi] = p with { Groups = Replace(p.Groups, gi, g with { Sessions = members }) };
                 changed = true;
