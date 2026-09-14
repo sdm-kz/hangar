@@ -2729,6 +2729,7 @@ export function SessionSidebar({
       {editing && (editing.id === null || editingProject) && (
         <ProjectDialog
           project={editingProject}
+          projects={projects}
           initialFolders={editing.folder ? [editing.folder] : undefined}
           initialGroup={editing.group}
           onSaved={onProjectsChange}

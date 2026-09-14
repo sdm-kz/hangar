@@ -14,6 +14,7 @@ import type {
   Project,
   PtyOrphan,
   SessionInfo,
+  SessionTemplate,
   ShellInfo,
   ShellOption,
   UpdateStatus,
@@ -35,6 +36,13 @@ export interface SessionUiState {
   rev: number;
   state: Record<string, unknown>;
 }
+
+/**
+ * The fields of a session template, as a create or an update. Everything is optional: on an update a
+ * field left out is left as it was, which is why clearing the project (or the description, or the
+ * hint) is done with "" rather than by omitting it.
+ */
+export type TemplatePatch = Partial<Omit<SessionTemplate, "id">>;
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -390,6 +398,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ parentId }),
     });
+  },
+
+  // ---- Session templates (named launch presets, server-backed like the projects above) ----
+  // Every mutation answers with the whole list, so a caller replaces its state from the response.
+  getTemplates(): Promise<SessionTemplate[]> {
+    return request("/api/templates");
+  },
+  createTemplate(patch: TemplatePatch): Promise<SessionTemplate[]> {
+    return request("/api/templates", { method: "POST", body: JSON.stringify(patch) });
+  },
+  /** A field left out is left as it was; "" clears the project, description or hint. */
+  updateTemplate(id: string, patch: TemplatePatch): Promise<SessionTemplate[]> {
+    return request(`/api/templates/${id}`, { method: "POST", body: JSON.stringify(patch) });
+  },
+  deleteTemplate(id: string): Promise<SessionTemplate[]> {
+    return request(`/api/templates/${id}`, { method: "DELETE" });
   },
 
   // ---- In-app update (a build staged by scripts\stage-update.ps1) ----

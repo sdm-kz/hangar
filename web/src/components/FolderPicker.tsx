@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import type { BrowseResult } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { sameFolder } from "@/lib/projects";
+import { folderName } from "@/lib/recentFolders";
 import { ArrowUp, Folder, HardDrive, Loader2 } from "lucide-react";
 
 /**
@@ -196,6 +198,56 @@ export function FolderPicker({
               })}
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A row of one-click folder picks — a project's linked folders, offered beside the picker wherever a
+ * folder is chosen in a project's context. The chosen one is *marked*, not merely hovered: with the
+ * picker above collapsed to a single line, this row is often the only thing on screen saying which
+ * folder is set.
+ */
+export function FolderChips({
+  folders,
+  value,
+  onPick,
+  label,
+  empty,
+}: {
+  folders: readonly string[];
+  /** The folder currently set, so the chip matching it can show as chosen. */
+  value: string;
+  onPick: (path: string) => void;
+  /** The heading above the row — a project name and its colour dot, typically. */
+  label: ReactNode;
+  /** What to say when the list is empty; nothing renders without it. */
+  empty?: ReactNode;
+}) {
+  if (folders.length === 0 && !empty) return null;
+  return (
+    <div className="space-y-1.5 pt-1">
+      <div className="flex items-center gap-1 text-xs text-muted-foreground">{label}</div>
+      {folders.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{empty}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {folders.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onPick(p)}
+              title={p}
+              className={cn(
+                "flex max-w-full items-center rounded-md border px-2 py-1 text-xs hover:bg-accent",
+                sameFolder(p, value) && "border-primary bg-accent"
+              )}
+            >
+              <span className="truncate">{folderName(p)}</span>
+            </button>
+          ))}
         </div>
       )}
     </div>

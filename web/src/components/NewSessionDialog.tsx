@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError } from "@/lib/api";
 import { folderName } from "@/lib/recentFolders";
-import { sameFolder } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 import { sameRecent, type RecentSession } from "@/lib/recentSessions";
-import type { Project, SessionInfo } from "@/types";
+import { buildPrompt, templateFolderChoices, templateSections } from "@/lib/templates";
+import type { Project, SessionInfo, SessionTemplate } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
 import {
   Dialog,
@@ -15,44 +15,32 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { FolderPicker } from "./FolderPicker";
-import { Activity, Boxes, History, Loader2, Radio, RotateCcw, X, Zap } from "lucide-react";
+import { FolderPicker, FolderChips } from "./FolderPicker";
+import {
+  DEFAULT_LAUNCH,
+  LaunchFields,
+  ToggleCard,
+  launchFromTemplate,
+  type LaunchOptions,
+} from "./LaunchOptions";
+import { TemplateDialog } from "./TemplateDialog";
+import {
+  Boxes,
+  ChevronDown,
+  ChevronRight,
+  History,
+  Loader2,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  X,
+} from "lucide-react";
 
-const MODELS = [
-  { value: "", label: "Default" },
-  { value: "opus", label: "Opus" },
-  { value: "sonnet", label: "Sonnet" },
-  { value: "haiku", label: "Haiku" },
-];
-
-// How much the session runs unattended. Auto is the default: it auto-approves routine work but
-// still stops for genuinely destructive actions. Descriptions surface under the dropdown.
-const PERMISSION_MODES = [
-  {
-    value: "auto",
-    label: "Auto",
-    hint: "Auto-approves routine actions (edits, most commands) but still asks before genuinely destructive ones like force-push or production deploys.",
-  },
-  {
-    value: "default",
-    label: "Ask each time",
-    hint: "Claude asks permission for each action — approve them interactively from the Claude Code app.",
-  },
-  {
-    value: "acceptEdits",
-    label: "Accept edits",
-    hint: "Auto-accepts file edits without asking, but still prompts for bash commands and other actions.",
-  },
-  {
-    value: "bypassPermissions",
-    label: "Bypass all (dangerous)",
-    hint: "Runs fully unattended — bypasses ALL permission prompts (edits, bash, everything). Claude can run any command without asking.",
-  },
-];
+/** Which half of the dialog is showing: a session set up by hand, or one started from a template. */
+type Tab = "new" | "templates";
 
 export function NewSessionDialog({
   open,
@@ -60,6 +48,7 @@ export function NewSessionDialog({
   onCreated,
   preset,
   project,
+  projects,
   defaultContinue,
 }: {
   open: boolean;
@@ -73,17 +62,34 @@ export function NewSessionDialog({
    * perfectly ordinary thing to do from here, and the project just saves the typing.
    */
   project?: Project | null;
+  /** Every project, for the Templates tab's headings and its editor's project dropdown. */
+  projects?: Project[];
   /** Overrides the "continue conversation" default (normally on for presets, off otherwise). */
   defaultContinue?: boolean;
 }) {
+  const [tab, setTab] = useState<Tab>("new");
+
+  // ---- the hand-made session (the "New" tab) --------------------------------------------------
   const [dir, setDir] = useState("");
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
-  const [model, setModel] = useState("");
-  const [remoteControl, setRemoteControl] = useState(true);
-  const [permissionMode, setPermissionMode] = useState("auto");
-  const [watchdog, setWatchdog] = useState(false); // hang watchdog — off by default
+  const [launch, setLaunch] = useState<LaunchOptions>(DEFAULT_LAUNCH);
   const [continueSession, setContinueSession] = useState(false); // resume the folder's last conversation
+
+  // ---- the template launch (the "Templates" tab) ----------------------------------------------
+  // Its own copy of the folder, name and settings rather than the fields above: the two tabs are two
+  // launches being set up side by side, and picking a template overwrites all three — which would
+  // quietly eat whatever had been typed into the other tab if they shared.
+  const [templates, setTemplates] = useState<SessionTemplate[]>([]);
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [input, setInput] = useState(""); // the detail pasted in: the log entry, the Jira key
+  const [tDir, setTDir] = useState("");
+  const [tName, setTName] = useState("");
+  const [tLaunch, setTLaunch] = useState<LaunchOptions>(DEFAULT_LAUNCH);
+  const [showOptions, setShowOptions] = useState(false);
+  // The template being edited, or { template: null } while one is being created. A separate popup
+  // over this one, the way the confirm dialog stacks over the project settings.
+  const [editing, setEditing] = useState<{ template: SessionTemplate | null } | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +105,13 @@ export function NewSessionDialog({
   const presetId = stored?.claudeSessionId ?? preset?.claudeSessionId ?? null;
   const resumeId = presetId && preset?.workingDirectory === dir.trim() ? presetId : null;
 
+  const allProjects = projects ?? (project ? [project] : []);
+  const template = templates.find((t) => t.id === templateId) ?? null;
+  const sections = templateSections(templates, allProjects);
+  // The project a template belongs to, for its folder chips — its own, not the one this dialog was
+  // opened from.
+  const templateProject = allProjects.find((p) => p.id === template?.projectId) ?? null;
+
   // Refresh the recent-folders list each time the dialog opens, and prefill from a preset if given.
   useEffect(() => {
     if (!open) return;
@@ -109,13 +122,33 @@ export function NewSessionDialog({
         setStored(preset ? r.sessions.find((s) => sameRecent(s, preset)) ?? null : null);
       })
       .catch(() => {});
+    // Templates are read fresh too: they are edited from here and from the project settings, so the
+    // list a browser opened an hour ago is not necessarily the list on the server.
+    api.getTemplates().then(setTemplates).catch(() => {});
     setError(null);
     setStored(null); // until the refresh above lands
-    setWatchdog(false); // always default the watchdog off, even when prefilling from a preset
+    // Reusing a preset is a "New" tab errand by definition — it *is* a filled-in form.
+    setTab("new");
+    setTemplateId(null);
+    setInput("");
+    setShowOptions(false);
     // Relaunching a remembered preset almost always means picking the work back up, so default to
     // continuing its conversation; a plain "New session" starts fresh. Some openers override this
     // (cloning a live session wants a fresh conversation alongside the original).
     setContinueSession(defaultContinue ?? !!preset);
+    // A preset's settings are prefilled; without one the last launch's are kept, so a model or a
+    // permission mode picked once holds for the next session started from this page. The watchdog is
+    // the exception either way: it is opt-in per session, so it always comes back off.
+    setLaunch((prev) => ({
+      ...(preset
+        ? {
+            model: preset.model,
+            remoteControl: preset.remoteControl,
+            permissionMode: preset.permissionMode || "auto",
+          }
+        : prev),
+      watchdog: false,
+    }));
     // A project with exactly one linked folder has an unambiguous answer, so fill it in. With several
     // there is nothing to guess between, and the chips below are one click away.
     if (project && !preset) setDir(project.folders.length === 1 ? project.folders[0] : "");
@@ -123,48 +156,81 @@ export function NewSessionDialog({
       setDir(preset.workingDirectory);
       setName(preset.name);
       setCommand(preset.command);
-      setModel(preset.model);
-      setRemoteControl(preset.remoteControl);
-      setPermissionMode(preset.permissionMode || "auto");
     }
   }, [open, preset, project, defaultContinue]);
 
+  /** Picking a template fills the launch in from it; the fields below stay editable for this run. */
+  const pickTemplate = (t: SessionTemplate) => {
+    // Re-picking the one already selected keeps what has been typed into the details box. That path
+    // is not hypothetical: saving an edit re-picks the template, and losing a pasted stack trace to
+    // a trip through its settings would be a nasty little surprise.
+    if (t.id !== templateId) setInput("");
+    setTemplateId(t.id);
+    setTDir(t.workingDirectory);
+    // The template's name is the obvious name for the session it starts ("MH Log Issue"), and Claude
+    // renames itself once it knows what the errand turned out to be.
+    setTName(t.name);
+    setTLaunch(launchFromTemplate(t));
+    setError(null);
+    // A template with no folder yet can't launch, so open the settings where that is fixed rather
+    // than failing on the button with the field folded away.
+    setShowOptions(!t.workingDirectory.trim());
+  };
+
   async function create() {
-    if (!dir.trim()) {
-      setError("Choose a working folder");
+    const fromTemplate = tab === "templates";
+    if (fromTemplate && !template) {
+      setError("Pick a template");
       return;
     }
+    const folder = (fromTemplate ? tDir : dir).trim();
+    if (!folder) {
+      setError("Choose a working folder");
+      if (fromTemplate) setShowOptions(true);
+      return;
+    }
+    const opts = fromTemplate ? tLaunch : launch;
+    const label = (fromTemplate ? tName : name).trim();
+    const prompt = fromTemplate ? buildPrompt(template!.prompt, input) : command.trim();
+
     setBusy(true);
     setError(null);
     try {
       const s = await api.createSession({
-        workingDirectory: dir.trim(),
-        name: name.trim() || null,
-        remoteControl,
-        model: model || null,
-        initialPrompt: command.trim() || null,
-        permissionMode,
-        watchdogEnabled: watchdog,
-        continue: continueSession,
-        resumeSessionId: continueSession ? resumeId : null,
+        workingDirectory: folder,
+        name: label || null,
+        remoteControl: opts.remoteControl,
+        model: opts.model || null,
+        initialPrompt: prompt || null,
+        permissionMode: opts.permissionMode,
+        watchdogEnabled: opts.watchdog,
+        // Continuing a conversation skips the start command, so it is never offered for a template —
+        // the prompt *is* the point of the launch.
+        continue: !fromTemplate && continueSession,
+        resumeSessionId: !fromTemplate && continueSession ? resumeId : null,
       });
-      // Remember the folder + full launch preset server-side for quick reuse next time. Both are
-      // fire-and-forget: a failure here shouldn't block the (already created) session.
-      await api.addRecentFolder(dir.trim()).catch(() => {});
-      await api
-        .addRecentSession({
-          workingDirectory: dir.trim(),
-          name: name.trim(),
-          command: command.trim(),
-          model,
-          remoteControl,
-          permissionMode,
-        })
-        .catch(() => {});
+      // Remember the folder server-side for quick reuse next time. Fire-and-forget: a failure here
+      // shouldn't block the (already created) session.
+      await api.addRecentFolder(folder).catch(() => {});
+      // The full launch preset, but only for a hand-made session: a template is already the reusable
+      // thing, and saving one as a recent would fill that list with one-off prompts — this log entry,
+      // that Jira key — which are exactly what you'd never want to relaunch verbatim.
+      if (!fromTemplate)
+        await api
+          .addRecentSession({
+            workingDirectory: folder,
+            name: label,
+            command: command.trim(),
+            model: opts.model,
+            remoteControl: opts.remoteControl,
+            permissionMode: opts.permissionMode,
+          })
+          .catch(() => {});
       onCreated(s);
       // Reset the transient fields for next time.
       setName("");
       setCommand("");
+      setInput("");
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to create session");
@@ -174,254 +240,448 @@ export function NewSessionDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="flex max-h-[90vh] flex-col"
-        onOpenAutoFocus={(e) => {
-          // Prefilled with a folder (clone / "new session here") — keep the folder picker collapsed
-          // instead of auto-focusing its input, which would pop the browser open over the whole form.
-          if (preset?.workingDirectory || project) e.preventDefault();
-        }}
-      >
-        <DialogHeader className="shrink-0">
-          <DialogTitle>New session</DialogTitle>
-          <DialogDescription>
-            {project ? (
-              <>
-                Start a Claude Code session in{" "}
-                <span className="font-medium text-foreground">{project.name}</span> — pick one of its
-                folders, or any other.
-              </>
-            ) : (
-              "Start a Claude Code session in a working folder."
-            )}
-          </DialogDescription>
-        </DialogHeader>
-
-        {/* Enter submits (native form submit); the folder picker and the command textarea handle
-            Enter themselves, so they don't trigger it. The body scrolls on short screens. */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            create();
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent
+          className="flex max-h-[90vh] flex-col"
+          onOpenAutoFocus={(e) => {
+            // Prefilled with a folder (clone / "new session here") — keep the folder picker collapsed
+            // instead of auto-focusing its input, which would pop the browser open over the whole form.
+            if (preset?.workingDirectory || project) e.preventDefault();
           }}
-          className="flex min-h-0 flex-1 flex-col gap-4"
         >
-          {/* -mx-1 px-1 is not spacing: a scroller clips on both axes, and a control whose edge
-              is flush with this box loses whatever it paints *outside* itself there -- which is
-              its focus ring, cut clean off down the left while the rest of it draws. The padding
-              buys the ring a gutter and the negative margin gives it back, so nothing moves. */}
-          <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
-          <div className="space-y-2">
-            <Label>Working folder</Label>
-            <FolderPicker value={dir} onChange={setDir} />
+          <DialogHeader className="shrink-0">
+            <DialogTitle>New session</DialogTitle>
+            <DialogDescription>
+              {tab === "templates" ? (
+                "Start a session from a template — pick one, then paste in what this run is about."
+              ) : project ? (
+                <>
+                  Start a Claude Code session in{" "}
+                  <span className="font-medium text-foreground">{project.name}</span> — pick one of its
+                  folders, or any other.
+                </>
+              ) : (
+                "Start a Claude Code session in a working folder."
+              )}
+            </DialogDescription>
+          </DialogHeader>
 
-            {project && (
-              <div className="space-y-1.5 pt-1">
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Boxes
-                    className="size-3"
-                    style={sessionColor(project.color) ? { color: sessionColor(project.color)! } : undefined}
-                  />
-                  {project.name}
-                </div>
-                {project.folders.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No folders linked yet — choose one above and link it in the project&rsquo;s settings.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {project.folders.map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => setDir(p)}
-                        title={p}
-                        // The chosen one is marked rather than merely hovered: with the picker
-                        // collapsed above, this row is the only thing saying which folder is set.
-                        className={cn(
-                          "flex max-w-full items-center rounded-md border px-2 py-1 text-xs hover:bg-accent",
-                          sameFolder(p, dir) && "border-primary bg-accent"
-                        )}
-                      >
-                        <span className="truncate">{folderName(p)}</span>
-                      </button>
-                    ))}
+          {/* Set up by hand, or from a template. The same row as the sidebar's Sessions/Recent tabs. */}
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-muted/50 p-1">
+            <TabButton active={tab === "new"} onClick={() => setTab("new")}>
+              New session
+            </TabButton>
+            <TabButton active={tab === "templates"} onClick={() => setTab("templates")} count={templates.length}>
+              <Sparkles className="size-3.5" /> Templates
+            </TabButton>
+          </div>
+
+          {/* Enter submits (native form submit); the folder picker and the textareas handle Enter
+              themselves, so they don't trigger it. The body scrolls on short screens. */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              create();
+            }}
+            className="flex min-h-0 flex-1 flex-col gap-4"
+          >
+            {/* -mx-1 px-1 is not spacing: a scroller clips on both axes, and a control whose edge
+                is flush with this box loses whatever it paints *outside* itself there -- which is
+                its focus ring, cut clean off down the left while the rest of it draws. The padding
+                buys the ring a gutter and the negative margin gives it back, so nothing moves. */}
+            <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
+              {tab === "new" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>Working folder</Label>
+                    <FolderPicker value={dir} onChange={setDir} />
+
+                    {project && (
+                      <FolderChips
+                        folders={project.folders}
+                        value={dir}
+                        onPick={setDir}
+                        label={
+                          <>
+                            <Boxes
+                              className="size-3"
+                              style={
+                                sessionColor(project.color)
+                                  ? { color: sessionColor(project.color)! }
+                                  : undefined
+                              }
+                            />
+                            {project.name}
+                          </>
+                        }
+                        empty="No folders linked yet — choose one above and link it in the project’s settings."
+                      />
+                    )}
+
+                    {recents.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <History className="size-3" /> Recent
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {recents.map((p) => (
+                            <span
+                              key={p}
+                              className="group flex max-w-full items-center gap-1 rounded-md border pl-2 pr-1 py-1 text-xs hover:bg-accent"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => setDir(p)}
+                                title={p}
+                                className="truncate"
+                              >
+                                {folderName(p)}
+                              </button>
+                              <button
+                                type="button"
+                                title="Remove from recent"
+                                onClick={async () => {
+                                  const r = await api.removeRecentFolder(p).catch(() => null);
+                                  if (r) setRecents(r.folders);
+                                }}
+                                className="shrink-0 text-muted-foreground opacity-60 hover:text-destructive hover:opacity-100"
+                              >
+                                <X className="size-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
 
-            {recents.length > 0 && (
-              <div className="space-y-1.5 pt-1">
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <History className="size-3" /> Recent
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {recents.map((p) => (
-                    <span
-                      key={p}
-                      className="group flex max-w-full items-center gap-1 rounded-md border pl-2 pr-1 py-1 text-xs hover:bg-accent"
+                  <LaunchFields
+                    value={launch}
+                    onChange={(p) => setLaunch((v) => ({ ...v, ...p }))}
+                    name={name}
+                    onName={setName}
+                    idPrefix="new"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="command">Start command (optional)</Label>
+                      <Textarea
+                        id="command"
+                        value={command}
+                        placeholder="Initial prompt sent to Claude on startup, e.g. “run the tests and fix any failures”"
+                        onChange={(e) => setCommand(e.target.value)}
+                        className="min-h-20"
+                      />
+                    </div>
+
+                    <ToggleCard
+                      checked={continueSession}
+                      onCheckedChange={setContinueSession}
+                      icon={<RotateCcw className="size-3.5" />}
+                      title="Continue previous conversation"
+                    >
+                      {resumeId ? (
+                        <>
+                          Resumes <em>this</em> session&apos;s own conversation (
+                          <code className="font-mono">--resume</code>), not just the folder&apos;s most
+                          recent one.
+                        </>
+                      ) : (
+                        <>
+                          Starts with <code className="font-mono">--continue</code> so Claude picks up the
+                          folder&apos;s most recent conversation instead of a blank one.
+                        </>
+                      )}{" "}
+                      The start command is skipped when continuing.
+                    </ToggleCard>
+                  </LaunchFields>
+                </>
+              ) : (
+                <TemplatesTab
+                  sections={sections}
+                  total={templates.length}
+                  selected={templateId}
+                  onPick={pickTemplate}
+                  onEdit={(t) => setEditing({ template: t })}
+                  onNew={() => setEditing({ template: null })}
+                  template={template}
+                  templateProject={templateProject}
+                  input={input}
+                  onInput={setInput}
+                  dir={tDir}
+                  onDir={setTDir}
+                  name={tName}
+                  onName={setTName}
+                  launch={tLaunch}
+                  onLaunch={(p) => setTLaunch((v) => ({ ...v, ...p }))}
+                  showOptions={showOptions}
+                  onToggleOptions={() => setShowOptions((v) => !v)}
+                />
+              )}
+
+              {error && <p className="text-sm text-destructive">{error}</p>}
+            </div>
+
+            <DialogFooter className="shrink-0">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || (tab === "templates" && !template)}>
+                {busy && <Loader2 className="size-4 animate-spin" />}
+                Create
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Stacked over the dialog above, the way the confirm popup stacks over the project settings.
+          Saving replaces the list here, and re-picks the template that was edited so the launch being
+          set up below follows the edit. */}
+      {editing && (
+        <TemplateDialog
+          template={editing.template}
+          projects={allProjects}
+          defaultProjectId={editing.template ? undefined : project?.id ?? null}
+          defaultFolder={editing.template ? undefined : dir || project?.folders[0] || ""}
+          onSaved={(list) => {
+            setTemplates(list);
+            const edited = editing.template
+              ? list.find((t) => t.id === editing.template!.id)
+              : // A new one is appended, so the last entry is it.
+                list[list.length - 1];
+            if (edited) pickTemplate(edited);
+            else setTemplateId(null); // it was deleted
+            setTab("templates");
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  count,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  count?: number;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
+        active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+      )}
+    >
+      {children}
+      {count !== undefined && count > 0 && (
+        <span className="text-xs tabular-nums opacity-70">{count}</span>
+      )}
+    </button>
+  );
+}
+
+/**
+ * The Templates tab: the templates as a tree under their projects, and — once one is picked — the
+ * box for this run's detail, with the launch itself folded away underneath.
+ *
+ * The folding is the point of the tab. A template already answers the folder, the model and the
+ * permission mode; what is left to say is the one thing that changes, so that is the only field
+ * showing. Everything a template decided is still there under "Session settings", because a template
+ * is a starting point and not a straitjacket.
+ */
+function TemplatesTab({
+  sections,
+  total,
+  selected,
+  onPick,
+  onEdit,
+  onNew,
+  template,
+  templateProject,
+  input,
+  onInput,
+  dir,
+  onDir,
+  name,
+  onName,
+  launch,
+  onLaunch,
+  showOptions,
+  onToggleOptions,
+}: {
+  sections: ReturnType<typeof templateSections>;
+  total: number;
+  selected: string | null;
+  onPick: (t: SessionTemplate) => void;
+  onEdit: (t: SessionTemplate) => void;
+  onNew: () => void;
+  template: SessionTemplate | null;
+  templateProject: Project | null;
+  input: string;
+  onInput: (v: string) => void;
+  dir: string;
+  onDir: (v: string) => void;
+  name: string;
+  onName: (v: string) => void;
+  launch: LaunchOptions;
+  onLaunch: (patch: Partial<LaunchOptions>) => void;
+  showOptions: boolean;
+  onToggleOptions: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <Label>Template</Label>
+          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onNew}>
+            <Plus className="mr-1 size-3.5" /> New template
+          </Button>
+        </div>
+
+        {total === 0 ? (
+          <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+            No templates yet. A template remembers a project, a folder and a prompt — the errands that
+            come back — so starting one is picking it and pasting in what this run is about.
+          </p>
+        ) : (
+          <div className="max-h-56 space-y-2 overflow-y-auto overscroll-contain rounded-md border p-1.5">
+            {sections.map((sec) => {
+              const accent = sessionColor(sec.project?.color ?? null);
+              return (
+                <div key={sec.project?.id ?? "none"} className="space-y-1">
+                  <div className="flex items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
+                    <Boxes className="size-3" style={accent ? { color: accent } : undefined} />
+                    <span className="truncate">{sec.project?.name ?? "No project"}</span>
+                  </div>
+                  {sec.templates.map((t) => (
+                    <div
+                      key={t.id}
+                      className={cn(
+                        "group flex items-center gap-1 rounded-md border pr-1 transition-colors",
+                        selected === t.id ? "border-primary bg-accent" : "border-transparent hover:bg-accent/50"
+                      )}
                     >
                       <button
                         type="button"
-                        onClick={() => setDir(p)}
-                        title={p}
-                        className="truncate"
+                        onClick={() => onPick(t)}
+                        className="min-w-0 flex-1 px-2 py-1.5 text-left"
                       >
-                        {folderName(p)}
+                        <span className="block truncate text-sm">{t.name}</span>
+                        {/* The description, or the folder when there is none — either way a second
+                            line saying which of two similarly-named templates this is. */}
+                        <span className="block truncate text-[11px] text-muted-foreground">
+                          {t.description ??
+                            (t.workingDirectory
+                              ? folderName(t.workingDirectory)
+                              : "No folder yet — set one before starting")}
+                        </span>
                       </button>
                       <button
                         type="button"
-                        title="Remove from recent"
-                        onClick={async () => {
-                          const r = await api.removeRecentFolder(p).catch(() => null);
-                          if (r) setRecents(r.folders);
-                        }}
-                        className="shrink-0 text-muted-foreground opacity-60 hover:text-destructive hover:opacity-100"
+                        title="Edit this template"
+                        onClick={() => onEdit(t)}
+                        className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
                       >
-                        <X className="size-3" />
+                        <Pencil className="size-3.5" />
                       </button>
-                    </span>
+                    </div>
                   ))}
                 </div>
-              </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {template && (
+        <>
+          <div className="space-y-2">
+            <Label htmlFor="template-input">Details (optional)</Label>
+            <Textarea
+              id="template-input"
+              value={input}
+              autoFocus
+              placeholder={template.inputHint ?? "What this run is about — paste the error, the request, the issue key…"}
+              onChange={(e) => onInput(e.target.value)}
+              className="min-h-24"
+            />
+            {template.prompt && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer select-none hover:text-foreground">
+                  What Claude will be sent
+                </summary>
+                <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-2 font-mono text-[11px]">
+                  {buildPrompt(template.prompt, input) || "(nothing — it starts with a blank prompt)"}
+                </pre>
+              </details>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="name">Name (optional)</Label>
-              <Input
-                id="name"
-                value={name}
-                placeholder="Folder name"
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="model">Model</Label>
-              <select
-                id="model"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="flex h-9 w-full rounded-md field-edge bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                {MODELS.map((m) => (
-                  <option key={m.value} value={m.value} className="bg-popover text-popover-foreground">
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="command">Start command (optional)</Label>
-            <Textarea
-              id="command"
-              value={command}
-              placeholder="Initial prompt sent to Claude on startup, e.g. “run the tests and fix any failures”"
-              onChange={(e) => setCommand(e.target.value)}
-              className="min-h-20"
-            />
-          </div>
-
-          <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
-            <Checkbox
-              checked={continueSession}
-              onCheckedChange={(v) => setContinueSession(v === true)}
-              className="mt-0.5"
-            />
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <RotateCcw className="size-3.5" /> Continue previous conversation
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {resumeId ? (
-                  <>
-                    Resumes <em>this</em> session&apos;s own conversation (
-                    <code className="font-mono">--resume</code>), not just the folder&apos;s most recent one.
-                  </>
-                ) : (
-                  <>
-                    Starts with <code className="font-mono">--continue</code> so Claude picks up the folder&apos;s
-                    most recent conversation instead of a blank one.
-                  </>
-                )}{" "}
-                The start command is skipped when continuing.
-              </p>
-            </div>
-          </label>
-
-          <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
-            <Checkbox
-              checked={remoteControl}
-              onCheckedChange={(v) => setRemoteControl(v === true)}
-              className="mt-0.5"
-            />
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <Radio className="size-3.5" /> Remote control
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Start Claude with <code className="font-mono">--remote-control</code> so this session appears in
-                the Claude Code app (claude.ai/code &amp; mobile) and you control it from there.
-              </p>
-            </div>
-          </label>
-
-          <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
-            <Checkbox
-              checked={watchdog}
-              onCheckedChange={(v) => setWatchdog(v === true)}
-              className="mt-0.5"
-            />
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-1.5 text-sm font-medium">
-                <Activity className="size-3.5" /> Hang watchdog
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Auto-sends <code className="font-mono">continue</code> when the session hangs on an API or
-                streaming error. Off by default; you can also toggle it later from the session header.
-              </p>
-            </div>
-          </label>
-
-          <div className="space-y-2 rounded-lg border p-3">
-            <div className="flex items-center gap-1.5 text-sm font-medium">
-              <Zap className="size-3.5" /> Permission mode
-            </div>
-            <select
-              value={permissionMode}
-              onChange={(e) => setPermissionMode(e.target.value)}
-              className="flex h-9 w-full rounded-md field-edge bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          <div className="rounded-lg border">
+            <button
+              type="button"
+              onClick={onToggleOptions}
+              aria-expanded={showOptions}
+              className="flex w-full items-center gap-1.5 px-3 py-2 text-sm font-medium hover:bg-accent/50"
             >
-              {PERMISSION_MODES.map((m) => (
-                <option key={m.value} value={m.value} className="bg-popover text-popover-foreground">
-                  {m.label}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-muted-foreground">
-              {PERMISSION_MODES.find((m) => m.value === permissionMode)?.hint}
-            </p>
+              {showOptions ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+              Session settings
+              <span className="ml-auto truncate text-xs font-normal text-muted-foreground">
+                {dir ? folderName(dir) : "no folder yet"} · {launch.model || "default model"}
+              </span>
+            </button>
+            {showOptions && (
+              <div className="space-y-4 border-t p-3">
+                <div className="space-y-2">
+                  <Label>Working folder</Label>
+                  <FolderPicker value={dir} onChange={onDir} />
+                  {templateProject && (
+                    <FolderChips
+                      folders={templateFolderChoices({ workingDirectory: dir }, templateProject)}
+                      value={dir}
+                      onPick={onDir}
+                      label={
+                        <>
+                          <Boxes
+                            className="size-3"
+                            style={
+                              sessionColor(templateProject.color)
+                                ? { color: sessionColor(templateProject.color)! }
+                                : undefined
+                            }
+                          />
+                          {templateProject.name}
+                        </>
+                      }
+                    />
+                  )}
+                </div>
+                <LaunchFields
+                  value={launch}
+                  onChange={onLaunch}
+                  name={name}
+                  onName={onName}
+                  namePlaceholder={template.name}
+                  idPrefix="tmpl-run"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Changes here apply to this session only — the template itself keeps what it had.
+                </p>
+              </div>
+            )}
           </div>
-
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          </div>
-
-          <DialogFooter className="shrink-0">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy && <Loader2 className="size-4 animate-spin" />}
-              Create
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+        </>
+      )}
+    </div>
   );
 }

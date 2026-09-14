@@ -294,6 +294,9 @@ internal static class Program
         builder.Services.AddSingleton<SessionUiStore>();
         // Projects: named groupings of folders, shown above the folder groups in the sessions sidebar.
         builder.Services.AddSingleton<ProjectStore>();
+        // Session templates: named launch presets (project, folder, prompt template) for the errands
+        // that come back — the New Session dialog's Templates tab starts sessions from them.
+        builder.Services.AddSingleton<TemplateStore>();
         // Shell tabs: a plain interactive shell (cmd/PowerShell/Git Bash/WSL) in a session's folder,
         // on its own pty hosts so a build left running survives a restart of this app.
         builder.Services.AddSingleton<Sessions.Shells.ShellManager>();
@@ -656,6 +659,23 @@ internal static class Program
             store.AddFolder(id, body.Path) is { } list ? Results.Ok(list) : Results.NotFound());
         app.MapPost("/api/projects/{id}/folders/remove", (string id, FolderRequest body, ProjectStore store) =>
             store.RemoveFolder(id, body.Path) is { } list ? Results.Ok(list) : Results.NotFound());
+
+        // ---- Session templates (named launch presets: project, folder, prompt template) ------------
+        // Same shape as the projects above — every mutation answers with the whole list, so a client
+        // replaces its state from the response rather than patching it.
+        app.MapGet("/api/templates", (TemplateStore store) => Results.Ok(store.List()));
+        app.MapPost("/api/templates", (SessionTemplatePatch body, TemplateStore store) =>
+            store.Create(body) is { } list
+                ? Results.Ok(list)
+                : Results.BadRequest(new { error = "A template needs a name (and there is a limit on how many)." }));
+        // A null name means "leave it alone"; a blank one is a bad request, not a missing template —
+        // the store answers null to both, so the name is checked here to keep the two apart.
+        app.MapPost("/api/templates/{id}", (string id, SessionTemplatePatch body, TemplateStore store) =>
+            body.Name is { } n && string.IsNullOrWhiteSpace(n)
+                ? Results.BadRequest(new { error = "A template needs a name." })
+                : store.Update(id, body) is { } list ? Results.Ok(list) : Results.NotFound());
+        app.MapDelete("/api/templates/{id}", (string id, TemplateStore store) =>
+            store.Delete(id) is { } list ? Results.Ok(list) : Results.NotFound());
 
         // Virtual folders: named boxes inside a project that hold sessions filed there by hand. A
         // group id addresses a group on its own (they are unique across the file), so editing and

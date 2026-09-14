@@ -1,9 +1,10 @@
-import { useState } from "react";
-import type { Project, ProjectGroup } from "@/types";
+import { useEffect, useState } from "react";
+import type { Project, ProjectGroup, SessionTemplate } from "@/types";
 import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
 import { groupIcon } from "@/lib/groupIcons";
 import { GroupAppearance } from "./GroupDialog";
+import { TemplateDialog } from "./TemplateDialog";
 import { folderName } from "@/lib/recentFolders";
 import { sameFolder } from "@/lib/projects";
 import { FolderPicker } from "./FolderPicker";
@@ -20,7 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
-import { Ban, FolderPlus, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Ban, FolderPlus, Loader2, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 
 /**
  * A project's settings: its name, its accent colour, and the folders it links.
@@ -32,6 +33,7 @@ import { Ban, FolderPlus, Loader2, Plus, Trash2, X } from "lucide-react";
  */
 export function ProjectDialog({
   project,
+  projects,
   initialFolders,
   initialGroup,
   onSaved,
@@ -39,6 +41,9 @@ export function ProjectDialog({
 }: {
   /** The project to edit, or null to create a new one. */
   project: Project | null;
+  /** Every project — the template editor's project dropdown offers them all, so a template can be
+      moved out of this one from here. Defaults to just this project when the caller has no list. */
+  projects?: Project[];
   /** Create mode: folders the new project starts with — the one it was created from. */
   initialFolders?: string[];
   /** Open with this group's colour/icon editor already unfolded — the pencil on its sidebar header. */
@@ -59,8 +64,20 @@ export function ProjectDialog({
   const [newGroup, setNewGroup] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // This project's session templates. Read here rather than handed in: the popup is the only place
+  // that shows them, and they are edited from the New Session dialog too, so a list cached higher up
+  // would be a second copy to keep in step.
+  const [templates, setTemplates] = useState<SessionTemplate[]>([]);
+  // The template being edited, or { template: null } while one is being created.
+  const [editingTemplate, setEditingTemplate] = useState<{ template: SessionTemplate | null } | null>(null);
+
+  useEffect(() => {
+    if (!project) return; // create mode: a template is written against a project id that doesn't exist yet
+    api.getTemplates().then(setTemplates).catch(() => {});
+  }, [project?.id]);
 
   const folders = project ? project.folders : draftFolders;
+  const myTemplates = project ? templates.filter((t) => t.projectId === project.id) : [];
   const accent = sessionColor(color);
 
   // Every mutation answers with the whole list; a failure keeps the popup open and says why, since
@@ -148,6 +165,7 @@ export function ProjectDialog({
   };
 
   return (
+    <>
     <Dialog
       open
       onOpenChange={(o) => {
@@ -392,6 +410,52 @@ export function ProjectDialog({
             </div>
           )}
 
+          {/* Session templates: the ways this project's sessions get started. Like the groups above,
+              only once the project exists — a template names the project it belongs to. */}
+          {project && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <Label>Templates</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setEditingTemplate({ template: null })}
+                >
+                  <Plus className="mr-1 size-3.5" /> New template
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                A saved way to start a session in this project — a folder and a prompt with a hole in
+                it. Pick one on the New Session dialog’s Templates tab and paste in what that run is
+                about.
+              </p>
+              {myTemplates.length > 0 && (
+                <ul className="-mx-1 flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
+                  {myTemplates.map((t) => (
+                    <li key={t.id} className="rounded-md border">
+                      <button
+                        type="button"
+                        onClick={() => setEditingTemplate({ template: t })}
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent/50"
+                      >
+                        <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">{t.name}</span>
+                          <span className="block truncate text-[10px] text-muted-foreground">
+                            {t.description ?? t.prompt}
+                          </span>
+                        </span>
+                        <Pencil className="size-3.5 shrink-0 text-muted-foreground" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
 
@@ -422,5 +486,18 @@ export function ProjectDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Stacked over this popup, the way the confirm dialog is. New templates land in this project. */}
+    {editingTemplate && project && (
+      <TemplateDialog
+        template={editingTemplate.template}
+        projects={projects ?? [project]}
+        defaultProjectId={project.id}
+        defaultFolder={project.folders[0] ?? ""}
+        onSaved={setTemplates}
+        onClose={() => setEditingTemplate(null)}
+      />
+    )}
+    </>
   );
 }

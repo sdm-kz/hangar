@@ -59,6 +59,21 @@ The web UI is a **session manager with a full terminal**:
   and putting the folder back brings the grouping back with it. Membership is keyed by the
   conversation, like a pin, so it survives reopening the session, and lives server-side alongside
   the project.
+- **Session templates** — a saved way to start the *same kind* of session again: a project, a folder,
+  a prompt, and the launch settings that go with them. The same errands come back week after week —
+  *look into this log entry*, *review this support request*, *ship this Jira issue* — and each one is
+  the same launch every time except for one detail. A template holds everything but that detail.
+  The **New session** dialog has a **Templates** tab beside the form: the templates listed under
+  their projects, and under the one you pick a single box for what this run is about. Paste the error
+  in, hit Create, and the session starts in the right folder with the prompt already sent. Where the
+  detail lands is the template's business: `{input}` in the prompt is replaced by what you typed (so
+  `/fix-issue {input}` becomes a slash command with the key in it), and a prompt without
+  the placeholder gets it appended as a paragraph at the end. *What Claude will be sent* shows the
+  result before you launch. Everything the template decided — folder, name, model, permission mode —
+  is still there under **Session settings**, folded away, and changing it there changes this run
+  only. Write them from the same tab (**New template**) or from a project's settings, where the
+  project's templates are listed beside its groups. Stored server-side like projects, so they follow
+  you across devices.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:

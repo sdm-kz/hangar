@@ -219,6 +219,30 @@ export interface ProjectGroup {
   sessions: string[];
 }
 
+/**
+ * A *session template*: a named, reusable way to start a particular kind of session — the project
+ * it belongs to, the folder it runs in, the prompt it opens with, and the launch settings that go
+ * with it. Persisted server-side (`/api/templates`), like projects.
+ *
+ * `prompt` is a template: the detail typed into the New Session dialog's "details" box is
+ * substituted for its `{input}` placeholder, or appended as its own paragraph when there is none —
+ * see lib/templates.ts. `projectId` is a soft reference: a template whose project has been deleted
+ * shows under "No project" rather than disappearing.
+ */
+export interface SessionTemplate {
+  id: string;
+  name: string;
+  projectId: string | null;
+  workingDirectory: string; // may be "" while the template is being set up
+  prompt: string; // may be "" — a template can be folder + settings and nothing else
+  model: string; // "", "opus", "sonnet", "haiku"
+  remoteControl: boolean;
+  permissionMode: string; // default | auto | acceptEdits | bypassPermissions
+  watchdogEnabled: boolean;
+  description: string | null; // one line under the name in the picker
+  inputHint: string | null; // placeholder for the details box — what to paste in
+}
+
 /** A shell the SERVER machine can run, as offered in the session tab bar's "+" menu. */
 export interface ShellOption {
   /** Stable handle sent back to open a tab: "cmd" | "powershell" | "pwsh" | "gitbash" | "wsl:<distro>". */

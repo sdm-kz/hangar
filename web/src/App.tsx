@@ -1032,6 +1032,7 @@ export function App() {
         onCreated={onCreated}
         preset={newPreset}
         project={projects.find((p) => p.id === newProjectId) ?? null}
+        projects={projects}
         defaultContinue={newDefaultContinue}
       />
     </div>
