@@ -1,5 +1,5 @@
 import type { Project, SessionTemplate } from "@/types";
-import { sameFolder } from "./projects";
+import { sameFolder, sortedByName } from "./projects";
 
 /**
  * Session templates: named launch presets for the errands that come back. A template holds the
@@ -67,7 +67,9 @@ export function templateSections(
 ): TemplateSection[] {
   const sections: TemplateSection[] = [];
   const taken = new Set<string>();
-  for (const project of projects) {
+  // By name, like every other list of projects — see sortedByName. The order projects arrive in is
+  // whatever the store happened to hold, which is no order at all to look a name up in.
+  for (const project of sortedByName(projects)) {
     const mine = templates.filter((t) => t.projectId === project.id);
     if (mine.length === 0) continue;
     mine.forEach((t) => taken.add(t.id));

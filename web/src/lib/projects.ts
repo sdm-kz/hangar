@@ -81,11 +81,23 @@ export function sectionsByProject<T>(
     else loose.push(item);
   }
 
-  const sections: ProjectSection<T>[] = [...projects]
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+  const sections: ProjectSection<T>[] = sortedByName(projects)
     .map((p) => ({ project: p, items: byProject.get(p.id)! }));
   if (loose.length) sections.push({ project: null, items: loose });
   return sections;
+}
+
+/**
+ * Projects in the order anything listing them should use: by name, blind to case and accents, and in
+ * the viewer's locale, so a list mixing Cyrillic and Latin names sorts the way that reader expects.
+ *
+ * Shared because a menu is scanned differently from a list — you open it with a name already in mind
+ * and look for it, which only works if there is somewhere for it to be. The sidebar's sections have
+ * always sorted; the pickers that move things between projects were showing them in whatever order
+ * the store happened to hold.
+ */
+export function sortedByName<T extends { name: string }>(items: readonly T[]): T[] {
+  return [...items].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
 
 /**

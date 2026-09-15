@@ -9,6 +9,7 @@ import {
   projectForDir,
   sameFolder,
   sectionsByProject,
+  sortedByName,
   type ProjectSection,
 } from "@/lib/projects";
 import { groupIcon } from "@/lib/groupIcons";
@@ -655,7 +656,7 @@ function FolderMenu({
                 hint={`Moves the folder — ${folderLabel(dir)}`}
                 onBack={() => setView("root")}
               />
-              {projects.map((p) => (
+              {sortedByName(projects).map((p) => (
                 <button
                   key={p.id}
                   type="button"
@@ -2918,7 +2919,7 @@ function RowActionsMenu({
                 hint={`Moves the folder — ${folderLabel(dir)}`}
                 onBack={() => setView("root")}
               />
-              {projects.map((p) => (
+              {sortedByName(projects).map((p) => (
                 <button
                   key={p.id}
                   type="button"

@@ -3,6 +3,7 @@ import type { Project, SessionTemplate } from "@/types";
 import { api } from "@/lib/api";
 import { sessionColor } from "@/lib/sessionColors";
 import { hasInputToken, templateFolderChoices } from "@/lib/templates";
+import { sortedByName } from "@/lib/projects";
 import { FolderPicker, FolderChips } from "./FolderPicker";
 import { DEFAULT_LAUNCH, LaunchFields, launchFromTemplate, type LaunchOptions } from "./LaunchOptions";
 import { Button } from "@/components/ui/button";
@@ -162,7 +163,7 @@ export function TemplateDialog({
                 <option value="" className="bg-popover text-popover-foreground">
                   No project
                 </option>
-                {projects.map((p) => (
+                {sortedByName(projects).map((p) => (
                   <option key={p.id} value={p.id} className="bg-popover text-popover-foreground">
                     {p.name}
                   </option>
