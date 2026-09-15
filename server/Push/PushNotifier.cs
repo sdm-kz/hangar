@@ -134,6 +134,10 @@ public sealed class PushNotifier : BackgroundService
 
     private async Task SendToAllAsync(string title, string body, string tag, string sessionId)
     {
+        // Nothing can be signed for anyone: this run is on a stand-in keypair (see VapidKeyStore),
+        // which every stored subscription would reject with a 403 — and a 403 isn't a prune, so the
+        // only thing sending would achieve is one failed request per device per notification.
+        if (_vapid.Ephemeral) return;
         var payload = JsonSerializer.Serialize(new { title, body, tag, sessionId });
         var vapid = new VapidDetails(_vapid.Keys.Subject, _vapid.Keys.PublicKey, _vapid.Keys.PrivateKey);
 

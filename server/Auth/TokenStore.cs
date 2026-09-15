@@ -58,7 +58,9 @@ public sealed class TokenStore
         LoadAuthState();
 
         // Mint the hook token once and keep it: sessions carry it in their environment for as long as
-        // their claude process lives, which outlasts this app run (see SessionManager adoption).
+        // their claude process lives, which outlasts this app run (see SessionManager adoption). When
+        // the auth file couldn't be used this save stands down, so the token lives in memory for this
+        // run only — sessions started now work, and pick up the real one after the file is repaired.
         if (string.IsNullOrEmpty(HookToken))
         {
             HookToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -71,15 +73,41 @@ public sealed class TokenStore
         if (!string.IsNullOrEmpty(_options.Password))
         {
             _passwordHash = PasswordHasher.Hash(_options.Password);
-            SaveAuthState();
-            _logger.LogWarning(
-                "A plaintext Auth:Password was detected and hashed to {AuthFile}. Remove the " +
-                "plaintext Password from appsettings.json — the persisted hash is now authoritative.",
-                _authFile);
+            // An explicit bootstrap is the one thing that overrides an auth file we refused to touch:
+            // the operator is telling us to set the password now, and this is the documented way back
+            // in after the file goes bad. The old one is kept beside the new rather than thrown away.
+            if (_authUnusable && StateFile.SetAside(_authFile, _logger, "auth")) _authUnusable = false;
+            if (SaveAuthState())
+                _logger.LogWarning(
+                    "A plaintext Auth:Password was detected and hashed to {AuthFile}. Remove the " +
+                    "plaintext Password from appsettings.json — the persisted hash is now authoritative.",
+                    _authFile);
+            else
+                // Saying "the persisted hash is now authoritative" here would be the opposite of true,
+                // and acting on it (clearing the plaintext) would lock the operator out on the next
+                // restart — this is the recovery path, so it must not mislead the person walking it.
+                _logger.LogWarning(
+                    "A plaintext Auth:Password was detected and is in effect for this run, but it could " +
+                    "NOT be written to {AuthFile}. Leave the plaintext Password in appsettings.json " +
+                    "until that file can be written, or this instance comes back with no password set.",
+                    _authFile);
         }
     }
 
-    public bool AuthDisabled => string.IsNullOrEmpty(_passwordHash);
+    /// <summary>
+    /// Whether this instance serves without a login. That is meant to describe a <b>never configured</b>
+    /// install (localhost dev): no auth.json, or one that has never carried a hash.
+    /// </summary>
+    /// <remarks>
+    /// An auth.json we could not use is emphatically <em>not</em> that, however it failed. A file that
+    /// exists is evidence a password was set, and inferring "no password was ever set" from our own
+    /// inability to read it would throw the doors of a public instance open to anyone — arbitrary reads
+    /// and writes under <c>/api/fs</c>, and a session spawn is a shell. Both failure paths therefore
+    /// fail closed: no login is accepted until a human deals with the file, which
+    /// <see cref="LoadAuthState"/> logs in full. Local clients (the tray) are unaffected — they carry
+    /// this run's <see cref="LocalToken"/>.
+    /// </remarks>
+    public bool AuthDisabled => !_authUnusable && string.IsNullOrEmpty(_passwordHash);
 
     /// <summary>
     /// Secret that authorizes Claude hook callbacks (<c>POST /api/hooks</c>) and a session's self-rename
@@ -160,6 +188,18 @@ public sealed class TokenStore
 
     // ---- Persistence: keep issued tokens across restarts so a redeploy doesn't force re-login -----
 
+    // Set when tokens.json is there but couldn't be used, which makes Save() stand down for the rest of
+    // the run rather than write this run's handful of tokens over a file whose contents we never saw.
+    private bool _tokensUnusable;
+
+    /// <summary>
+    /// Set when auth.json is there but couldn't be used — unreadable, or unparseable. Two things turn
+    /// on it: auth fails closed (see <see cref="AuthDisabled"/>), and nothing is written over the file,
+    /// so whatever is in it stays put for a human to rescue or remove. Cleared only by an explicit
+    /// <c>Auth:Password</c> bootstrap, which is the way back in.
+    /// </summary>
+    private bool _authUnusable;
+
     private void Load()
     {
         try
@@ -171,18 +211,31 @@ public sealed class TokenStore
             foreach (var (token, issued) in saved)
                 if (issued > cutoff) _tokens[token] = issued; // drop stale tokens on the way in
         }
-        catch { /* unreadable/old-format token file — start with none (user logs in once) */ }
+        catch (Exception ex) when (StateFile.IsAccessFailure(ex))
+        {
+            // Couldn't get at it — locked, or permissions. The tokens in it are presumably still good,
+            // so leave the file alone rather than replacing it with whatever this run mints.
+            _logger.LogWarning(ex, "Could not read tokens from {File}; it will not be written this run", _stateFile);
+            _tokens.Clear();
+            _tokensUnusable = true;
+        }
+        catch
+        {
+            // Could not make sense of it: old format, or truncated by a stop mid-write. It will never
+            // read any better, so set it aside and start a fresh one — the cost is a single re-login on
+            // each device. Deliberately without the exception: a malformed entry makes System.Text.Json
+            // name the offending JSON path, and in this file the property names ARE the bearer tokens.
+            _tokens.Clear();
+            _tokensUnusable = !StateFile.SetAside(_stateFile, _logger, "tokens");
+        }
     }
 
     private void Save()
     {
+        if (_tokensUnusable) return; // see Load: don't write over a file we couldn't use
         lock (_saveLock)
         {
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(_stateFile)!);
-                File.WriteAllText(_stateFile, JsonSerializer.Serialize(_tokens));
-            }
+            try { StateFile.Write(_stateFile, JsonSerializer.Serialize(_tokens)); }
             catch { /* best-effort — a failed persist just means re-login after the next restart */ }
         }
     }
@@ -206,20 +259,48 @@ public sealed class TokenStore
             if (!string.IsNullOrEmpty(state?.PasswordHash)) _passwordHash = state.PasswordHash;
             if (!string.IsNullOrEmpty(state?.HookToken)) HookToken = state.HookToken;
         }
-        catch { /* unreadable/old-format auth file — treat as unset (bootstrap plaintext can reseed) */ }
+        // Both ways of failing land in the same state, and it is deliberately the inconvenient one:
+        // the file is left exactly as it is, and auth fails closed until a human deals with it. Setting
+        // it aside and reseeding would be friendlier and is what this used to do — but it hands the
+        // instance to the internet in the meantime (see AuthDisabled), and the bytes it discards are
+        // the only copy of the password hash. Auth:Password is the way back in; the logs say so.
+        catch (Exception ex) when (StateFile.IsAccessFailure(ex))
+        {
+            _authUnusable = true;
+            _logger.LogError(ex,
+                "Could not read the auth file {AuthFile}. Logging in is refused until it can be read, " +
+                "nothing is written over it, and hook callbacks from sessions started before now will " +
+                "not authenticate. Free the file (or fix its permissions) and restart — or set a new " +
+                "Auth:Password, which replaces it.", _authFile);
+        }
+        catch (Exception ex)
+        {
+            _authUnusable = true;
+            _logger.LogError(ex,
+                "Could not load the auth file {AuthFile}. Logging in is refused until it is dealt with, " +
+                "and hook callbacks from sessions started before now will not authenticate. Restore the " +
+                "file from a backup, or set Auth:Password to replace it (the old one is kept beside it).",
+                _authFile);
+        }
     }
 
-    private void SaveAuthState()
+    /// <returns>Whether the state reached the disk — see the bootstrap warning in the constructor.</returns>
+    private bool SaveAuthState()
     {
+        if (_authUnusable) return false; // see LoadAuthState: don't write over a file we couldn't use
         lock (_saveLock)
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(_authFile)!);
-                File.WriteAllText(_authFile, JsonSerializer.Serialize(
+                StateFile.Write(_authFile, JsonSerializer.Serialize(
                     new AuthState { PasswordHash = _passwordHash, HookToken = HookToken }));
+                return true;
             }
-            catch (Exception ex) { _logger.LogWarning(ex, "Failed to persist auth state to {AuthFile}", _authFile); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to persist auth state to {AuthFile}", _authFile);
+                return false;
+            }
         }
     }
 }

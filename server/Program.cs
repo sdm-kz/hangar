@@ -734,7 +734,12 @@ internal static class Program
         // The VAPID public key is not secret and is needed before the browser can subscribe, so its
         // config endpoint is on the public allowlist in TokenAuthMiddleware; subscribe/unsubscribe are
         // token-gated like everything else.
-        app.MapGet("/api/push/config", (VapidKeyStore vapid) => Results.Ok(new { publicKey = vapid.Keys.PublicKey }));
+        // Null while the stored keypair couldn't be used (see VapidKeyStore.Ephemeral): a device that
+        // subscribed against this run's stand-in key would be bound to a private half that disappears
+        // with the process, and nothing on either side can detect that afterwards. The client reads a
+        // missing key as "push isn't available here", which is exactly what it is until the file is fixed.
+        app.MapGet("/api/push/config", (VapidKeyStore vapid) =>
+            Results.Ok(new { publicKey = vapid.Ephemeral ? null : vapid.Keys.PublicKey }));
         app.MapPost("/api/push/subscribe", (PushSubscribeRequest body, PushSubscriptionStore store) =>
         {
             if (body.Endpoint is null || body.Keys?.P256dh is null || body.Keys?.Auth is null)

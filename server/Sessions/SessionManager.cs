@@ -379,12 +379,51 @@ public sealed class SessionManager : IDisposable
     /// The fallback is load-bearing far more often than "hooks disabled" suggests: the hook store is
     /// in memory, so a restart drops every session's status, and an idle session emits no hook to
     /// rebuild it — after an update, every session that survived it is on the heuristic until you
-    /// next type in one. That is exactly when a repaint must not read as a turn, hence the guard.
+    /// next type in one. That is exactly when a repaint must not read as a turn, hence the guard —
+    /// and, for a session that has yet to say a word, when its opening paint must not either: see
+    /// <see cref="StillStartingUp"/>.
     /// </remarks>
     private bool IsBusy(ClaudeSession s) =>
         _hooks.TryGetStatus(s.Id, out var st)
             ? st.Busy
-            : s.Terminal is { IsBusy: true, IsRepaintingAfterResize: false };
+            : !StillStartingUp(s) && s.Terminal is { IsBusy: true, IsRepaintingAfterResize: false };
+
+    /// <summary>
+    /// How long a launched session's terminal is discounted while it waits for its first hook — a
+    /// backstop, not the mechanism. <c>SessionStart</c> normally ends the wait within seconds of
+    /// claude drawing itself; this is only what keeps a session whose hooks never arrive from staying
+    /// dark for ever, whether because they are switched off (<c>Hooks:Enabled=false</c>), because
+    /// another live instance owns the registration, or because one simply never lands.
+    ///
+    /// <para>One length for all three, because the thing being sat out is the same either way: the
+    /// opening paint, whose length has nothing to do with whether anyone is listening for hooks. Long
+    /// enough for the case that needs it — sixty sessions resuming at once after a restart, where a
+    /// single <c>claude --resume</c> took a minute and a half to reach its prompt — and no longer,
+    /// since an instance that hears no hooks is blind for the whole of it.</para>
+    /// </summary>
+    private static readonly TimeSpan StartupGrace = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Whether a session we launched is still <em>coming up</em>: claude has not reported in yet, so
+    /// everything on its terminal is the TUI drawing itself for the first time — with <c>--resume</c>,
+    /// an entire conversation being replayed onto the screen — rather than a turn.
+    /// </summary>
+    /// <remarks>
+    /// The distinction earns its keep downstream, where the sidebar reads a session <em>leaving</em> the
+    /// working set as a turn that just finished. Without this, every session brought back by a restart
+    /// flickers busy while it paints and then settles under a green "Claude finished here" tick that
+    /// nobody asked for — dozens of them at once, on the one screen where the tick is meant to mean
+    /// something. It is the same rule as the resize guard one line up: output we caused is not work.
+    ///
+    /// <para>Any hook at all ends it, not just a status-bearing one: the point is that claude is up and
+    /// talking, after which the hook store is the authority and the heuristic is only ever the
+    /// gap-filler it was always meant to be.</para>
+    /// </remarks>
+    private bool StillStartingUp(ClaudeSession s) =>
+        // Adopted: it was running long before we attached, so whatever is on its screen is its own.
+        !s.Adopted
+        && s.SinceLaunch is { } age && age < StartupGrace
+        && !_hooks.TryGetStatus(s.Id, out _);
 
     /// <summary>
     /// Ids of live sessions where Claude is compacting its conversation — auto-compaction or an
@@ -393,9 +432,15 @@ public sealed class SessionManager : IDisposable
     /// compaction ends, so the repainting "Compacting conversation…" spinner is the only signal
     /// that has both edges.
     /// </summary>
+    /// <remarks>
+    /// Skipped for a session that hasn't started yet, for the same reason as busy — and with an extra
+    /// one of its own: a <c>--resume</c> replays the conversation onto the screen, spinner line and
+    /// all, and a compaction that happened yesterday must not be read off it as one happening now.
+    /// </remarks>
     public IReadOnlyCollection<string> CompactingSessionIds() =>
         _sessions.Values
-            .Where(s => s.State == SessionState.Running && s.Terminal is { IsCompacting: true })
+            .Where(s => s.State == SessionState.Running && !StillStartingUp(s)
+                        && s.Terminal is { IsCompacting: true })
             .Select(s => s.Id)
             .ToArray();
 
@@ -1150,23 +1195,50 @@ public sealed class SessionManager : IDisposable
     // genuinely gone (a reboot: a ConPTY child can't survive one), the same entry is offered as
     // "Restorable" and reopened with --resume/--continue, exactly as before.
 
+    // Set when the state file is there but couldn't be read, which makes SavePersisted stand down for
+    // the rest of the run — see LoadPersisted.
+    private bool _stateUnreadable;
+
     private void LoadPersisted()
     {
-        List<PersistedSession>? saved = null;
         try
         {
-            if (File.Exists(_stateFile))
-                saved = JsonSerializer.Deserialize<List<PersistedSession>>(File.ReadAllText(_stateFile));
+            if (!File.Exists(_stateFile)) return;
+            var saved = JsonSerializer.Deserialize<List<PersistedSession>>(File.ReadAllText(_stateFile));
+            if (saved is null) return;
+            // Inside the try, not after it: a null entry or one with no id throws here, and that is a
+            // statement about the file — it belongs in the repair below rather than out of the
+            // constructor, where it would stop the app from starting at all.
+            foreach (var p in saved)
+                if (p is not null && !string.IsNullOrWhiteSpace(p.Id)) _restorable[p.Id] = p;
+            if (!_restorable.IsEmpty)
+                _log.LogInformation("Loaded {Count} restorable session(s) from a previous run", _restorable.Count);
+        }
+        // A failed read leaves _restorable empty, and the first save of the run would then write that
+        // emptiness back: every session from the previous run gone from the file, and with it the name,
+        // colour, fork links and conversation id that make a live pty host identifiable at all. The
+        // sessions themselves keep running — adoption just can't name them any more, so they surface as
+        // orphans. Which repair that calls for turns on why the read failed — see StateFile.
+        catch (Exception ex) when (StateFile.IsAccessFailure(ex))
+        {
+            // Couldn't get at the file — locked, or permissions. What is in it is presumably good, so
+            // it stays untouched and nothing is written over it this run. That costs this run's
+            // sessions their entry (they come back as orphans after the next restart, recoverable from
+            // the orphan list); overwriting would cost every session from every previous run outright.
+            _log.LogWarning(ex, "Could not read persisted sessions from {File}; it will not be written this run", _stateFile);
+            _restorable.Clear();
+            _stateUnreadable = true;
         }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Could not read persisted sessions from {File}", _stateFile);
+            // Could not make sense of it — truncated by a shutdown mid-write, or edited by hand into
+            // something that won't load. The names, fork links and conversation ids in it are worth a
+            // manual rescue, so it is kept beside the new one; if it can't even be moved, then it must
+            // not be written over either.
+            _log.LogWarning(ex, "Could not load persisted sessions from {File}; setting it aside", _stateFile);
+            _restorable.Clear();
+            _stateUnreadable = !StateFile.SetAside(_stateFile, _log, "sessions");
         }
-        if (saved is null || saved.Count == 0) return;
-
-        foreach (var p in saved)
-            _restorable[p.Id] = p;
-        _log.LogInformation("Loaded {Count} restorable session(s) from a previous run", _restorable.Count);
     }
 
     /// <summary>
@@ -1227,11 +1299,17 @@ public sealed class SessionManager : IDisposable
     private void SavePersisted()
     {
         if (_shuttingDown) return;
+        if (_stateUnreadable)
+        {
+            // Debug, not a warning: LoadPersisted already said this once, loudly, and this runs on
+            // every rename, colour change and exit.
+            _log.LogDebug("Not writing sessions: {File} could not be read at startup", _stateFile);
+            return;
+        }
         lock (_saveLock)
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(_stateFile)!);
                 // Persist live sessions plus any still-unrestored entries from prior runs, so they
                 // survive further restarts. Live entries win if an id somehow appears in both.
                 // Stamp each with Claude's own session id (from hooks, or the id we resumed with) so a
@@ -1252,7 +1330,11 @@ public sealed class SessionManager : IDisposable
                 // sessions live at the last save auto-resume, not stale leftovers from earlier runs.
                 var pending = _restorable.Values.Where(p => !liveIds.Contains(p.Id)).Select(p => p with { WasRunning = false });
                 var list = live.Concat(pending).OrderBy(p => p.CreatedAt).ToList();
-                File.WriteAllText(_stateFile, JsonSerializer.Serialize(list, new JsonSerializerOptions { WriteIndented = true }));
+                // Written on every metadata change and on the way out of a Windows shutdown, which is
+                // exactly when a truncate-then-fill write gets interrupted — and a half-written
+                // sessions.json is how a machine comes back with every session orphaned. Hence the
+                // swap-it-in write; see StateFile.
+                StateFile.Write(_stateFile, JsonSerializer.Serialize(list, new JsonSerializerOptions { WriteIndented = true }));
             }
             catch (Exception ex)
             {

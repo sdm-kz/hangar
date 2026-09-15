@@ -174,6 +174,9 @@ public sealed class SessionUiStore
 
     private sealed record PersistedEntry(int Rev, Dictionary<string, JsonElement>? State);
 
+    // Set when the state file exists but couldn't be read, which makes Save() stand down — see Load().
+    private bool _unreadable;
+
     private void Load()
     {
         try
@@ -190,14 +193,35 @@ public sealed class SessionUiStore
                 _entries[key] = new Entry { Rev = Math.Max(0, value.Rev), State = state };
             }
         }
+        // A failed read leaves the store empty, and the next save would write that emptiness back
+        // over the file. Which repair that calls for turns on why the read failed — see StateFile.
+        catch (Exception ex) when (StateFile.IsAccessFailure(ex))
+        {
+            // Couldn't get at the file — locked, or permissions. What is in it is presumably fine, so
+            // it stays exactly where it is and nothing is written over it for the rest of the run.
+            _log.LogWarning(ex, "Could not read session UI state from {File}; it will not be written this run", _file);
+            _entries.Clear();
+            _unreadable = true;
+        }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Could not read session UI state from {File}", _file);
+            // Could not make sense of it — truncated by a stop mid-write, or hand-edited into something
+            // that won't load. It will never read any better, so set it aside and carry on from a clean
+            // slate; if it can't even be moved, then it must not be written over either.
+            _log.LogWarning(ex, "Could not load session UI state from {File}; setting it aside", _file);
+            _entries.Clear();
+            _unreadable = !StateFile.SetAside(_file, _log, "session UI state");
         }
     }
 
     private void Save()
     {
+        if (_unreadable)
+        {
+            // Debug, not a warning: Load() already said this once, loudly, and this runs on every save.
+            _log.LogDebug("Not writing session UI state: {File} could not be read at startup", _file);
+            return;
+        }
         try
         {
             var persisted = new Dictionary<string, PersistedEntry>(StringComparer.Ordinal);
@@ -209,8 +233,7 @@ public sealed class SessionUiStore
                 if (JsonSerializer.Serialize(e, JsonOpts).Length > MaxEntryBytes) continue;
                 persisted[key] = e;
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
-            File.WriteAllText(_file, JsonSerializer.Serialize(
+            StateFile.Write(_file, JsonSerializer.Serialize(
                 persisted, new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
         }
         catch (Exception ex)

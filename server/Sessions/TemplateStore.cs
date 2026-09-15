@@ -215,11 +215,18 @@ public sealed class TemplateStore
         return Models.Contains(m, StringComparer.OrdinalIgnoreCase) ? m.ToLowerInvariant() : "";
     }
 
+    /// <summary>
+    /// A permission mode folded to one the launcher knows, landing on the same value
+    /// <see cref="ClaudeSession.NormalizeMode"/> would: anything unrecognised is <c>default</c> —
+    /// the mode that asks — and never <c>auto</c>. A typo in a hand-edited file (or in a call to
+    /// <c>POST /api/templates</c>) must not quietly buy every session launched from that template
+    /// the right to approve its own edits.
+    /// </summary>
     private static string CleanPermissionMode(string? mode)
     {
         var m = (mode ?? "").Trim();
         var match = PermissionModes.FirstOrDefault(x => string.Equals(x, m, StringComparison.OrdinalIgnoreCase));
-        return match ?? "auto";
+        return match ?? "default";
     }
 
     /// <summary>
@@ -240,6 +247,9 @@ public sealed class TemplateStore
 
     private sealed record Persisted(List<SessionTemplate>? Templates);
 
+    // Set when the state file exists but couldn't be read, which makes Save() stand down — see Load().
+    private bool _unreadable;
+
     private void Load()
     {
         try
@@ -251,8 +261,8 @@ public sealed class TemplateStore
             var seen = new HashSet<string>(StringComparer.Ordinal);
             _templates = p.Templates
                 // `t is not null` is not paranoia: a hand-edited (or truncated) file can hold a null
-                // entry, and an exception here is swallowed below — which leaves the store empty, and
-                // the next write would persist that emptiness over every template in the file.
+                // entry. Throwing here is caught below as content we can't load — the file is set aside
+                // rather than half-loaded — but skipping the bad entry keeps the other templates.
                 .Where(t => t is not null && !Blank(t.Id) && CleanName(t.Name) is not null && seen.Add(t.Id))
                 .Take(MaxTemplates)
                 .Select(t => t with
@@ -268,18 +278,38 @@ public sealed class TemplateStore
                 })
                 .ToList();
         }
+        // A failed read leaves the store empty, and the next save would write that emptiness back
+        // over the file. Which repair that calls for turns on why the read failed — see StateFile.
+        catch (Exception ex) when (StateFile.IsAccessFailure(ex))
+        {
+            // Couldn't get at the file — locked, or permissions. What is in it is presumably fine, so
+            // it stays exactly where it is and nothing is written over it for the rest of the run.
+            _log.LogWarning(ex, "Could not read session templates from {File}; it will not be written this run", _file);
+            _templates.Clear();
+            _unreadable = true;
+        }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Could not read session templates from {File}", _file);
+            // Could not make sense of it — truncated by a stop mid-write, or hand-edited into something
+            // that won't load. It will never read any better, so set it aside and carry on from a clean
+            // slate; if it can't even be moved, then it must not be written over either.
+            _log.LogWarning(ex, "Could not load session templates from {File}; setting it aside", _file);
+            _templates.Clear();
+            _unreadable = !StateFile.SetAside(_file, _log, "session templates");
         }
     }
 
     private void Save()
     {
+        if (_unreadable)
+        {
+            // Debug, not a warning: Load() already said this once, loudly, and this runs on every save.
+            _log.LogDebug("Not writing session templates: {File} could not be read at startup", _file);
+            return;
+        }
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
-            File.WriteAllText(_file, JsonSerializer.Serialize(
+            StateFile.Write(_file, JsonSerializer.Serialize(
                 new Persisted(_templates),
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
         }

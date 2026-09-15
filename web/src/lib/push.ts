@@ -67,6 +67,10 @@ export async function enablePush(): Promise<PushState> {
   if (!reg) return "default";
 
   const { publicKey } = await api.pushConfig();
+  // No key to subscribe against: the server's stored keypair couldn't be used, and a subscription made
+  // against the stand-in it is running on would be silently dead from the next restart on (the browser
+  // would still call itself subscribed). Better to say push isn't available here.
+  if (!publicKey) return "unsupported";
   const sub =
     (await reg.pushManager.getSubscription()) ??
     (await reg.pushManager.subscribe({

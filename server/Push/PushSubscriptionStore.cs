@@ -60,6 +60,9 @@ public sealed class PushSubscriptionStore
 
     private sealed record Persisted(List<PushSubscriptionEntry>? Subscriptions);
 
+    // Set when the state file exists but couldn't be read, which makes Save() stand down — see Load().
+    private bool _unreadable;
+
     private void Load()
     {
         try
@@ -70,18 +73,38 @@ public sealed class PushSubscriptionStore
                 .Where(s => s is not null && !string.IsNullOrWhiteSpace(s.Endpoint))
                 .ToList();
         }
+        // A failed read leaves the store empty, and the next save would write that emptiness back
+        // over the file. Which repair that calls for turns on why the read failed — see StateFile.
+        catch (Exception ex) when (StateFile.IsAccessFailure(ex))
+        {
+            // Couldn't get at the file — locked, or permissions. What is in it is presumably fine, so
+            // it stays exactly where it is and nothing is written over it for the rest of the run.
+            _log.LogWarning(ex, "Could not read push subscriptions from {File}; it will not be written this run", _file);
+            _subs.Clear();
+            _unreadable = true;
+        }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Could not read push subscriptions from {File}", _file);
+            // Could not make sense of it — truncated by a stop mid-write, or hand-edited into something
+            // that won't load. It will never read any better, so set it aside and carry on from a clean
+            // slate; if it can't even be moved, then it must not be written over either.
+            _log.LogWarning(ex, "Could not load push subscriptions from {File}; setting it aside", _file);
+            _subs.Clear();
+            _unreadable = !StateFile.SetAside(_file, _log, "push subscriptions");
         }
     }
 
     private void Save()
     {
+        if (_unreadable)
+        {
+            // Debug, not a warning: Load() already said this once, loudly, and this runs on every save.
+            _log.LogDebug("Not writing push subscriptions: {File} could not be read at startup", _file);
+            return;
+        }
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
-            File.WriteAllText(_file, JsonSerializer.Serialize(
+            StateFile.Write(_file, JsonSerializer.Serialize(
                 new Persisted(_subs), new JsonSerializerOptions { WriteIndented = true }));
         }
         catch (Exception ex)

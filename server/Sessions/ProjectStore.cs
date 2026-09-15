@@ -444,8 +444,8 @@ public sealed class ProjectStore
         if (groups is null) return new List<ProjectGroup>();
         return groups
             // `g is not null` is not paranoia: a hand-edited (or truncated) file can hold a null
-            // entry, and an exception here is swallowed by Load, which leaves the store empty — and the
-            // next write would then persist that emptiness over every project in the file.
+            // entry. Throwing here is caught by Load as content it can't load — the file is set aside
+            // rather than half-loaded — but skipping the bad entry keeps the rest of the project.
             .Where(g => g is not null && !string.IsNullOrWhiteSpace(g.Id) && CleanName(g.Name) is not null
                 && seen.Add(g.Id))
             .Take(MaxGroupsPerProject)
@@ -463,6 +463,9 @@ public sealed class ProjectStore
             .ToList();
     }
 
+    // Set when the state file exists but couldn't be read, which makes Save() stand down — see Load().
+    private bool _unreadable;
+
     private void Load()
     {
         try
@@ -473,7 +476,9 @@ public sealed class ProjectStore
             if (p?.Projects is null) return;
             var seenGroups = new HashSet<string>(StringComparer.Ordinal);
             _projects = p.Projects
-                .Where(x => !string.IsNullOrWhiteSpace(x.Id) && CleanName(x.Name) is not null)
+                // `x is not null` for the same reason CleanGroups checks it below: a hand-edited or
+                // truncated file can hold a null entry, and one skipped project beats losing the file.
+                .Where(x => x is not null && !string.IsNullOrWhiteSpace(x.Id) && CleanName(x.Name) is not null)
                 .Take(MaxProjects)
                 .Select(x => x with
                 {
@@ -490,18 +495,38 @@ public sealed class ProjectStore
                 })
                 .ToList();
         }
+        // A failed read leaves the store empty, and the next save would write that emptiness back
+        // over the file. Which repair that calls for turns on why the read failed — see StateFile.
+        catch (Exception ex) when (StateFile.IsAccessFailure(ex))
+        {
+            // Couldn't get at the file — locked, or permissions. What is in it is presumably fine, so
+            // it stays exactly where it is and nothing is written over it for the rest of the run.
+            _log.LogWarning(ex, "Could not read projects from {File}; it will not be written this run", _file);
+            _projects.Clear();
+            _unreadable = true;
+        }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Could not read projects from {File}", _file);
+            // Could not make sense of it — truncated by a stop mid-write, or hand-edited into something
+            // that won't load. It will never read any better, so set it aside and carry on from a clean
+            // slate; if it can't even be moved, then it must not be written over either.
+            _log.LogWarning(ex, "Could not load projects from {File}; setting it aside", _file);
+            _projects.Clear();
+            _unreadable = !StateFile.SetAside(_file, _log, "projects");
         }
     }
 
     private void Save()
     {
+        if (_unreadable)
+        {
+            // Debug, not a warning: Load() already said this once, loudly, and this runs on every save.
+            _log.LogDebug("Not writing projects: {File} could not be read at startup", _file);
+            return;
+        }
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_file)!);
-            File.WriteAllText(_file, JsonSerializer.Serialize(
+            StateFile.Write(_file, JsonSerializer.Serialize(
                 new Persisted(_projects),
                 new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }));
         }

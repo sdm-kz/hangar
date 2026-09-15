@@ -81,6 +81,28 @@ public sealed class ClaudeSession : IDisposable
     public int ProcessId { get; private set; }
     public DateTimeOffset CreatedAt { get; } = DateTimeOffset.Now;
 
+    // Stamped when we launch the child; left at zero for a session we adopted, which was already up
+    // long before we got to it. Monotonic rather than wall-clock, since it is read against a grace
+    // period and a clock that steps would otherwise decide a session that just started began an hour
+    // ago — and Stopwatch's clock rather than Environment.TickCount64, which keeps counting while the
+    // machine is asleep: a laptop that slept through a resume would wake up past the grace with the
+    // session still painting, which is the one case the grace exists to cover.
+    private long _launchTick;
+
+    /// <summary>
+    /// How long ago we launched this session's claude, or null when we didn't launch it (an adopted
+    /// session has no startup of ours to discount). See <c>SessionManager.StillStartingUp</c>, which
+    /// is the whole reason this is recorded.
+    /// </summary>
+    public TimeSpan? SinceLaunch
+    {
+        get
+        {
+            var launched = Volatile.Read(ref _launchTick);
+            return launched == 0 ? null : Stopwatch.GetElapsedTime(launched);
+        }
+    }
+
     /// <summary>
     /// When we first observed the process to be gone (UTC), or null while it's alive. Read by
     /// <see cref="SessionManager"/>'s auto-resume bookkeeping, which can't take a fresh exit at face
@@ -276,6 +298,10 @@ public sealed class ClaudeSession : IDisposable
 
         _log.LogInformation("Launching claude session {Id} in {Cwd}: {Exe} {Args}",
             Id, WorkingDirectory, _exe.FileName, string.Join(' ', launchArgs));
+
+        // Before the launch, not after: from here until claude's first hook, whatever its terminal
+        // does is the TUI drawing itself, not a turn.
+        Volatile.Write(ref _launchTick, Stopwatch.GetTimestamp());
 
         try
         {

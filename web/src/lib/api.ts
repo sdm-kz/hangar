@@ -433,7 +433,8 @@ export const api = {
 
   // ---- Web Push (background notifications) ----
   // The VAPID public key the browser needs to create a subscription (public, no auth required).
-  pushConfig(): Promise<{ publicKey: string }> {
+  /** The server's VAPID public key — null while it has no usable keypair, i.e. push is unavailable. */
+  pushConfig(): Promise<{ publicKey: string | null }> {
     return request("/api/push/config");
   },
   pushSubscribe(sub: { endpoint: string; keys: { p256dh: string; auth: string } }): Promise<void> {
