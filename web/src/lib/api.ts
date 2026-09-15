@@ -125,7 +125,13 @@ export const api = {
   forkSession(id: string, name: string): Promise<SessionInfo> {
     return request(`/api/sessions/${id}/fork`, { method: "POST", body: JSON.stringify({ name }) });
   },
-  // Stops the claude process and forgets the session.
+  // Stops the claude process but keeps the session in the list, as a closed (Restorable) one in the
+  // project and folder it was in. Returns the row as it now stands.
+  stopSession(id: string): Promise<SessionInfo> {
+    return request(`/api/sessions/${id}/stop`, { method: "POST" });
+  },
+  // Removes the session from the list altogether (saving it as a recent preset), stopping it first if
+  // it is still running.
   deleteSession(id: string): Promise<void> {
     return request(`/api/sessions/${id}`, { method: "DELETE" });
   },

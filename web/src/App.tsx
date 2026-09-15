@@ -167,9 +167,12 @@ export function App() {
     );
     setSessions(list);
     // Keep a valid current selection (e.g. restored from the URL); otherwise auto-select the
-    // first live session, never a Restorable placeholder (it has no terminal yet).
+    // first live session, never a Restorable placeholder (it has no terminal yet). "Valid" has to
+    // mean live, not merely present: a session stopped from its own tab stays in the list as a
+    // closed row, and leaving the selection on it would strand the main area on the empty state —
+    // with the row unhighlighted and ?session= still naming it, so a refresh landed there too.
     setActiveId((cur) =>
-      cur && list.some((s) => s.id === cur)
+      cur && list.some((s) => s.id === cur && s.state !== "Restorable")
         ? cur
         : list.find((s) => s.state !== "Restorable")?.id ?? null
     );
@@ -713,20 +716,58 @@ export function App() {
     loadRecents(); // the dialog just saved this launch as a recent preset (server-side)
   }
 
-  async function onClose(id: string) {
+  /**
+   * Close a session, leaving the row where it is: still in its project and folder, still reopenable.
+   * Stopping is about the process, not about the place the work happened — so this is also how a
+   * session that already died on its own is put away, which is the only way such a row keeps its
+   * place in the list. Taking it out of the list altogether is `onRemove` below, from the same menu,
+   * once it is sitting there closed.
+   */
+  async function onStop(id: string) {
     const s = sessions.find((x) => x.id === id);
-    const running = s?.state === "Running";
-    // Only confirm when stopping a running session; closing an inactive one is cheap to undo.
-    if (running) {
+    if (!s || s.state === "Restorable") return;
+    // Only a live process is worth asking about. A session that has already exited loses nothing
+    // here — the row stays, and Reopen is one click away — so the click is the whole decision.
+    if (s.state === "Running") {
       const ok = await confirm({
         title: "Stop session?",
         description: (
           <>
-            This kills the <span className="font-medium text-foreground">{s?.name}</span> process
-            {s?.remoteControl && " and ends its Remote Control session in the Claude Code app"}.
+            This kills the <span className="font-medium text-foreground">{s.name}</span> process
+            {s.remoteControl && " and ends its Remote Control session in the Claude Code app"}. The
+            session stays in the list and can be reopened.
           </>
         ),
         confirmLabel: "Stop",
+      });
+      if (!ok) return;
+    }
+    const stopped = await api.stopSession(id).catch(() => null);
+    // Only on success. Drawing the row as closed after a failed call would be a lie with claude still
+    // running behind it, and the row would then offer a Reopen that does nothing. On failure the list
+    // is left as it is; the stream and the poll both carry the truth within a few seconds.
+    if (!stopped) return;
+    // Otherwise take the server's own row straight away rather than waiting for the hub's next frame,
+    // so it settles the moment the dialog goes.
+    setSessions((prev) => prev.map((x) => (x.id === id ? stopped : x)));
+  }
+
+  /** Remove a session from the list for good. It lands in the Recent tab as a launch preset. */
+  async function onRemove(id: string) {
+    const s = sessions.find((x) => x.id === id);
+    // A session still running has to be stopped to be removed, and that is worth asking about; an
+    // already-closed row is cheap to undo from the Recent tab, so it just goes.
+    if (s?.state === "Running") {
+      const ok = await confirm({
+        title: "Remove session?",
+        description: (
+          <>
+            This kills the <span className="font-medium text-foreground">{s?.name}</span> process
+            {s?.remoteControl && " and ends its Remote Control session in the Claude Code app"}, and
+            takes the session out of the list. It stays in the Recent tab.
+          </>
+        ),
+        confirmLabel: "Remove",
       });
       if (!ok) return;
     }
@@ -843,7 +884,8 @@ export function App() {
               onNewInFolder={newSessionInFolder}
               onRevealFolder={revealFolderInFiles}
               onNewInProject={newSessionInProject}
-              onClose={onClose}
+              onStop={onStop}
+              onRemove={onRemove}
               onClone={cloneSession}
               onFork={forkSession}
               onRestore={onRestore}
@@ -909,7 +951,8 @@ export function App() {
                   onNewInFolder={newSessionInFolder}
                   onRevealFolder={revealFolderInFiles}
                   onNewInProject={newSessionInProject}
-                  onClose={onClose}
+                  onStop={onStop}
+                  onRemove={onRemove}
                   onClone={cloneSession}
                   onFork={forkSession}
                   onRestore={onRestore}
@@ -975,7 +1018,7 @@ export function App() {
             onToggleSidebar={() => setSidebarOpen(true)}
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}
-            onStopped={(id) => setSessions((prev) => prev.filter((s) => s.id !== id))}
+            onStopped={(info) => setSessions((prev) => prev.map((s) => (s.id === info.id ? info : s)))}
             onRename={onRename}
             onTerminalRename={onTerminalRename}
             onTerminalColor={onTerminalColor}

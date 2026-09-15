@@ -67,6 +67,7 @@ import {
   Radio,
   RotateCcw,
   Search,
+  Square,
   X,
   LogOut,
   Pencil,
@@ -1435,7 +1436,8 @@ export function SessionSidebar({
   onNewInFolder,
   onRevealFolder,
   onNewInProject,
-  onClose,
+  onStop,
+  onRemove,
   onClone,
   onFork,
   onRestore,
@@ -1464,7 +1466,10 @@ export function SessionSidebar({
   onRevealFolder: (dir: string) => void; // show a folder in the whole-server Files tree
   // Start a session in a project: the create dialog opens with its linked folders offered as picks.
   onNewInProject: (project: Project) => void;
-  onClose: (id: string) => void;
+  // End a running session's process, leaving the row in the list as a closed session.
+  onStop: (id: string) => void;
+  // Take a session out of the list for good; it lands in the Recent tab as a launch preset.
+  onRemove: (id: string) => void;
   onClone: (s: SessionInfo) => void;
   onFork: (s: SessionInfo) => void; // branch this session's conversation into a new one
   onRestore: (id: string) => void;
@@ -2311,6 +2316,7 @@ export function SessionSidebar({
               <RowActionsMenu
                 canFork={s.canFork}
                 restorable={restorable}
+                running={s.state === "Running"}
                 pinned={pinned.has(s.id)}
                 dir={s.workingDirectory}
                 projects={projects}
@@ -2332,7 +2338,8 @@ export function SessionSidebar({
                 onClone={() => onClone(s)}
                 onFork={() => onFork(s)}
                 onRestore={() => onRestore(s.id)}
-                onClose={() => onClose(s.id)}
+                onStop={() => onStop(s.id)}
+                onRemove={() => onRemove(s.id)}
               />
             )}
           </span>
@@ -2771,6 +2778,7 @@ function RowActionsMenu({
   nested,
   onUnnest,
   restorable,
+  running,
   pinned,
   dir,
   projects,
@@ -2787,13 +2795,16 @@ function RowActionsMenu({
   onClone,
   onFork,
   onRestore,
-  onClose,
+  onStop,
+  onRemove,
 }: {
   canFork: boolean;
   /** Whether this row was put under another by hand — the only nesting there is anything to undo. */
   nested: boolean;
   onUnnest: () => void;
   restorable: boolean;
+  /** Whether there is a live process to stop. False for a closed row and for one that already exited. */
+  running: boolean;
   pinned: boolean;
   /** The session's folder — what "move to project" actually moves. */
   dir: string;
@@ -2812,7 +2823,8 @@ function RowActionsMenu({
   onClone: () => void;
   onFork: () => void;
   onRestore: () => void;
-  onClose: () => void;
+  onStop: () => void;
+  onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
   // Which level of the menu is showing. Reset on close, so reopening never lands you halfway down
@@ -3040,12 +3052,19 @@ function RowActionsMenu({
 
               <div className="my-1 border-t" />
 
-              {item(
-                restorable ? "Forget" : "Close session",
-                <X className="size-3.5" />,
-                onClose,
-                true
-              )}
+              {/* Two steps, not one. Closing ends the session and leaves it where it is — in this
+                  project, in this folder, reopenable — because a session you have finished with for
+                  today is still the place that work happened. One that died on its own is closed the
+                  same way, which is what gives it back its Reopen. Removing it is the second step,
+                  offered once the row is sitting there closed, and it is what clears it out of the
+                  list into the Recent tab. */}
+              {!restorable &&
+                item(
+                  running ? "Stop session" : "Close session",
+                  <Square className="size-3.5" />,
+                  onStop
+                )}
+              {item("Remove session", <X className="size-3.5" />, onRemove, true)}
             </>
           )}
         </div>
@@ -3071,9 +3090,12 @@ function FolderRemoveDialog({
 }) {
   const active = sessions.filter((s) => s.state === "Running");
   const inactive = sessions.filter((s) => s.state !== "Running");
-  // Default to removing only inactive sessions — killing running ones should be a deliberate opt-in.
-  const [rmActive, setRmActive] = useState(active.length > 0 && inactive.length === 0);
-  const [rmInactive, setRmInactive] = useState(inactive.length > 0);
+  // Nothing is pre-selected. Inactive used to mean leftovers — sessions from a previous run, or ones
+  // that died — and pre-checking that bucket was a convenience. It now also holds every session
+  // somebody stopped and deliberately kept in this folder, so a dialog that opens ready to delete
+  // them would undo the whole point of keeping them. Both buckets are an explicit choice.
+  const [rmActive, setRmActive] = useState(false);
+  const [rmInactive, setRmInactive] = useState(false);
 
   const ids = [
     ...(rmActive ? active : []),

@@ -110,7 +110,8 @@ export function SessionView({
   onToggleSidebar: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  onStopped: (id: string) => void;
+  /** The session was closed and stays in the list — the row it should be replaced with. */
+  onStopped: (session: SessionInfo) => void;
   onRename: (id: string, name: string) => void;
   // Apply a rename detected in this session's terminal (Claude's /rename confirmation).
   onTerminalRename?: (id: string, name: string) => void;
@@ -479,27 +480,36 @@ export function SessionView({
 
   const changeCount = git?.isRepo ? Object.keys(git.files).length : 0;
 
+  /**
+   * Close the session. It stays in the list, in its project and folder, and can be reopened — this
+   * ends the work rather than clearing it away, and taking the row out of the list is the sidebar
+   * menu's job one deliberate step later. A session that has already exited goes the same way: there
+   * is no process left to kill, but closing it is what turns the row into one that can be reopened.
+   */
   async function stop() {
     const running = session.state === "Running";
-    const ok = await confirm({
-      title: running ? "Stop session?" : "Remove session?",
-      description: running ? (
-        <>
-          This kills the <span className="font-medium text-foreground">{session.name}</span> process.
-          {session.remoteControl && " Its Remote Control session in the Claude Code app ends too."}
-        </>
-      ) : (
-        <>
-          Remove <span className="font-medium text-foreground">{session.name}</span> from the list?
-        </>
-      ),
-      confirmLabel: running ? "Stop" : "Remove",
-    });
-    if (!ok) return;
+    // Only a live process is worth a dialog; closing one that already exited costs nothing.
+    if (running) {
+      const ok = await confirm({
+        title: "Stop session?",
+        description: (
+          <>
+            This kills the <span className="font-medium text-foreground">{session.name}</span>{" "}
+            process.
+            {session.remoteControl && " Its Remote Control session in the Claude Code app ends too."}{" "}
+            The session stays in the list and can be reopened.
+          </>
+        ),
+        confirmLabel: "Stop",
+      });
+      if (!ok) return;
+    }
     setStopping(true);
     try {
-      await api.deleteSession(session.id);
-      onStopped(session.id);
+      onStopped(await api.stopSession(session.id));
+    } catch {
+      // The session list is left exactly as it is: the poll and the live stream both carry what
+      // really happened, and drawing this session as closed on a failed call would be a lie.
     } finally {
       setStopping(false);
     }
@@ -704,7 +714,7 @@ export function SessionView({
                 className="size-[30px]"
                 onClick={stop}
                 disabled={stopping}
-                title={session.state === "Running" ? "Stop session" : "Remove session"}
+                title={session.state === "Running" ? "Stop session" : "Close session"}
               >
                 {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
               </Button>
@@ -1147,7 +1157,7 @@ function SessionActionsMenu({
               }}
             >
               {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
-              {running ? "Stop session" : "Remove session"}
+              {running ? "Stop session" : "Close session"}
             </MenuItem>
           </div>
           <div className="max-h-64 overflow-auto border-t p-3">

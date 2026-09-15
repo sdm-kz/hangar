@@ -496,8 +496,20 @@ internal static class Program
             }
         });
 
-        // Stop the claude process and forget the session (also forgets a Restorable entry). Its shell
-        // tabs go with it — they were opened against this session, and nothing would list them again.
+        // Stop the process but keep the session: it stays in the list as a closed session, in the
+        // project and folder it belongs to, ready to be reopened — or removed, which is what DELETE
+        // below still does. Its shell tabs go with the process: they are terminals opened inside this
+        // session's workspace, and a reopen mints a new session id for them to belong to anyway.
+        app.MapPost("/api/sessions/{id}/stop", async (string id, SessionManager mgr, Sessions.Shells.ShellManager shells) =>
+        {
+            var stopped = mgr.Stop(id);
+            await shells.CloseForSessionAsync(id);
+            return stopped is null ? Results.NotFound() : Results.Ok(stopped);
+        });
+
+        // Remove the session from the list altogether, saving it as a "recent" launch preset on the
+        // way out. Stops the process first when one is still running — closing a live session in one
+        // step is still what the bulk remove and a reopen-as-new do.
         app.MapDelete("/api/sessions/{id}", async (string id, SessionManager mgr, Sessions.Shells.ShellManager shells) =>
         {
             var removed = mgr.Remove(id, stopProcess: true);

@@ -1117,11 +1117,68 @@ public sealed class SessionManager : IDisposable
         if (_restorable.TryRemove(id, out var p))
         {
             RememberAsRecent(p);
+            // The same bookkeeping the live branch above does. It used to be unreachable here — a
+            // Restorable entry was always a leftover from a previous run, with no hook state and no
+            // launch preset in this process — but a stopped session is now one of these too, and it
+            // has both. Without this each stop-then-remove leaves a record behind for the life of
+            // the daemon, and a hook arriving late for the dead session recreates one nothing clears.
+            _hooks.Forget(id);
+            _launchedFrom.TryRemove(id, out _);
             SavePersisted();
             RaiseChanged();
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// End a session's process but <b>keep the session</b>: it becomes the same Restorable entry a
+    /// restart would have left behind, which is to say it stays in the list, in its project and its
+    /// virtual folder, under its own name and colour, and can be reopened on the spot.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is what closing a session now means, and the difference from <see cref="Remove"/> is
+    /// the whole point: stopping is about the process, not about the row. A session you have finished
+    /// with for today is still the place that work happened, and it used to vanish from the folder it
+    /// belonged to the moment you stopped it — recoverable only from the flat "recent" list, stripped
+    /// of everything but its launch settings. Removing it is now a second, deliberate step, taken from
+    /// the row itself once it is sitting there inactive.</para>
+    /// <para>Nothing is remembered as a recent preset here — that belongs to <see cref="Remove"/>, when
+    /// the row actually leaves the list. The entry keeps its id, so every membership keyed by it (pins,
+    /// virtual folders, per-session UI state, postponed messages) and every link pointing at it (forks,
+    /// hand-nested rows) still names the same session. Reopening is the point at which some of that is
+    /// spent: <see cref="RestoreAsync"/> launches a new process under a new id, and only what is keyed
+    /// by the <em>conversation</em> follows it there.</para>
+    /// </remarks>
+    /// <returns>The session as it now appears in the list, or null when there is no such live session.</returns>
+    public SessionInfo? Stop(string id)
+    {
+        if (!_sessions.TryRemove(id, out var s)) return null;
+        // Snapshot before stopping, and force WasRunning off: this session is not coming back by
+        // itself on the next start. Auto-resume is for sessions that were running when the app went
+        // down, and one you stopped by hand is the opposite of that.
+        var persisted = s.ToPersisted() with { WasRunning = false, ClaudeSessionId = ConversationId(s) };
+        // Publish the closed row FIRST, then take the process down — not the other way round. Stopping
+        // blocks for as long as the host takes to go (up to two five-second graces), and for all of it
+        // the session would otherwise be in neither collection: the hub recomputes the list every
+        // second, so the row would blink out of its folder, browsers would move their selection off
+        // it, a Remove or a Reopen landing in the window would 404, and a save triggered by any other
+        // session would write this one out of sessions.json altogether.
+        _restorable[id] = persisted;
+        SavePersisted();
+        RaiseChanged();
+        s.Stop();
+        s.Dispose();
+        _hooks.Forget(id);
+        // _launchedFrom is deliberately left alone: the preset this session was launched from is still
+        // what it should be remembered as when the row is finally closed. See RememberAsRecent.
+        _log.LogInformation("Stopped session {Id} ('{Name}'); it stays in the list as a closed session.", id, s.Name);
+        return ClaudeSession.RestorableInfo(persisted) with
+        {
+            Pinned = IsPinned(persisted.ClaudeSessionId, persisted.Id),
+            UiRev = UiRev(persisted.ClaudeSessionId, persisted.Id),
+            GroupId = GroupIdOf(persisted.ClaudeSessionId, persisted.Id),
+        };
     }
 
     /// <summary>
@@ -1144,14 +1201,21 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>Same, for a Restorable entry from a previous run (no live process or hook state).</summary>
-    private void RememberAsRecent(PersistedSession p) => RememberAsRecent(new RecentSession(
-        p.WorkingDirectory,
-        PresetName(p.Name, p.WorkingDirectory),
-        p.InitialPrompt ?? "",
-        p.Model ?? "",
-        p.RemoteControl,
-        p.PermissionMode ?? "",
-        p.ClaudeSessionId), null);
+    private void RememberAsRecent(PersistedSession p)
+    {
+        // Same lookup as the live overload above: an entry that was stopped rather than closed is
+        // still this run's session, and the preset it launched from is still on file under its id —
+        // without which closing it afterwards would add a second, near-identical recent entry.
+        _launchedFrom.TryGetValue(p.Id, out var launchedFrom);
+        RememberAsRecent(new RecentSession(
+            p.WorkingDirectory,
+            PresetName(p.Name, p.WorkingDirectory),
+            p.InitialPrompt ?? "",
+            p.Model ?? "",
+            p.RemoteControl,
+            p.PermissionMode ?? "",
+            p.ClaudeSessionId), launchedFrom);
+    }
 
     private void RememberAsRecent(RecentSession preset, RecentSession? launchedFrom)
     {
