@@ -24,8 +24,9 @@ public sealed record Project(
     IReadOnlyList<string> Folders)
 {
     /// <summary>
-    /// The project's virtual folders, in the order they were made. Never null — a project with none
-    /// is one that groups nothing by hand, which is most of them.
+    /// The project's virtual folders, in the order they are drawn — new ones are appended, and the
+    /// user arranges them by dragging (see ProjectStore.ReorderGroups). Never null — a project with
+    /// none is one that groups nothing by hand, which is most of them.
     /// </summary>
     public IReadOnlyList<ProjectGroup> Groups { get; init; } = Array.Empty<ProjectGroup>();
 }

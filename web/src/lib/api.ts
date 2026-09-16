@@ -378,6 +378,18 @@ export const api = {
   deleteProjectGroup(groupId: string): Promise<Project[]> {
     return projects(request(`/api/projects/groups/${groupId}`, { method: "DELETE" }));
   },
+  // Persist a user-chosen ordering of a project's virtual folders (drag-to-reorder in the sidebar and
+  // in the project's settings). The whole order goes over, not the move that produced it: a from/to
+  // pair applied to a list another browser has added to since would land the group somewhere nobody
+  // aimed at. Ids left out keep the order they had, after the ones named.
+  reorderProjectGroups(projectId: string, groupIds: string[]): Promise<Project[]> {
+    return projects(
+      request(`/api/projects/${projectId}/groups/reorder`, {
+        method: "POST",
+        body: JSON.stringify({ ids: groupIds }),
+      })
+    );
+  },
   /**
    * File sessions into a virtual folder, or (with null) take them out of the ones they are in.
    *

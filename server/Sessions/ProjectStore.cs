@@ -205,6 +205,47 @@ public sealed class ProjectStore
     }
 
     /// <summary>
+    /// Put a project's virtual folders in the given order — the boxes are drawn in the order they are
+    /// held in, here and in the tray, so arranging them is a rewrite of this list and nothing else.
+    ///
+    /// <para>The whole order rather than a from/to pair, because the client is arranging a list it
+    /// read a moment ago and another browser may have added a group since. Ids this one doesn't
+    /// mention keep the relative order they already had and follow the ones it does: a group nobody
+    /// moved belongs somewhere, and the end of the list is where a new one was going to be anyway.
+    /// The first mention of a repeated id is the one that counts. Same deal, and the same shape, as
+    /// <see cref="RecentsStore.ReorderSessions"/>.</para>
+    ///
+    /// Returns null when there is no such project.
+    /// </summary>
+    public IReadOnlyList<Project>? ReorderGroups(string projectId, IReadOnlyList<string>? groupIds)
+    {
+        lock (_lock)
+        {
+            var i = IndexOf(projectId);
+            if (i < 0) return null;
+            if (groupIds is null || groupIds.Count == 0) return Snapshot(); // nothing named, nothing to move
+
+            var rank = new Dictionary<string, int>(StringComparer.Ordinal);
+            // Bounded before anything is materialized: this runs inside the lock every project read
+            // serializes on, and naming more ids than a project can hold says nothing anyway. The
+            // slack over MaxGroupsPerProject is so a client that repeats one doesn't lose the tail.
+            foreach (var id in groupIds.Where(id => !string.IsNullOrWhiteSpace(id)).Take(MaxGroupsPerProject * 4))
+                rank.TryAdd(id, rank.Count);
+
+            var p = _projects[i];
+            // OrderBy is stable, so the groups this order doesn't name keep the order they had, at
+            // the end — an id from another project (or one that is simply gone) names nothing here
+            // and is quietly ignored.
+            _projects[i] = p with
+            {
+                Groups = p.Groups.OrderBy(g => rank.TryGetValue(g.Id, out var r) ? r : int.MaxValue).ToList(),
+            };
+            Save();
+            return Snapshot();
+        }
+    }
+
+    /// <summary>
     /// Delete a virtual folder. Its sessions are untouched — they simply go back to showing under the
     /// folder they run in. Returns null when there is no such group.
     /// </summary>

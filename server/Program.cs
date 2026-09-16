@@ -708,6 +708,10 @@ internal static class Program
                     : Results.NotFound());
         app.MapDelete("/api/projects/groups/{groupId}", (string groupId, ProjectStore store) =>
             store.DeleteGroup(groupId) is { } list ? Results.Ok(list) : Results.NotFound());
+        // Arranging a project's boxes — the whole order, not the move that produced it; see
+        // ProjectStore.ReorderGroups.
+        app.MapPost("/api/projects/{id}/groups/reorder", (string id, GroupOrderRequest body, ProjectStore store) =>
+            store.ReorderGroups(id, body.Ids) is { } list ? Results.Ok(list) : Results.NotFound());
         // Filing sessions into one (a null groupId takes them out). It goes through the manager rather
         // than the store because the membership is keyed by the session's conversation, which only the
         // manager can resolve — and because every browser has to be told the session list changed.
@@ -1251,6 +1255,8 @@ internal record ProjectRequest(string? Name, string? Color = null, List<string>?
 // Create/update a virtual folder. On update a null field means "leave it alone"; an empty colour or
 // icon clears it.
 internal record GroupRequest(string? Name, string? Color = null, string? Icon = null);
+// A project's virtual folders in the order they should be drawn — see ProjectStore.ReorderGroups.
+internal record GroupOrderRequest(string[]? Ids);
 // The sessions to file into a virtual folder, and which one; a blank/absent group id takes them out
 // of the one they are in. Ids is a branch — a session and the forks drawn under it — which is why it
 // is a list; filing one session is a list of one.

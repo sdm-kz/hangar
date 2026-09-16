@@ -198,7 +198,7 @@ export interface Project {
   name: string;
   color: string | null; // palette colour name (same names as a session's /color), or null
   folders: string[]; // absolute paths on the server machine
-  groups: ProjectGroup[]; // virtual folders, in the order they were made
+  groups: ProjectGroup[]; // virtual folders, in the order they are drawn (arranged by dragging)
 }
 
 /**

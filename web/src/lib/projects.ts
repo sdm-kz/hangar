@@ -1,5 +1,5 @@
 import type { Project, ProjectGroup, SessionInfo } from "@/types";
-import { dirKey } from "./sessionOrder";
+import { dirKey, move } from "./sessionOrder";
 
 /**
  * Projects: named groupings of folders, one level above the sidebar's folder groups. A project links
@@ -144,4 +144,28 @@ export function groupForSession(
   if (!session.groupId) return null;
   const owner = projectForDir(session.workingDirectory, projects);
   return owner?.groups.find((g) => g.id === session.groupId) ?? null;
+}
+
+/**
+ * A project's group ids in the order a drop implies, ready to send to the server.
+ *
+ * `visibleIds` is the list the user was actually looking at, which is not always all of them: the
+ * sidebar's active-only filter hides an empty box, and the indices a drag reports are positions in
+ * what was on screen. So the move is applied to those, and each hidden group keeps the slot it
+ * already held among them — the user aimed at what they could see, and a box they couldn't see has
+ * no business jumping because of it. Pass every id when nothing is hidden, as the settings popup does.
+ *
+ * Shared because the sidebar and the settings popup both arrange the same boxes, and two answers to
+ * "where does this one go?" would be two orders that disagree.
+ */
+export function groupIdsAfterMove(
+  groups: readonly ProjectGroup[],
+  visibleIds: readonly string[],
+  from: number,
+  to: number
+): string[] {
+  const shown = new Set(visibleIds);
+  const moved = move([...visibleIds], from, to);
+  let next = 0;
+  return groups.map((g) => (shown.has(g.id) ? moved[next++] : g.id));
 }

@@ -4,6 +4,7 @@ import { sessionColor } from "@/lib/sessionColors";
 import { forkDescendants, forkTree, parentOf, type ForkNode } from "@/lib/sessionTree";
 import {
   groupForSession,
+  groupIdsAfterMove,
   isUnder,
   mergesFolderHeader,
   projectForDir,
@@ -27,6 +28,7 @@ import {
   sortPinnedFirst,
   type SessionOrder,
 } from "@/lib/sessionOrder";
+import { useDragReorder } from "@/lib/useDragReorder";
 import { failureLine, type ActivityIds } from "@/lib/sessionActivity";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
@@ -766,6 +768,7 @@ function VirtualFolderHeader({
   activity,
   onEdit,
   navProps,
+  dragProps,
   doneCount = 0,
   onMarkSeen,
 }: {
@@ -775,6 +778,8 @@ function VirtualFolderHeader({
   onToggle: () => void;
   activity?: Activity | null;
   onEdit: () => void;
+  /** Makes the header the grab end of "drag this box to another place in the project". */
+  dragProps?: Record<string, unknown>;
   /**
    * Marks this header as a row of the sessions tree's keyboard navigation (see useTreeKeyNav).
    * Absent on the recents list, which has no arrow navigation of its own.
@@ -789,12 +794,16 @@ function VirtualFolderHeader({
   return (
     <div
       {...navProps}
+      {...dragProps}
       className="group/vf flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground"
     >
       <button
         type="button"
         onClick={onToggle}
-        title={`${group.name} — a virtual folder; drag sessions onto it to file them here`}
+        title={
+          `${group.name} — a virtual folder; drag sessions onto it to file them here` +
+          (dragProps ? ", or drag this header to move the box up or down the project" : "")
+        }
         className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-foreground"
       >
         {collapsed ? (
@@ -1380,54 +1389,6 @@ function saveCollapsedForks(set: Set<string>) {
   }
 }
 
-/**
- * Native drag-to-reorder for a vertical list. Returns props to spread on each row; a row initiates
- * the drag and is also a drop target. `isOver` reports the row currently hovered during a drag (for
- * a drop indicator). onReorder(from, to, list) receives indices within one list.
- *
- * `list` scopes a drag: the sessions sidebar draws one list per folder, and a row dragged out of its
- * folder has no meaningful index in the folder it lands on, so a cross-list drop is simply ignored.
- * Single-list callers can leave it out.
- */
-function useDragReorder(onReorder: (from: number, to: number, list: string) => void) {
-  const dragged = useRef<{ index: number; list: string } | null>(null);
-  const [over, setOver] = useState<{ index: number; list: string } | null>(null);
-  return {
-    isOver: (index: number, list = "") => over?.index === index && over.list === list,
-    /**
-     * Drop the pending indicator because something else is answering for this drag — a target drawn
-     * over a row takes the event before the row sees it, and the line the row drew on the way in
-     * would otherwise stay up beside the other target's own mark. A no-op when nothing is showing:
-     * the same state back means React has no render to do, and dragover fires continuously.
-     */
-    clearOver: () => setOver((cur) => (cur === null ? cur : null)),
-    rowProps: (index: number, list = "") => ({
-      draggable: true,
-      onDragStart: (e: React.DragEvent) => {
-        dragged.current = { index, list };
-        e.dataTransfer.effectAllowed = "move";
-      },
-      onDragOver: (e: React.DragEvent) => {
-        if (dragged.current?.list !== list) return; // from another folder — not a drop target
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        if (over?.index !== index || over.list !== list) setOver({ index, list });
-      },
-      onDrop: (e: React.DragEvent) => {
-        e.preventDefault();
-        const from = dragged.current;
-        if (from && from.list === list && from.index !== index) onReorder(from.index, index, list);
-        dragged.current = null;
-        setOver(null);
-      },
-      onDragEnd: () => {
-        dragged.current = null;
-        setOver(null);
-      },
-    }),
-  };
-}
-
 export function SessionSidebar({
   sessions,
   activityIds,
@@ -1882,6 +1843,48 @@ export function SessionSidebar({
       /* the list is re-read on the next load; a failed drop isn't worth a dialog */
     }
   };
+
+  /**
+   * Which box is in the air, by id. The drag hook reports the index the box had when the drag
+   * started, and this list rearranges itself underneath a drag: under the active-only filter a box
+   * appears the moment a session starts in it and goes the moment its last one closes, both of which
+   * arrive unprompted from the session feed. An index is then a position in a list that no longer
+   * exists, and honouring it moves whichever box happens to be sitting there now. An id can't drift.
+   */
+  const draggedGroup = useRef<string | null>(null);
+
+  /**
+   * Arrange a project's virtual folders by dragging one box past another. `to` is a position in the
+   * list as it stands right now, and the box being moved is resolved in that same list — see
+   * groupIdsAfterMove for what a drop means when the filter is hiding some of them.
+   *
+   * The whole order goes to the server rather than the move that produced it, so a group another
+   * browser added since this list was read lands at the end instead of somewhere arbitrary.
+   */
+  const reorderGroups = async (project: Project, movedId: string, to: number) => {
+    const visible = shownGroups(project).map((g) => g.group.id);
+    const from = visible.indexOf(movedId);
+    // The box left the list mid-drag (its last session closed under the active-only filter), or it
+    // is already where it was dropped. Either way there is no move to make.
+    if (from < 0 || to >= visible.length || from === to) return;
+    try {
+      onProjectsChange(
+        await api.reorderProjectGroups(project.id, groupIdsAfterMove(project.groups, visible, from, to))
+      );
+    } catch {
+      /* the list is re-read on the next load; a failed drag isn't worth a dialog */
+    }
+  };
+
+  // Scoped to the project (the list key): a box can only be arranged among its own project's boxes,
+  // because a session may only sit in a group of the project its folder belongs to — moving the box
+  // elsewhere would strand everything in it. The hook's `from` is deliberately ignored; see
+  // draggedGroup above.
+  const groupDnd = useDragReorder((_from, to, list) => {
+    const project = projects.find((p) => p.id === list);
+    const moved = draggedGroup.current;
+    if (project && moved) void reorderGroups(project, moved, to);
+  });
 
   /**
    * Put a session under another in the list, or (with a null parent) take it back out — which leaves
@@ -2389,22 +2392,33 @@ export function SessionSidebar({
    * folder group's body — once you are looking at rows, a box you filled by hand and a box a path
    * filled are the same list. The box itself is the drop target that fills it.
    */
-  const renderVirtualGroup = (vg: VirtualGroup, project: Project) => {
+  const renderVirtualGroup = (vg: VirtualGroup, project: Project, index: number) => {
     const isCollapsed = collapsed.has(vg.key);
     return (
       <div
         key={vg.key}
-        {...sessionDnd.targetProps(
-          vg.key,
-          (id) => inProject(id, project),
-          (id) => canFile(id, project, vg.group.id),
-          (id) => void moveSessionToGroup(id, vg.group.id)
+        // Two drops land here: a session filed into this box, and another box arranged past it. The
+        // whole box is the target for both — a collapsed one is a single row, and aiming at a header
+        // hidden among the sessions it holds would be the fiddliest part of the gesture.
+        {...mergeProps(
+          sessionDnd.targetProps(
+            vg.key,
+            (id) => inProject(id, project),
+            (id) => canFile(id, project, vg.group.id),
+            (id) => void moveSessionToGroup(id, vg.group.id)
+          ),
+          groupDnd.targetProps(index, project.id)
         )}
         className={cn(
-          "rounded-md transition-colors",
+          "relative rounded-md transition-colors",
           sessionDnd.isOver(vg.key) && "bg-accent ring-1 ring-primary"
         )}
       >
+        {/* Where a dragged box would land — the same line a dragged row draws, for the same reason:
+            a box joins the order at a position, it doesn't get swallowed by the box it lands on. */}
+        {groupDnd.isOver(index, project.id) && (
+          <span className="pointer-events-none absolute inset-x-2 -top-px z-10 h-0.5 rounded-full bg-primary" />
+        )}
         <VirtualFolderHeader
           group={vg.group}
           count={vg.count}
@@ -2412,6 +2426,12 @@ export function SessionSidebar({
           onToggle={() => toggleGroup(vg.key)}
           activity={folderActivity(vg.items, activityIds)}
           onEdit={() => setEditing({ id: project.id, group: vg.group.id })}
+          // Only the header grabs. The rows inside have drags of their own, and a box that could be
+          // picked up anywhere would swallow them.
+          dragProps={mergeProps(groupDnd.handleProps(index, project.id), {
+            onDragStart: () => (draggedGroup.current = vg.group.id),
+            onDragEnd: () => (draggedGroup.current = null),
+          })}
           doneCount={doneIn(vg.items).length}
           onMarkSeen={() => onMarkSeen(doneIn(vg.items))}
           // A virtual folder only ever hangs off a project heading, so it always sits at depth 1.
@@ -2443,7 +2463,7 @@ export function SessionSidebar({
   const renderVirtualGroups = (project: Project | null) => {
     const gs = shownGroups(project);
     if (!project || gs.length === 0) return null;
-    return gs.map((vg) => renderVirtualGroup(vg, project));
+    return gs.map((vg, i) => renderVirtualGroup(vg, project, i));
   };
 
   // One folder group: its header and, unless folded, the fork tree of the sessions in it. Pulled out

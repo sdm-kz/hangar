@@ -6,7 +6,8 @@ import { groupIcon } from "@/lib/groupIcons";
 import { GroupAppearance } from "./GroupDialog";
 import { TemplateDialog } from "./TemplateDialog";
 import { folderName } from "@/lib/recentFolders";
-import { sameFolder } from "@/lib/projects";
+import { groupIdsAfterMove, sameFolder } from "@/lib/projects";
+import { useDragReorder } from "@/lib/useDragReorder";
 import { FolderPicker } from "./FolderPicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
-import { Ban, FolderPlus, Loader2, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Ban, FolderPlus, GripVertical, Loader2, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 
 /**
  * A project's settings: its name, its accent colour, and the folders it links.
@@ -133,6 +134,20 @@ export function ProjectDialog({
     if (!project || !next) return;
     if (await run(() => api.createProjectGroup(project.id, next))) setNewGroup("");
   };
+
+  /**
+   * Arrange the groups by dragging one past another, through the same helper the sidebar drops
+   * through — nothing is hidden here, so every group is its own visible slot.
+   */
+  const reorderGroups = (from: number, to: number) => {
+    if (!project) return;
+    const ids = project.groups.map((g) => g.id);
+    void run(() => api.reorderProjectGroups(project.id, groupIdsAfterMove(project.groups, ids, from, to)));
+  };
+
+  // The grip is the only thing that grabs: the row is mostly a text field, and a draggable row would
+  // fight the mouse every time a name is selected in it.
+  const groupDnd = useDragReorder(reorderGroups);
 
   const removeGroup = async (group: ProjectGroup) => {
     const ok = await confirm({
@@ -319,13 +334,33 @@ export function ProjectDialog({
               </p>
               {project.groups.length > 0 && (
                 <ul className="-mx-1 flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
-                  {project.groups.map((g) => {
+                  {project.groups.map((g, i) => {
                     const Icon = groupIcon(g.icon);
                     const tint = sessionColor(g.color);
                     const open = openGroup === g.id;
                     return (
-                      <li key={g.id} className="rounded-md border">
+                      <li
+                        key={g.id}
+                        {...groupDnd.targetProps(i)}
+                        className="relative rounded-md border"
+                      >
+                        {/* Where a dragged group would land: a line at the top of the row it lands
+                            on, as in the sidebar — the order set here is the order the boxes are
+                            drawn in there. On the row's own top edge rather than in the gap above it,
+                            because this list scrolls: a line one pixel outside the first row would be
+                            clipped away by the scroller, and "move it to the top" is the drop that
+                            most needs to show where it is going. */}
+                        {groupDnd.isOver(i) && (
+                          <span className="pointer-events-none absolute inset-x-1 top-0 h-0.5 rounded-full bg-primary" />
+                        )}
                         <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
+                          <span
+                            {...groupDnd.handleProps(i)}
+                            title="Drag to reorder"
+                            className="-ml-1 shrink-0 cursor-grab text-muted-foreground active:cursor-grabbing hover:text-foreground"
+                          >
+                            <GripVertical className="size-4" />
+                          </span>
                           <button
                             type="button"
                             onClick={() => setOpenGroup(open ? null : g.id)}
