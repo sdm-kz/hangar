@@ -467,6 +467,28 @@ export const TerminalPane = forwardRef<
       },
     });
     term.open(host);
+    // Copy what you select, the way a terminal emulator does — no Ctrl-C, which in here belongs to
+    // the program running in the terminal, and no right-click menu.
+    //
+    // On mouseup rather than xterm's own onSelectionChange, which fires on every cell the pointer
+    // crosses: that would put a hundred half-selections through the clipboard on the way to the one
+    // the user meant. Mouseup is also what makes the write legal — the Clipboard API only grants it
+    // inside a user gesture, and a selection-change tick is not one.
+    //
+    // Listened for on the document, not the host: a drag that starts in the terminal very often ends
+    // outside it (past the last row, over the sidebar), and a host-bound listener never hears that
+    // mouseup, so exactly the selections that run to the end of the buffer would fail to copy.
+    //
+    // Nothing is copied when there is no selection, so a plain click doesn't wipe the clipboard, and
+    // a drag the TUI is tracking for itself (mouse reporting on) never makes a selection here in the
+    // first place. Touch is excluded: xterm's selection runs on mouse events iOS only synthesizes for
+    // a tap, which is why that path has the Select-text overlay instead.
+    const onMouseUp = () => {
+      if (isTouch || !term.hasSelection()) return;
+      const text = term.getSelection();
+      if (text) void writeToClipboard(text);
+    };
+    document.addEventListener("mouseup", onMouseUp);
     // GPU renderer. The default DOM renderer rebuilds row elements on every scroll step, which is
     // what makes touch scrolling lag behind the finger on phones; WebGL repaints the whole grid in
     // one draw call. Must be loaded after open() (it needs the canvas parent). Mobile browsers drop
@@ -923,6 +945,7 @@ export const TerminalPane = forwardRef<
         retryTimerRef.current = null;
       }
       document.removeEventListener("paste", onPaste, true);
+      document.removeEventListener("mouseup", onMouseUp);
       themeSub();
       dataSub.dispose();
       wsRef.current = null;
