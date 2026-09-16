@@ -155,16 +155,20 @@ function folderLabel(dir: string): string {
  *
  * Out of the flow rather than in the line: a heading's line starts with its chevron, so an inline
  * dot would either hold a gutter open on every idle heading or shove the name sideways the moment
- * something inside woke up. Here it costs nothing and shifts nothing. The ring of page background
- * keeps it legible against a coloured glyph, and out of the flow it takes no pointer events — the
- * same trade the dot on a session row already makes.
+ * something inside woke up. Here it costs nothing and shifts nothing. Out of the flow it also takes
+ * no pointer events — the same trade the dot on a session row already makes.
+ *
+ * The badge is the glyph and nothing else: no padding, so the page background behind it stops at the
+ * glyph's own box instead of ringing it. A ring reads as a second shape at this size — a white halo
+ * around a 8px tick — and the offsets below are what keep the two apart, not a gap drawn around it.
+ * They carry the 2px the padding used to add, so the glyph itself sits exactly where it always did.
  *
  * Expects a positioned parent: wrap the icon, not the row.
  */
 function HeadingActivityMark({ activity }: { activity: Activity | null }) {
   if (!activity) return null;
   return (
-    <span className="pointer-events-none absolute -left-1 -top-1 rounded-full bg-background p-[2px] leading-none">
+    <span className="pointer-events-none absolute -left-0.5 -top-0.5 rounded-full bg-background leading-none">
       <ActivityMark activity={activity} />
     </span>
   );
@@ -423,29 +427,34 @@ function useMenuPlacement(minHeight = 160) {
 
 /** Collapsible folder header shared by the grouped session and recent lists. */
 /**
- * "Mark all seen" on a heading: clears the finished tick on every session under it without opening
- * any of them — for the afternoon you already know how those runs went, where opening each one just
- * to dismiss a tick is busywork. Offered only while there is something to clear, so its appearing is
- * itself the signal, and it leads the heading's hover actions, where the eye already is after reading
- * the tick on the icon.
+ * "Mark seen": clears the finished tick without opening anything — on a heading, every session under
+ * it; on a session row, that one row. For the afternoon you already know how those runs went, where
+ * opening each session just to dismiss a tick is busywork. Offered only while there is something to
+ * clear, so its appearing is itself the signal, and it leads the hover actions, where the eye already
+ * is after reading the tick.
  *
  * The hover class is looked up rather than built: each heading reveals its actions under its own
- * named group, and Tailwind only generates classes it can find spelled out in the source.
+ * named group (a row uses the unnamed one it already has), and Tailwind only generates classes it
+ * can find spelled out in the source.
  */
 const MARK_SEEN_REVEAL = {
   ph: "group-hover/ph:inline-flex",
   vf: "group-hover/vf:inline-flex",
   gh: "group-hover/gh:inline-flex",
+  row: "group-hover:inline-flex",
 } as const;
 
 function MarkSeenButton({
   count,
   onMarkSeen,
   reveal,
+  label,
 }: {
   count: number;
   onMarkSeen?: () => void;
   reveal: keyof typeof MARK_SEEN_REVEAL;
+  /** Tooltip, where "n finished sessions" isn't what the button is about — a single row's tick. */
+  label?: string;
 }) {
   if (!onMarkSeen || count <= 0) return null;
   return (
@@ -455,7 +464,7 @@ function MarkSeenButton({
         e.stopPropagation();
         onMarkSeen();
       }}
-      title={`Mark ${count} finished session${count === 1 ? "" : "s"} as seen`}
+      title={label ?? `Mark ${count} finished session${count === 1 ? "" : "s"} as seen`}
       className={cn(
         "hidden shrink-0 text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 [@media(hover:none)]:inline-flex",
         MARK_SEEN_REVEAL[reveal]
@@ -2213,10 +2222,11 @@ export function SessionSidebar({
             gutter would have to stay reserved on every idle row — most of them — just so the title
             wouldn't shift when the mark appears. What it can say lives in ACTIVITY_MARK and is drawn
             by ActivityMark, so this row and its folder header always say it the same way. It sits ON
-            the colour band deliberately, with a ring of the page background around it so the two
-            colours stay legible where they meet. */}
+            the colour band deliberately, and with no padding of its own: the background stops at the
+            glyph rather than ringing it, which at this size read as a halo rather than as breathing
+            room. The offset carries the 2px that padding used to hold, so the mark has not moved. */}
         {!restorable && activity && (
-          <span className="pointer-events-none absolute left-0.5 top-0.5 rounded-full bg-background p-[2px] leading-none">
+          <span className="pointer-events-none absolute left-1 top-1 rounded-full bg-background leading-none">
             <ActivityMark activity={activity} label={detail ?? undefined} />
           </span>
         )}
@@ -2304,6 +2314,21 @@ export function SessionSidebar({
             )}
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
+            {/* This row's own tick, cleared where it is drawn. A heading has been able to do this
+                for the whole set under it; a single finished session could only be dismissed by
+                opening it, which is the one thing you don't want to do to the ones you already know
+                the ending of — and opening it to dismiss a tick costs a terminal attach and takes
+                the main area off whatever you were reading. Shown only while this row is the one
+                ticking: `activity` is what the corner mark says, so the button appears exactly when
+                there is a mark to answer for and goes when it does. */}
+            {activity === "done" && editingId !== s.id && (
+              <MarkSeenButton
+                count={1}
+                reveal="row"
+                label="Mark as seen"
+                onMarkSeen={() => onMarkSeen([s.id])}
+              />
+            )}
             {/* Postponed-message counter, so a stashed pool is discoverable from the list. It sits
                 left of the menu button, which holds the right edge of every row. */}
             {s.postponedCount > 0 && (
