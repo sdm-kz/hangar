@@ -453,6 +453,7 @@ internal static class Program
             // id it nests under comes from a script's environment. A stale one would otherwise be
             // written as a link to nothing and the session would come out at the top level, looking
             // like the request was honoured — so it is refused here, where the caller can still see why.
+            // A live one puts the new session in its host's virtual folder too; see CreateAsync.
             if (!string.IsNullOrWhiteSpace(req.NestedUnderId) && !mgr.Exists(req.NestedUnderId))
                 return Results.BadRequest(new { error = $"No session '{req.NestedUnderId}' to put this one under." });
             try
@@ -482,7 +483,8 @@ internal static class Program
 
         // Fork a session: launch a new one in the same folder that branches this session's conversation
         // (claude --resume <convo> --fork-session), leaving the original untouched. The new session
-        // records its parent so the UI can nest it underneath.
+        // records its parent so the UI can nest it underneath, and is filed into the same project and
+        // virtual folder as the session it branched from.
         app.MapPost("/api/sessions/{id}/fork", async (string id, ForkRequest body, SessionManager mgr) =>
         {
             try

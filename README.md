@@ -58,7 +58,9 @@ The web UI is a **session manager with a full terminal**:
   a folder that later leaves the project quietly hands its sessions back to the folder grouping,
   and putting the folder back brings the grouping back with it. Membership is keyed by the
   conversation, like a pin, so it survives reopening the session, and lives server-side alongside
-  the project.
+  the project. A session launched from one that is filed — a fork, or a child session started under
+  it — goes into the same box, so a branch is drawn under the session it came from instead of
+  falling out of it into the folder grouping.
 - **Session templates** — a saved way to start the *same kind* of session again: a project, a folder,
   a prompt, and the launch settings that go with them. The same errands come back week after week —
   *look into this log entry*, *review this support request*, *ship this Jira issue* — and each one is

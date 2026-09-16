@@ -171,6 +171,18 @@ public sealed class SessionManager : IDisposable
     private string? GroupIdOf(string? conversationId, string sessionId) =>
         _projects.GroupOf(conversationId) ?? _projects.GroupOf(ProjectStore.SessionKey(sessionId));
 
+    /// <summary>
+    /// The virtual folder a session is filed in, asked by id alone — live or Restorable, and under
+    /// whichever of its keys holds the membership. What a new session launched from an existing one
+    /// (a fork, a child session) inherits.
+    /// </summary>
+    private string? GroupIdOf(string id)
+    {
+        foreach (var key in GroupKeys(id))
+            if (_projects.GroupOf(key) is { } g) return g;
+        return null;
+    }
+
     /// <summary>Every key a session's membership could be filed under; the first is the one it is written to.</summary>
     private IReadOnlyList<string> GroupKeys(string id)
     {
@@ -620,14 +632,31 @@ public sealed class SessionManager : IDisposable
         }
         SavePersisted();
         RaiseChanged();
-        return session.ToInfo(ConversationId(session));
+
+        var info = session.ToInfo(ConversationId(session));
+        // A session launched under another — new-claude-child-session.ps1 posts NestedUnderId — is
+        // drawn under it, and a row is only ever drawn under something in its own list: filed in a
+        // virtual folder its host is not in (which includes being filed in none at all), it comes out
+        // at the top level of the other list and the nesting the caller asked for is simply gone. So
+        // it joins its host's box, for the same reason a fork does — see ForkAsync.
+        //
+        // Only when it isn't already filed somewhere itself, which is what keeps a reopen from
+        // dragging a session back: RestoreAsync relaunches with the same NestedUnderId, and a
+        // conversation that was filed by hand is still filed under the id it resumes with.
+        if (req.NestedUnderId is { } host
+            && GroupIdOf(ConversationId(session), session.Id) is null
+            && GroupIdOf(host) is { } hostGroup
+            && SetGroup(new[] { session.Id }, hostGroup) is not null)
+            info = info with { GroupId = hostGroup };
+        return info;
     }
 
     /// <summary>
     /// Branch a session's conversation into a new one: relaunch <c>claude</c> in the same folder with
     /// the same settings, resuming the session's conversation under <c>--fork-session</c> so Claude
     /// replays its history into a fresh conversation id. The original is left running and untouched;
-    /// the fork records its parent so the UI can nest it underneath.
+    /// the fork records its parent so the UI can nest it underneath, and joins the virtual folder the
+    /// parent was filed into so the branch stays where the user put it.
     /// Works for a live session and for a Restorable entry from a previous run. Returns null when the
     /// id is unknown; throws when we don't (yet) know a conversation id to branch from.
     /// </summary>
@@ -664,10 +693,13 @@ public sealed class SessionManager : IDisposable
         }
         else return null;
 
+        // Where the parent is filed by hand, before anything is launched: the fork joins it below.
+        var groupId = GroupIdOf(id);
+
         var forkName = ClaudeSession.SanitizeName(name);
         if (forkName.Length == 0) forkName = DefaultForkName(parentName);
 
-        return await CreateAsync(new CreateSessionRequest(
+        var fork = await CreateAsync(new CreateSessionRequest(
             WorkingDirectory: workingDirectory,
             Name: forkName,
             RemoteControl: remoteControl,
@@ -681,6 +713,20 @@ public sealed class SessionManager : IDisposable
             ForkSession: true,
             ParentSessionId: id,
             ParentName: parentName));
+
+        if (groupId is null) return fork;
+
+        // A fork belongs where its parent belongs. The project comes for free — it is decided by the
+        // working directory, which the fork inherits — but a virtual folder is filed by hand and keyed
+        // per conversation, and a fork's conversation is brand new. Unfiled, a branch of a filed
+        // session would be drawn outside its parent's box, which is a different list: the nesting that
+        // makes it a fork at all would come apart in the same move. Filed under the `session:` fallback
+        // key and folded into the real one once the fork reports its conversation id, exactly as a
+        // grouping set by hand in those first seconds is (see OnClaudeSessionIdCaptured).
+        //
+        // A group that has since stopped applying to the folder files nothing, and the fork simply
+        // shows under its folder — SetGroup refuses it rather than writing a membership nothing reads.
+        return SetGroup(new[] { fork.Id }, groupId) is null ? fork : fork with { GroupId = groupId };
     }
 
     /// <summary>
