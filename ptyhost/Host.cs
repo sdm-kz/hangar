@@ -102,6 +102,10 @@ public static class Host
         terminal.RenameCommandDetected += name => server.Broadcast(new PtyControl { Type = "renamed", Name = name });
         terminal.ColorCommandDetected += color => server.Broadcast(new PtyControl { Type = "color", Color = color });
         terminal.RemoteUrlDetected += url => server.Broadcast(new PtyControl { Type = "remoteUrl", RemoteUrl = url });
+        // The web app keeps a screen model of its own, fed by the same bytes. It has to turn at the
+        // point in that stream where this one turned, not when it asked — so the size it settles on is
+        // pushed, not assumed.
+        terminal.SizeApplied += (cols, rows) => server.Broadcast(new PtyControl { Type = "size", Cols = cols, Rows = rows });
 
         // Two independent reasons to stand down, and the host must wake on EITHER: the child ending
         // by itself, or a client asking us to stop. (Waiting on the child alone deadlocks a Stop from

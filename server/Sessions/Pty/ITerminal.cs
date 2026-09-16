@@ -25,6 +25,14 @@ public interface ITerminal : IDisposable
     /// <summary>Attach a viewer: the current scrollback plus a live stream of everything after it.</summary>
     TerminalSubscription Subscribe();
 
+    /// <summary>
+    /// The screen as it stands, as the sequences that reproduce it — the same thing a viewer is given
+    /// when it attaches. Asked for again when a viewer has fallen behind and lost output: a gap in a
+    /// VT stream is not something a terminal can recover from on its own, and a screen it can be
+    /// handed outright is better than any amount of redrawing.
+    /// </summary>
+    byte[] Snapshot();
+
     /// <summary>Write to the child's stdin (a keystroke, a paste, the watchdog's recovery sequence).</summary>
     ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct);
 
@@ -93,7 +101,7 @@ public interface ITerminal : IDisposable
 /// </remarks>
 public sealed class TerminalSubscription(
     byte[] replay, ChannelReader<byte[]> reader, Action unsubscribe, Action<short, short> resize,
-    Action touch) : IDisposable
+    Action touch, Func<bool> takeDropped) : IDisposable
 {
     public byte[] Replay { get; } = replay;
     public ChannelReader<byte[]> Reader { get; } = reader;
@@ -112,6 +120,15 @@ public sealed class TerminalSubscription(
     /// exactly the state this whole arrangement exists to avoid.
     /// </summary>
     public void Touch() => touch();
+
+    /// <summary>
+    /// Whether this viewer has had output dropped since the last time anyone asked — and clearing the
+    /// flag in the asking. A viewer that stops draining (a phone whose tab is frozen, a socket under
+    /// backpressure) loses the oldest chunks rather than holding the session up, which leaves a hole
+    /// in its VT stream: rows that never arrived, and possibly an escape sequence cut in half. The
+    /// repair is a fresh snapshot, and this is how the socket knows to send one.
+    /// </summary>
+    public bool TakeDropped() => takeDropped();
 
     /// <summary>
     /// The size the child is actually being drawn at, once it has been worked out: answered whenever

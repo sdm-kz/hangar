@@ -52,7 +52,21 @@ public static class TerminalSocket
                 try
                 {
                     await foreach (var chunk in sub.Reader.ReadAllAsync(cts.Token))
+                    {
+                        // This viewer fell behind far enough to lose output — a frozen phone tab, a
+                        // socket under backpressure — and a VT stream with a hole in it does not heal:
+                        // the rows that went missing never arrive, and an escape sequence cut in half
+                        // takes the next few bytes with it. Everything still queued predates the state
+                        // we are about to send, so drop it and hand over the screen as it stands.
+                        if (sub.TakeDropped())
+                        {
+                            while (sub.Reader.TryRead(out _)) { }
+                            await SendSizeAsync(ws, sendGate, term.Cols, term.Rows, cts.Token);
+                            await SendAsync(ws, sendGate, term.Snapshot(), WebSocketMessageType.Binary, cts.Token);
+                            continue;
+                        }
                         await SendAsync(ws, sendGate, chunk, WebSocketMessageType.Binary, cts.Token);
+                    }
                 }
                 catch { /* cancelled or socket gone — the read loop below handles teardown */ }
             }, cts.Token);

@@ -22,14 +22,13 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 /// </remarks>
 public sealed class PtyHostClient : ITerminal
 {
-    private const int RingCapacity = 512 * 1024; // recent VT bytes kept for reconnect replay
-
     private readonly NamedPipeClientStream _pipe;
     private readonly ILogger _log;
-    // Seeded from the scrollback the host replayed at handshake and grown with everything since, so a
-    // browser tab that opens later gets the whole picture — the host replays per CLIENT, not per
-    // viewer. (The host keeps its own ring; this one exists purely to fan out to several tabs.)
-    private readonly RingBuffer _ring = new(RingCapacity);
+    // The screen the child has drawn: seeded from the snapshot the host sent at handshake and kept up
+    // to date with everything since, so a browser tab that opens later can be handed the screen as it
+    // stands — the host snapshots per CLIENT, not per viewer. (The host keeps its own model; this one
+    // exists purely to fan out to several tabs without a round-trip for each.)
+    private readonly ScreenModel _screen;
     private readonly Dictionary<Guid, Viewer> _subs = new();
     private readonly object _lock = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -100,12 +99,16 @@ public sealed class PtyHostClient : ITerminal
         // Absent on a host built before the repaint control existed, which is exactly what it has to
         // mean: fall back to nudging (see RequestRepaint).
         _canRepaint = welcome.CanRepaint;
+        _canSnapshot = welcome.CanSnapshot;
         _remoteUrl = welcome.RemoteUrl;
         _cols = _wantCols = (short)Math.Max(1, welcome.Cols);
         _rows = _wantRows = (short)Math.Max(1, welcome.Rows);
-        // Seed the ring from the replay, so a viewer attaching now sees the screen as it stands rather
-        // than only what happens to arrive from here on.
-        if (replay.Length > 0) _ring.Append(replay);
+        // Seed the model from what the host sent, so a viewer attaching now sees the screen as it
+        // stands rather than only what happens to arrive from here on. The seed is VT bytes — a
+        // snapshot from a current host, a raw scrollback ring from one built before this existed —
+        // and either way the way to take it in is to play it through the terminal.
+        _screen = new ScreenModel(_cols, _rows);
+        if (replay.Length > 0) _screen.Write(replay);
     }
 
     /// <summary>
@@ -220,8 +223,16 @@ public sealed class PtyHostClient : ITerminal
     {
         lock (_lock)
         {
-            _ring.Append(chunk);
-            foreach (var v in _subs.Values) v.Writer.TryWrite(chunk);
+            _screen.Write(chunk);
+            foreach (var v in _subs.Values)
+            {
+                // The queue is bounded and drops its oldest when full, so one viewer that has stopped
+                // reading degrades only itself. Note the loss: a hole in a VT stream is not something
+                // a terminal recovers from, and the socket repairs it with a fresh snapshot when the
+                // viewer starts draining again.
+                if (v.Reader.Count >= ViewerQueueDepth) v.Dropped = true;
+                v.Writer.TryWrite(chunk);
+            }
         }
     }
 
@@ -241,6 +252,17 @@ public sealed class PtyHostClient : ITerminal
 
             case "remoteUrl" when !string.IsNullOrEmpty(msg.RemoteUrl):
                 lock (_lock) _remoteUrl = msg.RemoteUrl;
+                break;
+
+            // The host has moved the pseudoconsole. It arrives in the same stream as the output, so
+            // turning the model here puts the turn where the host put it rather than where we asked
+            // for it — see the note in Nudge. Only a size the viewers agreed on: the repaint nudge
+            // announces the column it passes through on the way back, and the model must not follow
+            // it there and lose a column off every row for a width nothing is drawn at.
+            case "size" when msg.Cols > 0 && msg.Rows > 0:
+                lock (_lock)
+                    if (msg.Cols == _wantCols && msg.Rows == _wantRows)
+                        _screen.Resize(msg.Cols, msg.Rows);
                 break;
 
             // Pushed on every busy / waiting / watchdog transition, and on a heartbeat besides, so the
@@ -278,9 +300,13 @@ public sealed class PtyHostClient : ITerminal
     }
 
     /// <summary>One attached viewer: where its output goes, and how big a grid it has to put it in.</summary>
-    private sealed class Viewer(ChannelWriter<byte[]> writer)
+    private sealed class Viewer(Channel<byte[]> channel)
     {
-        public ChannelWriter<byte[]> Writer { get; } = writer;
+        public ChannelWriter<byte[]> Writer { get; } = channel.Writer;
+        public ChannelReader<byte[]> Reader { get; } = channel.Reader;
+
+        /// <summary>Set when this viewer's queue was full and a chunk was dropped (see OnOutput).</summary>
+        public bool Dropped;
         // Zero until the viewer has said, and zero again once it says it has stopped looking. An
         // unspoken size joins no minimum — a tab that has attached but not yet measured itself must
         // not shrink the session to whatever it would default to, and neither must a hidden one.
@@ -298,6 +324,12 @@ public sealed class PtyHostClient : ITerminal
     /// </summary>
     private const long ViewerQuietMs = 60_000;
 
+    /// <summary>
+    /// How many output chunks a viewer may fall behind by before the oldest are dropped. Also the
+    /// mark that says a drop has happened, which is what the snapshot repair keys off.
+    /// </summary>
+    private const int ViewerQueueDepth = 2048;
+
     /// <summary>Attach a viewer: the current scrollback plus a live stream of subsequent output.</summary>
     public TerminalSubscription Subscribe()
     {
@@ -306,13 +338,13 @@ public sealed class PtyHostClient : ITerminal
         {
             // Bounded + DropOldest so a stalled viewer degrades only itself, never the shared reader.
             var ch = Channel.CreateBounded<byte[]>(
-                new BoundedChannelOptions(2048) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
+                new BoundedChannelOptions(ViewerQueueDepth) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
             var id = Guid.NewGuid();
-            var viewer = new Viewer(ch.Writer);
+            var viewer = new Viewer(ch);
             _subs[id] = viewer;
             if (_completed) ch.Writer.TryComplete();
             sub = new TerminalSubscription(
-                _ring.Snapshot(), ch.Reader,
+                _screen.Snapshot(), ch.Reader,
                 unsubscribe: () =>
                 {
                     lock (_lock) _subs.Remove(id);
@@ -344,9 +376,29 @@ public sealed class PtyHostClient : ITerminal
                     // while this one was talking. The heartbeat is what makes the second case land
                     // without anyone having to do anything.
                     AgreeSize(wasQuiet ? viewer : null);
+                },
+                takeDropped: () =>
+                {
+                    lock (_lock)
+                    {
+                        var dropped = viewer.Dropped;
+                        viewer.Dropped = false;
+                        return dropped;
+                    }
                 });
             viewer.Handle = sub;
         }
+        // A session started before this build is still served by the host it was started with, and
+        // that host can only hand over the old byte tape — which may end mid-frame, leaving the
+        // screen this viewer gets short of whatever the child has not redrawn since. The browser no
+        // longer asks for a redraw on attach (a snapshot needs none), so ask on its behalf for the
+        // hosts that need it. It costs those sessions the width nudge it always cost them; sessions
+        // started from here on pay nothing.
+        // Nothing to redraw for a child that has already gone, and asking costs one: against an older
+        // host the ask is performed as a width nudge, on a screen frozen at the session's last frame.
+        bool ended;
+        lock (_lock) ended = _completed;
+        if (!_canSnapshot && !AlreadyExited && !ended) RequestRepaint();
         return sub;
     }
 
@@ -386,6 +438,12 @@ public sealed class PtyHostClient : ITerminal
         foreach (var t in tell) t.SizeChanged?.Invoke(cols, rows);
     }
 
+    /// <summary>The screen as it stands (see <see cref="ITerminal.Snapshot"/>).</summary>
+    public byte[] Snapshot()
+    {
+        lock (_lock) return _screen.Snapshot();
+    }
+
     public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct) =>
         SendAsync(PtyFrameType.Input, data, ct);
 
@@ -409,6 +467,10 @@ public sealed class PtyHostClient : ITerminal
     private const long ResizeRepaintMs = 3000;
     private long _lastResizeTick;
     private readonly bool _canRepaint;
+    // Whether the scrollback this host hands over is a screen snapshot. An older host predates the
+    // screen model and can only send the byte tape, which is exactly the case a viewer still needs a
+    // redraw for (see Subscribe).
+    private readonly bool _canSnapshot;
 
     public bool IsRepaintingAfterResize =>
         Environment.TickCount64 - Volatile.Read(ref _lastResizeTick) < ResizeRepaintMs;
@@ -450,6 +512,12 @@ public sealed class PtyHostClient : ITerminal
             if (cols == _cols && rows == _rows) return;
             _cols = cols;
             _rows = rows;
+            // A current host answers with a `size` control once the pseudoconsole has actually moved,
+            // and the model turns there — at the same point in the byte stream the host's own model
+            // turned at. Moving it here instead would lay everything still in flight, drawn for the
+            // old width, into the new grid: wrapped rows, and a copy of each in the history a later
+            // viewer is handed. An older host says nothing, so for those the ask is all we have.
+            if (!_canSnapshot) _screen.Resize(cols, rows);
         }
         // After the early return, so a viewer that reattaches at the size the terminal already has
         // repaints nothing and blinds nothing.

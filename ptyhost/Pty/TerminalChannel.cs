@@ -6,28 +6,32 @@ using ClaudeWeb.Pty;
 namespace ClaudeWeb.PtyHost.Pty;
 
 /// <summary>
-/// Owns a <see cref="PtySession"/> and turns its single output stream into a broadcast: a bounded
-/// scrollback ring (so late/re-connecting viewers get recent screen state) fanned out to any number
-/// of subscribers. Input from any viewer is written back to the one PTY. This gives tmux-attach
-/// semantics — a session can be viewed from several browser tabs/devices at once.
+/// Owns a <see cref="PtySession"/> and turns its single output stream into a broadcast: a model of
+/// the screen the child has drawn (so a late or re-connecting viewer can be handed that screen)
+/// fanned out to any number of subscribers. Input from any viewer is written back to the one PTY.
+/// This gives tmux-attach semantics — a session can be viewed from several browser tabs and devices
+/// at once, and each of them starts from the same screen.
 /// </summary>
 /// <remarks>
 /// This class used to live in the web app, which made "detach" and "kill" the same thing: the app
 /// owned the pseudoconsole, so restarting it took every session down. It is unchanged logic in a new
 /// home — the pty host — and the web app now reaches it over a named pipe
-/// (<c>ClaudeWeb.Server.Sessions.Pty.PtyHostClient</c>). The ring, the busy heuristic and the
+/// (<c>ClaudeWeb.Server.Sessions.Pty.PtyHostClient</c>). The screen, the busy heuristic and the
 /// <c>/rename</c> · <c>/color</c> · remote-URL sniffers all have to run here: a web app that restarts
 /// mid-session must find the screen intact and must not have missed a rename while it was away.
 /// </remarks>
 public sealed partial class TerminalChannel : IDisposable
 {
-    private const int RingCapacity = 512 * 1024; // recent VT bytes kept for reconnect replay
     private const int RecentCapacity = 32 * 1024; // small tail scanned for on-screen text (watchdog)
 
     private readonly PtySession _pty;
-    private readonly RingBuffer _ring = new(RingCapacity);
+    // The screen the child has drawn, kept by running its output through a terminal of our own. What
+    // an attaching viewer gets is a snapshot of this — see ScreenModel for why a recording of the
+    // bytes cannot be replayed, and what that was doing to the scrollback.
+    private readonly ScreenModel _screen;
     // A short tail of the most recent raw VT bytes, ANSI-stripped on demand so the watchdog can scan
-    // roughly the current screen for an error banner without re-processing the whole 512 KB ring.
+    // roughly the current screen for an error banner. Kept raw rather than read off the screen model:
+    // the watchdog matches on text as it was streamed, which is not quite the text as it was laid out.
     private readonly RingBuffer _recentRaw = new(RecentCapacity);
     private readonly Dictionary<Guid, ChannelWriter<byte[]>> _subs = new();
     private readonly object _lock = new();
@@ -323,9 +327,10 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised once the claude.ai deep link has been sniffed out of the child's output.</summary>
     public event Action<string>? RemoteUrlDetected;
 
-    private TerminalChannel(PtySession pty)
+    private TerminalChannel(PtySession pty, short cols, short rows)
     {
         _pty = pty;
+        _screen = new ScreenModel(cols, rows);
         // Surfaced to the host so it can stamp the exit code into the state file and stand down.
         _pty.Exited += code => Exited?.Invoke(code);
     }
@@ -334,7 +339,7 @@ public sealed partial class TerminalChannel : IDisposable
         short cols, short rows, IReadOnlyDictionary<string, string> environment, bool verbatim = false)
     {
         var pty = PtySession.Start(fileName, args, cwd, cols, rows, environment, verbatim);
-        var channel = new TerminalChannel(pty) { Cols = cols, Rows = rows };
+        var channel = new TerminalChannel(pty, cols, rows) { Cols = cols, Rows = rows };
         // A dedicated blocking-read thread bridges the (synchronous) PTY pipe to async subscribers.
         var t = new Thread(channel.ReadPump) { IsBackground = true, Name = $"pty-read-{pty.ProcessId}" };
         t.Start();
@@ -362,7 +367,7 @@ public sealed partial class TerminalChannel : IDisposable
                 string? url;
                 lock (_lock)
                 {
-                    _ring.Append(chunk);
+                    _screen.Write(chunk);
                     _recentRaw.Append(chunk);
                     foreach (var w in _subs.Values) w.TryWrite(chunk);
                     url = SniffRemoteUrl(buf, n);
@@ -417,14 +422,17 @@ public sealed partial class TerminalChannel : IDisposable
     {
         lock (_lock)
         {
-            var replay = _ring.Snapshot();
+            var replay = _screen.Snapshot();
             // Bounded + DropOldest so a stalled viewer degrades only itself, never the shared reader.
             var ch = System.Threading.Channels.Channel.CreateBounded<byte[]>(
                 new BoundedChannelOptions(2048) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });
             var id = Guid.NewGuid();
             _subs[id] = ch.Writer;
             if (_completed) ch.Writer.TryComplete();
-            return new Subscription(replay, ch.Reader, () =>
+            // The size goes with the snapshot, taken under the same lock: read afterwards it could
+            // be a size the snapshot was not drawn at, and the client would lay it out to the wrong
+            // width — which nothing later corrects, because nothing else tells the client the width.
+            return new Subscription(replay, Cols, Rows, ch.Reader, () =>
             {
                 lock (_lock) _subs.Remove(id);
                 ch.Writer.TryComplete();
@@ -472,13 +480,28 @@ public sealed partial class TerminalChannel : IDisposable
             if (cols == Cols && rows == Rows) return;
             Cols = cols;
             Rows = rows;
+            // The model moves with the pseudoconsole, but only to a size somebody is actually being
+            // drawn at. The repaint nudge passes through cols-1 on its way back to the real width,
+            // and a narrowing resize costs the model the last column of every row — for a width the
+            // child never draws at, and so never redraws.
+            if (cols == _wantCols && rows == _wantRows) _screen.Resize(cols, rows);
+            // Stamped only for a size that actually changed — the early return above is what makes a
+            // same-size resize free, and it must stay free: a viewer that reattaches without changing
+            // the size has caused no repaint and should not blind the busy signal for two seconds.
+            Volatile.Write(ref _lastResizeTick, Environment.TickCount64);
+            // Inside the lock, with the record of it. Two threads resizing at once — the repaint's
+            // restore against a viewer's resize — could otherwise write the sizes in one order and
+            // move the pseudoconsole in the other, leaving the model and the child disagreeing about
+            // the width for as long as the session lasts.
+            _pty.Resize(cols, rows);
         }
-        // Stamped only for a size that actually changed — the early return above is what makes a
-        // same-size resize free, and it must stay free: a viewer that reattaches without changing
-        // the size has caused no repaint and should not blind the busy signal for two seconds.
-        Volatile.Write(ref _lastResizeTick, Environment.TickCount64);
-        _pty.Resize(cols, rows);
+        // Outside the lock: the web app keeps a model of its own, fed by the same bytes, and it has
+        // to turn at the point in that stream where this one turned rather than when it asked.
+        SizeApplied?.Invoke(cols, rows);
     }
+
+    /// <summary>Raised when the pseudoconsole has actually moved, so clients can follow (see above).</summary>
+    public event Action<short, short>? SizeApplied;
 
     /// <summary>
     /// Make the child redraw its whole screen, for a viewer that has just attached.
@@ -531,9 +554,15 @@ public sealed partial class TerminalChannel : IDisposable
     public void Dispose() => _pty.Dispose();
 
     /// <summary>A viewer's handle: initial <see cref="Replay"/> scrollback then a live <see cref="Reader"/>.</summary>
-    public sealed class Subscription(byte[] replay, ChannelReader<byte[]> reader, Action unsubscribe) : IDisposable
+    public sealed class Subscription(byte[] replay, short cols, short rows, ChannelReader<byte[]> reader, Action unsubscribe) : IDisposable
     {
         public byte[] Replay { get; } = replay;
+
+        /// <summary>The grid the <see cref="Replay"/> snapshot was drawn at.</summary>
+        public short Cols { get; } = cols;
+
+        /// <summary>The height the <see cref="Replay"/> snapshot was drawn at.</summary>
+        public short Rows { get; } = rows;
         public ChannelReader<byte[]> Reader { get; } = reader;
         public void Dispose() => unsubscribe();
     }

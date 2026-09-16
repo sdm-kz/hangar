@@ -146,10 +146,11 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
                 Type = "welcome",
                 Protocol = PtyFrame.Protocol,
                 CanRepaint = true,
+                CanSnapshot = true,
                 ChildPid = terminal.ProcessId,
                 ChildStartTicks = Host.ChildStartTicks,
-                Cols = terminal.Cols,
-                Rows = terminal.Rows,
+                Cols = sub.Cols,   // the size the snapshot above was drawn at, not whatever it is now
+                Rows = sub.Rows,
                 RemoteUrl = terminal.RemoteUrl,
                 Exited = Host.ChildExitCode is not null,
                 ExitCode = Host.ChildExitCode ?? 0,

@@ -39,6 +39,17 @@ public sealed record PtyControl
     /// </summary>
     public bool CanRepaint { get; init; }
 
+    /// <summary>
+    /// welcome: the scrollback frame that follows is a <see cref="ScreenModel"/> snapshot — the
+    /// screen as it stands — rather than a recording of the last 512 KB the child wrote.
+    ///
+    /// The same kind of capability flag as <see cref="CanRepaint"/>, and for the same reason: the
+    /// hosts serving sessions started before this build keep running, and they can only hand over
+    /// the old tape. A viewer attaching to one of those still needs the redraw that a snapshot
+    /// otherwise makes unnecessary, so the web app asks for it on their behalf.
+    /// </summary>
+    public bool CanSnapshot { get; init; }
+
     /// <summary>welcome: the pid of the process attached to the pseudoconsole.</summary>
     public int ChildPid { get; init; }
     /// <summary>welcome: the child's start time, pinning the exact process against PID reuse.</summary>

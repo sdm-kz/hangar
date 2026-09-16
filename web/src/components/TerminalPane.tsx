@@ -595,16 +595,21 @@ export const TerminalPane = forwardRef<
       ws.send(JSON.stringify({ type: "resize", cols: 0, rows: 0 }));
     };
 
-    // Ask for a full repaint. A fresh xterm reattaching at the size the PTY already has gets the
-    // replayed scrollback and no SIGWINCH — the server shares one ConPTY across viewers and ignores
-    // a same-size resize — which leaves Claude's input box unpainted until something resizes.
+    // Ask for a full repaint: the host nudges the width so Ink draws its whole frame again.
     //
-    // This used to arrange the redraw from here, by sending two resizes it didn't actually want
-    // (cols-1, then back). It worked, but out here a repaint is indistinguishable from Claude
-    // working: the activity heuristic reads any output as a turn, so opening an idle session
-    // reported it busy and then finished. Naming the intent instead lets the pty host perform the
-    // redraw and, knowing what the burst is, not count it. Older hosts have no such control, so the
-    // server still nudges on their behalf — either way, one message from here.
+    // Deliberately rare. A redraw is the child rewriting what is on screen, and it can only erase
+    // the rows it still owns — anything that has scrolled above the viewport keeps its old copy, so
+    // a repaint of a transcript taller than the screen leaves that copy behind for good. Attaching
+    // no longer needs one (the server sends the screen, not the bytes that drew it), which leaves
+    // two callers: the narrowing case below, where output already on the wire was drawn for a wider
+    // grid and lands here wrapped, and the redraw button, where the user is telling us the screen is
+    // wrong and a stale row is the thing being complained about.
+    //
+    // Named as an intent rather than performed from here — two resizes we do not want — because out
+    // here a repaint is indistinguishable from Claude working: the activity heuristic reads any
+    // output as a turn, so opening an idle session used to report it busy and then finished. The pty
+    // host knows what the burst is and does not count it. Older hosts have no such control, so the
+    // server nudges on their behalf — either way, one message from here.
     const requestRepaint = () => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (host.clientWidth === 0 || host.clientHeight === 0) return;
@@ -620,10 +625,13 @@ export const TerminalPane = forwardRef<
       sendResize();
       requestAnimationFrame(sendResize);
       setTimeout(sendResize, 150);
-      setTimeout(() => {
-        sendResize();
-        requestRepaint(); // once the size has settled, ask for a fresh full-screen repaint
-      }, 400);
+      // No repaint here any more. What the server sends on attach is a snapshot of the screen —
+      // history, every visible row, the cursor, the modes — so there is nothing left unpainted for a
+      // redraw to fill in. Asking for one anyway is what used to make the session's width flicker
+      // (cols-1 and back) on every attach, and a TUI redrawing a transcript taller than the screen
+      // cannot erase the copy that has scrolled above it: that is where the duplicated paragraphs in
+      // the scrollback came from. The size still has to settle, so the refits stay.
+      setTimeout(sendResize, 400);
     };
     const decoder = new TextDecoder();
     ws.onmessage = (e) => {
@@ -902,19 +910,13 @@ export const TerminalPane = forwardRef<
       sendResize();
       requestAnimationFrame(sendResize);
       setTimeout(sendResize, 150);
-      // One PTY serves every viewer of a session, so the same session open on a second machine has
-      // been driving its size while we were away, and Claude last painted its frame to fit THAT
-      // screen. Re-asserting our own size usually changes nothing at the PTY -- often it is already
-      // the size we are asking for -- so there is no SIGWINCH, no repaint, and we come back to
-      // someone else's screen laid into our grid: blank rows under a frame drawn for fewer, or text
-      // running off the edge of one drawn for more. Nudging the size forces the redraw.
-      //
-      // Only from the live tail. Scrolled back into history, a reflow moves the ground under what
-      // you were reading, which is the reason this used to be skipped here altogether.
-      setTimeout(() => {
-        const buf = term.buffer.active;
-        if (buf.baseY - buf.viewportY <= 2) requestRepaint();
-      }, 250);
+      // One PTY serves every viewer of a session, so the same session open on a second machine may
+      // have been driving its size while we were away. Re-asserting our own size above settles that:
+      // if it changes the agreed grid the child redraws for it, and if it does not, the frame on
+      // screen is already the one being drawn. We used to nudge the width here to force a redraw
+      // regardless, which cost a duplicated copy of the transcript every time the frame was taller
+      // than the screen — and there is nothing left for it to fix now that an attach starts from a
+      // snapshot of the screen rather than a replay of the bytes that drew it.
     };
     document.addEventListener("visibilitychange", onVisible);
 
