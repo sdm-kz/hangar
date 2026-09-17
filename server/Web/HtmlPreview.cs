@@ -156,8 +156,9 @@ public static class HtmlPreview
     /// append to.
     /// <para>The frame keeps quiet until it has been given a position: the scroll events a document
     /// fires while it is still laying out are all zero, and reporting those would erase the offset
-    /// we are about to restore. It also waits for the page to be tall enough before scrolling, since
-    /// images and late scripts land after the ready message.</para>
+    /// we are about to restore. And it does not scroll until the document has finished loading —
+    /// images sized, webfonts swapped — because an offset only means the same thing in the layout it
+    /// was written in, and a document reaches its full height long before it stops moving.</para>
     /// <para>And it stays quiet until somebody touches it. Restoring the offset is not the end of
     /// the page moving: images and webfonts above the viewport are still arriving, and as they size
     /// themselves the browser's scroll anchoring slides scrollTop to keep the same content in front
@@ -196,11 +197,27 @@ public static class HtmlPreview
     w.scrollTo(0, Math.min(want, max));
     want = null;
   };
+  // An offset only means the same thing in the same layout, so the restore waits for the layout it
+  // was recorded in: every image sized, every webfont swapped in. "Tall enough to scroll there" is
+  // not the same question and is true far too early -- the document reaches its full height while
+  // the images above the fold are still blank boxes, and scrolling then lands on whatever text
+  // happens to be at that pixel, which is not the text that was there when the offset was written.
+  var whenLoaded = function (go) {
+    var done = false;
+    var once = function () { if (!done) { done = true; go(); } };
+    var wait = [];
+    if (document.readyState !== "complete")
+      wait.push(new Promise(function (r) { w.addEventListener("load", r, { once: true }); }));
+    // Fonts resize every line they touch, so a swap moves the page as surely as an image does.
+    if (document.fonts && document.fonts.ready) wait.push(document.fonts.ready);
+    Promise.all(wait).then(once, once);
+    // A resource that never arrives must not hold the restore forever; late is better than never.
+    w.setTimeout(once, 5000);
+  };
   w.addEventListener("message", function (e) {
     if (!e.data || typeof e.data.cwScrollTo !== "number") return;
     want = e.data.cwScrollTo;
-    deadline = Date.now() + 3000;
-    apply();
+    whenLoaded(function () { deadline = Date.now() + 3000; apply(); });
   });
   w.addEventListener("scroll", function () {
     if (!touched) return;                // the page settling, not a person reading
