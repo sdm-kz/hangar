@@ -22,7 +22,15 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
             // Self-service endpoints for a launched session acting on itself (e.g. renaming). Same
             // deal as the hooks: no browser token, authenticated inside the endpoint by the
             // X-Session-Id / X-Hook-Token pair we injected into that session's environment.
-            || path.StartsWithSegments("/api/self");
+            || path.StartsWithSegments("/api/self")
+            // The HTML preview's ticketed folder. Requested by a sandboxed frame, which cannot set
+            // an Authorization header on its own navigation — and this app keeps its token in
+            // localStorage and sets no cookies, so nothing else rides along either. The ticket in
+            // the path is therefore the credential, checked inside the endpoint. It is minted from
+            // the protected side (/api/fs/preview-ticket), stands for one folder's subtree, reads
+            // only, and expires. GET alone: nothing under here writes, and confining the exemption
+            // to the verb keeps it that way if something is ever added.
+            || (path.StartsWithSegments("/api/preview") && HttpMethods.IsGet(ctx.Request.Method));
 
         if (!isProtected || isPublic)
         {
