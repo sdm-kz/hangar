@@ -537,20 +537,28 @@ export function SessionView({
               title={`Color: ${session.color}`}
             />
           )}
-        <Button variant="ghost" size="icon" className="size-9 shrink-0 md:hidden" onClick={onToggleSidebar}>
-          <Menu className="size-5" />
-        </Button>
-        {collapsed && (
+          {/* The sidebar toggle. Pulled back by its own padding (-ml-2) so the glyph -- not the
+              button box around it -- starts on the row's padding edge, lining up with the tab icons
+              below and with the session name when the sidebar is open and the button is gone. */}
           <Button
             variant="ghost"
             size="icon"
-            className="hidden md:inline-flex"
-            title="Show sidebar"
-            onClick={onToggleCollapsed}
+            className="-ml-2 size-9 shrink-0 md:hidden"
+            onClick={onToggleSidebar}
           >
-            <PanelLeftOpen className="size-5" />
+            <Menu className="size-5" />
           </Button>
-        )}
+          {collapsed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="-ml-2 hidden md:inline-flex"
+              title="Show sidebar"
+              onClick={onToggleCollapsed}
+            >
+              <PanelLeftOpen className="size-5" />
+            </Button>
+          )}
           {/* No overflow-hidden here — it would clip the info popup; children truncate themselves.
               Two stacked lines on a phone (name, then folder/branch), one line from md up. */}
           <div className="group flex min-w-0 flex-1 flex-col gap-0.5 md:flex-row md:items-center md:gap-2">
