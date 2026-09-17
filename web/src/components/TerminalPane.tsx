@@ -195,6 +195,9 @@ const IMAGE_SETTLE_MS = 600;
 // backgrounding the tab, a proxy cutting an idle connection). Attempt N waits DELAYS[N]; once the
 // list runs out we stop and leave the manual Reconnect button — a session whose PTY is gone fails
 // the handshake with a 404, and retrying that forever would just spin.
+// How long the measured grid has to stop changing before the session is told (see sendResize).
+const RESIZE_SETTLE_MS = 150;
+
 const RECONNECT_DELAYS_MS = [300, 1000, 2000, 4000, 8000, 8000, 8000, 8000];
 
 // Heartbeat for the terminal socket. A half-open connection — a phone losing signal, a NAT or proxy
@@ -542,6 +545,8 @@ export const TerminalPane = forwardRef<
     // grid narrower than the frame wraps the last cell of every line onto the front of the next row,
     // and Ink, painting only the rows it believes changed, never takes those strays back. Zero means
     // not known yet (or a server too old to say), where our own fit stands in as it always did.
+    // A drag fires the observer dozens of times a second; only the size it ends on is worth sending.
+    let resizeTimer = 0;
     let desiredCols = 0;
     let desiredRows = 0;
     let agreedCols = 0;
@@ -577,21 +582,38 @@ export const TerminalPane = forwardRef<
       desiredCols = dims.cols;
       desiredRows = dims.rows;
       applyGrid();
+      // Local work is free and immediate; telling the session is not, so that part waits below.
       // Repaint xterm's own cells in case the renderer left them stale after being hidden.
       term.refresh(0, term.rows - 1);
       // A request, not a setting — the answer comes back as a `size` frame, which may be smaller.
       if (ws.readyState === WebSocket.OPEN)
-        // The box it was measured from rides along. A resize costs the session a stale frame if it
-        // lands mid-draw, so the ones nobody asked for are worth explaining — and the two candidates
-        // look nothing alike from the server: a box that changed size (something in the layout moved)
-        // or a box that did not (the cell did, which is a font or a device-pixel-ratio shift).
-        ws.send(JSON.stringify({
-          type: "resize",
-          cols: desiredCols,
-          rows: desiredRows,
-          w: Math.round(host.clientWidth),
-          h: Math.round(host.clientHeight),
-        }));
+        // Coalesced, because a drag is not one resize. Pulling the split divider across a session
+        // measured 42 of them inside a single second, and the child answers every one by laying its
+        // whole frame out again — at one width a table, at the next the same data as a list. A frame
+        // taller than the screen cannot be erased once part of it has scrolled above the viewport, so
+        // each of those redraws leaves its copy behind: one drag, a dozen copies of the same
+        // paragraph down the scrollback. Only the size the drag ends on was ever real.
+        //
+        // Held here rather than in the pty host on purpose: coalescing the ASK means nothing
+        // downstream ever sees the burst, so no part of the chain has to reconcile a size that was
+        // asked for against the different one in force. Holding it at the far end instead put those
+        // two out of step for long enough that an attaching viewer could be handed a screen drawn at
+        // one width and told to lay it out at another.
+        //
+        // The box it was measured from rides along: a resize nobody asked for is worth explaining,
+        // and from the server a box that changed size (the layout moved) and one that did not (the
+        // cell did — a font, or a device-pixel-ratio shift) look nothing alike.
+        window.clearTimeout(resizeTimer);
+        resizeTimer = window.setTimeout(() => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          ws.send(JSON.stringify({
+            type: "resize",
+            cols: desiredCols,
+            rows: desiredRows,
+            w: Math.round(host.clientWidth),
+            h: Math.round(host.clientHeight),
+          }));
+        }, RESIZE_SETTLE_MS);
     };
 
     // Stop counting towards the session's size. One pseudoconsole serves every viewer and it runs at
@@ -600,6 +622,8 @@ export const TerminalPane = forwardRef<
     // showing the session, and says so; it declares its size again the moment it comes back.
     const withdrawSize = () => {
       if (ws.readyState !== WebSocket.OPEN) return;
+      // At once, and cancelling anything a drag left pending: going away is not a size to settle on.
+      window.clearTimeout(resizeTimer);
       desiredCols = 0;
       desiredRows = 0;
       ws.send(JSON.stringify({ type: "resize", cols: 0, rows: 0 }));
@@ -958,6 +982,7 @@ export const TerminalPane = forwardRef<
       }
       document.removeEventListener("paste", onPaste, true);
       document.removeEventListener("mouseup", onMouseUp);
+      window.clearTimeout(resizeTimer);   // a size this terminal will never send now
       themeSub();
       dataSub.dispose();
       wsRef.current = null;
