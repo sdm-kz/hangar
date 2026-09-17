@@ -421,7 +421,8 @@ internal static class Program
             if (term is null) { ctx.Response.StatusCode = StatusCodes.Status404NotFound; return; }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             using var life = SocketLifetime(ctx, lifetime);
-            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, life.Token);
+            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, life.Token,
+                ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("ClaudeWeb.Terminal"));
         });
 
         app.MapGet("/api/sessions/{id}", (string id, SessionManager mgr) =>
@@ -557,7 +558,8 @@ internal static class Program
             if (term is null) { ctx.Response.StatusCode = StatusCodes.Status404NotFound; return; }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             using var life = SocketLifetime(ctx, lifetime);
-            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, life.Token);
+            await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, life.Token,
+                ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("ClaudeWeb.Terminal"));
         });
 
         // A socket's lifetime: until the client leaves or the app stops — see the note above /hub/events.

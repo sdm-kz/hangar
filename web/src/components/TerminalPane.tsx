@@ -581,7 +581,17 @@ export const TerminalPane = forwardRef<
       term.refresh(0, term.rows - 1);
       // A request, not a setting — the answer comes back as a `size` frame, which may be smaller.
       if (ws.readyState === WebSocket.OPEN)
-        ws.send(JSON.stringify({ type: "resize", cols: desiredCols, rows: desiredRows }));
+        // The box it was measured from rides along. A resize costs the session a stale frame if it
+        // lands mid-draw, so the ones nobody asked for are worth explaining — and the two candidates
+        // look nothing alike from the server: a box that changed size (something in the layout moved)
+        // or a box that did not (the cell did, which is a font or a device-pixel-ratio shift).
+        ws.send(JSON.stringify({
+          type: "resize",
+          cols: desiredCols,
+          rows: desiredRows,
+          w: Math.round(host.clientWidth),
+          h: Math.round(host.clientHeight),
+        }));
     };
 
     // Stop counting towards the session's size. One pseudoconsole serves every viewer and it runs at

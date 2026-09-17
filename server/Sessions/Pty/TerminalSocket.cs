@@ -19,8 +19,10 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 /// </summary>
 public static class TerminalSocket
 {
-    public static async Task PumpAsync(WebSocket ws, ITerminal term, CancellationToken hostCt)
+    public static async Task PumpAsync(WebSocket ws, ITerminal term, CancellationToken hostCt, ILogger? log = null)
     {
+        // The last size this viewer asked for, so only the changes are logged.
+        var last = new LastAsk();
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(hostCt);
         using var sub = term.Subscribe();
         // A WebSocket allows one outstanding send at a time, and two places send here: the write
@@ -87,7 +89,7 @@ public static class TerminalSocket
                 if (r.MessageType == WebSocketMessageType.Binary)
                     await term.WriteAsync(buf.AsMemory(0, r.Count), cts.Token);
                 else
-                    await HandleControlAsync(buf.AsMemory(0, r.Count), term, sub, ws, sendGate, cts.Token);
+                    await HandleControlAsync(buf.AsMemory(0, r.Count), term, sub, ws, sendGate, last, log, cts.Token);
             }
 
             cts.Cancel();
@@ -127,7 +129,7 @@ public static class TerminalSocket
 
     private static async Task HandleControlAsync(
         ReadOnlyMemory<byte> json, ITerminal term, TerminalSubscription sub, WebSocket ws, SemaphoreSlim gate,
-        CancellationToken ct)
+        LastAsk last, ILogger? log, CancellationToken ct)
     {
         ControlMessage? msg;
         try { msg = JsonSerializer.Deserialize<ControlMessage>(json.Span, ControlJson); }
@@ -138,6 +140,17 @@ public static class TerminalSocket
             // What this viewer can show, not what the session becomes: the terminal answers with the
             // size it settled on across every viewer, which may be smaller.
             case { Type: "resize" }:
+                // Logged when it changes, with the box it was measured from. Every size a session
+                // takes mid-draw costs it a stale copy of the frame on screen, so a viewer that keeps
+                // changing its mind is worth a line — and whether the box moved with it says whether
+                // the layout did that or the cell size did.
+                if (msg.Cols != last.Cols || msg.Rows != last.Rows)
+                {
+                    last.Cols = msg.Cols;
+                    last.Rows = msg.Rows;
+                    log?.LogInformation("Viewer asked for {Cols}x{Rows} from a {W}x{H}px box.",
+                        msg.Cols, msg.Rows, msg.W, msg.H);
+                }
                 sub.Resize((short)msg.Cols, (short)msg.Rows);
                 break;
             // "I have attached and my screen is blank below the scrollback — draw it." The viewer used
@@ -157,5 +170,14 @@ public static class TerminalSocket
         }
     }
 
-    private sealed record ControlMessage(string Type, int Cols, int Rows);
+    /// <param name="W">Viewer box width in CSS pixels, and <paramref name="H"/> its height — see the
+    /// note on the resize case: they say whether a resize came from the layout or from the cell.</param>
+    private sealed record ControlMessage(string Type, int Cols, int Rows, int W, int H);
+
+    /// <summary>One viewer's last asked-for grid, so the log carries only what changed.</summary>
+    private sealed class LastAsk
+    {
+        public int Cols = -1;
+        public int Rows = -1;
+    }
 }
