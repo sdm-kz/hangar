@@ -537,26 +537,28 @@ export function SessionView({
               title={`Color: ${session.color}`}
             />
           )}
-          {/* The sidebar toggle. Pulled back by its own padding (-ml-2) so the glyph -- not the
-              button box around it -- starts on the row's padding edge, lining up with the tab icons
-              below and with the session name when the sidebar is open and the button is gone. */}
+          {/* The sidebar toggle. Pulled back by the button's own centering inset (-ml-2.5) so the
+              glyph -- not the box around it -- starts on the row's padding edge, lining up with the
+              tab icons below and with the session name when the sidebar is open and the button is
+              gone. The inset is 10px, not 8: Button's `[&_svg]:size-4` outranks a `size-5` written
+              here, so the glyph is 16px however it is asked for, and it centres in a 36px box. */}
           <Button
             variant="ghost"
             size="icon"
-            className="-ml-2 size-9 shrink-0 md:hidden"
+            className="-ml-2.5 size-9 shrink-0 md:hidden"
             onClick={onToggleSidebar}
           >
-            <Menu className="size-5" />
+            <Menu />
           </Button>
           {collapsed && (
             <Button
               variant="ghost"
               size="icon"
-              className="-ml-2 hidden md:inline-flex"
+              className="-ml-2.5 hidden md:inline-flex"
               title="Show sidebar"
               onClick={onToggleCollapsed}
             >
-              <PanelLeftOpen className="size-5" />
+              <PanelLeftOpen />
             </Button>
           )}
           {/* No overflow-hidden here — it would clip the info popup; children truncate themselves.
