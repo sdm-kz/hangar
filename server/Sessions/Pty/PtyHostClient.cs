@@ -429,6 +429,15 @@ public sealed class PtyHostClient : ITerminal
             // Leave the child at the size it has rather than resize it to nothing on the way out.
             if (cols <= 0 || rows <= 0) return;
             bool changed = cols != _wantCols || rows != _wantRows;
+            // Named, when it moves. Every resize of a session that is mid-turn costs it a stale copy
+            // of the frame on screen (see TerminalChannel.ApplySize), and the sizes of the viewers
+            // that produced this one are what say whether it was a zoom, a pane, or a second device
+            // arriving — which is not a thing anyone can reconstruct afterwards.
+            if (changed)
+                _log.LogInformation(
+                    "Session {Id} sized to {Cols}x{Rows} by {Count} viewer(s): {Sizes}.",
+                    SessionId, cols, rows, _subs.Count,
+                    string.Join(", ", _subs.Values.Select(v => v.Cols > 0 ? $"{v.Cols}x{v.Rows}" : "hidden")));
             _wantCols = cols;
             _wantRows = rows;
             foreach (var v in _subs.Values)

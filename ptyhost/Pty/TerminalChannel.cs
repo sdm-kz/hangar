@@ -475,9 +475,16 @@ public sealed partial class TerminalChannel : IDisposable
     /// </summary>
     private void ApplySize(short cols, short rows)
     {
+        short wasCols, wasRows;
+        bool wanted, drawing;
         lock (_lock)
         {
             if (cols == Cols && rows == Rows) return;
+            wasCols = Cols;
+            wasRows = Rows;
+            // A size somebody asked for, rather than the column the repaint nudge passes through.
+            wanted = cols == _wantCols && rows == _wantRows;
+            drawing = Environment.TickCount64 - Volatile.Read(ref _lastOutputTick) < 250;
             Cols = cols;
             Rows = rows;
             // The model moves with the pseudoconsole, but only to a size somebody is actually being
@@ -495,6 +502,16 @@ public sealed partial class TerminalChannel : IDisposable
             // the width for as long as the session lasts.
             _pty.Resize(cols, rows);
         }
+        // Every real resize, logged. A resize made while the child is drawing costs the session a
+        // stale copy of whatever frame was on screen — Ink redraws for the new width and can only
+        // erase the rows it still owns, so anything that has scrolled above the viewport keeps the
+        // old copy. Nothing here can prevent that; what this line answers is how often it happens and
+        // what asked for it, which is the only way to tell a zoom from a second viewer coming and
+        // going. The nudge is not logged: it is ours, and it goes straight back.
+        if (wanted)
+            HostLog.Info($"Resized {wasCols}x{wasRows} -> {cols}x{rows}" +
+                         (drawing ? " while the child was drawing (expect a stale frame)." : "."));
+
         // Outside the lock: the web app keeps a model of its own, fed by the same bytes, and it has
         // to turn at the point in that stream where this one turned rather than when it asked.
         SizeApplied?.Invoke(cols, rows);
