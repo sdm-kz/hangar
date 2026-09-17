@@ -14,6 +14,11 @@ import { cn } from "@/lib/utils";
  * all. The sliver of horizontal padding is given back with a matching negative margin, which keeps
  * the text on the same column it was reading from a moment ago.
  *
+ * The ring is --ring, the same grey every other focused control in the app draws. --primary is near
+ * black in this theme: fine for a drop target, which shouts for a second and is gone, but this is a
+ * state you sit in and type in, and a black outline around three words of a name reads as an alarm.
+ * The opaque background is what keeps the name legible over a row that is selected or hovered.
+ *
  * The type size is inherited rather than set, so the name keeps the size it had a keystroke ago in
  * each of the three trees this serves -- they are not all the same size, and the file trees used to
  * jump a step up on the way into the field.
@@ -63,7 +68,7 @@ export function RenameField({
       }}
       onBlur={commit}
       className={cn(
-        "-mx-0.5 min-w-0 flex-1 rounded-sm bg-background px-0.5 outline-none ring-1 ring-primary",
+        "-mx-0.5 min-w-0 flex-1 rounded-sm bg-background px-0.5 outline-none ring-1 ring-ring",
         className
       )}
     />
