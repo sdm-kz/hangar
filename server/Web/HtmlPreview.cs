@@ -158,6 +158,14 @@ public static class HtmlPreview
     /// fires while it is still laying out are all zero, and reporting those would erase the offset
     /// we are about to restore. It also waits for the page to be tall enough before scrolling, since
     /// images and late scripts land after the ready message.</para>
+    /// <para>And it stays quiet until somebody touches it. Restoring the offset is not the end of
+    /// the page moving: images and webfonts above the viewport are still arriving, and as they size
+    /// themselves the browser's scroll anchoring slides scrollTop to keep the same content in front
+    /// of the reader — firing a scroll event that looks exactly like a person scrolling. Reported,
+    /// it was saved as the new position, so every reload of a page with images came back a little
+    /// further down than the last: 10800 became 10850, then 10900, drifting a few pixels a time and
+    /// never settling. This is the one signal that separates the two, and it is the reason the
+    /// preview only remembers where a <em>reader</em> left off.</para>
     /// <para>Every message names the document it came from (<c>cwPath</c>). The frame can navigate
     /// now — a link to a sibling page inside the ticket loads another document, served with another
     /// copy of this script — and the listener outside identifies the frame, not the document: a
@@ -171,6 +179,12 @@ public static class HtmlPreview
   if (w.parent === w) return;
   var want = null, deadline = 0, queued = 0;
   var here = w.location.pathname;
+  // Whether a person has touched this document yet. Nothing is reported before they have, because
+  // until then the only thing moving the page is the page itself finishing loading -- see below.
+  var touched = false;
+  ["wheel", "touchstart", "keydown", "pointerdown"].forEach(function (type) {
+    w.addEventListener(type, function () { touched = true; }, { passive: true, capture: true });
+  });
   var maxScroll = function () {
     var d = document.documentElement, b = document.body;
     return Math.max(0, Math.max(d ? d.scrollHeight : 0, b ? b.scrollHeight : 0) - w.innerHeight);
@@ -189,6 +203,7 @@ public static class HtmlPreview
     apply();
   });
   w.addEventListener("scroll", function () {
+    if (!touched) return;                // the page settling, not a person reading
     if (want !== null || queued) return; // still restoring, or a report is already pending
     queued = w.requestAnimationFrame(function () {
       queued = 0;
