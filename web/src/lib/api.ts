@@ -248,6 +248,16 @@ export const api = {
   fsWrite(path: string, content: string): Promise<void> {
     return request("/api/fs/write", { method: "POST", body: JSON.stringify({ path, content }) });
   },
+  /**
+   * A ticket for previewing an HTML file: the server will serve that file's folder, read-only and
+   * briefly, under `/api/preview/{ticket}/`. Loading the preview from a URL instead of handing the
+   * frame its bytes is what lets a relative `<img src>` in the page resolve at all — see
+   * {@link previewFrameUrl} for the other half, and the server's PreviewTicketStore for why it isn't
+   * simply the bearer token.
+   */
+  previewTicket(path: string): Promise<{ ticket: string; name: string }> {
+    return request("/api/fs/preview-ticket", { method: "POST", body: JSON.stringify({ path }) });
+  },
   fsMkdir(path: string): Promise<{ path: string }> {
     return request("/api/fs/mkdir", { method: "POST", body: JSON.stringify({ path }) });
   },
@@ -612,6 +622,19 @@ export function sessionsStreamUrl(): string {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const q = token ? `?access_token=${encodeURIComponent(token)}` : "";
   return `${proto}://${location.host}/hub/events${q}`;
+}
+
+/**
+ * Frame URL for a ticketed HTML preview. The path segments are what matter: the browser resolves the
+ * page's relative assets against them, and each one comes back to the same endpoint. `rev` only ever
+ * rides in the query — where relative resolution ignores it — and exists to make the frame reload
+ * when the file changes on disk, which a stable `src` otherwise wouldn't.
+ *
+ * No token: the ticket is the credential, and the frame's opaque origin couldn't present one anyway.
+ */
+export function previewFrameUrl(ticket: string, name: string, rev: string | number = ""): string {
+  const path = name.split("/").map(encodeURIComponent).join("/");
+  return `/api/preview/${ticket}/${path}${rev === "" ? "" : `?rev=${encodeURIComponent(rev)}`}`;
 }
 
 /** URL for a general server file's raw bytes (absolute path); token in the query so it works in <img>/<a>. */

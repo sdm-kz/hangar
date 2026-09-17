@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, serverFileUrl } from "@/lib/api";
+import { api, previewFrameUrl, serverFileUrl } from "@/lib/api";
 import { fileExt, fileKind } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
 import { useHtml } from "@/lib/useHtml";
+import { useContentRev } from "@/lib/useContentRev";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -107,6 +108,41 @@ export function ServerFileViewer({
   // Raw-bytes URL for media previews; carries the reload counter so a refresh actually bypasses
   // the browser cache instead of re-serving the stale image/video/document.
   const rawUrl = reloadKey ? `${serverFileUrl(path)}&v=${reloadKey}` : serverFileUrl(path);
+
+  // --- The HTML frame's source --------------------------------------------------------------------
+  // Loaded from a ticketed URL rather than handed its bytes, so the page's own relative images and
+  // stylesheets have something to resolve against; the server appends the scroll bridge. Mirrors the
+  // per-session file preview — see FileBrowser's previewSrc, and api.previewTicket for the ticket.
+  // What makes the frame reload: `src` is otherwise stable across an edit, so the frame would go on
+  // showing the document it first loaded. The file's contents changing moves it, and so does the
+  // refresh button on its own — re-reading an unchanged file leaves the text equal, and a press of
+  // refresh should reload the page regardless.
+  const contentRev = useContentRev(text);
+
+  // Keyed by the path it was minted for, and re-minted whenever the frame is about to reload — see
+  // FileBrowser's copy for both reasons. They matter more here: `rendered` is not reset when the
+  // open file changes, so a ticket for the previous file would otherwise still be in hand when a
+  // new one is shown.
+  const [preview, setPreview] = useState<
+    { forPath: string; ticket: string; name: string } | { forPath: string; failed: true } | null
+  >(null);
+  useEffect(() => {
+    if (!isHtml || !rendered || !path) return;
+    let cancelled = false;
+    api
+      .previewTicket(path)
+      .then((p) => !cancelled && setPreview({ forPath: path, ...p }))
+      .catch(() => !cancelled && setPreview({ forPath: path, failed: true }));
+    return () => {
+      cancelled = true;
+    };
+  }, [isHtml, rendered, path, contentRev, reloadKey]);
+
+  const previewSrc = preview?.forPath === path ? preview : null;
+  const frameSrc =
+    previewSrc && !("failed" in previewSrc)
+      ? previewFrameUrl(previewSrc.ticket, previewSrc.name, `${contentRev}-${reloadKey}`)
+      : "";
 
   // A section anchor in the URL hash belongs to the file it was clicked in: keep it across a
   // reload (that's what makes it restorable), but drop it when switching to a different file.
@@ -404,14 +440,19 @@ export function ServerFileViewer({
           </div>
         ) : isHtml && rendered ? (
           // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an opaque origin,
-          // so page scripts can't reach this app's token or DOM. Relative asset URLs won't resolve (no
-          // base) — self-contained pages preview best. Mirrors the per-session file preview.
-          <iframe
-            title={`Preview of ${name}`}
-            srcDoc={text ?? ""}
-            sandbox="allow-scripts allow-forms allow-popups allow-modals"
-            className="h-full w-full border-0 bg-white"
-          />
+          // so page scripts can't reach this app's token or DOM. Loaded from a ticketed URL so the
+          // page's relative assets resolve, falling back to its bytes (and broken assets) if no ticket
+          // could be minted. Mirrors the per-session file preview.
+          previewSrc === null ? (
+            <div className="h-full w-full bg-white" />
+          ) : (
+            <iframe
+              title={`Preview of ${name}`}
+              {...("failed" in previewSrc ? { srcDoc: text ?? "" } : { src: frameSrc })}
+              sandbox="allow-scripts allow-forms allow-popups allow-modals"
+              className="h-full w-full border-0 bg-white"
+            />
+          )
         ) : highlighted ? (
           <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
             <code className="hljs" dangerouslySetInnerHTML={highlighted} />

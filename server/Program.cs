@@ -20,6 +20,12 @@ namespace ClaudeWeb.Server;
 /// </summary>
 internal static class Program
 {
+    // Ceiling on a previewed HTML document we will hold in memory to append the scroll bridge to.
+    // Buffering costs twice this — the file, then the copy with the tag on the end — and both land
+    // on the large-object heap, with nothing limiting how many previews load at once. 8 MB is still
+    // far above any page a person reads; past it the file is streamed unbridged (see the endpoint).
+    private const long MaxBridgedDocument = 8L * 1024 * 1024;
+
     // No [STAThread], on purpose: SystemEvents (below) only creates its hidden window on a thread of its
     // own — one that pumps messages — when the thread that first touches it is MTA. On an STA thread it
     // would put the window here, where nothing pumps, and a logoff would never be heard.
@@ -305,6 +311,9 @@ internal static class Program
         // Reads the title, icon and — the part a browser is not allowed to see — the framing policy of
         // a web page a session links to. The links themselves are UI state; only this needs a server.
         builder.Services.AddSingleton<Web.LinkProbeService>();
+        // Short-lived, folder-scoped tickets that let a previewed HTML page load the images and
+        // stylesheets sitting next to it, without handing the page anything else (see the store).
+        builder.Services.AddSingleton<Web.PreviewTicketStore>();
         // Web Push: the VAPID keypair, the subscription store, and the notifier that fires a push on
         // the same attention/waiting transitions the UI shows — so alerts arrive with every tab closed.
         builder.Services.AddSingleton<VapidKeyStore>();
@@ -809,6 +818,118 @@ internal static class Program
             return download == true
                 ? Results.File(full, contentType, fileDownloadName: name, enableRangeProcessing: true)
                 : Results.File(full, contentType, enableRangeProcessing: true);
+        });
+
+        // Mint a preview ticket for the folder a file lives in, so the HTML preview can load that
+        // file by URL and let the browser resolve its relative assets the ordinary way. Answers with
+        // the ticket and the file's name within the folder — the two halves of the frame's src.
+        //
+        // This sits on the protected API, unlike the serving endpoint below: asking for a ticket is
+        // the privileged half, and using one is not. It takes an absolute path because both viewers
+        // already have one.
+        //
+        // Note what a ticket is NOT: it is not /api/fs/file with a different spelling. That endpoint
+        // is equally unconfined but demands the bearer token on every request, and dies when the
+        // token is revoked. A ticket is a second credential — bearer-less, shareable, and held by
+        // the previewed page itself, which can read it out of location.pathname. So this hands out
+        // rather less than the caller's own token already reaches: the root is one folder's subtree,
+        // reads only, minus its dotted and hidden entries, and it expires (see PreviewTicketStore
+        // and HtmlPreview.IsServable).
+        app.MapPost("/api/fs/preview-ticket", (FsPathRequest body, Web.PreviewTicketStore tickets) =>
+        {
+            var full = Path.GetFullPath(body.Path);
+            if (!File.Exists(full)) return Results.NotFound();
+            var dir = Path.GetDirectoryName(full);
+            if (string.IsNullOrEmpty(dir)) return Results.BadRequest(new { error = "no containing folder" });
+            // A file sitting at the top of a volume would otherwise mint a ticket rooted at the
+            // whole drive. Nothing legitimate previews out of C:\, and the subtree grant makes the
+            // difference between that and an ordinary folder enormous.
+            if (Path.GetPathRoot(dir)!.Equals(dir, StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error = "cannot preview from a drive root" });
+            return Results.Ok(new { ticket = tickets.Mint(dir), name = Path.GetFileName(full) });
+        });
+
+        // Serve a ticketed folder to the HTML preview frame. The frame loads its document from here
+        // by URL, so a relative src in the page resolves against this path the way it would in any
+        // browser and arrives back here as an ordinary subresource GET — no rewriting of the page,
+        // and no asset class left out (stylesheets, fonts, media, whatever a script fetches).
+        //
+        // Reachable WITHOUT the bearer token (see TokenAuthMiddleware): a frame navigation can't set
+        // an Authorization header, and this app authenticates with a token out of localStorage and
+        // sets no cookies at all, so nothing rides along on the request. The ticket in the path is
+        // the whole credential: 32 random bytes, read-only, covering one folder AND EVERYTHING
+        // UNDER IT — it has to reach `./img/logo.png` — less its dotted and hidden entries, which
+        // HtmlPreview.IsServable declines so that previewing a page at the top of a repo doesn't
+        // hand it .git/config and .env.
+        app.MapGet("/api/preview/{ticket}/{**path}", (string ticket, string? path, Web.PreviewTicketStore tickets, HttpContext http) =>
+        {
+            var root = tickets.Resolve(ticket);
+            if (root is null) return Results.NotFound();
+
+            // The sandbox, restated as a header, because the iframe attribute only covers the frame:
+            // paste a ticket URL into the address bar and the document would otherwise load as a
+            // first-class page at this app's origin, with the run of localStorage — where the bearer
+            // token lives — and of the API. `sandbox` is the one CSP directive used, deliberately:
+            // it forces an opaque origin however the page was reached, while saying nothing about
+            // where the page may load things from, so a preview that pulls webfonts or a CDN script
+            // still looks like itself. Harmless on the non-document responses, which ignore it.
+            http.Response.Headers.ContentSecurityPolicy = "sandbox allow-scripts allow-forms allow-popups allow-modals";
+            http.Response.Headers.XContentTypeOptions = "nosniff";
+            // Requests a page makes in CORS mode — webfonts, fetch/XHR — carry `Origin: null` from
+            // that opaque origin and are refused without this. (Plain subresource loads, the images
+            // and stylesheets this feature exists for, are no-cors and send no Origin at all; they
+            // never needed it.) Safe to open to all comers: the endpoint carries no cookies, so `*`
+            // grants a reader nothing it couldn't get by requesting the URL directly.
+            http.Response.Headers.AccessControlAllowOrigin = "*";
+            // The URL is stable per file, so without this a stale heuristically-cached body outlives
+            // an edit. The asset branches below still revalidate cheaply — Results.File sends
+            // Last-Modified and an ETag — but the document and the bridge go out through
+            // Results.Bytes/Results.Text, which send neither, so those two are re-fetched in full on
+            // every frame load. They are small, and a preview showing yesterday's page would be a
+            // far worse trade.
+            http.Response.Headers.CacheControl = "no-cache";
+
+            path ??= "";
+            if (path.Equals(Web.HtmlPreview.ScrollBridgePath, StringComparison.OrdinalIgnoreCase))
+                return Results.Text(Web.HtmlPreview.ScrollBridge, "text/javascript; charset=utf-8");
+            // Nothing else in the reserved namespace exists, and it must not fall through to the
+            // disk: a folder really called __cw would otherwise answer here. Matched without regard
+            // to case, like the filesystem underneath it, so __CW/ can't walk around the guard.
+            if (path.StartsWith(Web.HtmlPreview.ReservedPrefix, StringComparison.OrdinalIgnoreCase))
+                return Results.NotFound();
+
+            var full = SessionFileBrowser.ResolveSafe(root, path);
+            // ResolveSafe only says the path doesn't *spell* its way out of the root; IsServable is
+            // what says it doesn't link its way out, and that it isn't one of the things this ticket
+            // was never meant to reach. Both, in that order.
+            if (full is null || !File.Exists(full)) return Results.NotFound();
+            if (!Web.HtmlPreview.IsServable(root, full)) return Results.NotFound();
+
+            var contentType = Web.HtmlPreview.ContentType(full);
+            if (!Web.HtmlPreview.IsHtml(full))
+                return Results.File(full, contentType, enableRangeProcessing: true);
+
+            // A document too big to hold in memory goes out whole and unbridged — nothing to
+            // scroll-restore is a better failure than nothing to read.
+            var length = new FileInfo(full).Length;
+            if (length > MaxBridgedDocument)
+                return Results.File(full, contentType, enableRangeProcessing: true);
+
+            var document = File.ReadAllBytes(full);
+            // A UTF-16 document is served exactly as it arrived, without the charset above and
+            // without the bridge: either one visibly wrecks it, and it renders correctly on its own
+            // BOM (see HtmlPreview.IsUtf16).
+            if (Web.HtmlPreview.IsUtf16(document))
+                return Results.File(full, "text/html", enableRangeProcessing: true);
+
+            // Appended as bytes rather than by decoding and re-encoding: the tag is pure ASCII, so
+            // it lands correctly on the end of any UTF-8 document without this handler needing an
+            // opinion about the text in front of it.
+            var tag = System.Text.Encoding.UTF8.GetBytes(Web.HtmlPreview.ScrollBridgeTag(ticket));
+            var body = new byte[document.Length + tag.Length];
+            document.CopyTo(body, 0);
+            tag.CopyTo(body, document.Length);
+            return Results.Bytes(body, contentType);
         });
 
         app.MapPost("/api/fs/write", (FsWriteRequest body) =>

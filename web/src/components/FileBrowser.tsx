@@ -1,9 +1,10 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type UIEvent } from "react";
-import { ApiError, api, sessionFileUrl } from "@/lib/api";
+import { ApiError, api, previewFrameUrl, sessionFileUrl } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
 import { useHtml } from "@/lib/useHtml";
+import { useContentRev } from "@/lib/useContentRev";
 import { readUrlState, previewUrl } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
 import { fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type PreviewGuard } from "@/lib/useFileTabs";
@@ -1765,55 +1766,6 @@ function IndentedNote({ depth, children }: { depth: number; children: React.Reac
   );
 }
 
-// Scroll bridge for the sandboxed HTML preview. The iframe runs without `allow-same-origin`, so its
-// document has an opaque origin and nothing out here can read or set its scrollTop — the frame has to
-// report its own position and be told where to go back to. Appended to the previewed HTML: the parser
-// relocates a trailing <script> into the body, so no rewriting of the document itself is needed. A
-// page with a script-blocking CSP simply won't run it, and that file loses scroll memory — the rest
-// of the preview is unaffected.
-//
-// The frame keeps quiet until it has been given a position: the scroll events a document fires while
-// it is still laying out are all zero, and reporting those would erase the offset we are about to
-// restore. It also waits for the page to be tall enough before scrolling, since images and late
-// scripts land after the ready message.
-const HTML_SCROLL_BRIDGE = `
-<script>
-(function () {
-  var w = window;
-  if (w.parent === w) return;
-  var want = null, deadline = 0, queued = 0;
-  var maxScroll = function () {
-    var d = document.documentElement, b = document.body;
-    return Math.max(0, Math.max(d ? d.scrollHeight : 0, b ? b.scrollHeight : 0) - w.innerHeight);
-  };
-  var apply = function () {
-    if (want === null) return;
-    var max = maxScroll();
-    if (max < want && Date.now() < deadline) { w.setTimeout(apply, 120); return; }
-    w.scrollTo(0, Math.min(want, max));
-    want = null;
-  };
-  w.addEventListener("message", function (e) {
-    if (!e.data || typeof e.data.cwScrollTo !== "number") return;
-    want = e.data.cwScrollTo;
-    deadline = Date.now() + 3000;
-    apply();
-  });
-  w.addEventListener("scroll", function () {
-    if (want !== null || queued) return; // still restoring, or a report is already pending
-    queued = w.requestAnimationFrame(function () {
-      queued = 0;
-      w.parent.postMessage({ cwScroll: w.scrollY || 0 }, "*");
-    });
-  }, { passive: true });
-  var ready = function () { w.parent.postMessage({ cwScrollReady: true }, "*"); };
-  // Twice: the frame can finish parsing before the listener out there is attached, and once more
-  // after load costs nothing — a second ready for a document already placed is ignored.
-  ready();
-  w.addEventListener("load", ready);
-})();
-</script>`;
-
 function FilePreview({
   sessionId,
   workingDirectory,
@@ -2090,6 +2042,57 @@ function FilePreview({
   // the container below — the two restore paths are mutually exclusive.
   const htmlPreview = isHtml && mdView === "rendered" && view === "preview" && !editing;
 
+  // --- The HTML frame's source --------------------------------------------------------------------
+  // The frame is given a URL rather than the document's bytes, so the browser has something to
+  // resolve the page's own `src="map.jpg"` against. Handed the bytes it resolved them against the
+  // *app's* base URL, since an `about:srcdoc` document inherits one from its parent — so every
+  // relative asset went looking for an SPA route and came back a broken image. The URL points at a
+  // ticket standing for the file's folder (see api.previewTicket), which is also where the scroll
+  // bridge comes from now that the client no longer assembles the document.
+
+  // What makes the frame reload. `src` is otherwise stable across an edit — same ticket, same file —
+  // and the frame would go on showing the document it first loaded. Two things move it: the file's
+  // contents actually changing (a save here, or an edit on disk the tree poll picked up), and the
+  // header's refresh button, which counts separately because re-reading an unchanged file leaves
+  // the text equal — pressing refresh should still reload the page.
+  const contentRev = useContentRev(text);
+
+  // Carries the path it was minted for, rather than being cleared on the way in. Two things fall out
+  // of that which a bare "loading" sentinel got wrong: a ticket left over from the previously open
+  // file can never be handed to the frame (its `forPath` won't match, so the pane stays blank until
+  // the new one lands), and flipping Source→Preview on the same file reuses what we already hold
+  // instead of blanking the frame and paying for a round trip on every toggle.
+  const [preview, setPreview] = useState<
+    { forPath: string; ticket: string; name: string } | { forPath: string; failed: true } | null
+  >(null);
+
+  // Re-minted when the document is about to reload for a content change or a manual refresh, not
+  // just when the file is opened. A ticket expires, and the page inside the frame is usually static
+  // — it makes no requests, so nothing slides the idle timer, and the ticket can be dead by the time
+  // an edit lands. Asking again at exactly the moment we are going to navigate the frame anyway
+  // costs one cheap round trip (the server hands back the ticket it already has for that folder) and
+  // is what keeps a long-open preview, or one whose mint failed, from going permanently blank.
+  useEffect(() => {
+    if (!htmlPreview || !absPath) return;
+    let cancelled = false;
+    api
+      .previewTicket(absPath)
+      .then((p) => !cancelled && setPreview({ forPath: absPath, ...p }))
+      // Nothing to do but fall back to the old way of doing it: the page renders from its bytes,
+      // relative assets stay broken, and it loses scroll memory with the bridge. Better than a
+      // preview pane that just sits empty because a ticket couldn't be minted.
+      .catch(() => !cancelled && setPreview({ forPath: absPath, failed: true }));
+    return () => {
+      cancelled = true;
+    };
+  }, [htmlPreview, absPath, contentRev, reload]);
+
+  const previewSrc = preview?.forPath === absPath ? preview : null;
+  const frameSrc =
+    previewSrc && !("failed" in previewSrc)
+      ? previewFrameUrl(previewSrc.ticket, previewSrc.name, `${contentRev}-${reload}`)
+      : "";
+
   // --- Remembered scroll position, per open tab ------------------------------------------------
   // Where a file was left off is part of "this file is open", so it lives in the session's UI bag
   // alongside the tab list (see SessionUi.fileScroll) rather than in this component's state: that is
@@ -2159,18 +2162,27 @@ function FilePreview({
   }, [sessionId, file, htmlPreview, editing, kind, status, text, view, mdView]);
 
   // The HTML frame can't be read or driven from here (opaque origin), so it reports its own position
-  // and is handed the one to go back to. Re-runs whenever the frame reloads — a different file, the
-  // Source/Preview toggle, a manual or automatic content refresh — because each load starts a fresh
-  // document at the top that has to be placed again.
+  // and is handed the one to go back to. Re-runs whenever the frame reloads, because each load
+  // starts a fresh document at the top that has to be placed again — which is exactly what a change
+  // of `frameSrc` means now that the frame is loaded by URL: a different file, a new ticket, the
+  // Source/Preview toggle, a manual or automatic content refresh.
   useEffect(() => {
     if (!htmlPreview || !file) return;
     const path = file.path;
+    // The document we are actually tracking, as the bridge inside it sees its own location. The
+    // frame can navigate — a previewed page may link to a sibling inside the same ticket, which
+    // loads another document carrying another copy of the bridge — and `e.source` cannot tell them
+    // apart, because a WindowProxy outlives the document in it. Filing that page's offset under
+    // this file's name would make reopening this one jump to an offset from somewhere else, so
+    // anything that doesn't name the document we opened is left alone.
+    const ours = frameSrc ? new URL(frameSrc, window.location.origin).pathname : "";
     let placed = false; // this document has been told where to go; later readies are duplicates
     const onMessage = (e: MessageEvent) => {
       const frame = frameRef.current?.contentWindow;
       if (!frame || e.source !== frame) return; // only our own preview frame
-      const msg = e.data as { cwScrollReady?: boolean; cwScroll?: number } | null;
+      const msg = e.data as { cwScrollReady?: boolean; cwScroll?: number; cwPath?: string } | null;
       if (!msg || typeof msg !== "object") return;
+      if (msg.cwPath !== ours) return; // the frame has navigated; that page keeps its own place
       if (msg.cwScrollReady) {
         if (placed) return;
         placed = true;
@@ -2182,7 +2194,7 @@ function FilePreview({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [htmlPreview, file, sessionId, text, reload, rememberScroll]);
+  }, [htmlPreview, file, sessionId, frameSrc, rememberScroll]);
 
   if (!file) {
     return (
@@ -2444,15 +2456,22 @@ function FilePreview({
                 </div>
               ) : isHtml && mdView === "rendered" ? (
                 // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an
-                // opaque origin, so page scripts can't reach this app's token or DOM. Relative
-                // asset URLs won't resolve (no base) — self-contained pages preview best.
-                <iframe
-                  ref={frameRef}
-                  title={`Preview of ${file.name}`}
-                  srcDoc={text + HTML_SCROLL_BRIDGE}
-                  sandbox="allow-scripts allow-forms allow-popups allow-modals"
-                  className="h-full w-full border-0 bg-white"
-                />
+                // opaque origin, so page scripts can't reach this app's token or DOM. It is loaded
+                // from a ticketed URL (see previewSrc), which is what lets the page's own relative
+                // images and stylesheets resolve; the server also puts the scroll bridge on the end.
+                // Blank for the round trip that mints the ticket, and back to the bytes if that
+                // fails — a page with no assets of its own is none the worse for it.
+                previewSrc === null ? (
+                  <div className="h-full w-full bg-white" />
+                ) : (
+                  <iframe
+                    ref={frameRef}
+                    title={`Preview of ${file.name}`}
+                    {...("failed" in previewSrc ? { srcDoc: text } : { src: frameSrc })}
+                    sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                    className="h-full w-full border-0 bg-white"
+                  />
+                )
               ) : highlighted ? (
                 <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
                   <code className="hljs bg-transparent p-0" dangerouslySetInnerHTML={highlighted} />
