@@ -104,6 +104,7 @@ export function ServerFileViewer({
   const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
 
   // Raw-bytes URL for media previews; carries the reload counter so a refresh actually bypasses
   // the browser cache instead of re-serving the stale image/video/document.
@@ -187,11 +188,46 @@ export function ServerFileViewer({
     // A section anchor in the URL wins over the pixel position: the Markdown component scrolls
     // to it itself, and it stays correct even when late-rendering diagrams shift the layout.
     if (isMarkdown && rendered && window.location.hash) return;
+    // The HTML frame scrolls its own document, not this container — the effect below is what puts
+    // that one back, and the offset it stores would be clamped to nothing if applied here.
+    if (isHtml && rendered) return;
     const el = scrollRef.current;
     if (!el) return;
     const saved = Number(sessionStorage.getItem(scrollKey(path)));
     if (saved > 0) el.scrollTop = saved;
-  }, [path, loading, editing, text, rendered, isMarkdown]);
+  }, [path, loading, editing, text, rendered, isMarkdown, isHtml]);
+
+  // Where an HTML preview was left off. The frame has an opaque origin, so nothing out here can
+  // read or set its scrollTop: the bridge the server appends to the document reports its own
+  // position and is told where to go back to. Same exchange as the per-session preview — see
+  // FileBrowser, which explains why the message has to name the document it came from — and it
+  // writes to the same key as the container position above, so a file remembers one place
+  // whichever way it was being shown.
+  useEffect(() => {
+    if (!isHtml || !rendered || !frameSrc) return;
+    const ours = new URL(frameSrc, window.location.origin).pathname;
+    let placed = false; // this document has been told where to go; later readies are duplicates
+    const onMessage = (e: MessageEvent) => {
+      const frame = frameRef.current?.contentWindow;
+      if (!frame || e.source !== frame) return; // only our own preview frame
+      const msg = e.data as { cwScrollReady?: boolean; cwScroll?: number; cwPath?: string } | null;
+      if (!msg || typeof msg !== "object") return;
+      if (msg.cwPath !== ours) return; // the frame has navigated; that page keeps its own place
+      try {
+        if (msg.cwScrollReady) {
+          if (placed) return;
+          placed = true;
+          frame.postMessage({ cwScrollTo: Number(sessionStorage.getItem(scrollKey(path))) || 0 }, "*");
+        } else if (typeof msg.cwScroll === "number") {
+          sessionStorage.setItem(scrollKey(path), String(Math.round(msg.cwScroll)));
+        }
+      } catch {
+        /* storage unavailable — position keeping is best-effort, same as the container above */
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [isHtml, rendered, path, frameSrc]);
 
   // highlight.js escapes its input, so the resulting HTML is safe to inject (same as FileBrowser).
   // useHtml keeps the injected markup identical across renders, so re-renders don't rebuild the
@@ -447,6 +483,7 @@ export function ServerFileViewer({
             <div className="h-full w-full bg-white" />
           ) : (
             <iframe
+              ref={frameRef}
               title={`Preview of ${name}`}
               {...("failed" in previewSrc ? { srcDoc: text ?? "" } : { src: frameSrc })}
               sandbox="allow-scripts allow-forms allow-popups allow-modals"
