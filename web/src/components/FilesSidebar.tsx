@@ -4,6 +4,7 @@ import type { DirEntry, FsNode } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
+import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
 import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
 import { CopyPathButton } from "./CopyPathButton";
@@ -21,9 +22,12 @@ import {
   TerminalSquare,
   HardDrive,
   Image as ImageIcon,
+  ListChecks,
   Loader2,
   Pencil,
   RefreshCw,
+  Square,
+  SquareCheck,
   Trash2,
   Upload,
   Video,
@@ -139,6 +143,9 @@ export function FilesSidebar({
   const scrolledDirRef = useRef<number | null>(null); // last reveal-a-folder request we scrolled to
   const restoredScrollRef = useRef(false); // have we replayed the remembered scroll offset yet?
   const saveScrollRef = useRef<number | undefined>(undefined); // debounce timer for scroll writes
+  // Rows marked for a batch action. The tree is the range gesture's frame of reference, so it is the
+  // scroll container -- the element the rows live in -- that the hook reads their order from.
+  const mark = useMarkedPaths(scrollRef);
 
   const listDir = useCallback(async (path: string) => {
     setLoading((s) => new Set(s).add(path));
@@ -379,6 +386,58 @@ export function FilesSidebar({
     [confirm, reload, openPath, onOpenFile]
   );
 
+  /**
+   * Delete everything marked, behind one confirmation that names what is going.
+   *
+   * The names are spelled out rather than counted. A mark survives its folder being collapsed, so a
+   * selection can hold rows that are no longer on screen, and "Delete 7 items?" would be asking for
+   * a yes to something the answer cannot be seen from. Folders are spelled out for a second reason:
+   * a folder takes everything inside it, which no count says either.
+   */
+  const deleteMarked = useCallback(async () => {
+    const paths = withoutDescendants([...mark.marked.keys()]);
+    if (paths.length === 0) return;
+    const dirs = paths.filter((p) => mark.marked.get(p)).length;
+    const ok = await confirm({
+      title: `Delete ${paths.length} item${paths.length === 1 ? "" : "s"}?`,
+      description: (
+        <>
+          <span className="mb-2 block">
+            Permanently delete{dirs > 0 && " these, and everything inside the folders"}:
+          </span>
+          <span className="block max-h-40 overflow-y-auto">
+            {paths.map((path) => (
+              <span key={path} className="block truncate font-mono text-xs text-foreground" title={path}>
+                {mark.marked.get(path) ? "📁 " : ""}
+                {baseName(path)}
+              </span>
+            ))}
+          </span>
+        </>
+      ),
+      confirmLabel: `Delete ${paths.length}`,
+    });
+    if (!ok) return;
+    const failed: string[] = [];
+    // One at a time, and every one attempted: a folder that refuses to go (a file open in it, a
+    // permission) is no reason to leave the rest of the selection standing.
+    for (const path of paths) {
+      try {
+        await api.fsDelete(path);
+      } catch {
+        failed.push(baseName(path));
+      }
+    }
+    for (const parent of new Set(paths.map(parentOf))) reload(parent);
+    mark.clear();
+    if (failed.length > 0)
+      setError(
+        failed.length === paths.length
+          ? "Delete failed."
+          : `Deleted ${paths.length - failed.length}, could not delete: ${failed.join(", ")}.`
+      );
+  }, [mark, confirm, reload]);
+
   const newFolder = useCallback(async () => {
     if (!selectedDir) return;
     const name = window.prompt("New folder name:");
@@ -464,6 +523,18 @@ export function FilesSidebar({
         >
           <Upload className="size-4" />
         </Button>
+        {/* The way into select mode where there is no hover to reveal a row's own box, and a plain
+            way out of it once there is nothing marked left to act on. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn("size-7", mark.selecting && "text-foreground")}
+          title={mark.selecting ? "Leave select mode" : "Select files"}
+          aria-pressed={mark.selecting}
+          onClick={() => (mark.selecting ? mark.clear() : mark.start())}
+        >
+          <ListChecks className="size-4" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -491,10 +562,43 @@ export function FilesSidebar({
         </div>
       )}
 
+      {/* What is marked and what can be done with it. Shown from the moment select mode starts, so
+          the mode always says out loud that it is on -- an empty tree of boxes with no explanation
+          is how you end up clicking a file and wondering why it did not open. */}
+      {mark.selecting && (
+        <div className="flex items-center gap-1 border-b bg-accent/40 px-2 py-1 text-xs">
+          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+            {mark.count > 0 ? `${mark.count} selected` : "Select files and folders"}
+          </span>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="h-6 gap-1 px-2 text-xs"
+            disabled={mark.count === 0}
+            onClick={() => void deleteMarked()}
+          >
+            <Trash2 className="size-3" />
+            Delete
+          </Button>
+          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={mark.clear}>
+            Cancel
+          </Button>
+        </div>
+      )}
+
       <div
         ref={scrollRef}
         onScroll={onScroll}
         {...treeKeys}
+        // Escape is the way out of a selection, ahead of the tree's own keys -- which do not use it.
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && mark.selecting) {
+            e.preventDefault();
+            mark.clear();
+            return;
+          }
+          treeKeys.onKeyDown?.(e);
+        }}
         className="min-h-0 flex-1 overflow-auto py-1 outline-none"
       >
         {drives.map((d) => (
@@ -519,6 +623,7 @@ export function FilesSidebar({
             onRename={doRename}
             onCancelRename={() => setRenaming(null)}
             onDelete={doDelete}
+            mark={mark}
           />
         ))}
       </div>
@@ -547,6 +652,7 @@ function TreeNode({
   onRename,
   onCancelRename,
   onDelete,
+  mark,
 }: {
   path: string;
   name: string;
@@ -567,12 +673,16 @@ function TreeNode({
   onRename: (path: string, name: string) => void;
   onCancelRename: () => void;
   onDelete: (path: string, isDir: boolean) => void;
+  mark: MarkedPaths;
 }) {
   const isOpen = expanded.has(path);
   const isBusy = loading.has(path);
   const kids = children_.get(path);
   const active = !isDir && openPath === path;
   const selected = isDir && selectedDir === path;
+  const marked = mark.has(path);
+  // A drive is the one thing here that cannot be deleted, so it is not a thing that can be marked.
+  const markable = !isDrive;
 
   return (
     <div>
@@ -583,11 +693,23 @@ function TreeNode({
           "group flex items-center gap-1 rounded px-1 py-0.5 text-sm",
           "cursor-pointer hover:bg-accent",
           active && "bg-accent font-medium",
-          selected && "bg-accent/50"
+          selected && "bg-accent/50",
+          marked && "bg-primary/10"
         )}
         style={{ paddingLeft: depth * 12 + 4 }}
-        onClick={() => (isDir ? onToggle(path) : onOpenFile(path))}
+        // In select mode the row is a checkbox: everything it normally does -- opening a file,
+        // folding a folder -- would fight the gesture the mode is there for.
+        onClick={(e) => {
+          if (mark.selecting && markable) mark.toggle(path, isDir, e.shiftKey);
+          else if (isDir) onToggle(path);
+          else onOpenFile(path);
+        }}
       >
+        {mark.selecting && markable && (
+          <span className={cn("shrink-0", marked ? "text-primary" : "text-muted-foreground")}>
+            {marked ? <SquareCheck className="size-4" /> : <Square className="size-4" />}
+          </span>
+        )}
         {isDir ? (
           isOpen ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
         ) : (
@@ -640,6 +762,20 @@ function TreeNode({
             }}
           >
             <TerminalSquare className="size-3.5" />
+          </button>
+        )}
+        {/* Start a selection with this row in it. Only before the mode is on: once it is, every row
+            carries its own box on the left and a second one here would be a second answer. */}
+        {markable && !mark.selecting && renaming !== path && (
+          <button
+            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
+            title="Select"
+            onClick={(e) => {
+              e.stopPropagation();
+              mark.toggle(path, isDir, e.shiftKey);
+            }}
+          >
+            <Square className="size-3" />
           </button>
         )}
         {/* Drives can't be renamed/deleted; everything else can, via hover actions. */}
@@ -697,6 +833,7 @@ function TreeNode({
                 onRename={onRename}
                 onCancelRename={onCancelRename}
                 onDelete={onDelete}
+                mark={mark}
               />
             ))
           )}

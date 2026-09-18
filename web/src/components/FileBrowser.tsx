@@ -9,6 +9,7 @@ import { readUrlState, previewUrl } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
 import { fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type PreviewGuard } from "@/lib/useFileTabs";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
+import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm";
@@ -54,6 +55,7 @@ import {
   FolderSymlink,
   GitCompare,
   Image as ImageIcon,
+  ListChecks,
   ListTree,
   Loader2,
   Maximize2,
@@ -61,6 +63,8 @@ import {
   RefreshCw,
   Save,
   Search,
+  Square,
+  SquareCheck,
   Trash2,
   Upload,
   Video,
@@ -85,6 +89,7 @@ interface RowActions {
   onCancelRename: () => void;
   onDelete: (entry: FileEntry) => void;
   onNewFolderIn: (dir: string) => void;
+  mark: MarkedPaths; // rows marked for a batch action (see useMarkedPaths)
 }
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
@@ -549,9 +554,46 @@ export const FileBrowser = forwardRef<
   const gitAvailable = !!gitFiles && !isLinkedRoot;
   const changesView = showChanges && gitAvailable;
 
+  // The tree pane's scroll container. Its offset is remembered per session and per view, so
+  // switching sessions (or reloading) comes back to the same place rather than the top of the tree.
+  const treeScrollRef = useRef<HTMLDivElement>(null);
+
   // ---- Per-node file operations (rename / delete / new folder inside a folder) ----
   const confirm = useConfirm();
+  // What a failed batch delete left behind, said where the selection was made. A single delete has
+  // no such line -- the row it failed on is still sitting there, which says it.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Rows marked for a batch action. A range is measured across the tree pane, so the scroll
+  // container is what the hook reads row order back from -- whichever tree happens to be in it.
+  const mark = useMarkedPaths(treeScrollRef);
+  // A mark is a path, and a path here means the root it was made under. Switching session or folder
+  // turns every one of them into a claim about a tree that is no longer on screen -- and the batch
+  // delete would happily act on it -- so a selection does not outlive the thing it was made in.
+  useEffect(() => {
+    mark.clear();
+  }, [sessionId, rootDir, mark.clear]);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
+
+  /**
+   * Close any tab showing one of these paths, or a file that was inside one of them. Deleting a file
+   * out from under its own tab leaves a tab that can only ever report that the file is gone.
+   */
+  const closeTabsUnder = useCallback(
+    (paths: string[]) => {
+      if (paths.length === 0) return;
+      const affected = (p: string) => paths.some((d) => p === d || p.startsWith(d + "/"));
+      if (!tabs.tabs.some((t) => affected(t.path))) return;
+      const next = tabs.tabs.filter((t) => !affected(t.path));
+      const cur = tabs.activePath;
+      const prev = tabs.previewPath;
+      tabs.replace(
+        next,
+        cur && !affected(cur) ? cur : next[0]?.path ?? null,
+        prev && !affected(prev) ? prev : null
+      );
+    },
+    [tabs]
+  );
 
   const doRename = useCallback(
     async (path: string, newName: string) => {
@@ -581,7 +623,7 @@ export const FileBrowser = forwardRef<
 
   const doDelete = useCallback(
     async (entry: FileEntry) => {
-      const staged = hasStagedAdd(effectiveGitFiles, entry);
+      const staged = hasStagedAdd(effectiveGitFiles, entry.path, entry.isDir);
       const ok = await confirm({
         title: `Delete ${entry.isDir ? "folder" : "file"}?`,
         description: (
@@ -599,25 +641,76 @@ export const FileBrowser = forwardRef<
       if (!ok) return;
       try {
         await api.deleteSessionFile(sessionId, entry.path, writeDir);
-        // Drop any tab for the deleted file (or files under a deleted folder).
-        const affected = (p: string) => p === entry.path || p.startsWith(entry.path + "/");
-        if (tabs.tabs.some((t) => affected(t.path))) {
-          const next = tabs.tabs.filter((t) => !affected(t.path));
-          const cur = tabs.activePath;
-          const prev = tabs.previewPath;
-          tabs.replace(
-            next,
-            cur && !affected(cur) ? cur : next[0]?.path ?? null,
-            prev && !affected(prev) ? prev : null
-          );
-        }
+        closeTabsUnder([entry.path]);
         onRefresh?.();
       } catch {
         /* ignore — best effort */
       }
     },
-    [sessionId, writeDir, tabs, confirm, onRefresh, effectiveGitFiles]
+    [sessionId, writeDir, closeTabsUnder, confirm, onRefresh, effectiveGitFiles]
   );
+
+  /**
+   * Delete everything marked, behind one confirmation that names what is going.
+   *
+   * The names are spelled out rather than counted. A mark outlives its folder being collapsed and a
+   * switch to the changes view, so a selection can hold rows that are no longer on screen, and
+   * "Delete 7 items?" would be asking for a yes to something the answer cannot be seen from.
+   */
+  const deleteMarked = useCallback(async () => {
+    const paths = withoutDescendants([...mark.marked.keys()]);
+    if (paths.length === 0) return;
+    const dirs = paths.filter((p) => mark.marked.get(p)).length;
+    const staged = paths.some((p) => hasStagedAdd(effectiveGitFiles, p, !!mark.marked.get(p)));
+    const ok = await confirm({
+      title: `Delete ${paths.length} item${paths.length === 1 ? "" : "s"}?`,
+      description: (
+        <>
+          <span className="mb-2 block">
+            Permanently delete{dirs > 0 && " these, and everything inside the folders"}:
+          </span>
+          <span className="mb-2 block max-h-40 overflow-y-auto">
+            {paths.map((path) => (
+              <span key={path} className="block truncate font-mono text-xs text-foreground" title={path}>
+                {mark.marked.get(path) ? "📁 " : ""}
+                {path}
+              </span>
+            ))}
+          </span>
+          {staged && (
+            <span className="block">
+              Staged-but-uncommitted files among them are unstaged as well — otherwise a commit would
+              still add them.
+            </span>
+          )}
+        </>
+      ),
+      confirmLabel: `Delete ${paths.length}`,
+    });
+    if (!ok) return;
+    const failed: string[] = [];
+    const gone: string[] = [];
+    // One at a time, and every one attempted: a file that refuses to go is no reason to leave the
+    // rest of the selection standing.
+    for (const path of paths) {
+      try {
+        await api.deleteSessionFile(sessionId, path, writeDir);
+        gone.push(path);
+      } catch {
+        failed.push(path);
+      }
+    }
+    closeTabsUnder(gone);
+    mark.clear();
+    setDeleteError(
+      failed.length === 0
+        ? null
+        : failed.length === paths.length
+          ? "Delete failed."
+          : `Deleted ${gone.length}, could not delete ${failed.length}: ${failed.join(", ")}.`
+    );
+    onRefresh?.();
+  }, [mark, sessionId, writeDir, closeTabsUnder, confirm, onRefresh, effectiveGitFiles]);
 
   // Open the new-folder creator targeting a specific directory ("" = repo root).
   const newFolderIn = useCallback((dir: string) => {
@@ -635,6 +728,7 @@ export const FileBrowser = forwardRef<
     onCancelRename: () => setRenamingPath(null),
     onDelete: doDelete,
     onNewFolderIn: newFolderIn,
+    mark,
   };
 
   // Reveal a file in the working-tree Files pane (from a commit preview): leave the changes/commit
@@ -724,10 +818,6 @@ export const FileBrowser = forwardRef<
     setChangesExpanded(new Set());
     saveSessionUi(sessionId, { changesExpanded: [] });
   }, [sessionId]);
-
-  // Where the tree pane is scrolled to, remembered per session and per view so switching sessions (or
-  // reloading) comes back to the same place rather than the top of the tree.
-  const treeScrollRef = useRef<HTMLDivElement>(null);
 
   // Arrow-key walking of whichever tree the pane is showing. Landing on a file previews it (the
   // same as clicking it), so ↑/↓ steps through a folder the way an image viewer does; folders are
@@ -934,6 +1024,18 @@ export const FileBrowser = forwardRef<
             >
               <FolderSymlink className="size-3.5" />
             </button>
+            {/* The way into select mode where there is no hover to reveal a row's own box, and a
+                plain way out of it once there is nothing marked left to act on. */}
+            {!readOnly && (
+              <button
+                title={mark.selecting ? "Leave select mode" : "Select files"}
+                aria-pressed={mark.selecting}
+                onClick={() => (mark.selecting ? mark.clear() : mark.start())}
+                className={cn("hover:text-foreground", mark.selecting && "text-foreground")}
+              >
+                <ListChecks className="size-3.5" />
+              </button>
+            )}
             <button title="Refresh" onClick={() => onRefresh?.()} className="hover:text-foreground">
               <RefreshCw className="size-3.5" />
             </button>
@@ -1023,10 +1125,51 @@ export const FileBrowser = forwardRef<
           </div>
         </div>
 
+        {/* What is marked and what can be done with it. Shown from the moment select mode starts, so
+            the mode always says out loud that it is on -- a tree of empty boxes with no explanation
+            is how you end up clicking a file and wondering why it did not open. */}
+        {mark.selecting && !readOnly && (
+          <div className="mx-2 mb-1 flex items-center gap-1 rounded bg-accent/60 px-2 py-1 text-xs">
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              {mark.count > 0 ? `${mark.count} selected` : "Select files and folders"}
+            </span>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-6 gap-1 px-2 text-xs"
+              disabled={mark.count === 0}
+              onClick={() => void deleteMarked()}
+            >
+              <Trash2 className="size-3" />
+              Delete
+            </Button>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={mark.clear}>
+              Cancel
+            </Button>
+          </div>
+        )}
+        {deleteError && (
+          <p
+            className="mx-2 mb-1 cursor-pointer text-[10px] text-destructive"
+            onClick={() => setDeleteError(null)}
+          >
+            {deleteError}
+          </p>
+        )}
+
         <div
           ref={treeScrollRef}
           onScroll={onTreeScroll}
           {...treeKeys}
+          // Escape is the way out of a selection, ahead of the tree's own keys -- which do not use it.
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && mark.selecting) {
+              e.preventDefault();
+              mark.clear();
+              return;
+            }
+            treeKeys.onKeyDown?.(e);
+          }}
           className="flex-1 overflow-auto px-1 pb-2 outline-none"
         >
           {changesView ? (
@@ -1183,10 +1326,12 @@ function GitMarker({ status }: { status?: string }) {
 /** Whether deleting this entry would strip a staged addition — a file `git add`ed but never
  * committed, whose index copy would outlive the file on disk (status "A"). A folder counts when
  * anything inside it is staged that way. */
-function hasStagedAdd(gitFiles: GitFiles | undefined, entry: FileEntry): boolean {
+// Takes a path rather than an entry: a marked row is remembered as one, and there is nothing else
+// about a file this needs to know.
+function hasStagedAdd(gitFiles: GitFiles | undefined, path: string, isDir: boolean): boolean {
   if (!gitFiles) return false;
-  if (!entry.isDir) return gitFiles[entry.path] === "A";
-  const prefix = entry.path + "/";
+  if (!isDir) return gitFiles[path] === "A";
+  const prefix = path + "/";
   for (const p in gitFiles) if (gitFiles[p] === "A" && p.startsWith(prefix)) return true;
   return false;
 }
@@ -1666,12 +1811,18 @@ const Row = forwardRef<
   }
 >(function Row({ depth, selected, open, onClick, onOpenNewTab, entry, actions, extraActions, children }, ref) {
   const renaming = actions.renamingPath === entry.path;
+  const { mark } = actions;
+  const marked = mark.has(entry.path);
+  // Nothing is markable while browsing another worktree: the delete the mark leads to is one of the
+  // actions that root does not get.
+  const selecting = mark.selecting && !actions.readOnly;
   return (
     <div
       ref={ref}
       className={cn(
         "group relative flex items-center rounded-sm text-xs hover:bg-accent",
-        selected && "bg-accent font-medium"
+        selected && "bg-accent font-medium",
+        marked && "bg-primary/10"
       )}
     >
       {/* The rename box carries the same padding as the row button opposite it, so a row keeps its
@@ -1695,12 +1846,16 @@ const Row = forwardRef<
               current: !!selected && !entry.isDir,
               depth,
             })}
-            // Cmd/Ctrl+click opens a pinned tab like middle-click (no middle button on trackpads).
+            // In select mode the row is a checkbox: opening a file or folding a folder would fight
+            // the one gesture the mode is there for. Shift takes the range from the last row marked.
+            // Otherwise: Cmd/Ctrl+click opens a pinned tab like middle-click (no middle button on
+            // trackpads).
             onClick={(e) => {
-              if ((e.metaKey || e.ctrlKey) && onOpenNewTab) onOpenNewTab();
+              if (selecting) mark.toggle(entry.path, entry.isDir, e.shiftKey);
+              else if ((e.metaKey || e.ctrlKey) && onOpenNewTab) onOpenNewTab();
               else onClick();
             }}
-            onDoubleClick={onOpenNewTab}
+            onDoubleClick={selecting ? undefined : onOpenNewTab}
             // Middle-click opens the file in a new pinned tab (browser-link behaviour).
             onAuxClick={(e) => {
               if (e.button === 1 && onOpenNewTab) {
@@ -1714,6 +1869,11 @@ const Row = forwardRef<
             style={{ paddingLeft: depth * 12 + 8 }}
             className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left"
           >
+            {selecting && (
+              <span className={cn("shrink-0", marked ? "text-primary" : "text-muted-foreground")}>
+                {marked ? <SquareCheck className="size-3.5" /> : <Square className="size-3.5" />}
+              </span>
+            )}
             {children}
           </button>
           {/* Hover actions, overlaid at the right so they don't eat name width when idle. Mutating
@@ -1724,6 +1884,20 @@ const Row = forwardRef<
               path={entry.path}
               className="rounded p-0.5 hover:bg-background hover:text-foreground"
             />
+            {/* Start a selection with this row in it. Only before the mode is on: once it is, every
+                row carries its own box on the left and a second one here would be a second answer. */}
+            {!actions.readOnly && !mark.selecting && (
+              <button
+                className="rounded p-0.5 hover:bg-background hover:text-foreground"
+                title="Select"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  mark.toggle(entry.path, entry.isDir, e.shiftKey);
+                }}
+              >
+                <Square className="size-3.5" />
+              </button>
+            )}
             {!actions.readOnly && (
               <>
                 <button
