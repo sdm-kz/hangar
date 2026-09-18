@@ -28,6 +28,17 @@ public static class SessionFileBrowser
             : null;
     }
 
+    /// <summary>
+    /// The root-relative, forward-slash path of an existing file named either relative to the root or
+    /// by its absolute path — null when it escapes the root or is not a file. What a caller outside
+    /// the browser needs in order to speak the same paths the tree does (see <c>POST /api/self/open</c>).
+    /// </summary>
+    public static string? RelativeFile(string root, string? path)
+    {
+        var full = ResolveSafe(root, path);
+        return full is not null && File.Exists(full) ? RelOf(root, full) : null;
+    }
+
     public static FileListing? List(string root, string? rel)
     {
         var full = ResolveSafe(root, rel);

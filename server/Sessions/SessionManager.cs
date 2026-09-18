@@ -346,6 +346,77 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
+    /// How many file tabs a session may hold. The panel itself has no limit — a person closes tabs —
+    /// but this endpoint can be called in a loop, and a bag that grows past
+    /// <see cref="SessionUiStore"/>'s per-entry cap stops being persisted at all. Past the limit the
+    /// oldest tabs give way, which is what a person would have done to make room.
+    /// </summary>
+    private const int MaxFileTabs = 50;
+
+    /// <summary>
+    /// Open a file as a tab in a session's Files panel, exactly as clicking it in the tree does: the
+    /// tab model lives in the saved UI bag (see <see cref="SessionUiStore"/>), so this writes the same
+    /// fields the browser writes and every device picks the new tab up on the next list push.
+    ///
+    /// <para><paramref name="paths"/> are relative to the session's working directory and are assumed
+    /// already resolved against it (see <c>SessionFileBrowser.RelativeFile</c>). The last one becomes
+    /// the active tab. <paramref name="pin"/> false opens the file in the single transient "preview"
+    /// slot that a single click reuses; true gives it a tab of its own.</para>
+    ///
+    /// <para>Returns the merged bag, or null when there is no such session.</para>
+    /// </summary>
+    public SessionUiStore.Snapshot? OpenFileTabs(string id, IReadOnlyList<string> paths, bool pin)
+    {
+        if (GetUi(id) is not { } ui || paths.Count == 0) return null;
+
+        var files = ui.State.TryGetValue("files", out var f) && f.ValueKind == JsonValueKind.Array
+            ? f.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => e.GetString()!).ToList()
+            : new List<string>();
+        var preview = ui.State.TryGetValue("preview", out var p) && p.ValueKind == JsonValueKind.String
+            ? p.GetString() ?? ""
+            : "";
+
+        foreach (var path in paths)
+        {
+            // The three cases the panel has (useFileTabs.open), in the same order.
+            var slot = pin || preview.Length == 0 ? -1 : files.IndexOf(preview);
+            if (files.Contains(path, StringComparer.Ordinal))
+            {
+                if (pin && preview == path) preview = ""; // promote the preview tab to a pinned one
+            }
+            else if (slot < 0)
+            {
+                files.Add(path);                          // a tab of its own, or the first preview tab
+                if (!pin) preview = path;
+            }
+            else
+            {
+                files[slot] = path;                       // reuse the preview slot in place
+                preview = path;
+            }
+        }
+
+        var active = paths[^1];
+        if (files.Count > MaxFileTabs)
+        {
+            var drop = files.Count - MaxFileTabs;
+            files = files.Where((t, i) => i >= drop || t == active || t == preview).ToList();
+        }
+
+        return MergeUi(id, new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+        {
+            ["files"] = JsonSerializer.SerializeToElement(files),
+            ["file"] = JsonSerializer.SerializeToElement(active),
+            ["preview"] = JsonSerializer.SerializeToElement(preview),
+            // The panel can be pointed at another worktree or a linked folder, where these paths would
+            // resolve somewhere else entirely. They were resolved against the session's own working
+            // directory, so that is the root they belong to.
+            ["worktree"] = JsonSerializer.SerializeToElement(""),
+        });
+    }
+
+    /// <summary>
     /// Pin or unpin a session, keyed by its conversation so the pin survives a reopen (which mints a
     /// new session id) and reaches every browser through the session list. Returns false when there
     /// is no such session.

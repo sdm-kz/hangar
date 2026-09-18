@@ -513,6 +513,41 @@ The session id comes from the header we injected at launch, so a session can onl
 itself — the endpoint can't be aimed at another session, and it stays shut to anything that can't
 read that session's environment. Same trust boundary as the `/api/hooks` callback.
 
+## Opening a file in a session's tab bar from inside it (API)
+
+The same trust boundary, put to a second use: a running session can open a file of its own working
+directory as a **tab in its own tab bar**, next to Terminal/Split/Files, the way clicking it in the
+Files panel would. `POST /api/self/open` takes the same three environment variables as the rename
+above, and nothing else.
+
+```bash
+curl -s -X POST "$CLAUDEWEB_URL/api/self/open" \
+  -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
+  -H "X-Hook-Token: $CLAUDEWEB_HOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"paths":["server/Program.cs","web/src/App.tsx"]}'
+# {"id":"664d6618…","opened":["server/Program.cs","web/src/App.tsx"],"missing":[],"active":"web/src/App.tsx"}
+```
+
+`path` (one string) and `paths` (an array) are both accepted and add up; the last file opened
+becomes the active tab. Paths are relative to the session's working directory — an absolute path
+inside it is fine too — and anything that escapes it, names a folder, or isn't there comes back in
+`missing` rather than opening. `"pin": false` puts the file in the single transient *preview* slot
+that a click in the tree reuses, instead of giving it a tab of its own.
+
+Responses are `200` with what opened, `400` when no path was given or none of them resolved,
+`401` on missing/stale headers, and `404` when the id names no live session.
+
+The tabs live in the same server-side UI bag the browsers keep them in (`session-ui.json`, keyed by
+conversation), so the new tab reaches **every** device the session is open on and survives a reopen
+— not just the browser that happens to be in front of you. What the call deliberately does *not* do
+is take over the pane: a browser on the Terminal view keeps it, with the tab waiting in the bar,
+while one already showing Files/Split/a file follows to the newly opened file. Which surface is on
+screen belongs to the person looking at it; the open tabs are shared state.
+
+Fifty tabs is the ceiling for one session (the panel itself has none — a person closes tabs, and
+this endpoint can be called in a loop); past it the oldest give way.
+
 ## Security notes
 
 - Auth is a single shared password that mints an in-memory bearer token. The password is stored

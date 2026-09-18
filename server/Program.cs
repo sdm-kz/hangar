@@ -604,19 +604,7 @@ internal static class Program
         app.MapPost("/api/self/name", (HttpContext ctx, RenameRequest body, TokenStore tokens,
             SessionManager mgr, ILoggerFactory lf) =>
         {
-            if (!tokens.IsValidHookToken(ctx.Request.Headers["X-Hook-Token"].ToString()))
-            {
-                // Worth a line: from inside a session this reads as a bare 401 with nothing to chase.
-                // The token is persisted now, so the remaining cause is a session started against a
-                // different state directory — or one launched before this build, still carrying a
-                // per-run token that no longer exists.
-                lf.CreateLogger("SelfRename").LogWarning(
-                    "Self-rename rejected: stale or missing X-Hook-Token from session {Id}",
-                    ctx.Request.Headers["X-Session-Id"].ToString());
-                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
-            }
-            var id = ctx.Request.Headers["X-Session-Id"].ToString();
-            if (string.IsNullOrEmpty(id))
+            if (SelfCaller(ctx, tokens, lf, "rename") is not { } id)
                 return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
             // Sanitize up front so an all-whitespace/control-character name is a clear 400 rather than
             // being indistinguishable from an unknown session.
@@ -624,6 +612,59 @@ internal static class Program
             if (clean.Length == 0) return Results.BadRequest(new { error = "name is empty" });
             return mgr.Rename(id, clean) ? Results.Ok(new { id, name = clean }) : Results.NotFound();
         });
+
+        // Self-open: the same deal for the Files panel. A session opens a file of its own working
+        // directory as a tab in its own tab bar — the tab a click in the tree would have made — so
+        // what Claude is talking about is one click away for whoever is watching. Paths are relative
+        // to the working directory (an absolute path inside it is accepted too) and the last one
+        // opened becomes the active file tab. The tabs live in the shared UI bag, so the new tab
+        // reaches every device the session is open on, not just one browser.
+        app.MapPost("/api/self/open", (HttpContext ctx, SelfOpenRequest body, TokenStore tokens,
+            SessionManager mgr, ILoggerFactory lf) =>
+        {
+            if (SelfCaller(ctx, tokens, lf, "open") is not { } id)
+                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            if (mgr.Get(id) is not { } info) return Results.NotFound();
+
+            var asked = (body.Path is null ? Enumerable.Empty<string>() : [body.Path])
+                .Concat(body.Paths ?? [])
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .ToList();
+            if (asked.Count == 0) return Results.BadRequest(new { error = "no path given" });
+
+            // A path that escapes the working directory, or names a folder or something that isn't
+            // there, is reported back rather than opened — the panel can only show files of this
+            // session's own tree, and a tab pointing at nothing would just fail to load.
+            var opened = new List<string>();
+            var missing = new List<string>();
+            foreach (var p in asked)
+            {
+                if (SessionFileBrowser.RelativeFile(info.WorkingDirectory, p) is not { } rel) missing.Add(p);
+                else if (!opened.Contains(rel, StringComparer.Ordinal)) opened.Add(rel);
+            }
+            if (opened.Count == 0)
+                return Results.BadRequest(new { error = "no such file under the session's folder", missing });
+
+            return mgr.OpenFileTabs(id, opened, body.Pin) is null
+                ? Results.NotFound()
+                : Results.Ok(new { id, opened, missing, active = opened[^1] });
+        });
+
+        // Which session is calling an /api/self endpoint: the id it was launched with, once the hook
+        // token it was launched with checks out. Null — and a logged line, because from inside a
+        // session this otherwise reads as a bare 401 with nothing to chase — when either is missing or
+        // stale. The token is persisted now, so the remaining cause is a session started against a
+        // different state directory, or one launched before that changed and still carrying a per-run
+        // token that no longer exists.
+        static string? SelfCaller(HttpContext ctx, TokenStore tokens, ILoggerFactory lf, string what)
+        {
+            var id = ctx.Request.Headers["X-Session-Id"].ToString();
+            if (id.Length > 0 && tokens.IsValidHookToken(ctx.Request.Headers["X-Hook-Token"].ToString()))
+                return id;
+            lf.CreateLogger("SelfApi").LogWarning(
+                "Self-{What} rejected: stale or missing X-Hook-Token/X-Session-Id from session {Id}", what, id);
+            return null;
+        }
 
         // Enable/disable the hang watchdog for a session.
         // Pin/unpin a session. The manager resolves which conversation the pin belongs to; the client
@@ -1368,6 +1409,12 @@ internal record PinRequest(bool Pinned);
 /// told about while it changes.</summary>
 internal record SessionUiRequest(Dictionary<string, System.Text.Json.JsonElement>? State, bool Quiet = false);
 internal record RenameRequest(string Name);
+/// <summary>Body for <c>POST /api/self/open</c>: the file(s) to open as tabs in the calling session's
+/// Files panel, named relative to its working directory (or absolutely, inside it). <c>Path</c> and
+/// <c>Paths</c> are both accepted and add up; the last one opened becomes the active tab.
+/// <c>Pin</c> (the default) gives each file a tab of its own — false puts it in the single transient
+/// "preview" slot that a click in the tree reuses.</summary>
+internal record SelfOpenRequest(string? Path, string[]? Paths = null, bool Pin = true);
 // Name for a forked session; blank/absent falls back to a "<parent> (fork)" default server-side.
 internal record ForkRequest(string? Name);
 // `Dir` on the session file-mutation payloads names the write root: empty (the default) is the
