@@ -320,6 +320,51 @@ function folderPostponed(items: SessionInfo[]): number {
   return items.reduce((n, s) => n + s.postponedCount, 0);
 }
 
+/**
+ * How far a heading's batch has got: how many of the sessions under it have finished, out of the
+ * ones that are up to anything at all.
+ *
+ * The heading's dot says what the most urgent thing inside is; it cannot say how much of the work is
+ * over, and on a collapsed box that is the thing you are actually waiting to know. Sessions with no
+ * mark are left out of both halves -- an idle session was never part of this run, and counting it
+ * would make a finished batch read as unfinished for as long as it sat there.
+ */
+function folderProgress(items: SessionInfo[], ids: ActivityIds): { done: number; active: number } {
+  let done = 0;
+  let active = 0;
+  for (const s of items) {
+    if (s.state === "Restorable") continue; // a closed session isn't part of anything running
+    const a = sessionActivity(s, ids);
+    if (!a) continue;
+    active++;
+    if (a === "done") done++;
+  }
+  return { done, active };
+}
+
+/**
+ * The fraction, shown only once something has finished. While a batch is still all working the dot
+ * says everything there is to say, and a "0/4" ticking away in the corner of every heading would be
+ * a number that means "nothing has happened yet".
+ */
+function HeadingProgress({ done, active }: { done: number; active: number }) {
+  if (done <= 0 || active <= 0) return null;
+  return (
+    <span
+      // The tick's colour, because it counts ticks -- and the same past tense: nothing here is
+      // moving, so nothing about it pulses.
+      className="shrink-0 font-mono text-[10px] tabular-nums text-emerald-600 dark:text-emerald-500"
+      title={
+        done === active
+          ? `${done} finished, nothing still going`
+          : `${done} of ${active} finished — ${active - done} still going`
+      }
+    >
+      {done}/{active}
+    </span>
+  );
+}
+
 function folderActivity(items: SessionInfo[], ids: ActivityIds): Activity | null {
   let top: Activity | null = null;
   for (const s of items) {
@@ -509,6 +554,7 @@ function GroupHeader({
   dragProps,
   navProps,
   doneCount = 0,
+  activeCount = 0,
   onMarkSeen,
 }: {
   dir: string;
@@ -537,6 +583,8 @@ function GroupHeader({
   navProps?: Record<string, unknown>;
   // Finished-but-unseen sessions in this folder, and the way to clear them all. Sessions view only.
   doneCount?: number;
+  /** Sessions in here doing anything at all — the other half of the done/active count. */
+  activeCount?: number;
   onMarkSeen?: () => void;
 }) {
   return (
@@ -566,6 +614,7 @@ function GroupHeader({
             part of the folder's label, and never drifts away from it on a wide sidebar. */}
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
       </button>
+      <HeadingProgress done={doneCount} active={activeCount} />
       <MarkSeenButton count={doneCount} onMarkSeen={onMarkSeen} reveal="gh" />
       {onNewSession && (
         <button
@@ -799,6 +848,7 @@ function VirtualFolderHeader({
   navProps,
   dragProps,
   doneCount = 0,
+  activeCount = 0,
   onMarkSeen,
 }: {
   group: ProjectGroup;
@@ -817,6 +867,8 @@ function VirtualFolderHeader({
   // Finished-but-unseen sessions filed in here, and the way to clear them all — see MarkSeenButton.
   doneCount?: number;
   onMarkSeen?: () => void;
+  /** Sessions in here doing anything at all — the other half of the done/active count. */
+  activeCount?: number;
 }) {
   const Icon = groupIcon(group.icon);
   const accent = sessionColor(group.color);
@@ -853,6 +905,10 @@ function VirtualFolderHeader({
         <span className="truncate text-xs font-medium">{group.name}</span>
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
       </button>
+      {/* Outside the fold button and before the hover actions, so it sits at the heading's right
+          edge -- away from the name and its count, which say what is filed here rather than how it
+          is getting on. */}
+      <HeadingProgress done={doneCount} active={activeCount} />
       <MarkSeenButton count={doneCount} onMarkSeen={onMarkSeen} reveal="vf" />
       <button
         type="button"
@@ -886,6 +942,7 @@ function ProjectHeader({
   navProps,
   postponed = 0,
   doneCount = 0,
+  activeCount = 0,
   onMarkSeen,
 }: {
   project: Project | null;
@@ -910,6 +967,8 @@ function ProjectHeader({
   // once. Only offered while there is at least one, so the button is itself the "there's something
   // to clear" signal rather than a control that is usually inert.
   doneCount?: number;
+  /** Sessions in here doing anything at all — the other half of the done/active count. */
+  activeCount?: number;
   onMarkSeen?: () => void;
 }) {
   const accent = project ? sessionColor(project.color) : null;
@@ -962,6 +1021,10 @@ function ProjectHeader({
           </Badge>
         )}
       </button>
+      {/* Outside the fold button and before the hover actions, so it sits at the heading's right
+          edge -- away from the name and its count, which say what is in the project rather than how
+          it is getting on. */}
+      <HeadingProgress done={doneCount} active={activeCount} />
       <MarkSeenButton count={doneCount} onMarkSeen={onMarkSeen} reveal="ph" />
       {onNewSession && (
         <button
@@ -1019,6 +1082,7 @@ function ProjectSections<T>({
   activityOf,
   postponedOf,
   doneOf,
+  activeOf,
   onMarkSeen,
 }: {
   sections: ProjectSection<T>[];
@@ -1072,6 +1136,8 @@ function ProjectSections<T>({
   postponedOf?: (items: T[], project: Project | null) => number;
   /** Finished-but-unseen sessions inside the section, for its "mark all seen". Sessions view only. */
   doneOf?: (items: T[], project: Project | null) => string[];
+  /** Sessions inside the section doing anything at all, for the heading's done/active count. */
+  activeOf?: (items: T[], project: Project | null) => number;
   onMarkSeen?: (ids: string[]) => void;
 }) {
   return (
@@ -1105,6 +1171,7 @@ function ProjectSections<T>({
               navProps={navRow?.(project)}
               postponed={postponedOf?.(items, project) ?? 0}
               doneCount={done.length}
+              activeCount={activeOf?.(items, project) ?? 0}
               onMarkSeen={onMarkSeen && done.length > 0 ? () => onMarkSeen(done) : undefined}
             />
             {!isCollapsed && groups && (
@@ -2491,6 +2558,7 @@ export function SessionSidebar({
             onDragEnd: () => (draggedGroup.current = null),
           })}
           doneCount={doneIn(vg.items).length}
+          activeCount={folderProgress(vg.items, activityIds).active}
           onMarkSeen={() => onMarkSeen(doneIn(vg.items))}
           // A virtual folder only ever hangs off a project heading, so it always sits at depth 1.
           navProps={navRowProps({
@@ -2542,6 +2610,7 @@ export function SessionSidebar({
           onRemove={() => setRemoveDir(g.key)}
           activity={folderActivity(g.items, activityIds)}
           doneCount={doneIn(g.items).length}
+          activeCount={folderProgress(g.items, activityIds).active}
           onMarkSeen={() => onMarkSeen(doneIn(g.items))}
           projects={projects}
           projectId={projectForDir(g.dir, projects)?.id ?? null}
@@ -2733,6 +2802,12 @@ export function SessionSidebar({
               doneOf={(gs, project) =>
                 doneIn([...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)])
               }
+              activeOf={(gs, project) =>
+                folderProgress(
+                  [...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)],
+                  activityIds
+                ).active
+              }
               onMarkSeen={onMarkSeen}
               postponedOf={(gs, project) =>
                 folderPostponed([
@@ -2779,6 +2854,9 @@ export function SessionSidebar({
               folderPostponed([...ss, ...shownGroups(project).flatMap((g) => g.items)])
             }
             doneOf={(ss, project) => doneIn([...ss, ...shownGroups(project).flatMap((g) => g.items)])}
+            activeOf={(ss, project) =>
+              folderProgress([...ss, ...shownGroups(project).flatMap((g) => g.items)], activityIds).active
+            }
             onMarkSeen={onMarkSeen}
           />
         ) : (
