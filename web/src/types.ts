@@ -170,12 +170,24 @@ export interface BrowseResult {
   drives: DirEntry[];
 }
 
+/**
+ * What a staged build says it changed, written by `scripts\stage-update.ps1` into the payload's
+ * build.json. Optional throughout: a build staged by hand carries none, and the update dialog then
+ * says nothing about it rather than promising notes that never arrive.
+ */
+export interface ReleaseNotes {
+  summary: string | null; // one line, for the button's tooltip
+  changes: string[] | null; // the changes themselves, newest first
+  since: string | null; // commit the range was measured from (the installed build's)
+}
+
 /** Identity of one build of the app, written by scripts\build.ps1 as build.json next to the exe. */
 export interface BuildStamp {
   buildId: string; // UTC build timestamp + short commit; two builds are the same iff this matches
   commit: string | null;
   branch: string | null;
   builtAtUtc: string | null;
+  notes: ReleaseNotes | null; // what this build brought, when whoever staged it said
 }
 
 /** The updater's view of itself: what's running, what's staged, and whether one is being installed. */

@@ -72,6 +72,8 @@ export function UpdateButton({
             </DialogDescription>
           </DialogHeader>
 
+          <WhatsNew stamp={status.staged} />
+
           <dl className="grid grid-cols-[auto,minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
             <dt className="text-muted-foreground">New</dt>
             <dd className="min-w-0">
@@ -176,8 +178,42 @@ function BuildLine({ stamp }: { stamp: BuildStamp }) {
   );
 }
 
+/**
+ * What the staged build brings, when whoever staged it said (see scripts\stage-update.ps1). Nothing
+ * at all when they did not: the dialog is then exactly what it was before this existed, which is the
+ * right answer for a build staged by hand rather than a promise of notes that never arrive.
+ */
+function WhatsNew({ stamp }: { stamp: BuildStamp }) {
+  const notes = stamp.notes;
+  const changes = notes?.changes ?? [];
+  if (!notes || (changes.length === 0 && !notes.summary)) return null;
+  return (
+    <section className="min-w-0">
+      <h3 className="mb-1 text-sm font-medium">What's new</h3>
+      {notes.summary && <p className="mb-2 text-sm text-muted-foreground">{notes.summary}</p>}
+      {changes.length > 0 && (
+        // Capped and scrolled rather than allowed to push the buttons off a short window: a build
+        // that has been waiting a while can carry a long list, and the dialog still has to be one
+        // you can act on without scrolling to find the way out.
+        <ul className="max-h-48 space-y-1 overflow-y-auto pr-1 text-sm">
+          {changes.map((change, i) => (
+            <li key={i} className="flex gap-2">
+              <span aria-hidden className="select-none text-muted-foreground">
+                •
+              </span>
+              <span className="min-w-0 break-words">{change}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /** One-line summary for the button's tooltip. */
 function describe(stamp: BuildStamp): string {
   const when = stamp.builtAtUtc ? new Date(stamp.builtAtUtc).toLocaleString() : stamp.buildId;
-  return stamp.commit ? `${stamp.commit}, built ${when}` : `built ${when}`;
+  const build = stamp.commit ? `${stamp.commit}, built ${when}` : `built ${when}`;
+  // The summary first: it is the part that says whether this is worth restarting for right now.
+  return stamp.notes?.summary ? `${stamp.notes.summary} (${build})` : build;
 }
