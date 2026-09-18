@@ -138,6 +138,12 @@ The web UI is a **session manager with a full terminal**:
   wrap by default, because this pane is often half a screen wide rather than a whole one; the button
   in the header turns that off for GitHub's own behaviour, where the two halves scroll together.
 
+  Both are **syntax highlighted**, in the same palette the file preview uses. Each side of a diff is
+  coloured as one text rather than a line at a time, so a comment or a string running over several
+  lines is still one of those where it is drawn — what a diff cannot show is the code between hunks,
+  so a block opened in a part of the file nobody touched reads as closed. A whole file has no such
+  gap and is coloured exactly as a compiler would read it.
+
   Every file's header also offers **Diff / File**: the change, or the file itself, read whole at the
   commit this pull request proposes — the base commit for a file the request deletes, since that is
   the only side it still exists on. A file being read whole gets a **copy** button beside the toggle,

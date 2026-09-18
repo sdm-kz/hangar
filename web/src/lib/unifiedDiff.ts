@@ -133,7 +133,11 @@ export function oneSidedAs(status: string): "add" | "del" | null {
   return null;
 }
 
-/** Every row of every hunk, flattened — what the one-sided view draws. */
-export function allRows(hunks: DiffHunk[]): DiffRow[] {
+/**
+ * Every row of every hunk, flattened — what the one-sided view draws. Generic in the row, so a
+ * caller that has decorated its rows (with highlight tokens, say) gets its own type back rather than
+ * the bare one this module defines.
+ */
+export function allRows<R>(hunks: { rows: R[] }[]): R[] {
   return hunks.flatMap((h) => h.rows);
 }

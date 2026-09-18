@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { GitHubPullDetail, GitHubPullFile } from "@/types";
 import { api } from "@/lib/api";
 import { writeToClipboard } from "@/lib/clipboard";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
-import { allRows, oneSidedAs, parseUnifiedDiff, type DiffHunk } from "@/lib/unifiedDiff";
+import { highlightLines, type CodeToken } from "@/lib/highlight";
+import { allRows, oneSidedAs, parseUnifiedDiff, type DiffRow } from "@/lib/unifiedDiff";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./Markdown";
 import {
@@ -93,6 +94,13 @@ function readShare(): number {
   } catch {
     return SHARE_DEFAULT;
   }
+}
+
+/** A diff row with each side's highlight tokens attached, where the language was one we know. */
+type ShownRow = DiffRow & { leftTokens?: CodeToken[]; rightTokens?: CodeToken[] };
+interface ShownHunk {
+  header: string;
+  rows: ShownRow[];
 }
 
 /** The word a status letter stands for, for the file row's tooltip. */
@@ -555,7 +563,40 @@ function FileDiff({
   register: (el: HTMLDivElement | null) => void;
 }) {
   // Parsing is the expensive part of drawing a file, so it waits until the file is actually open.
-  const hunks = useMemo(() => (open && !file.binary ? parseUnifiedDiff(file.diff) : []), [open, file]);
+  const rawHunks = useMemo(() => (open && !file.binary ? parseUnifiedDiff(file.diff) : []), [open, file]);
+
+  /**
+   * The same hunks with each line's highlighted HTML attached. Each side is highlighted as one text
+   * rather than line by line — see highlightLines — so a comment or a string that runs over several
+   * lines is still one of those by the time it is drawn. The two sides go separately, because they
+   * are two different versions of the file interleaved, and reading them as one would be nonsense.
+   *
+   * What it cannot know is the code between hunks, which the diff never sent: a block opened in a
+   * part of the file nobody changed looks closed to this. That is the same thing GitHub does, and
+   * the alternative is fetching the whole file to colour three lines of context.
+   */
+  const hunks = useMemo(() => {
+    const lefts: string[] = [];
+    const rights: string[] = [];
+    for (const h of rawHunks)
+      for (const r of h.rows) {
+        if (r.left) lefts.push(r.left.text);
+        if (r.right) rights.push(r.right.text);
+      }
+    const left = highlightLines(file.path, lefts.join("\n"));
+    const right = highlightLines(file.path, rights.join("\n"));
+
+    let li = 0;
+    let ri = 0;
+    return rawHunks.map((h) => ({
+      header: h.header,
+      rows: h.rows.map((r) => {
+        const leftTokens = r.left ? left?.[li++] : undefined;
+        const rightTokens = r.right ? right?.[ri++] : undefined;
+        return { ...r, leftTokens, rightTokens };
+      }),
+    }));
+  }, [rawHunks, file.path]);
   const side = oneSidedAs(file.status);
   const { dir, name } = splitPath(file.path);
 
@@ -699,7 +740,7 @@ function FileDiff({
         ) : contentError ? (
           <div className="p-4 text-sm text-muted-foreground">{contentError}</div>
         ) : (
-          <FileListing text={content ?? ""} wrap={wrap} />
+          <FileListing path={file.path} text={content ?? ""} wrap={wrap} />
         )
       ) : open ? (
         file.binary ? (
@@ -778,6 +819,35 @@ function splitColumns(wrap: boolean, share: number): string {
   return `${NUM_COL}px ${oldCol} ${NUM_COL}px ${newCol}`;
 }
 
+/**
+ * One line of code in the grid, highlighted where the language is one we have a grammar for and
+ * drawn as plain text where it isn't — which is why both paths are here.
+ *
+ * The tokens become nested spans rather than a string of HTML. The code being coloured came from
+ * whoever opened the pull request, and going through React means React escapes it: there is no HTML
+ * string on the path at all, so there is nothing on it that could forget to. The nesting is rebuilt
+ * per token because the theme has descendant rules — `.hljs-meta .hljs-string` and the like — that a
+ * flattened span would stop matching.
+ *
+ * A blank line still has to occupy its row, hence the space standing in for empty content.
+ */
+function Code({ tokens, text, className }: { tokens?: CodeToken[]; text: string; className: string }) {
+  if (!tokens) return <div className={className}>{text || " "}</div>;
+  if (!tokens.length) return <div className={className}> </div>;
+  return (
+    <div className={className}>
+      {tokens.map((t, i) => (
+        <Fragment key={i}>
+          {t.classes.reduceRight<ReactNode>(
+            (child, cls) => <span className={cls}>{child}</span>,
+            t.text
+          )}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
 /** Background for a cell, by what happened to the line it holds. */
 function tint(kind: "add" | "del" | "none" | "gap"): string {
   if (kind === "add") return "bg-emerald-500/10";
@@ -794,7 +864,7 @@ function SideBySide({
   onResize,
   onReset,
 }: {
-  hunks: DiffHunk[];
+  hunks: ShownHunk[];
   wrap: boolean;
   share: number;
   onResize: (e: React.PointerEvent) => void;
@@ -827,9 +897,17 @@ function SideBySide({
               return (
                 <div key={i} className="contents">
                   <div className={cn(NUM_CELL, tint(leftKind))}>{row.left?.number ?? ""}</div>
-                  <div className={cn(CODE_CELL, mode.code, tint(leftKind))}>{row.left?.text || " "}</div>
+                  <Code
+                    tokens={row.leftTokens}
+                    text={row.left?.text ?? ""}
+                    className={cn(CODE_CELL, mode.code, tint(leftKind))}
+                  />
                   <div className={cn(NUM_CELL, "border-l", tint(rightKind))}>{row.right?.number ?? ""}</div>
-                  <div className={cn(CODE_CELL, mode.code, tint(rightKind))}>{row.right?.text || " "}</div>
+                  <Code
+                    tokens={row.rightTokens}
+                    text={row.right?.text ?? ""}
+                    className={cn(CODE_CELL, mode.code, tint(rightKind))}
+                  />
                 </div>
               );
             })}
@@ -845,7 +923,7 @@ function SideBySide({
  * against, so the second column would be a full-height empty gutter beside the only thing worth
  * reading — the content itself, which is what this shows.
  */
-function OneSided({ hunks, side, wrap }: { hunks: DiffHunk[]; side: "add" | "del"; wrap: boolean }) {
+function OneSided({ hunks, side, wrap }: { hunks: ShownHunk[]; side: "add" | "del"; wrap: boolean }) {
   const rows = allRows(hunks);
   const mode = lineMode(wrap);
   return (
@@ -856,6 +934,7 @@ function OneSided({ hunks, side, wrap }: { hunks: DiffHunk[]; side: "add" | "del
       >
         {rows.map((row, i) => {
           const line = side === "add" ? row.right : row.left;
+          const tokens = side === "add" ? row.rightTokens : row.leftTokens;
           if (!line) return null;
           // Every line of a new file is an addition; a context line can still turn up where the file
           // was added in a repo that had it before, and it is not tinted.
@@ -863,7 +942,7 @@ function OneSided({ hunks, side, wrap }: { hunks: DiffHunk[]; side: "add" | "del
           return (
             <div key={i} className="contents">
               <div className={cn(NUM_CELL, tint(kind))}>{line.number}</div>
-              <div className={cn(CODE_CELL, mode.code, tint(kind))}>{line.text || " "}</div>
+              <Code tokens={tokens} text={line.text} className={cn(CODE_CELL, mode.code, tint(kind))} />
             </div>
           );
         })}
@@ -877,8 +956,11 @@ function OneSided({ hunks, side, wrap }: { hunks: DiffHunk[]; side: "add" | "del
  * grid the one-sided view uses, so the two read the same way — what differs is that this is the file
  * at a commit, and the numbers run from one to the end rather than from wherever a hunk started.
  */
-function FileListing({ text, wrap }: { text: string; wrap: boolean }) {
+function FileListing({ path, text, wrap }: { path: string; text: string; wrap: boolean }) {
   const mode = lineMode(wrap);
+  // One highlight pass over the whole file — the one case where nothing is missing from it, so a
+  // block comment or a long string is read exactly as a compiler would read it.
+  const tokens = useMemo(() => highlightLines(path, text), [path, text]);
   // A file ends with a newline, and splitting on it leaves an empty last element that is the
   // terminator rather than a line of the file — the same trap the diff parser has to sidestep.
   const lines = useMemo(() => {
@@ -898,7 +980,7 @@ function FileListing({ text, wrap }: { text: string; wrap: boolean }) {
         {lines.map((line, i) => (
           <div key={i} className="contents">
             <div className={NUM_CELL}>{i + 1}</div>
-            <div className={cn(CODE_CELL, mode.code)}>{line || " "}</div>
+            <Code tokens={tokens?.[i]} text={line} className={cn(CODE_CELL, mode.code)} />
           </div>
         ))}
       </div>
