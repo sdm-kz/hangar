@@ -9,6 +9,7 @@ import type {
   GitLog,
   GitRefs,
   GitStatus,
+  GitHubFileContent,
   GitHubPullDetail,
   GitHubPullList,
   GitHubRepo,
@@ -560,6 +561,12 @@ export const api = {
   },
   githubPull(id: string, number: number): Promise<GitHubPullDetail> {
     return request(`/api/sessions/${id}/github/pulls/${number}`);
+  },
+  // One of a PR's files read whole at one of the two commits the review names — the head unless the
+  // base is asked for, which is what a deleted file wants.
+  githubPullFile(id: string, number: number, path: string, ref: string): Promise<GitHubFileContent> {
+    const q = new URLSearchParams({ path, ref });
+    return request(`/api/sessions/${id}/github/pulls/${number}/file?${q.toString()}`);
   },
   writeSessionFile(id: string, path: string, content: string, dir?: string): Promise<void> {
     return request(`/api/sessions/${id}/fs/write`, {

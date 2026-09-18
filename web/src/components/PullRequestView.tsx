@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GitHubPullDetail, GitHubPullFile } from "@/types";
 import { api } from "@/lib/api";
+import { writeToClipboard } from "@/lib/clipboard";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { allRows, oneSidedAs, parseUnifiedDiff, type DiffHunk } from "@/lib/unifiedDiff";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./Markdown";
 import {
   AlertTriangle,
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -491,6 +494,10 @@ export function PullRequestView({
               {files.map((f) => (
                 <FileDiff
                   key={f.path}
+                  sessionId={sessionId}
+                  number={number}
+                  headRef={pull?.headRefOid ?? ""}
+                  baseRef={pull?.baseRefOid ?? ""}
                   file={f}
                   open={isOpen(f)}
                   wrap={wrap}
@@ -513,8 +520,12 @@ export function PullRequestView({
   );
 }
 
-/** One file of the review: a header that folds it away, and its diff below. */
+/** One file of the review: a header that folds it away, and its diff — or the file itself — below. */
 function FileDiff({
+  sessionId,
+  number,
+  headRef,
+  baseRef,
   file,
   open,
   wrap,
@@ -525,6 +536,11 @@ function FileDiff({
   onToggle,
   register,
 }: {
+  sessionId: string;
+  number: number;
+  /** The commits the review names. A file is read whole at the head, except a deleted one. */
+  headRef: string;
+  baseRef: string;
   file: GitHubPullFile;
   open: boolean;
   /** Long lines wrap rather than running off to the right — see WRAP_KEY. */
@@ -543,35 +559,149 @@ function FileDiff({
   const side = oneSidedAs(file.status);
   const { dir, name } = splitPath(file.path);
 
+  // Whether this file is showing its change or itself, and the file once it has been fetched. Local
+  // to the file, because it is a question about this file and not about the review.
+  const [whole, setWhole] = useState(false);
+  const [content, setContent] = useState<string | null>(null);
+  const [contentError, setContentError] = useState<string | null>(null);
+  const [loadingContent, setLoadingContent] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // A deleted file is not at the head any more, so the side to read it from is the base. Everything
+  // else is asked for at the head, which is what the review is proposing.
+  const readAt = file.status === "D" ? baseRef : headRef;
+
+  // What has already been asked for, so asking twice does not fetch twice. A ref rather than the
+  // loading flag: an effect that depends on state it sets re-runs the moment it sets it, and its own
+  // cleanup then cancels the request it just made — which reads on screen as "Reading the file…"
+  // forever. Cleared again on failure, so switching back to File is a retry rather than a no-op.
+  const fetchedFor = useRef<string | null>(null);
+
+  // Fetched when it is first asked for, and kept: the file at a commit does not change under us the
+  // way the review around it does, and the reload in the header drops the whole view anyway.
+  useEffect(() => {
+    if (!whole) return;
+    const key = `${file.path}@${readAt}`;
+    if (fetchedFor.current === key) return;
+    fetchedFor.current = key;
+
+    let cancelled = false;
+    setLoadingContent(true);
+    setContentError(null);
+    const fail = (message: string) => {
+      fetchedFor.current = null;
+      setContentError(message);
+    };
+    api
+      .githubPullFile(sessionId, number, file.path, readAt)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.error) fail(r.error);
+        else if (r.truncated) fail("This file is too large to show here — it is on GitHub.");
+        else setContent(r.content);
+      })
+      .catch(() => !cancelled && fail("Could not reach the server."))
+      .finally(() => !cancelled && setLoadingContent(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [whole, sessionId, number, file.path, readAt]);
+
+  const copyAll = useCallback(async () => {
+    if (content === null) return;
+    await writeToClipboard(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }, [content]);
+
+  // Nothing to read whole: a binary has no text, and a pure rename has no commit of its own to ask
+  // about beyond what the review already said.
+  const canReadWhole = !file.binary && !!readAt;
+
   return (
     <div ref={register} className="border-b last:border-b-0">
-      <button
-        type="button"
-        onClick={onToggle}
-        // Sticky so the name of what you are reading stays on screen through a long diff.
-        className="sticky top-0 z-10 flex w-full items-center gap-2 border-b bg-muted/60 px-3 py-1.5 text-left text-xs backdrop-blur hover:bg-muted"
-      >
-        {open ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5" />}
-        <span className={cn("shrink-0 font-mono", STATUS_COLOR[file.status] ?? "text-muted-foreground")}>
-          {file.status}
-        </span>
-        {/* Same shrink order as the sidebar: the folders go before the file name does. */}
-        <span className="flex min-w-0 flex-1 items-baseline font-mono">
-          <span className="min-w-0 shrink-[999] truncate text-muted-foreground">{dir}</span>
-          <span className="min-w-0 truncate font-medium">{name}</span>
-          {file.oldPath && (
-            <span className="min-w-0 shrink-[999] truncate text-muted-foreground">
-              &nbsp;← {file.oldPath}
-            </span>
-          )}
-        </span>
-        <span className="shrink-0 font-mono text-[11px]">
-          <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>{" "}
-          <span className="text-red-600 dark:text-red-400">−{file.deletions}</span>
-        </span>
-      </button>
+      {/* Sticky so the name of what you are reading stays on screen through a long diff. The row is
+          no longer one big button: the controls at its end are buttons of their own, and a button
+          cannot hold another one. */}
+      <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-muted/60 px-3 py-1.5 text-xs backdrop-blur">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-foreground"
+        >
+          {open ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5" />}
+          <span className={cn("shrink-0 font-mono", STATUS_COLOR[file.status] ?? "text-muted-foreground")}>
+            {file.status}
+          </span>
+          {/* Same shrink order as the sidebar: the folders go before the file name does. */}
+          <span className="flex min-w-0 flex-1 items-baseline font-mono">
+            <span className="min-w-0 shrink-[999] truncate text-muted-foreground">{dir}</span>
+            <span className="min-w-0 truncate font-medium">{name}</span>
+            {file.oldPath && (
+              <span className="min-w-0 shrink-[999] truncate text-muted-foreground">
+                &nbsp;← {file.oldPath}
+              </span>
+            )}
+          </span>
+          <span className="shrink-0 font-mono text-[11px]">
+            <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>{" "}
+            <span className="text-red-600 dark:text-red-400">−{file.deletions}</span>
+          </span>
+        </button>
 
-      {open ? (
+        {/* Change or file. Only once the file is open — they are how to read what is on screen, and
+            there is nothing on screen to read while it is folded away. */}
+        {open && canReadWhole && (
+          <span className="flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => setWhole(false)}
+              title="Show what this pull request changes in the file"
+              className={cn(
+                "rounded px-1.5 py-0.5 transition-colors",
+                whole ? "text-muted-foreground hover:text-foreground" : "bg-accent text-foreground"
+              )}
+            >
+              Diff
+            </button>
+            <button
+              type="button"
+              onClick={() => setWhole(true)}
+              title={`Show the whole file as it is at ${file.status === "D" ? "the base" : "the head"} of this pull request`}
+              className={cn(
+                "rounded px-1.5 py-0.5 transition-colors",
+                whole ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              File
+            </button>
+            {/* Copying a diff would hand over a mix of both sides with markers down the left, which is
+                not the file anyone means — so this is offered for the whole file and nowhere else. */}
+            {whole && content !== null && (
+              <button
+                type="button"
+                onClick={() => void copyAll()}
+                title={copied ? "Copied!" : "Copy the whole file"}
+                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
+              </button>
+            )}
+          </span>
+        )}
+      </div>
+
+      {open && whole ? (
+        loadingContent ? (
+          <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" /> Reading the file…
+          </div>
+        ) : contentError ? (
+          <div className="p-4 text-sm text-muted-foreground">{contentError}</div>
+        ) : (
+          <FileListing text={content ?? ""} wrap={wrap} />
+        )
+      ) : open ? (
         file.binary ? (
           <div className="p-4 text-sm text-muted-foreground">Binary file — nothing to show.</div>
         ) : file.truncated ? (
@@ -737,6 +867,40 @@ function OneSided({ hunks, side, wrap }: { hunks: DiffHunk[]; side: "add" | "del
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A file as it stands, rather than as a change to it: every line numbered, nothing tinted. The same
+ * grid the one-sided view uses, so the two read the same way — what differs is that this is the file
+ * at a commit, and the numbers run from one to the end rather than from wherever a hunk started.
+ */
+function FileListing({ text, wrap }: { text: string; wrap: boolean }) {
+  const mode = lineMode(wrap);
+  // A file ends with a newline, and splitting on it leaves an empty last element that is the
+  // terminator rather than a line of the file — the same trap the diff parser has to sidestep.
+  const lines = useMemo(() => {
+    const all = text.split("\n");
+    if (all.length > 1 && all[all.length - 1] === "") all.pop();
+    return all;
+  }, [text]);
+
+  if (!text) return <div className="p-4 text-sm text-muted-foreground">This file is empty.</div>;
+
+  return (
+    <div className={mode.scroll}>
+      <div
+        style={{ gridTemplateColumns: `${NUM_COL}px ${wrap ? "minmax(0, 1fr)" : "1fr"}` }}
+        className={cn("grid", mode.grid)}
+      >
+        {lines.map((line, i) => (
+          <div key={i} className="contents">
+            <div className={NUM_CELL}>{i + 1}</div>
+            <div className={cn(CODE_CELL, mode.code)}>{line || " "}</div>
+          </div>
+        ))}
       </div>
     </div>
   );

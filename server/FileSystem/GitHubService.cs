@@ -13,7 +13,10 @@ public sealed record GitHubPull(
     int Number, string Title, string Author, string State, bool Draft,
     string HeadRefName, string BaseRefName, string Url,
     string UpdatedAt,
-    int Additions, int Deletions, int ChangedFiles);
+    int Additions, int Deletions, int ChangedFiles,
+    /// <summary>The commits the two sides of the review point at, so a file can be read whole at
+    /// either of them. Empty on a list row, which does not ask for them.</summary>
+    string HeadRefOid = "", string BaseRefOid = "");
 
 /// <summary><see cref="Error"/> is set when GitHub could not be asked at all — no <c>gh</c>, not
 /// signed in, offline — so the popup can say why instead of reading as "this repo has no PRs".</summary>
@@ -29,6 +32,12 @@ public sealed record GitHubPullFile(
     int Additions, int Deletions, bool Binary, bool Truncated, string Diff);
 
 public sealed record GitHubPullDetail(GitHubPull? Pull, string Body, IReadOnlyList<GitHubPullFile> Files, string? Error);
+
+/// <summary>The two commits a pull request names. Read on its own, without its patch.</summary>
+public sealed record GitHubPullRefs(string HeadRefOid, string BaseRefOid, string? Error);
+
+/// <summary>One file of a pull request read whole at a commit, rather than as a diff.</summary>
+public sealed record GitHubFileContent(string Path, string Ref, string Content, bool Truncated, string? Error);
 
 /// <summary>
 /// The pull requests of the repo a folder belongs to, read through the <c>gh</c> CLI. gh is what
@@ -58,6 +67,10 @@ public static class GitHubService
     // process hosting every live session. Comfortably above MaxPatchChars so the budget above is
     // what normally does the cutting, and splitting a patch costs a few times its own size.
     private const int MaxStdoutChars = 12_000_000;
+    // A file read whole, rather than as the handful of hunks that changed in it. Larger than the
+    // per-file diff cap because this is the file, not a slice of it — and still a cap, because the
+    // repo on the other end is not ours and "how big is this file" is not our question to guess.
+    private const int MaxFileChars = 1_500_000;
     private const int MaxPulls = 100;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -152,7 +165,7 @@ public static class GitHubService
 
         var meta = GhAsync(workingDir, ct,
             "pr", "view", number.ToString(),
-            "--json", "number,title,author,state,isDraft,updatedAt,headRefName,baseRefName,url,additions,deletions,changedFiles,body");
+            "--json", "number,title,author,state,isDraft,updatedAt,headRefName,baseRefName,url,additions,deletions,changedFiles,body,headRefOid,baseRefOid");
         // No --patch: that asks for the PR's commits as a mail-formatted series, which repeats a
         // file once per commit that touched it. The plain form is the combined diff — head against
         // base, one entry per file — which is what the Files tab of a PR shows and what this draws.
@@ -174,6 +187,59 @@ public static class GitHubService
             patchOk ? SplitPatch(patchOut) : Array.Empty<GitHubPullFile>(),
             patchOk ? null : patchError);
     }
+
+    /// <summary>
+    /// Just the two commits a pull request points at. Its own call rather than a read of
+    /// <see cref="PullAsync"/>, because that one downloads the whole patch — which is a great deal of
+    /// work to do again when the question is only "which commit is this file's head".
+    /// </summary>
+    public static async Task<GitHubPullRefs> RefsAsync(string workingDir, int number, CancellationToken ct)
+    {
+        if (!Repo(workingDir).IsGitHub)
+            return new GitHubPullRefs("", "", "This folder is not a GitHub repository.");
+
+        var (ok, stdout, error) = await GhAsync(workingDir, ct,
+            "pr", "view", number.ToString(), "--json", "headRefOid,baseRefOid");
+        if (!ok) return new GitHubPullRefs("", "", error);
+        try
+        {
+            var row = JsonSerializer.Deserialize<PullJson>(stdout, Json);
+            return new GitHubPullRefs(row?.HeadRefOid ?? "", row?.BaseRefOid ?? "", null);
+        }
+        catch (JsonException)
+        {
+            return new GitHubPullRefs("", "", "GitHub returned something we could not read.");
+        }
+    }
+
+    /// <summary>
+    /// One file of the repo, read whole at a commit — what the review shows when someone asks for the
+    /// file rather than the change to it. <paramref name="sha"/> is a commit of this repo; GitHub
+    /// keeps a pull request's head commits in the base repo, so a PR from a fork is readable here too.
+    /// </summary>
+    public static async Task<GitHubFileContent> FileAsync(string workingDir, string path, string sha, CancellationToken ct)
+    {
+        var repo = Repo(workingDir);
+        if (!repo.IsGitHub)
+            return new GitHubFileContent(path, sha, "", false, "This folder is not a GitHub repository.");
+        if (!IsCommitSha(sha))
+            return new GitHubFileContent(path, sha, "", false, "That is not a commit this review points at.");
+
+        // The path is a URL segment sequence, not one segment: the slashes separate, everything else
+        // is escaped. Without this a "#" or a space in a name silently truncates the request.
+        var encoded = string.Join("/", path.Split('/').Select(Uri.EscapeDataString));
+        var (ok, stdout, error) = await GhAsync(workingDir, ct,
+            "api", "-H", "Accept: application/vnd.github.raw",
+            $"repos/{repo.NameWithOwner}/contents/{encoded}?ref={sha}");
+        if (!ok) return new GitHubFileContent(path, sha, "", false, error);
+
+        var truncated = stdout.Length > MaxFileChars;
+        return new GitHubFileContent(path, sha, truncated ? "" : stdout, truncated, null);
+    }
+
+    /// <summary>A full commit sha, and nothing else — it is about to be part of a URL handed to gh.</summary>
+    private static bool IsCommitSha(string? sha) =>
+        !string.IsNullOrEmpty(sha) && sha.Length == 40 && sha.All(Uri.IsHexDigit);
 
     /// <summary>
     /// Cut a unified patch into one entry per file. Paths are read from the <c>---</c>/<c>+++</c>
@@ -296,7 +362,8 @@ public static class GitHubService
         j.Number, j.Title ?? "", j.Author?.Login ?? "", j.State ?? "", j.IsDraft,
         j.HeadRefName ?? "", j.BaseRefName ?? "", j.Url ?? "",
         j.UpdatedAt ?? "",
-        j.Additions, j.Deletions, j.ChangedFiles);
+        j.Additions, j.Deletions, j.ChangedFiles,
+        j.HeadRefOid ?? "", j.BaseRefOid ?? "");
 
     private sealed class PullJson
     {
@@ -313,6 +380,8 @@ public static class GitHubService
         public int Deletions { get; set; }
         public int ChangedFiles { get; set; }
         public string? Body { get; set; }
+        public string? HeadRefOid { get; set; }
+        public string? BaseRefOid { get; set; }
     }
 
     private sealed class AuthorJson

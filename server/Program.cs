@@ -1336,6 +1336,26 @@ internal static class Program
                 : Results.Ok(await GitHubService.PullsAsync(info.WorkingDirectory, state, ct));
         });
 
+        // One file of a pull request, read whole at one of the commits the review points at, for the
+        // reader who wants the file rather than the change to it. The ref is checked against the two
+        // the pull request actually names, so this cannot be pointed at an arbitrary commit.
+        app.MapGet("/api/sessions/{id}/github/pulls/{number:int}/file",
+            async (string id, int number, string path, string? @ref, SessionManager mgr, CancellationToken ct) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
+            if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "invalid path" });
+
+            var refs = await GitHubService.RefsAsync(info.WorkingDirectory, number, ct);
+            if (refs.Error is not null)
+                return Results.Ok(new GitHubFileContent(path, @ref ?? "", "", false, refs.Error));
+            // Only the head or the base of this very pull request: the client hands back one of the
+            // two it was given, and anything else is not a question this endpoint answers.
+            var sha = @ref == refs.BaseRefOid ? refs.BaseRefOid : refs.HeadRefOid;
+            return Results.Ok(await GitHubService.FileAsync(info.WorkingDirectory, path, sha, ct));
+        });
+
         // One pull request: its description and every changed file, each with its slice of the diff.
         app.MapGet("/api/sessions/{id}/github/pulls/{number:int}", async (string id, int number, SessionManager mgr, CancellationToken ct) =>
         {

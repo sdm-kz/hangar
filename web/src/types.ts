@@ -347,6 +347,9 @@ export interface GitHubPull {
   additions: number;
   deletions: number;
   changedFiles: number;
+  /** The commits the two sides point at, so a file can be read whole at either. "" on a list row. */
+  headRefOid: string;
+  baseRefOid: string;
 }
 
 export interface GitHubPullList {
@@ -370,6 +373,16 @@ export interface GitHubPullFile {
   /** The diff was cut short because the file's changes are enormous. */
   truncated: boolean;
   diff: string;
+}
+
+/** One file of a pull request read whole at a commit, rather than as a diff. */
+export interface GitHubFileContent {
+  path: string;
+  ref: string;
+  content: string;
+  /** The file was too large to send; `content` is empty. */
+  truncated: boolean;
+  error: string | null;
 }
 
 export interface GitHubPullDetail {

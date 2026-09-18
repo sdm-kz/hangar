@@ -138,6 +138,12 @@ The web UI is a **session manager with a full terminal**:
   wrap by default, because this pane is often half a screen wide rather than a whole one; the button
   in the header turns that off for GitHub's own behaviour, where the two halves scroll together.
 
+  Every file's header also offers **Diff / File**: the change, or the file itself, read whole at the
+  commit this pull request proposes — the base commit for a file the request deletes, since that is
+  the only side it still exists on. A file being read whole gets a **copy** button beside the toggle,
+  which is where copying belongs: a diff copied wholesale is a mix of both sides with markers down
+  the left, which is not the file anyone means.
+
   A review is fetched when its tab is first opened and then stays as it was, so one left open behind
   the terminal is as old as when you last looked at it — the **reload** in its header is what catches
   it up. A file whose diff is enormous arrives folded rather than drawn, and one past the size the
