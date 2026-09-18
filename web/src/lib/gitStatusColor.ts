@@ -6,4 +6,5 @@ export const STATUS_COLOR: Record<string, string> = {
   U: "text-emerald-500",
   D: "text-red-500",
   R: "text-sky-500",
+  C: "text-sky-500",
 };

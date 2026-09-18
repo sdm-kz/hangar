@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { GitStatus, SessionInfo, SessionLink } from "@/types";
+import type { GitStatus, SessionInfo, SessionLink, SessionPull } from "@/types";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
 import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
@@ -13,12 +13,16 @@ import {
 } from "@/lib/sessionUi";
 import { fileEntryFromPath, useFileTabs } from "@/lib/useFileTabs";
 import { MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
+import { useSessionPulls } from "@/lib/sessionPulls";
 import { useShells } from "@/lib/useShells";
 import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
-import { FileTabStrip } from "./FileTabStrip";
+import { FileTabs, FileTabsCloseAll } from "./FileTabStrip";
 import { LinkDialog } from "./LinkDialog";
 import { LinkTabStrip } from "./LinkTabStrip";
+import { PullRequestView } from "./PullRequestView";
+import { PullPicker, PullTabs } from "./PullTabStrip";
 import { ShellTabStrip } from "./ShellTabStrip";
+import { TabScroll } from "./TabScroll";
 import { WebLinkView } from "./WebLinkView";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
@@ -172,6 +176,23 @@ export function SessionView({
   // tabs so coming back to a page finds it where it was left, but mounting every link on open would
   // fetch every pinned page whether or not anyone looked at one.
   const [mountedLinks, setMountedLinks] = useState<string[]>([]);
+
+  // The pull requests this session has open as tabs. Like the links they live in the session's UI
+  // bag, so a review follows the session to every device; unlike them, what is drawn under the tab
+  // is fetched from GitHub each time it is opened.
+  const pulls = useSessionPulls(session.id);
+  // Whether this session's folder is a GitHub repo — read from its git remote, so it costs no
+  // network call. It is what decides whether the PR picker is in the tab bar at all.
+  const [isGitHub, setIsGitHub] = useState(false);
+  // Reviews mounted at least once, kept alive behind the other tabs the way the link frames are — so
+  // coming back to one finds it loaded, with the files folded the way they were left, instead of
+  // asking GitHub again. The session they belong to is part of the state because this view is NOT
+  // remounted when the session changes, and a PR number is a small integer that means a different
+  // review in every repo: carried over, session A's #42 would be handed straight to session B's.
+  const [mountedPulls, setMountedPulls] = useState<{ session: string; numbers: number[] }>(() => ({
+    session: session.id,
+    numbers: [],
+  }));
 
   useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
 
@@ -411,6 +432,74 @@ export function SessionView({
   useEffect(() => {
     if (view === "link" && !links.links.length) changeView("terminal");
   }, [view, links.links.length, changeView]);
+
+  // Ask once per session whether its folder is a GitHub repo. A session doesn't change folders, and
+  // a remote is not added mid-session often enough to be worth polling for.
+  useEffect(() => {
+    let cancelled = false;
+    setIsGitHub(false);
+    api
+      .githubRepo(session.id)
+      .then((r) => !cancelled && setIsGitHub(r.isGitHub))
+      .catch(() => {
+        /* not a repo, or the server is not answering — no picker, which is the safe default */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session.id]);
+
+  // Showing a PR review. Both writes land in one request — saveSessionUi coalesces what a single
+  // click queues — so the session comes back to this review on its other devices too.
+  const showPull = useCallback(
+    (number: number) => {
+      pulls.activate(number);
+      changeView("pull");
+    },
+    [pulls.activate, changeView]
+  );
+
+  // Opening one from the picker: `open` moves to the tab if it is already there, so this only has to
+  // give the pane over. Looking a PR up is asking to read it.
+  const openPull = useCallback(
+    (pull: SessionPull) => {
+      pulls.open(pull);
+      changeView("pull");
+    },
+    [pulls.open, changeView]
+  );
+
+  // Mount the review being looked at, and leave it mounted from then on. A session switch starts the
+  // list again rather than clearing it in an effect of its own — which would race this one, and on
+  // the first render would win, leaving the tab with nothing under it.
+  useEffect(() => {
+    if (view !== "pull" || !pulls.activeNumber) return;
+    const n = pulls.activeNumber;
+    setMountedPulls((prev) =>
+      prev.session !== session.id
+        ? { session: session.id, numbers: [n] }
+        : prev.numbers.includes(n)
+          ? prev
+          : { session: prev.session, numbers: [...prev.numbers, n] }
+    );
+  }, [view, pulls.activeNumber, session.id]);
+
+  // Forget reviews that are gone (closed here, or on another device), so they are unmounted rather
+  // than kept alive behind a tab that no longer exists. A list belonging to the session just left is
+  // dropped whole, for the reason the state carries its session at all.
+  useEffect(() => {
+    setMountedPulls((prev) => {
+      if (prev.session !== session.id)
+        return prev.numbers.length ? { session: session.id, numbers: [] } : prev;
+      const numbers = prev.numbers.filter((n) => pulls.pulls.some((p) => p.number === n));
+      return numbers.length === prev.numbers.length ? prev : { session: prev.session, numbers };
+    });
+  }, [pulls.pulls, session.id]);
+
+  // The last review closed: the pane goes back to the terminal, the way it does for the links.
+  useEffect(() => {
+    if (view === "pull" && !pulls.pulls.length) changeView("terminal");
+  }, [view, pulls.pulls.length, changeView]);
 
   // Pinning a page gives it the pane straight away — adding it is asking to look at it. `add` picks
   // the tab itself (it may have landed on one that was already there), so this only moves the view.
@@ -758,18 +847,35 @@ export function SessionView({
             <FolderTree className="size-4" />
             <span className="hidden sm:inline">Files</span>
           </ViewTab>
-          {/* The open files, as tabs of the same standing: one click and the file has the pane. */}
-          <FileTabStrip
-            tabs={fileTabs.tabs}
-            activePath={fileTabs.activePath}
-            previewPath={fileTabs.previewPath}
-            showingFile={view === "file"}
-            gitFiles={git?.isRepo ? git.files : undefined}
-            onActivate={(p) => void openFileTab(p)}
-            onPin={fileTabs.pin}
-            onClose={(p) => void fileTabs.close(p)}
-            onCloseAll={() => void fileTabs.closeAll()}
-          />
+          {/* The repo's pull-request picker, right after Files because a review is a view of the
+              same repo the tree is showing. Only the picker waits on the folder turning out to be on
+              GitHub: the review tabs below are saved state, and a probe that is slow, or that
+              failed, must not leave an open review with no tab to get back to. */}
+          <PullPicker sessionId={session.id} enabled={isGitHub} onOpen={openPull} />
+
+          {/* The reviews and the open files, in one scrolling run: they are one row of tabs and
+              behave like one, rather than two strips clipping at a seam in the middle of the bar. */}
+          <TabScroll revealOn={`${view}|${pulls.activeNumber ?? ""}|${fileTabs.activePath ?? ""}|${pulls.pulls.length}|${fileTabs.tabs.length}`}>
+            <PullTabs
+              pulls={pulls.pulls}
+              activeNumber={pulls.activeNumber}
+              showingPull={view === "pull"}
+              onActivate={showPull}
+              onClose={pulls.close}
+            />
+            {/* One click and the file has the pane, the same standing as a review beside it. */}
+            <FileTabs
+              tabs={fileTabs.tabs}
+              activePath={fileTabs.activePath}
+              previewPath={fileTabs.previewPath}
+              showingFile={view === "file"}
+              gitFiles={git?.isRepo ? git.files : undefined}
+              onActivate={(p) => void openFileTab(p)}
+              onPin={fileTabs.pin}
+              onClose={(p) => void fileTabs.close(p)}
+            />
+          </TabScroll>
+          <FileTabsCloseAll tabs={fileTabs.tabs} onCloseAll={() => void fileTabs.closeAll()} />
           {/* Shells in the same folder, and the "+" that opens another. After the views that are
               always there, so those keep their places as shells come and go. */}
           <ShellTabStrip
@@ -892,6 +998,28 @@ export function SessionView({
               )}
             >
               <WebLinkView link={l} onEdit={() => setLinkDialog({ edit: l })} />
+            </div>
+          ))}
+
+        {/* A review stays mounted behind the other tabs once it has been opened, so coming back to it
+            finds it loaded and folded the way it was left rather than asking GitHub again. */}
+        {pulls.pulls
+          .filter((p) => mountedPulls.session === session.id && mountedPulls.numbers.includes(p.number))
+          .map((p) => (
+            // Keyed by session as well as number, so a review can never be handed the instance a
+            // different repo's PR of the same number left behind.
+            <div
+              key={`${session.id}:${p.number}`}
+              className={cn(
+                "flex min-h-0 min-w-0 flex-1 flex-col",
+                !(view === "pull" && p.number === pulls.activeNumber) && "hidden"
+              )}
+            >
+              <PullRequestView
+                sessionId={session.id}
+                number={p.number}
+                onTitle={(title) => pulls.retitle(p.number, title)}
+              />
             </div>
           ))}
       </div>

@@ -10,7 +10,7 @@
 // the merged bag, which is what the mirror then holds. Other browsers learn about the change from
 // SessionInfo.uiRev on the session list and re-fetch (see noteSessionUiRev).
 import { api } from "./api";
-import type { SessionLink } from "@/types";
+import type { SessionLink, SessionPull } from "@/types";
 import type { TabName } from "./urlState";
 
 const KEY = "claudeweb.sessionUi";
@@ -24,7 +24,7 @@ const FLUSH_MS = 400; // coalesce bursts (a scroll settling, a tab open) into on
 const QUIET_FIELDS = new Set<keyof SessionUi>(["filesScroll", "changesScroll", "fileScroll"]);
 
 export interface SessionUi {
-  view?: TabName; // active tab: terminal | files | split | file | shell | link (a tab in the bar)
+  view?: TabName; // active tab: terminal | files | split | file | shell | link | pull (a tab in the bar)
   // Id of the shell tab filling the pane in the "shell" view. The shells themselves live on the
   // server (they are processes), so only which one is on screen is remembered here.
   shell?: string;
@@ -33,6 +33,10 @@ export interface SessionUi {
   // lives in the bag, which is what carries them to the user's other devices.
   links?: SessionLink[];
   link?: string; // id of the link tab filling the pane in the "link" view
+  // Pull requests of this session's repo opened as tabs. Like the links these ARE the state — the
+  // review itself is re-fetched from GitHub — so the list rides the bag to the user's other devices.
+  pulls?: SessionPull[];
+  pull?: number; // number of the PR tab filling the pane in the "pull" view
   file?: string; // path of the active file tab in the Files/Split view (relative to the working dir)
   files?: string[]; // paths of all open file tabs, in order (the active one is `file`)
   preview?: string; // path of the transient "preview" tab (reused by single-click), if any

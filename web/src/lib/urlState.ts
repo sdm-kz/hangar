@@ -7,8 +7,9 @@
 // tab bar, filling the pane on its own (which one is the session's saved `file`); "files" and
 // "split" show the tree beside it. "shell" is one of the session's shell tabs, filling the pane the
 // same way a file tab does (which one is the session's saved `shell`). "link" is one of the web
-// pages linked to the session, shown in a frame (which one is the session's saved `link`).
-export type TabName = "terminal" | "files" | "split" | "file" | "shell" | "link";
+// pages linked to the session, shown in a frame (which one is the session's saved `link`). "pull"
+// is a pull request of the session's repo, reviewed in the pane (which one is the saved `pull`).
+export type TabName = "terminal" | "files" | "split" | "file" | "shell" | "link" | "pull";
 
 // Which sidebar tab is showing: the session list (default) or the server Files tree.
 export type PanelName = "sessions" | "files";
@@ -97,7 +98,8 @@ export function readUrlState(): UrlState {
       tab === "split" ||
       tab === "file" ||
       tab === "shell" ||
-      tab === "link"
+      tab === "link" ||
+      tab === "pull"
         ? tab
         : undefined,
     file: p.get("file") || undefined,

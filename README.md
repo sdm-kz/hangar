@@ -118,6 +118,43 @@ The web UI is a **session manager with a full terminal**:
   names the page and opens it in a browser tab in one click. You can force either behaviour with the
   *Show the page in the tab* checkbox. A page that does frame but needs you signed in may still ask
   again — a frame is a separate context as far as the browser's cookie rules go.
+- **GitHub pull requests** — a session whose folder is a GitHub repo gets a **PRs** button right
+  after *Files*, and the repo's pull requests one click behind it: **Open** ones by default, with
+  **Closed** (which includes merged) and **All** on the tabs beside it, and a box that filters the
+  list by number, title, author or branch. Pick one and it opens as a **tab of its own** — `#42` and
+  the title — right after the Files tab, and stays there: the open reviews live server-side against
+  the conversation like the linked pages do, so a PR opened on the laptop is on the phone too, and a
+  reload finds it where you left it. Eight at once is the cap, and a ninth pushes out the oldest tab
+  rather than refusing — a row of reviews being worked through is what the tabs are for.
+
+  The tab is a **review**: the changed files down a collapsible left sidebar, and the diffs beside
+  them, old on the left and new on the right the way GitHub draws them. Each file folds away by its
+  header (and the header stays put as you read through it); clicking one in the sidebar opens it and
+  scrolls to it. Both dividers drag: the one beside the file list, and the one down the middle of a
+  diff — that one sets the ratio for **every** file at once, so the two columns stay in step down the
+  page. Double-click either to put it back. (The middle divider is for the wrapped view; unwrapped,
+  the halves are as wide as their longest line and scroll together, and there is no width to divide.) **A file that was added has no left side to show**, so it isn't given one — the new
+  content is drawn as a single full-width column, and a deleted file the same way round. Long lines
+  wrap by default, because this pane is often half a screen wide rather than a whole one; the button
+  in the header turns that off for GitHub's own behaviour, where the two halves scroll together.
+
+  Every file's header also offers **Diff / File**: the change, or the file itself, read whole at the
+  commit this pull request proposes — the base commit for a file the request deletes, since that is
+  the only side it still exists on. A file being read whole gets a **copy** button beside the toggle,
+  which is where copying belongs: a diff copied wholesale is a mix of both sides with markers down
+  the left, which is not the file anyone means.
+
+  A review is fetched when its tab is first opened and then stays as it was, so one left open behind
+  the terminal is as old as when you last looked at it — the **reload** in its header is what catches
+  it up. A file whose diff is enormous arrives folded rather than drawn, and one past the size the
+  server will send is listed with its counts and left on GitHub.
+
+  It all runs through the **`gh` CLI on the server machine**, which is what makes it work without a
+  token of its own: gh already holds your GitHub credentials and resolves the repo from the folder's
+  remotes. `gh auth login` there is the whole of the setup, and whatever gh says when it can't answer
+  — not installed, not signed in, no such repo — is what the picker says back. Whether a folder is a
+  GitHub repo at all is read from its git remote, so a session in a folder that isn't one simply has
+  no button, and nothing on the network was asked to find that out.
 - **What each session is doing** — every row carries a mark, read off Claude's own hook callbacks
   rather than scraped off the terminal: a green pulse while it works, a cooler one while it compacts,
   an **amber ring** when it is blocked on you, a **red cross** when the last turn died on an API
