@@ -3086,6 +3086,14 @@ function RowActionsMenu({
 
           {view === "root" && (
             <>
+              {/* First, on a closed row: it is the one thing that row is for, and everything below
+                  is housekeeping you would do to a session you were not about to open anyway. */}
+              {restorable && (
+                <>
+                  {item("Reopen", <RotateCcw className="size-3.5" />, onRestore)}
+                  <div className="my-1 border-t" />
+                </>
+              )}
               {pinned
                 ? item("Unpin", <PinOff className="size-3.5" />, onTogglePin)
                 : item("Pin to top", <Pin className="size-3.5" />, onTogglePin)}
@@ -3096,7 +3104,6 @@ function RowActionsMenu({
                   to hanging off the session it was forked from, which is where it belongs and was
                   never the user's arrangement to begin with. */}
               {nested && item("Move out", <CornerLeftUp className="size-3.5" />, onUnnest)}
-              {restorable && item("Reopen", <RotateCcw className="size-3.5" />, onRestore)}
 
               <div className="my-1 border-t" />
 
