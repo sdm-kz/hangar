@@ -363,7 +363,13 @@ public static class GitService
         catch { return false; }
     }
 
-    private static string Run(string cwd, out int exitCode, params string[] args)
+    /// <summary>
+    /// Run <c>git</c> in a folder and return its stdout ("" on any failure, including git not being
+    /// installed). Internal rather than private because <see cref="GitHubService"/> asks git the same
+    /// kind of local question — which remote a folder has — and a second copy of a process spawner
+    /// is the sort of thing that drifts apart one timeout at a time.
+    /// </summary>
+    internal static string Run(string cwd, out int exitCode, params string[] args)
     {
         exitCode = -1;
         try

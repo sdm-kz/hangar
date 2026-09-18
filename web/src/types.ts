@@ -323,3 +323,73 @@ export interface LinkProbe {
   /** Why the probe failed, when it did — the link is still addable. */
   error?: string | null;
 }
+
+/** Whether a session's folder is a GitHub repo — see server/FileSystem/GitHubService.cs. */
+export interface GitHubRepo {
+  isGitHub: boolean;
+  /** "owner/name", read from the folder's remote. Null when it isn't a GitHub repo. */
+  nameWithOwner: string | null;
+}
+
+/** A pull request as the picker lists it. */
+export interface GitHubPull {
+  number: number;
+  title: string;
+  /** The author's GitHub login. */
+  author: string;
+  /** OPEN | CLOSED | MERGED — GitHub's own spelling. */
+  state: string;
+  draft: boolean;
+  headRefName: string;
+  baseRefName: string;
+  url: string;
+  updatedAt: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+}
+
+export interface GitHubPullList {
+  isGitHub: boolean;
+  nameWithOwner: string | null;
+  pulls: GitHubPull[];
+  /** Why GitHub could not be asked — no gh, not signed in, offline. Distinct from "no PRs". */
+  error: string | null;
+}
+
+/** One file of a pull request, carrying its own slice of the unified diff. */
+export interface GitHubPullFile {
+  path: string;
+  /** Where the file came from, for a rename or a copy; null otherwise. */
+  oldPath: string | null;
+  /** A | M | D | R | C — the alphabet the working-tree status uses. */
+  status: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  /** The diff was cut short because the file's changes are enormous. */
+  truncated: boolean;
+  diff: string;
+}
+
+export interface GitHubPullDetail {
+  pull: GitHubPull | null;
+  /** The PR description, as Markdown. */
+  body: string;
+  files: GitHubPullFile[];
+  error: string | null;
+}
+
+/**
+ * A pull request opened as a tab in a session's tab bar. Only what the tab itself says is kept —
+ * the review below it is fetched fresh, since a PR moves while you are working on it.
+ *
+ * Stored in the session's UI bag (see lib/sessionUi.ts) beside the links, so an open PR follows the
+ * session to every device and survives a reload. The number is the identity: a session is one repo,
+ * so opening #42 twice means going back to the tab that is already there.
+ */
+export interface SessionPull {
+  number: number;
+  /** The title as it was when the tab was opened — what the tab says before the PR has loaded. */
+  title: string;
+}

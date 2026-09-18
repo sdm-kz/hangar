@@ -9,6 +9,9 @@ import type {
   GitLog,
   GitRefs,
   GitStatus,
+  GitHubPullDetail,
+  GitHubPullList,
+  GitHubRepo,
   GitWorktree,
   LinkProbe,
   Project,
@@ -544,6 +547,19 @@ export const api = {
     return request(
       `/api/sessions/${id}/git/commit-file?hash=${encodeURIComponent(hash)}&path=${encodeURIComponent(path)}`
     );
+  },
+  // ---- GitHub pull requests for the session's repo (server-side, through the gh CLI) ----
+  // Cheap and offline: read from the folder's git remote, not from GitHub.
+  githubRepo(id: string): Promise<GitHubRepo> {
+    return request(`/api/sessions/${id}/github/repo`);
+  },
+  // state: open (default) | closed | merged | all.
+  githubPulls(id: string, state?: string): Promise<GitHubPullList> {
+    const q = state ? `?state=${encodeURIComponent(state)}` : "";
+    return request(`/api/sessions/${id}/github/pulls${q}`);
+  },
+  githubPull(id: string, number: number): Promise<GitHubPullDetail> {
+    return request(`/api/sessions/${id}/github/pulls/${number}`);
   },
   writeSessionFile(id: string, path: string, content: string, dir?: string): Promise<void> {
     return request(`/api/sessions/${id}/fs/write`, {

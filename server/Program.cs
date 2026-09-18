@@ -1316,6 +1316,34 @@ internal static class Program
                 return Results.BadRequest(new { error = "invalid path" });
             return Results.Ok(GitService.CommitFile(info.WorkingDirectory, hash, path));
         });
+
+        // ---- GitHub pull requests for the session's repo (read through the gh CLI) ----
+        // Whether the folder is a GitHub repo at all: answered from the git remote, so it costs no
+        // network call and can be asked whenever a session opens. It is what decides whether the PR
+        // button is in the tab bar.
+        app.MapGet("/api/sessions/{id}/github/repo", (string id, SessionManager mgr) =>
+        {
+            var info = mgr.Get(id);
+            return info is null ? Results.NotFound() : Results.Ok(GitHubService.Repo(info.WorkingDirectory));
+        });
+
+        // The repo's pull requests. `state` is open (the default), closed, merged or all.
+        app.MapGet("/api/sessions/{id}/github/pulls", async (string id, string? state, SessionManager mgr, CancellationToken ct) =>
+        {
+            var info = mgr.Get(id);
+            return info is null
+                ? Results.NotFound()
+                : Results.Ok(await GitHubService.PullsAsync(info.WorkingDirectory, state, ct));
+        });
+
+        // One pull request: its description and every changed file, each with its slice of the diff.
+        app.MapGet("/api/sessions/{id}/github/pulls/{number:int}", async (string id, int number, SessionManager mgr, CancellationToken ct) =>
+        {
+            var info = mgr.Get(id);
+            if (info is null) return Results.NotFound();
+            if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
+            return Results.Ok(await GitHubService.PullAsync(info.WorkingDirectory, number, ct));
+        });
     }
 
     /// <summary>
