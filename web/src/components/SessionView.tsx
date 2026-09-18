@@ -16,12 +16,13 @@ import { MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
 import { useSessionPulls } from "@/lib/sessionPulls";
 import { useShells } from "@/lib/useShells";
 import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
-import { FileTabStrip } from "./FileTabStrip";
+import { FileTabs, FileTabsCloseAll } from "./FileTabStrip";
 import { LinkDialog } from "./LinkDialog";
 import { LinkTabStrip } from "./LinkTabStrip";
 import { PullRequestView } from "./PullRequestView";
-import { PullTabStrip } from "./PullTabStrip";
+import { PullPicker, PullTabs } from "./PullTabStrip";
 import { ShellTabStrip } from "./ShellTabStrip";
+import { TabScroll } from "./TabScroll";
 import { WebLinkView } from "./WebLinkView";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
@@ -846,35 +847,35 @@ export function SessionView({
             <FolderTree className="size-4" />
             <span className="hidden sm:inline">Files</span>
           </ViewTab>
-          {/* The repo's pull requests: the picker, then whichever reviews are open. Right after
-              Files because a review is a view of the same repo the tree is showing. The strip is
-              here whenever there is something in it — the picker alone is what waits on the folder
-              turning out to be on GitHub, since the tabs are saved state and a probe that is slow,
-              or that failed, must not leave an open review with no tab to get back to. */}
-          {(isGitHub || pulls.pulls.length > 0) && (
-            <PullTabStrip
-              sessionId={session.id}
-              picker={isGitHub}
+          {/* The repo's pull-request picker, right after Files because a review is a view of the
+              same repo the tree is showing. Only the picker waits on the folder turning out to be on
+              GitHub: the review tabs below are saved state, and a probe that is slow, or that
+              failed, must not leave an open review with no tab to get back to. */}
+          <PullPicker sessionId={session.id} enabled={isGitHub} onOpen={openPull} />
+
+          {/* The reviews and the open files, in one scrolling run: they are one row of tabs and
+              behave like one, rather than two strips clipping at a seam in the middle of the bar. */}
+          <TabScroll revealOn={`${view}|${pulls.activeNumber ?? ""}|${fileTabs.activePath ?? ""}|${pulls.pulls.length}|${fileTabs.tabs.length}`}>
+            <PullTabs
               pulls={pulls.pulls}
               activeNumber={pulls.activeNumber}
               showingPull={view === "pull"}
-              onOpen={openPull}
               onActivate={showPull}
               onClose={pulls.close}
             />
-          )}
-          {/* The open files, as tabs of the same standing: one click and the file has the pane. */}
-          <FileTabStrip
-            tabs={fileTabs.tabs}
-            activePath={fileTabs.activePath}
-            previewPath={fileTabs.previewPath}
-            showingFile={view === "file"}
-            gitFiles={git?.isRepo ? git.files : undefined}
-            onActivate={(p) => void openFileTab(p)}
-            onPin={fileTabs.pin}
-            onClose={(p) => void fileTabs.close(p)}
-            onCloseAll={() => void fileTabs.closeAll()}
-          />
+            {/* One click and the file has the pane, the same standing as a review beside it. */}
+            <FileTabs
+              tabs={fileTabs.tabs}
+              activePath={fileTabs.activePath}
+              previewPath={fileTabs.previewPath}
+              showingFile={view === "file"}
+              gitFiles={git?.isRepo ? git.files : undefined}
+              onActivate={(p) => void openFileTab(p)}
+              onPin={fileTabs.pin}
+              onClose={(p) => void fileTabs.close(p)}
+            />
+          </TabScroll>
+          <FileTabsCloseAll tabs={fileTabs.tabs} onCloseAll={() => void fileTabs.closeAll()} />
           {/* Shells in the same folder, and the "+" that opens another. After the views that are
               always there, so those keep their places as shells come and go. */}
           <ShellTabStrip
