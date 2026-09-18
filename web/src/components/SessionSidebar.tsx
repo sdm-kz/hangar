@@ -330,6 +330,24 @@ function folderActivity(items: SessionInfo[], ids: ActivityIds): Activity | null
 }
 
 /**
+ * Props that stop a drag from starting inside a menu.
+ *
+ * These menus are absolutely positioned inside the row they belong to, and the row is a drag source
+ * -- so a press-and-move on "Rename" picks the session up and offers to drop it somewhere, which is
+ * never what a menu is for. `draggable={false}` does not help: the browser walks up from whatever
+ * was pressed to the nearest *draggable* ancestor, and a false on the way past only means "not this
+ * one" -- the walk carries on and finds the row. Claiming the drag instead makes the menu itself the
+ * source, and cancelling it there ends the gesture before it starts.
+ */
+const cancelDrag = {
+  draggable: true,
+  onDragStart: (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  },
+} as const;
+
+/**
  * A row that opens a submenu, and the header that comes back from one.
  *
  * The submenu replaces the menu's contents rather than flying out beside it. A fly-out would have
@@ -642,6 +660,7 @@ function FolderMenu({
         open ? "flex" : "hidden group-hover/gh:flex [@media(hover:none)]:flex"
       )}
       onClick={(e) => e.stopPropagation()}
+      {...cancelDrag}
     >
       <button
         type="button"
@@ -2926,6 +2945,7 @@ function RowActionsMenu({
       data-menu-open={open ? "1" : undefined}
       className="relative flex items-center"
       onClick={(e) => e.stopPropagation()}
+      {...cancelDrag}
     >
       <button
         type="button"
