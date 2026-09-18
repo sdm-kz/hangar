@@ -92,6 +92,17 @@ interface RowActions {
   mark: MarkedPaths; // rows marked for a batch action (see useMarkedPaths)
 }
 
+/**
+ * A search box's query as a path: slashes levelled, ends trimmed, lowercased.
+ *
+ * What gets pasted into that box is often a path rather than a name — out of a terminal, a diff, a
+ * stack trace — and it arrives in whatever slashes its source used. Matching it means levelling them
+ * first; the server does the same to the paths it walks (see SessionFileBrowser.Search).
+ */
+function pathQuery(query: string): string {
+  return query.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").toLowerCase();
+}
+
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
 
 // Desktop width of the file-tree pane. Persisted per-browser and drag-resizable (like the sidebar).
@@ -798,10 +809,15 @@ export const FileBrowser = forwardRef<
   // In the changes view the search box filters the changed-file list in place (below), so the query
   // narrows the changes rather than searching the whole working tree.
   const filteredChangeEntries = useMemo<FileEntry[]>(() => {
-    const q = query.trim().toLowerCase();
+    const q = pathQuery(query);
     if (!q) return changeEntries;
-    return changeEntries.filter((e) => e.path.toLowerCase().includes(q));
-  }, [changeEntries, query]);
+    const base = (rootDir || workingDirectory).replace(/\\/g, "/").toLowerCase();
+    // Against the whole path as well as the repo-relative one, so a path pasted out of Explorer or a
+    // terminal finds its file here too — the same rule the server searches by (SessionFileBrowser.Search).
+    return changeEntries.filter(
+      (e) => e.path.toLowerCase().includes(q) || `${base}/${e.path}`.toLowerCase().includes(q)
+    );
+  }, [changeEntries, query, rootDir, workingDirectory]);
 
   // The grouped changes tree, built once here so the header's collapse/expand-all can enumerate every
   // rendered folder (compacted paths — the same keys the folder rows toggle on).

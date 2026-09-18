@@ -207,6 +207,15 @@ public static class SessionFileBrowser
         var fullRoot = Path.GetFullPath(root);
         if (!Directory.Exists(fullRoot)) return results;
 
+        // A query with a separator in it is a path, not a name -- someone has pasted one out of a
+        // terminal, a diff or a stack trace, and asking "which file is called
+        // MyApp.Db/Manual/x.sql" has no answer. Matched against the file's path instead, in both
+        // the forms such a paste arrives in: the tail of a repo-relative path, and a whole absolute
+        // one. Slashes are levelled first, so a path copied out of Explorer works as well as one out
+        // of git.
+        var qPath = q.Replace('\\', '/').Trim('/');
+        var byPath = qPath.Contains('/');
+
         var stack = new Stack<string>();
         stack.Push(fullRoot);
         while (stack.Count > 0 && results.Count < max)
@@ -221,11 +230,16 @@ public static class SessionFileBrowser
                 if (results.Count >= max) break;
                 if (IsHidden(f)) continue;
                 var name = Path.GetFileName(f);
-                if (name.Contains(q, StringComparison.OrdinalIgnoreCase))
+                var rel = RelOf(root, f);
+                var hit = byPath
+                    ? rel.Contains(qPath, StringComparison.OrdinalIgnoreCase)
+                        || f.Replace('\\', '/').Contains(qPath, StringComparison.OrdinalIgnoreCase)
+                    : name.Contains(q, StringComparison.OrdinalIgnoreCase);
+                if (hit)
                 {
                     long size = 0;
                     try { size = new FileInfo(f).Length; } catch { }
-                    results.Add(new FileEntry(name, RelOf(root, f), false, size));
+                    results.Add(new FileEntry(name, rel, false, size));
                 }
             }
             foreach (var d in subs)
