@@ -897,10 +897,28 @@ export const TerminalPane = forwardRef<
 
     // Drive the jump-to-bottom button: it only makes sense while the viewport is off the live tail.
     // A few rows of slack keeps it from flickering on the last sliver of a drag.
-    const scrollSub = term.onScroll(() => {
+    //
+    // Read off the buffer rather than followed from one event, because no single event sees every
+    // way the view moves. `onScroll` fires when output pushes the view along, but xterm suppresses
+    // it for the scrolling a person does themselves -- dragging the scrollbar, or a wheel the
+    // viewport handles -- which is precisely when the button is wanted. So the viewport's own scroll
+    // event is watched too, and the buffer switch, which changes the answer without scrolling
+    // anything at all.
+    const readScroll = () => {
       const buf = term.buffer.active;
-      setScrolledUp(buf.baseY - buf.viewportY > 2);
-    });
+      // Nothing to jump to in the alternate buffer: a TUI like Claude's owns its whole screen, there
+      // is no scrollback behind it, and xterm's scrollToBottom is a no-op there (the same reason
+      // applyScroll hands that buffer a wheel instead). A button that cannot move the view is worse
+      // than no button -- it reads as broken, because from where the user sits it is.
+      setScrolledUp(buf.type === "normal" && buf.baseY - buf.viewportY > 2);
+    };
+    const scrollSub = term.onScroll(readScroll);
+    const bufferSub = term.buffer.onBufferChange(readScroll);
+    // After xterm's own listener, which is registered by term.open() above, so the buffer it reads
+    // has already been moved to match the element.
+    const viewport = host.querySelector(".xterm-viewport");
+    viewport?.addEventListener("scroll", readScroll, { passive: true });
+    readScroll();
 
     refitRef.current = sendResize;
     repaintRef.current = () => {
@@ -966,6 +984,8 @@ export const TerminalPane = forwardRef<
       ro.disconnect();
       fileLinks.dispose();
       scrollSub.dispose();
+      bufferSub.dispose();
+      viewport?.removeEventListener("scroll", readScroll);
       stopMomentum();
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
