@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ClaudeWeb.Pty;
@@ -250,6 +250,19 @@ public sealed class SessionManager : IDisposable
 
     /// <summary>Whether a session exists at all, live or Restorable.</summary>
     public bool Exists(string id) => _sessions.ContainsKey(id) || _restorable.ContainsKey(id);
+
+    /// <summary>
+    /// The working directory of a session, live or Restorable; null when there is no such session.
+    ///
+    /// <see cref="Get"/> answers only for live ones, which is right for anything that needs a process
+    /// behind it. What a closed session leaves behind in its folder is a different question: the
+    /// postponed pool is a file there, and reading a note you left yourself should not require
+    /// relaunching the session that took it.
+    /// </summary>
+    public string? FolderOf(string id) =>
+        _sessions.TryGetValue(id, out var live) ? live.WorkingDirectory
+            : _restorable.TryGetValue(id, out var stored) ? stored.WorkingDirectory
+            : null;
 
     /// <summary>
     /// Put a session under another in the list — or, with a null <paramref name="parentId"/>, leave it

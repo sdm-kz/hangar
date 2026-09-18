@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Text.Json;
 using ClaudeWeb.Pty;
 using ClaudeWeb.Server.Auth;
@@ -1206,22 +1206,27 @@ internal static class Program
         // (in .claudeweb/postponed/<id>.json under the working dir, alongside the images they reference)
         // so they survive a reload and are shared across devices. Keyed by session id, so sessions that
         // share a working directory each keep their own pool (a resume gets a fresh session id → empty).
+        // Answered for a closed session as well as a live one (FolderOf, not Get): the pool outlives
+        // the process that stashed it, and its count is on the row either way -- a number the list
+        // shows and nothing can open would be a poor joke.
         app.MapGet("/api/sessions/{id}/postponed", (string id, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
-            if (info is null) return Results.NotFound();
-            var json = SessionFileBrowser.ReadTextSafe(info.WorkingDirectory, PostponedStore.RelPathFor(id));
+            var dir = mgr.FolderOf(id);
+            if (dir is null) return Results.NotFound();
+            var json = SessionFileBrowser.ReadTextSafe(dir, PostponedStore.RelPathFor(id));
             return Results.Content(json ?? "[]", "application/json");
         });
 
+        // Writable for a closed session too, for the same reason: discarding a message you are no
+        // longer going to send is the other half of being able to read it.
         app.MapPut("/api/sessions/{id}/postponed", async (string id, HttpContext ctx, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
-            if (info is null) return Results.NotFound();
+            var dir = mgr.FolderOf(id);
+            if (dir is null) return Results.NotFound();
             using var reader = new StreamReader(ctx.Request.Body);
             var body = await reader.ReadToEndAsync();
             if (body.Length > 512 * 1024) return Results.BadRequest(new { error = "too large" });
-            return SessionFileBrowser.WriteBytes(info.WorkingDirectory, PostponedStore.RelPathFor(id), System.Text.Encoding.UTF8.GetBytes(body)) is not null
+            return SessionFileBrowser.WriteBytes(dir, PostponedStore.RelPathFor(id), System.Text.Encoding.UTF8.GetBytes(body)) is not null
                 ? Results.Ok()
                 : Results.BadRequest(new { error = "invalid path" });
         });

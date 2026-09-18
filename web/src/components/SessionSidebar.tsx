@@ -33,6 +33,7 @@ import { failureLine, type ActivityIds } from "@/lib/sessionActivity";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
+import { PostponedDialog } from "./PostponedDialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -43,7 +44,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import { ThemeToggle } from "./ThemeToggle";
 import { NotificationToggle } from "./NotificationToggle";
 import { OrphanBar } from "./OrphanBar";
@@ -1491,6 +1492,10 @@ export function SessionSidebar({
   const [editingId, setEditingId] = useState<string | null>(null);
   // Folder whose bulk-remove popup is open (its normalized dirKey), or null.
   const [removeDir, setRemoveDir] = useState<string | null>(null);
+  // Session whose postponed pool is being read, or null. Held by id rather than by the row object,
+  // so the dialog follows the session through the list's next refresh instead of showing a copy of
+  // a row that has since changed -- or outliving one that has gone.
+  const [postponedId, setPostponedId] = useState<string | null>(null);
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedSet(
     loadCollapsed,
     saveCollapsed
@@ -2349,16 +2354,25 @@ export function SessionSidebar({
               />
             )}
             {/* Postponed-message counter, so a stashed pool is discoverable from the list. It sits
-                left of the menu button, which holds the right edge of every row. */}
+                left of the menu button, which holds the right edge of every row. Clicking it opens
+                the pool itself: the number was the only thing a closed session showed of its stash,
+                and reading it back used to mean relaunching the session that left it. */}
             {s.postponedCount > 0 && (
-              <Badge
-                variant="secondary"
-                className="gap-0.5 px-1.5"
-                title={`${s.postponedCount} postponed message${s.postponedCount === 1 ? "" : "s"}`}
+              <button
+                type="button"
+                title={`${s.postponedCount} postponed message${s.postponedCount === 1 ? "" : "s"} — click to read`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPostponedId(s.id);
+                }}
+                className={cn(
+                  badgeVariants({ variant: "secondary" }),
+                  "gap-0.5 px-1.5 transition-colors hover:bg-accent"
+                )}
               >
                 <Inbox className="size-3" />
                 {s.postponedCount}
-              </Badge>
+              </button>
             )}
             {editingId !== s.id && (
               <RowActionsMenu
@@ -2816,6 +2830,17 @@ export function SessionSidebar({
           onSaved={onProjectsChange}
           onCreated={(groupId) => void moveSessionToGroup(newGroupFor.sessionId, groupId)}
           onClose={() => setNewGroupFor(null)}
+        />
+      )}
+
+      {/* Resolved from the live list, like the popups above: a session that leaves the list while its
+          stash is open takes the dialog with it rather than leaving one nothing can answer. */}
+      {postponedId && sessions.some((s) => s.id === postponedId) && (
+        <PostponedDialog
+          sessionId={postponedId}
+          sessionName={sessions.find((s) => s.id === postponedId)!.name}
+          live={sessions.find((s) => s.id === postponedId)!.state === "Running"}
+          onClose={() => setPostponedId(null)}
         />
       )}
 
