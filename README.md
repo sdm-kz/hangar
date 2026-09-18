@@ -130,7 +130,10 @@ The web UI is a **session manager with a full terminal**:
   The tab is a **review**: the changed files down a collapsible left sidebar, and the diffs beside
   them, old on the left and new on the right the way GitHub draws them. Each file folds away by its
   header (and the header stays put as you read through it); clicking one in the sidebar opens it and
-  scrolls to it. **A file that was added has no left side to show**, so it isn't given one — the new
+  scrolls to it. Both dividers drag: the one beside the file list, and the one down the middle of a
+  diff — that one sets the ratio for **every** file at once, so the two columns stay in step down the
+  page. Double-click either to put it back. (The middle divider is for the wrapped view; unwrapped,
+  the halves are as wide as their longest line and scroll together, and there is no width to divide.) **A file that was added has no left side to show**, so it isn't given one — the new
   content is drawn as a single full-width column, and a deleted file the same way round. Long lines
   wrap by default, because this pane is often half a screen wide rather than a whole one; the button
   in the header turns that off for GitHub's own behaviour, where the two halves scroll together.

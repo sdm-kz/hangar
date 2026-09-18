@@ -29,6 +29,25 @@ const SIDEBAR_KEY = "claudeweb.prFilesSidebar";
 // GitHub — GitHub is read in a whole browser window, this in half of one, and two columns of eighty
 // characters do not fit in half a window. Off gives GitHub's behaviour exactly.
 const WRAP_KEY = "claudeweb.prDiffWrap";
+// Width of the file sidebar, dragged by the divider beside it. Per-browser like the Split view's
+// own divider, and for the same reason: how much of this screen the list deserves is a fact about
+// this screen. Paths are long and deeply nested, so the default is wider than a tab strip wants.
+const SIDEBAR_MIN = 140;
+const SIDEBAR_DEFAULT = 256;
+const SIDEBAR_WIDTH_KEY = "claudeweb.prFilesWidth";
+// Left for the diffs whatever the sidebar is dragged to. A two-column diff needs the room far more
+// than a list of file names does.
+const DIFF_MIN = 320;
+// How much of a split diff's width the old side takes, dragged by the divider running down the
+// middle of every file. One share for the whole review rather than one per file: the point of the
+// two columns is that they line up, and a page where each file sat at its own ratio would be a
+// worse thing to read down than a page where none of them moved. Per browser, like the two above.
+const SHARE_MIN = 0.15;
+const SHARE_MAX = 0.85;
+const SHARE_DEFAULT = 0.5;
+const SHARE_KEY = "claudeweb.prDiffSplit";
+// Width of a line-number column, in pixels rather than rem so the drag can do arithmetic with it.
+const NUM_COL = 52;
 // A diff this big is not read top to bottom, and drawing every row of every such file on open would
 // cost seconds. Those files arrive collapsed instead, one click from being read. Both a row count and
 // a size, because they catch different things: a long file, and a generated one whose "two changed
@@ -52,6 +71,24 @@ function readWrap(): boolean {
     return localStorage.getItem(WRAP_KEY) !== "off";
   } catch {
     return true;
+  }
+}
+
+function readSidebarWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return Number.isFinite(n) && n >= SIDEBAR_MIN ? n : SIDEBAR_DEFAULT;
+  } catch {
+    return SIDEBAR_DEFAULT;
+  }
+}
+
+function readShare(): number {
+  try {
+    const n = Number(localStorage.getItem(SHARE_KEY));
+    return Number.isFinite(n) && n >= SHARE_MIN && n <= SHARE_MAX ? n : SHARE_DEFAULT;
+  } catch {
+    return SHARE_DEFAULT;
   }
 }
 
@@ -94,11 +131,15 @@ export function PullRequestView({
   const [error, setError] = useState<string | null>(null);
   const [sidebar, setSidebar] = useState(readSidebarOpen);
   const [wrap, setWrap] = useState(readWrap);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [share, setShare] = useState(readShare);
   // Files the reader has collapsed or expanded by hand, by path. Everything not in here follows the
   // default, which is "open unless it is enormous" — so a re-fetch doesn't undo what was folded away.
   const [folded, setFolded] = useState<Record<string, boolean>>({});
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const fileRefs = useRef(new Map<string, HTMLDivElement>());
+  // The row holding the sidebar and the diffs, so the drag knows how much width there is to divide.
+  const splitRef = useRef<HTMLDivElement>(null);
   // Held in a ref rather than depended on: the caller writes it inline, so a new function arrives
   // every render, and a fetch keyed on that would re-fetch the PR for the rest of the page's life.
   const onTitleRef = useRef(onTitle);
@@ -132,6 +173,85 @@ export function PullRequestView({
       }
       return !open;
     });
+  }, []);
+
+  // Drag the divider between the file list and the diffs, the way the Split view's divider works.
+  // The pointer events go on the window rather than the divider: a fast drag outruns a 6px target,
+  // and losing the pointer mid-drag would strand the layout at whatever width it had got to.
+  const startResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = readSidebarWidth();
+    let width = startW;
+    const onMove = (ev: PointerEvent) => {
+      const max = (splitRef.current?.clientWidth ?? Infinity) - DIFF_MIN;
+      width = Math.min(Math.max(max, SIDEBAR_MIN), Math.max(SIDEBAR_MIN, startW + ev.clientX - startX));
+      setSidebarWidth(width);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try {
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+      } catch {
+        /* private window — the width holds for this page and starts over on the next */
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const resetResize = useCallback(() => {
+    setSidebarWidth(SIDEBAR_DEFAULT);
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(SIDEBAR_DEFAULT));
+    } catch {
+      /* as above */
+    }
+  }, []);
+
+  // Drag the divider between the two halves of a diff. The handle belongs to one file, but the share
+  // it writes is the review's, so every other file moves with it and the columns stay in step.
+  const startShareResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startShare = readShare();
+    // The width the two code columns divide between them: the whole row, less the two number columns.
+    const usable = (e.currentTarget.parentElement?.clientWidth ?? 0) - 2 * NUM_COL;
+    if (usable <= 0) return;
+    let next = startShare;
+    const onMove = (ev: PointerEvent) => {
+      next = Math.min(SHARE_MAX, Math.max(SHARE_MIN, startShare + (ev.clientX - startX) / usable));
+      setShare(next);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try {
+        localStorage.setItem(SHARE_KEY, String(next));
+      } catch {
+        /* as above */
+      }
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  const resetShare = useCallback(() => {
+    setShare(SHARE_DEFAULT);
+    try {
+      localStorage.setItem(SHARE_KEY, String(SHARE_DEFAULT));
+    } catch {
+      /* as above */
+    }
   }, []);
 
   const toggleWrap = useCallback(() => {
@@ -276,9 +396,12 @@ export function PullRequestView({
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div ref={splitRef} className="flex min-h-0 flex-1">
         {sidebar && (
-          <div className="hidden w-64 shrink-0 flex-col overflow-y-auto border-r md:flex">
+          <div
+            style={{ "--files-w": `${sidebarWidth}px` } as React.CSSProperties}
+            className="hidden w-[var(--files-w)] shrink-0 flex-col overflow-y-auto md:flex"
+          >
             <div className="sticky top-0 z-10 bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground">
               {files.length} changed {files.length === 1 ? "file" : "files"}
             </div>
@@ -309,6 +432,17 @@ export function PullRequestView({
               );
             })}
           </div>
+        )}
+
+        {sidebar && (
+          <div
+            onPointerDown={startResize}
+            onDoubleClick={resetResize}
+            title="Drag to resize · double-click to reset"
+            // Carries the border the sidebar used to draw, so widening the grab area does not put a
+            // second line on screen.
+            className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:block"
+          />
         )}
 
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
@@ -360,6 +494,9 @@ export function PullRequestView({
                   file={f}
                   open={isOpen(f)}
                   wrap={wrap}
+                  share={share}
+                  onShareResize={startShareResize}
+                  onShareReset={resetShare}
                   bigByDefault={big.has(f.path)}
                   onToggle={() => setFolded((prev) => ({ ...prev, [f.path]: !isOpen(f) }))}
                   register={(el) => {
@@ -381,6 +518,9 @@ function FileDiff({
   file,
   open,
   wrap,
+  share,
+  onShareResize,
+  onShareReset,
   bigByDefault,
   onToggle,
   register,
@@ -389,6 +529,10 @@ function FileDiff({
   open: boolean;
   /** Long lines wrap rather than running off to the right — see WRAP_KEY. */
   wrap: boolean;
+  /** How much of the width the old side takes, 0..1 — shared by every file (see SHARE_KEY). */
+  share: number;
+  onShareResize: (e: React.PointerEvent) => void;
+  onShareReset: () => void;
   /** The file arrived folded because its diff is enormous — say so, so the fold isn't a mystery. */
   bigByDefault: boolean;
   onToggle: () => void;
@@ -443,7 +587,13 @@ function FileDiff({
         ) : side ? (
           <OneSided hunks={hunks} side={side} wrap={wrap} />
         ) : (
-          <SideBySide hunks={hunks} wrap={wrap} />
+          <SideBySide
+            hunks={hunks}
+            wrap={wrap}
+            share={share}
+            onResize={onShareResize}
+            onReset={onShareReset}
+          />
         )
       ) : (
         bigByDefault && (
@@ -478,6 +628,26 @@ function lineMode(wrap: boolean) {
   };
 }
 
+/**
+ * The four column widths of a split diff. Wrapped, the two code columns divide the pane between them
+ * at whatever ratio the divider was left at. Unwrapped they are equal `1fr` again, deliberately: the
+ * columns are then sized by their longest line rather than by the pane, and equal `1fr` tracks in a
+ * max-content grid both take the width of the widest — which is what keeps the two halves the same
+ * width and lets one scrollbar move them together. There is nothing there for a ratio to divide.
+ *
+ * `minmax(0, …)` rather than a bare `fr` in the wrapped case, and it is load-bearing: a bare `Xfr`
+ * means `minmax(auto, Xfr)`, whose floor is the track's min-content width. A column of code has a
+ * wide one, so both tracks sit on their floor, the ratio is ignored, and the grid quietly overflows
+ * the pane it was told to fit. A zero floor lets the ratio decide and lets the text wrap, which is
+ * the whole premise of the mode.
+ */
+function splitColumns(wrap: boolean, share: number): string {
+  const [oldCol, newCol] = wrap
+    ? [`minmax(0, ${share}fr)`, `minmax(0, ${1 - share}fr)`]
+    : ["1fr", "1fr"];
+  return `${NUM_COL}px ${oldCol} ${NUM_COL}px ${newCol}`;
+}
+
 /** Background for a cell, by what happened to the line it holds. */
 function tint(kind: "add" | "del" | "none" | "gap"): string {
   if (kind === "add") return "bg-emerald-500/10";
@@ -487,11 +657,38 @@ function tint(kind: "add" | "del" | "none" | "gap"): string {
 }
 
 /** The old file beside the new one — the view for a file that existed before and still does. */
-function SideBySide({ hunks, wrap }: { hunks: DiffHunk[]; wrap: boolean }) {
+function SideBySide({
+  hunks,
+  wrap,
+  share,
+  onResize,
+  onReset,
+}: {
+  hunks: DiffHunk[];
+  wrap: boolean;
+  share: number;
+  onResize: (e: React.PointerEvent) => void;
+  onReset: () => void;
+}) {
   const mode = lineMode(wrap);
   return (
-    <div className={mode.scroll}>
-      <div className={cn("grid grid-cols-[3.25rem_1fr_3.25rem_1fr]", mode.grid)}>
+    <div className={cn("relative", mode.scroll)}>
+      {/* The divider between the halves. Only while the lines wrap: unwrapped, the columns are as
+          wide as their longest line and the pane scrolls, so there is no width here to divide.
+          Drawn over the grid rather than in it, since it has to run the height of every row. */}
+      {wrap && (
+        <div
+          onPointerDown={onResize}
+          onDoubleClick={onReset}
+          title="Drag to resize · double-click to reset"
+          style={{ left: `calc(${NUM_COL}px + ${share} * (100% - ${2 * NUM_COL}px))` }}
+          className="absolute inset-y-0 z-[5] -ml-[3px] w-1.5 cursor-col-resize bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30"
+        />
+      )}
+      <div
+        style={{ gridTemplateColumns: splitColumns(wrap, share) }}
+        className={cn("grid", mode.grid)}
+      >
         {hunks.map((hunk, h) => (
           <HunkRows key={h} header={hunk.header} span={4}>
             {hunk.rows.map((row, i) => {
@@ -523,7 +720,10 @@ function OneSided({ hunks, side, wrap }: { hunks: DiffHunk[]; side: "add" | "del
   const mode = lineMode(wrap);
   return (
     <div className={mode.scroll}>
-      <div className={cn("grid grid-cols-[3.25rem_1fr]", mode.grid)}>
+      <div
+        style={{ gridTemplateColumns: `${NUM_COL}px ${wrap ? "minmax(0, 1fr)" : "1fr"}` }}
+        className={cn("grid", mode.grid)}
+      >
         {rows.map((row, i) => {
           const line = side === "add" ? row.right : row.left;
           if (!line) return null;
