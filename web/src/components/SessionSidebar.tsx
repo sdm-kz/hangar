@@ -325,12 +325,13 @@ function folderPostponed(items: SessionInfo[]): number {
  * How far a heading's batch has got: how many of the sessions under it have finished, out of the
  * ones that are up to anything at all.
  *
- * The heading's dot says what the most urgent thing inside is; it cannot say how much of the work is
- * over, and on a collapsed box that is the thing you are actually waiting to know. Sessions with no
- * mark are left out of both halves -- an idle session was never part of this run, and counting it
- * would make a finished batch read as unfinished for as long as it sat there.
+ * The heading's dot says what the most urgent thing inside is; it cannot say how many sessions that
+ * is, or how much of the work is over, and on a collapsed box that is the thing you are actually
+ * waiting to know. Sessions with no mark are left out of both halves -- an idle session was never
+ * part of this run, and counting it would make a finished batch read as unfinished for as long as it
+ * sat there.
  */
-function folderProgress(items: SessionInfo[], ids: ActivityIds): { done: number; active: number } {
+export function folderProgress(items: SessionInfo[], ids: ActivityIds): { done: number; active: number } {
   let done = 0;
   let active = 0;
   for (const s of items) {
@@ -344,21 +345,28 @@ function folderProgress(items: SessionInfo[], ids: ActivityIds): { done: number;
 }
 
 /**
- * The fraction, shown only once something has finished. While a batch is still all working the dot
- * says everything there is to say, and a "0/4" ticking away in the corner of every heading would be
- * a number that means "nothing has happened yet".
+ * The fraction, shown wherever anything under the heading is up to something -- including "0/2",
+ * before any of it has finished. The dot says a batch is running; how big it is, and how much of it
+ * is left, is the thing you are waiting on, and it is worth reading off a heading whose sessions may
+ * be folded away underneath it.
  */
-function HeadingProgress({ done, active }: { done: number; active: number }) {
-  if (done <= 0 || active <= 0) return null;
+export function HeadingProgress({ done, active }: { done: number; active: number }) {
+  if (active <= 0) return null;
   return (
     <span
-      // The tick's colour, because it counts ticks -- and the same past tense: nothing here is
-      // moving, so nothing about it pulses.
-      className="shrink-0 font-mono text-[10px] tabular-nums text-emerald-600 dark:text-emerald-500"
+      className={cn(
+        "shrink-0 font-mono text-[10px] tabular-nums",
+        // The tick's colour once there are ticks to count, and the same past tense -- nothing here is
+        // moving, so nothing about it pulses. Grey until then: a green "0/2" would be claiming
+        // something has landed when nothing has.
+        done > 0 ? "text-emerald-600 dark:text-emerald-500" : "text-muted-foreground"
+      )}
       title={
-        done === active
-          ? `${done} finished, nothing still going`
-          : `${done} of ${active} finished — ${active - done} still going`
+        done === 0
+          ? `Nothing finished yet — ${active} still going`
+          : done === active
+            ? `${done} finished, nothing still going`
+            : `${done} of ${active} finished — ${active - done} still going`
       }
     >
       {done}/{active}
