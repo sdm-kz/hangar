@@ -19,6 +19,7 @@ export function AppSidebar({
   sessions,
   files,
   update,
+  sessionsProgress,
 }: {
   tab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
@@ -27,6 +28,13 @@ export function AppSidebar({
   sessions: ReactNode;
   files: ReactNode;
   update?: ReactNode; // "Update available" button; renders nothing unless a build is staged
+  /**
+   * How much of everything running has finished, shown on the Sessions tab. The headings inside
+   * answer that question a project or a folder at a time; this is the same answer for the lot, and
+   * it is the one still readable with the list scrolled somewhere else entirely -- or sitting on the
+   * Files tab.
+   */
+  sessionsProgress?: ReactNode;
 }) {
   return (
     <div className="flex h-full flex-col bg-card">
@@ -68,6 +76,7 @@ export function AppSidebar({
         <TabButton active={tab === "sessions"} onClick={() => onTabChange("sessions")}>
           <MessagesSquare className="size-4" />
           Sessions
+          {sessionsProgress}
         </TabButton>
         <TabButton
           active={tab === "files"}

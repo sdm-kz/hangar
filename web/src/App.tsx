@@ -9,7 +9,7 @@ import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
 import type { Project, SessionInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
-import { SessionSidebar, type SessionListTab } from "@/components/SessionSidebar";
+import { SessionSidebar, type SessionListTab, folderProgress, HeadingProgress } from "@/components/SessionSidebar";
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
 import { FilesSidebar } from "@/components/FilesSidebar";
@@ -257,6 +257,11 @@ export function App() {
     }),
     [busyIds, waitingIds, compactingIds, failedIds, doneIds, activityDetail]
   );
+
+  // How much of everything running has finished — the count the headings carry, taken over the whole
+  // list. It rides the Sessions tab, which is where it stays readable with the list scrolled away
+  // from the work, or the sidebar showing Files.
+  const totalProgress = useMemo(() => folderProgress(sessions, activityIds), [sessions, activityIds]);
 
   // Badge the favicon with the busiest state across *all* sessions, so a backgrounded tab shows at a
   // glance that something is happening. Waiting-on-you (amber) outranks working (green) here — unlike
@@ -874,6 +879,7 @@ export function App() {
           onNew={() => openNew()}
           onCollapse={toggleCollapsed}
           update={<UpdateButton status={update} onApplying={setInstalling} />}
+          sessionsProgress={<HeadingProgress done={totalProgress.done} active={totalProgress.active} />}
           sessions={
             <SessionSidebar
               sessions={sessions}
@@ -938,6 +944,7 @@ export function App() {
                 setSidebarOpen(false);
               }}
               update={<UpdateButton status={update} onApplying={setInstalling} />}
+              sessionsProgress={<HeadingProgress done={totalProgress.done} active={totalProgress.active} />}
               sessions={
                 <SessionSidebar
                   sessions={sessions}
