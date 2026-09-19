@@ -16,7 +16,10 @@ export interface SessionInfo {
   color: string | null; // color name set via /color in the terminal; shown in the sessions list
   resumeExact: boolean; // Restorable: reopen can --resume the exact conversation (vs --continue fallback)
   postponedCount: number; // number of "postponed" messages stashed for this session (0 = none)
-  claudeSessionId: string | null; // Restorable: the conversation id behind resumeExact; null when live
+  // Claude's own id for this conversation, once its first hook has reported one. The handle that
+  // outlives the session — ours is minted afresh on every reopen — so anything meant to find this
+  // conversation again later (a schedule) holds this rather than `id`.
+  claudeSessionId: string | null;
   canFork: boolean; // its conversation id is known, so it can be forked (false for the first seconds)
   parentSessionId: string | null; // the session this one was forked from; null for an ordinary session
   parentName: string | null; // the parent's name at fork time — shown even once the parent is gone
@@ -35,6 +38,12 @@ export interface SessionInfo {
   // id like the pin above, so it survives a reopen. It only applies inside the project that owns the
   // group — see groupForSession in lib/projects.ts, which is what the sidebar actually asks.
   groupId: string | null;
+  // The schedule that started this session, or that pokes it; null when a person started it. Drawn as
+  // a mark before the name, beside the fork mark, because "a clock did this" is provenance — see the
+  // note on ActivityMark in SessionSidebar for why it is not a sixth corner dot.
+  scheduleId: string | null;
+  // That schedule's clock in a few words ("0 9 * * 1-5", "every 10 min"), for the mark's tooltip.
+  scheduleLabel: string | null;
 }
 
 /** A pty host still running for a session the app no longer tracks (see PtyOrphanInfo server-side). */
@@ -253,6 +262,79 @@ export interface SessionTemplate {
   watchdogEnabled: boolean;
   description: string | null; // one line under the name in the picker
   inputHint: string | null; // placeholder for the details box — what to paste in
+}
+
+/** How a schedule's fire turns into work. See ScheduleStore server-side. */
+export type ScheduleMode =
+  /** A one-shot `claude -p` with no session row: the right shape for a frequent stateless check. */
+  | "Headless"
+  /** A full session per fire, as if you had filled in the New Session dialog. */
+  | "NewSession"
+  /** Send the prompt into a session already running, continuing one conversation. */
+  | "ReuseSession";
+
+/** One past fire, so a schedule that ran while you slept still left a trace. */
+export interface ScheduleRun {
+  at: string;
+  sessionId: string | null;
+  outcome: "ok" | "blocked" | "failed" | "skipped" | "postponed";
+  detail: string | null;
+  durationSeconds: number | null;
+}
+
+/**
+ * A *schedule*: a {@link SessionTemplate} plus a clock. The template already holds what to run —
+ * folder, prompt, model, permission mode — so this adds only when to fire it, what to do about a
+ * moment the machine was off for, and what to do with the result.
+ *
+ * `cron` and `intervalMinutes` are alternatives, not two spellings of one thing: cron fires on a
+ * wall clock, while an interval fires N minutes after the target's last turn *finished* — which is
+ * what makes an every-N-minutes schedule unable to collide with itself.
+ */
+export interface SessionSchedule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  templateId: string | null;
+  input: string | null; // fills the template's {input} on every fire
+  mode: ScheduleMode;
+  cron: string; // 5-field cron, read in timeZoneId; "" when driven by an interval
+  timeZoneId: string;
+  intervalMinutes: number | null;
+  onMissed: "Skip" | "RunOnce";
+  graceMinutes: number;
+  overlap: "Skip" | "Queue";
+  maxRunMinutes: number;
+  maxRuns: number | null;
+  stopWhenDone: boolean;
+  keepRuns: number;
+  targetConversationId: string | null; // ReuseSession: the conversation it pokes
+  lastFiredAt: string | null;
+  runCount: number;
+  history: ScheduleRun[];
+}
+
+/**
+ * A schedule as the list endpoint sends it: the record plus what only the server can work out —
+ * when it next fires (it owns the cron parser, and after a reboot only it knows when the schedule
+ * last actually ran) and whether it can fire at all.
+ */
+export interface ScheduleEntry {
+  schedule: SessionSchedule;
+  nextFireAt: string | null;
+  blocked: boolean;
+  /**
+   * Why it can never fire as it stands, in words, or null when nothing is stopping it. The server
+   * says which, because the client can't tell a bad cron from a deleted template without a parser —
+   * and naming the wrong one is worse than saying nothing.
+   */
+  blockedReason: string | null;
+  /**
+   * The zone the cron will ACTUALLY be read in, which is not always `schedule.timeZoneId`: the
+   * server is built with InvariantGlobalization, so an IANA id a browser reports ("Europe/Berlin")
+   * doesn't resolve on Windows and falls back to the machine's own zone. Show this one.
+   */
+  resolvedTimeZoneId: string;
 }
 
 /** A shell the SERVER machine can run, as offered in the session tab bar's "+" menu. */

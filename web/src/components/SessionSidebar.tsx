@@ -57,6 +57,7 @@ import {
   Boxes,
   Check,
   CheckCheck,
+  CalendarClock,
   Copy,
   CornerLeftUp,
   Filter,
@@ -1507,6 +1508,7 @@ export function SessionSidebar({
   onRemoveRecent,
   onReorderRecent,
   onSearch,
+  onSchedules,
   tab,
   onTabChange,
   projects,
@@ -1542,6 +1544,11 @@ export function SessionSidebar({
   // hotkey, which must work with the sidebar collapsed, and the sidebar is mounted twice (desktop
   // column + mobile drawer) so it can't own the dialog without mounting two copies.
   onSearch: () => void;
+  // Open the schedules popup — the clocks that start sessions with nobody at the machine. Owned by
+  // App like the search one above, and for the same reason: this component is mounted twice. Called
+  // with a session to pre-fill a schedule that continues that conversation, or with nothing to open
+  // the list.
+  onSchedules: (target?: { conversationId: string; name: string }) => void;
   // Sessions/Recent list tab. Owned by App so creating a session can pull the sidebar back to the
   // list, and so the desktop sidebar and the mobile drawer stay on the same tab.
   tab: SessionListTab;
@@ -2363,6 +2370,23 @@ export function SessionSidebar({
                 <GitFork className="size-3" aria-label="forked session" />
               </span>
             )}
+            {/* Started by a clock rather than by a person. This is provenance, like the fork mark
+                above it, so it sits in the same place and wears the same weight — and NOT in the
+                activity corner, where it would be a sixth thing to learn about a list that is mostly
+                quiet (see ActivityMark). One icon covers both a run a schedule launched and a live
+                session it pokes; which one, and on what clock, is the tooltip's job. */}
+            {s.scheduleId && (
+              <span
+                className="flex shrink-0 items-center text-muted-foreground"
+                title={
+                  s.scheduleLabel
+                    ? `Scheduled — ${s.scheduleLabel}`
+                    : "Started by a schedule"
+                }
+              >
+                <CalendarClock className="size-3" aria-label="scheduled session" />
+              </span>
+            )}
             {/* Whether a session survived a restart of the app (re-attached, not relaunched) is worth
                 knowing but not worth a badge on every row it applies to — it lives in the session
                 info panel, next to the pid it's really a statement about. */}
@@ -2466,6 +2490,11 @@ export function SessionSidebar({
                 onRename={() => setEditingId(s.id)}
                 onClone={() => onClone(s)}
                 onFork={() => onFork(s)}
+                onSchedule={
+                  s.claudeSessionId
+                    ? () => onSchedules({ conversationId: s.claudeSessionId!, name: s.name })
+                    : null
+                }
                 onRestore={() => onRestore(s.id)}
                 onStop={() => onStop(s.id)}
                 onRemove={() => onRemove(s.id)}
@@ -2718,6 +2747,17 @@ export function SessionSidebar({
             <FolderPlus className="size-3.5" />
           </Button>
         )}
+        {tab === "sessions" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 shrink-0 text-muted-foreground"
+            title="Schedules — run a template on a clock"
+            onClick={() => onSchedules()}
+          >
+            <CalendarClock className="size-3.5" />
+          </Button>
+        )}
         {canFoldAll && (
           <Button
             variant="ghost"
@@ -2962,6 +3002,7 @@ function RowActionsMenu({
   onRename,
   onClone,
   onFork,
+  onSchedule,
   onRestore,
   onStop,
   onRemove,
@@ -2990,6 +3031,12 @@ function RowActionsMenu({
   onRename: () => void;
   onClone: () => void;
   onFork: () => void;
+  /**
+   * Start a schedule that keeps sending to this conversation. Null when there is nothing to schedule
+   * against yet — a schedule outlives a reboot by holding Claude's conversation id, and a session too
+   * young to have reported one has no handle to hold.
+   */
+  onSchedule: (() => void) | null;
   onRestore: () => void;
   onStop: () => void;
   onRemove: () => void;
@@ -3178,6 +3225,9 @@ function RowActionsMenu({
               {item("Rename", <Pencil className="size-3.5" />, onRename)}
               {item("Clone", <Copy className="size-3.5" />, onClone)}
               {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
+              {/* Same handle as a fork: both need the conversation id, which is why they appear
+                  together and at the same moment. */}
+              {onSchedule && item("Schedule…", <CalendarClock className="size-3.5" />, onSchedule)}
               {/* Only for a row put under another by hand, and only that is undone: a fork goes back
                   to hanging off the session it was forked from, which is where it belongs and was
                   never the user's arrangement to begin with. */}

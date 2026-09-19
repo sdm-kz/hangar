@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using ClaudeWeb.Pty;
@@ -145,15 +146,71 @@ public sealed class SessionManager : IDisposable
                 Pinned = IsPinned(ConversationId(s), s.Id),
                 UiRev = UiRev(ConversationId(s), s.Id),
                 GroupId = GroupIdOf(ConversationId(s), s.Id),
+                ScheduleId = ScheduleOf(ConversationId(s), s.Id)?.Id,
+                ScheduleLabel = ScheduleOf(ConversationId(s), s.Id)?.Label,
             })
             .Concat(_restorable.Values.Select(p => ClaudeSession.RestorableInfo(p) with
             {
                 Pinned = IsPinned(p.ClaudeSessionId, p.Id),
                 UiRev = UiRev(p.ClaudeSessionId, p.Id),
                 GroupId = GroupIdOf(p.ClaudeSessionId, p.Id),
+                ScheduleId = ScheduleOf(p.ClaudeSessionId, p.Id)?.Id,
+                ScheduleLabel = ScheduleOf(p.ClaudeSessionId, p.Id)?.Label,
             }))
             .OrderBy(i => i.CreatedAt)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Which schedule a session belongs to, and what its clock says. Keyed by conversation first so
+    /// the mark survives a reopen the way a pin and a virtual folder do — a schedule that pokes a
+    /// session every ten minutes must still own it after the reboot that gave it a new id — with the
+    /// session id as the fallback key for one too young to have reported a conversation.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (string Id, string Label)> _scheduled = new();
+
+    private (string Id, string Label)? ScheduleOf(string? conversationId, string sessionId)
+    {
+        if (conversationId is not null && _scheduled.TryGetValue(conversationId, out var byConvo)) return byConvo;
+        return _scheduled.TryGetValue(sessionId, out var bySession) ? bySession : null;
+    }
+
+    /// <summary>
+    /// Record that a schedule owns this session, so its row is marked as one a clock started. Written
+    /// under the conversation id when there is one, and under the session id until there is.
+    /// </summary>
+    public void MarkScheduled(string id, string scheduleId, string label)
+    {
+        var conversation = _sessions.TryGetValue(id, out var s) ? ConversationId(s)
+            : _restorable.TryGetValue(id, out var p) ? p.ClaudeSessionId
+            : null;
+        _scheduled[conversation ?? id] = (scheduleId, label);
+        RaiseChanged();
+    }
+
+    /// <summary>Forget a schedule's claim on every session it had marked (the schedule was deleted).</summary>
+    public void ForgetSchedule(string scheduleId)
+    {
+        foreach (var (key, value) in _scheduled)
+            if (value.Id == scheduleId) _scheduled.TryRemove(key, out _);
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// The session running a given Claude conversation — live or Restorable — or null when none is.
+    /// The scheduler works in conversation ids rather than ours precisely because ours do not survive
+    /// a reopen; this is the lookup that bridges the two.
+    /// </summary>
+    public SessionInfo? FindByConversation(string conversationId)
+    {
+        if (string.IsNullOrWhiteSpace(conversationId)) return null;
+        foreach (var s in _sessions.Values)
+            if (string.Equals(ConversationId(s), conversationId, StringComparison.OrdinalIgnoreCase))
+                return s.ToInfo(ConversationId(s));
+        foreach (var p in _restorable.Values)
+            if (string.Equals(p.ClaudeSessionId, conversationId, StringComparison.OrdinalIgnoreCase))
+                return ClaudeSession.RestorableInfo(p);
+        return null;
     }
 
     /// <summary>
@@ -668,6 +725,55 @@ public sealed class SessionManager : IDisposable
         await s.SetWatchdogAsync(enabled: null, reset: true);
         RaiseChanged();
     }
+
+    /// <summary>
+    /// The gap the TUI needs between two submits. Back-to-back Enters are coalesced into one message
+    /// by Claude Code's input box, so a caller sending several in a row must space them out; the
+    /// browser's "send all" flush has used the same 150 ms since it shipped
+    /// (<c>web/src/components/PostponedPool.tsx</c>).
+    /// </summary>
+    public static readonly TimeSpan SendGap = TimeSpan.FromMilliseconds(150);
+
+    /// <summary>
+    /// Send one message to a live session's Claude, exactly as typing it into the terminal would:
+    /// the text as a <em>bracketed paste</em> — so newlines inside it stay literal instead of
+    /// submitting a line at a time — followed by a single <c>\r</c> as the one submit.
+    ///
+    /// <para>This used to exist only in the browser (<c>TerminalPane.sendMessage</c>), which meant
+    /// nothing server-side could talk to a session: the scheduler needs to, and so does anything
+    /// driving a session from a script. The transport underneath is the one the watchdog has always
+    /// used — <see cref="Pty.ITerminal.WriteAsync"/>.</para>
+    ///
+    /// <para>Returns false when the id is unknown, the session isn't running, or its terminal has
+    /// gone — never throws for those, because every caller here is reacting to a timer rather than
+    /// to a person, and a session that ended is an outcome to record, not an error to propagate.</para>
+    /// </summary>
+    public async Task<bool> SendMessageAsync(string id, string text, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (!_sessions.TryGetValue(id, out var s) || s.State != SessionState.Running) return false;
+        if (s.Terminal is not { } term) return false;
+
+        // \x1b[200~ … \x1b[201~ is the paste; the \r after it is deliberately a separate write and a
+        // separate byte — inside the brackets it would be pasted text, not a submit.
+        var paste = Encoding.UTF8.GetBytes($"\x1b[200~{text.Replace("\r\n", "\n")}\x1b[201~");
+        try
+        {
+            await term.WriteAsync(paste, ct);
+            await term.WriteAsync(Cr, ct);
+            _log.LogInformation("Sent a {Length}-char message to session {Id} ('{Name}')", text.Length, id, s.Name);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // The host can go between the checks above and the write; that is a delivery failure like
+            // any other and the caller decides what to do about it.
+            _log.LogWarning(ex, "Could not send a message to session {Id}", id);
+            return false;
+        }
+    }
+
+    private static readonly ReadOnlyMemory<byte> Cr = new(new[] { (byte)'\r' });
 
     /// <summary>
     /// Launch a new session: spawn its pty host, then attach to it over the host's pipe. Genuinely

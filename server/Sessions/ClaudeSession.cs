@@ -254,6 +254,7 @@ public sealed class ClaudeSession : IDisposable
         WatchdogStatus: WatchdogStatus,
         Color: Color,
         PostponedCount: PostponedStore.Count(WorkingDirectory, Id),
+        ClaudeSessionId: claudeSessionId ?? OwnConversationId,
         CanFork: (claudeSessionId ?? OwnConversationId) is not null,
         ParentSessionId: ParentSessionId,
         ParentName: ParentName,

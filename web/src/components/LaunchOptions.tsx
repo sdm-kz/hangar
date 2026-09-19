@@ -78,7 +78,7 @@ export function launchFromTemplate(t: {
 }
 
 /** The shared select styling — a bare <select>, since the app has no styled one of its own. */
-const selectClass =
+export const selectClass =
   "flex h-9 w-full rounded-md field-edge bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 /** A checkbox with a title, an icon and a paragraph saying what it does — the whole card clicks. */

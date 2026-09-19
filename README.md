@@ -76,6 +76,41 @@ The web UI is a **session manager with a full terminal**:
   only. Write them from the same tab (**New template**) or from a project's settings, where the
   project's templates are listed beside its groups. Stored server-side like projects, so they follow
   you across devices.
+- **Schedules** — a template plus a clock, so the errands that come back on their own run on their
+  own. The calendar button in the sidebar's toolbar lists them; each one picks a template, a clock,
+  and what a run actually *is*:
+  - **One-shot (headless)** — `claude -p` runs once and exits. No session row, nothing accumulates,
+    and the output is kept in the schedule's history. The right shape for the frequent stateless
+    check ("is the deploy green?"), and the one to reach for before the other two.
+  - **New session each run** — a full interactive session per fire, as if you had filled in the New
+    Session dialog. **Stop when done** closes it once its turn ends (the Stop hook is what says so),
+    and **sessions to keep** drops the older runs, so a daily schedule doesn't leave thirty rows
+    behind it.
+  - **Continue an existing session** — sends the prompt into a session already running, keeping one
+    conversation's context. Its clock is *not* a wall clock: it fires **N minutes after the last turn
+    finished**, which is what makes a run unable to land on top of the one before it. It never types
+    over a permission prompt, and a prompt it cannot deliver is stashed in that session's
+    **postponed messages** rather than dropped — so the badge says a schedule has been stuck instead
+    of the silence saying nothing. Worth knowing: one conversation poked every few minutes grows
+    until it compacts and drifts, so anything that doesn't truly need the history holds up far
+    better as a one-shot.
+
+  The clock is a five-field cron read in a stored timezone (you edit these from a phone, which may be
+  somewhere else), with presets for the usual shapes. A fire the machine was **off or asleep** for
+  runs once on the next start if it is inside its grace window — several missed slots still produce
+  one run, not one each. **Run now** fires one without touching its clock, which is how you check it
+  does what you meant before leaving it to run at 03:00.
+
+  Schedules live in the server, so they survive a restart of the app and a reboot — as reliably as
+  the server itself starts (**Start at sign-in** below, with autologin, or a user systemd/launchd
+  unit elsewhere). That ceiling is why every row leads with **when it last ran** and flags itself
+  **overdue**: a schedule silenced by a broken autologin otherwise looks exactly like one with
+  nothing to do. A session a clock started wears a calendar mark before its name, beside the fork
+  mark — "a clock did this" is provenance, not activity.
+
+  Runs are unattended, so the template's **permission mode** is doing real work: a run that hits a
+  permission prompt just sits there, and the watchdog deliberately won't answer it. Web Push already
+  fires on "newly waiting on a prompt", so a 03:00 run that blocks wakes your phone.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:
@@ -472,6 +507,10 @@ the whole thing off and go back to `deploy.ps1` only.
 | `Pty:AttachTimeoutMs`       | How long a host has to answer its pipe before its state file is called stale | `3000` |
 | `Pty:StartTimeoutMs`        | How long a freshly launched host has to come up and accept a connection | `20000` |
 | `Pty:OrphanMaxAgeHours`     | Auto-stop untracked sessions older than this; `0` never does (they are listed in the sidebar and tray instead) | `0` |
+| `Schedules:Enabled`         | Master switch for the clock; off means no schedule ever fires | `true`      |
+| `Schedules:MaxConcurrentRuns` | Most scheduled runs in flight at once, across every schedule | `4`         |
+| `Schedules:DoneAfterIdleSeconds` | How long a run must sit idle before **Stop when done** stops it | `20`   |
+| `Schedules:RestoreWaitSeconds` | How long to wait for a reopened session's terminal before giving up on poking it | `45` |
 | `Watchdog:Enabled`          | Master switch for auto-recovery; off means no host ever auto-continues | `true` |
 | `Watchdog:PollIntervalMs`   | How often a host re-examines its own session      | `2000`               |
 | `Watchdog:CooldownMs`       | Minimum gap between auto-continues for one session| `20000`              |
@@ -510,8 +549,24 @@ curl -X POST http://<this-pc>:5099/api/external/sessions \
 Only `workingDirectory` is required. `model` is `opus`/`sonnet`/`haiku` (or omit for default),
 `permissionMode` is `auto`/`default`/`acceptEdits`/`bypassPermissions`. On success it returns
 `201` with the session JSON (same shape the UI uses); the session then appears in the web UI and,
-if `remoteControl` is true, in the Claude Code app. The key authorizes this endpoint only — the
+if `remoteControl` is true, in the Claude Code app. The key authorizes `/api/external/*` only — the
 rest of `/api/*` still requires the browser bearer token.
+
+**Talking to a session you started.** `POST /api/external/sessions/{id}/message` sends one message to
+a running session's Claude, exactly as typing it into the terminal would — the text goes in as a
+bracketed paste, so newlines in it stay part of the one message instead of submitting a line at a
+time, and a single Enter follows it:
+
+```bash
+curl -X POST http://<this-pc>:5099/api/external/sessions/<id>/message \
+  -H "X-Api-Key: <your-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "now open a PR for that"}'
+```
+
+`200` when it was delivered, `404` when the id names no *running* session. Sending several in a row
+needs a gap of ~150 ms between them, or Claude Code's input box merges them into one message. The
+browser's own route for this is `POST /api/sessions/{id}/message`, behind the bearer token.
 
 ## Renaming a session from inside it (API)
 

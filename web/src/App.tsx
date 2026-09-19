@@ -18,6 +18,7 @@ import { ShellView } from "@/components/ShellView";
 import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
 import { ForkSessionDialog } from "@/components/ForkSessionDialog";
+import { ScheduleDialog } from "@/components/ScheduleDialog";
 import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
@@ -88,6 +89,12 @@ export function App() {
   // Search popup over sessions + recents. Owned here (not by the sidebar) so the hotkey below works
   // with the sidebar collapsed, and so the two sidebar instances don't each mount a dialog.
   const [searching, setSearching] = useState(false);
+  // The schedules popup. Owned here for the same reason the search one is: the sidebar is mounted
+  // twice (desktop column + mobile drawer), so a dialog it owned would exist twice over. A non-null
+  // `target` opens it straight on a new schedule that continues that conversation.
+  const [scheduling, setScheduling] = useState<
+    { target: { conversationId: string; name: string } | null } | null
+  >(null);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("claudeweb.sidebarCollapsed") === "1"
@@ -897,6 +904,7 @@ export function App() {
               onRemoveRecent={removeRecent}
               onReorderRecent={reorderRecents}
               onSearch={() => setSearching(true)}
+              onSchedules={(target) => setScheduling({ target: target ?? null })}
               tab={listTab}
               onTabChange={setListTab}
               projects={projects}
@@ -964,6 +972,7 @@ export function App() {
                   onRemoveRecent={removeRecent}
                   onReorderRecent={reorderRecents}
                   onSearch={() => setSearching(true)}
+                  onSchedules={(target) => setScheduling({ target: target ?? null })}
                   tab={listTab}
                   onTabChange={setListTab}
                   projects={projects}
@@ -1033,6 +1042,14 @@ export function App() {
           />
         )}
       </main>
+
+      {scheduling && (
+        <ScheduleDialog
+          sessions={sessions}
+          initialTarget={scheduling.target}
+          onClose={() => setScheduling(null)}
+        />
+      )}
 
       {searching && (
         <SessionSearchDialog

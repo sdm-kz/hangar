@@ -65,10 +65,12 @@ public sealed record SessionInfo(
     /// <summary>How many "postponed" messages are stashed for this session (0 = none).</summary>
     int PostponedCount = 0,
     /// <summary>
-    /// For a Restorable entry: Claude's own session id for its conversation, when we captured one — the
-    /// id behind <see cref="ResumeExact"/>. Lets the client relaunch the entry through the New Session
-    /// dialog (adjusting the model/prompt first) and still resume that exact conversation. Null for live
-    /// sessions, which are opened rather than relaunched.
+    /// Claude's own session id for this conversation, when we have captured one — the id behind
+    /// <see cref="ResumeExact"/> and <see cref="CanFork"/>. For a Restorable entry it lets the client
+    /// relaunch through the New Session dialog and still resume that exact conversation; for a live
+    /// one it is the only handle that <em>survives</em> the session — ours is minted afresh every
+    /// reopen — which is what a schedule aimed at a conversation has to hold on to. Null for the first
+    /// seconds of a fresh session, until its first hook reports the id.
     /// </summary>
     string? ClaudeSessionId = null,
     /// <summary>
@@ -120,4 +122,15 @@ public sealed record SessionInfo(
     /// <see cref="ParentSessionId"/>. Null means the list draws it where forking left it: under
     /// <see cref="ParentSessionId"/>, or at the top level when it has none.
     /// </summary>
-    string? NestedUnderId = null);
+    string? NestedUnderId = null,
+    /// <summary>
+    /// The schedule that started this session, or that is poking it (see <c>ScheduleStore</c>). Null
+    /// for a session a person started. It earns a mark on the row because "a clock did this" is
+    /// provenance — the same kind of thing as <see cref="ParentSessionId"/>, and not an activity.
+    /// </summary>
+    string? ScheduleId = null,
+    /// <summary>
+    /// What that schedule's clock says, in a few words ("0 9 * * 1-5", "every 10 min"), for the
+    /// tooltip on the mark. Carried beside the id so the sessions list needn't hold the schedules too.
+    /// </summary>
+    string? ScheduleLabel = null);

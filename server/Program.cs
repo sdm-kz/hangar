@@ -255,6 +255,7 @@ internal static class Program
         var watchdogOptions = builder.Configuration.GetSection("Watchdog").Get<WatchdogOptions>() ?? new WatchdogOptions();
         var updateOptions = builder.Configuration.GetSection("Update").Get<Update.UpdateOptions>() ?? new Update.UpdateOptions();
         var ptyHostOptions = builder.Configuration.GetSection("Pty").Get<Sessions.Pty.PtyHostOptions>() ?? new Sessions.Pty.PtyHostOptions();
+        var scheduleOptions = builder.Configuration.GetSection("Schedules").Get<ScheduleOptions>() ?? new ScheduleOptions();
 
         // The URL a launched session calls back on (CLAUDEWEB_URL in its environment). Derived from the
         // bound port unless the operator pinned Sessions:SelfUrl; always loopback, since the session's
@@ -303,6 +304,13 @@ internal static class Program
         // Session templates: named launch presets (project, folder, prompt template) for the errands
         // that come back — the New Session dialog's Templates tab starts sessions from them.
         builder.Services.AddSingleton<TemplateStore>();
+        // Schedules: a template plus a clock. The service is the only thing in the app that starts a
+        // session without someone asking for one, so it lives here rather than in an external cron —
+        // that is what lets a schedule survive a reboot and still be editable from a phone.
+        builder.Services.AddSingleton(scheduleOptions);
+        builder.Services.AddSingleton<ScheduleStore>();
+        builder.Services.AddSingleton<ScheduleService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<ScheduleService>());
         // Shell tabs: a plain interactive shell (cmd/PowerShell/Git Bash/WSL) in a session's folder,
         // on its own pty hosts so a build left running survives a restart of this app.
         builder.Services.AddSingleton<Sessions.Shells.ShellManager>();
@@ -696,6 +704,29 @@ internal static class Program
             return Results.Ok();
         });
 
+        // Send one message to a session's Claude, as typing it into the terminal would. The browser
+        // has always been able to do this over the terminal socket; this is the same thing for
+        // everything that isn't a browser — the scheduler, and anything driving a session from a
+        // script. Text only: an image rides the socket as a path after an upload, which is a
+        // conversation between the pane and the session that has no business here.
+        app.MapPost("/api/sessions/{id}/message", async (string id, MessageRequest body, SessionManager mgr) =>
+            await SendMessage(id, body, mgr));
+
+        // The same thing for automation, behind the API key rather than a browser token — the twin of
+        // POST /api/external/sessions, and what makes "start a session, then talk to it" a thing a
+        // script can do on its own.
+        app.MapPost("/api/external/sessions/{id}/message", async (string id, MessageRequest body, SessionManager mgr) =>
+            await SendMessage(id, body, mgr));
+
+        static async Task<IResult> SendMessage(string id, MessageRequest body, SessionManager mgr)
+        {
+            if (string.IsNullOrWhiteSpace(body.Text))
+                return Results.BadRequest(new { error = "Nothing to send." });
+            return await mgr.SendMessageAsync(id, body.Text)
+                ? Results.Ok()
+                : Results.NotFound(new { error = "No running session with that id." });
+        }
+
         // ---- Recent launch presets & folders (shared across devices, persisted server-side) ---
         app.MapGet("/api/recents", (RecentsStore store) => Results.Ok(store.Get()));
         app.MapPost("/api/recents/sessions", (RecentSession body, RecentsStore store) => Results.Ok(store.AddSession(body)));
@@ -742,6 +773,34 @@ internal static class Program
                 : store.Update(id, body) is { } list ? Results.Ok(list) : Results.NotFound());
         app.MapDelete("/api/templates/{id}", (string id, TemplateStore store) =>
             store.Delete(id) is { } list ? Results.Ok(list) : Results.NotFound());
+
+        // ---- Schedules (a template plus a clock) --------------------------------------------------
+        // Same shape again: the whole list comes back from every mutation. The list carries each
+        // schedule's next fire time computed server-side, because the client has neither the cron
+        // parser nor — after a reboot — any idea when the daemon last ran.
+        app.MapGet("/api/schedules", (ScheduleStore store) => Results.Ok(WithNext(store.List())));
+        app.MapPost("/api/schedules", (SessionSchedulePatch body, ScheduleStore store) =>
+            store.Create(body) is { } list
+                ? Results.Ok(WithNext(list))
+                : Results.BadRequest(new { error = "A schedule needs a name (and there is a limit on how many)." }));
+        app.MapPost("/api/schedules/{id}", (string id, SessionSchedulePatch body, ScheduleStore store) =>
+            body.Name is { } n && string.IsNullOrWhiteSpace(n)
+                ? Results.BadRequest(new { error = "A schedule needs a name." })
+                : store.Update(id, body) is { } list ? Results.Ok(WithNext(list)) : Results.NotFound());
+        app.MapDelete("/api/schedules/{id}", (string id, ScheduleStore store, SessionManager mgr) =>
+        {
+            if (store.Delete(id) is not { } list) return Results.NotFound();
+            // The sessions it started stay — they are real work, and deleting the clock is not a
+            // statement about them — but they stop claiming a schedule that no longer exists.
+            mgr.ForgetSchedule(id);
+            return Results.Ok(WithNext(list));
+        });
+        // Fire one now, without touching its clock: the way to find out whether a schedule does what
+        // you meant before leaving it to run at 03:00.
+        app.MapPost("/api/schedules/{id}/run", async (string id, ScheduleService schedules) =>
+            await schedules.RunNowAsync(id) is { } error
+                ? Results.BadRequest(new { error })
+                : Results.Ok());
 
         // Virtual folders: named boxes inside a project that hold sessions filed there by hand. A
         // group id addresses a group on its own (they are unique across the file), so editing and
@@ -1371,6 +1430,51 @@ internal static class Program
     /// working directory (empty <paramref name="dir"/>), another worktree of the same repo, or a folder
     /// linked to it. Null when the request names anything else.
     /// </summary>
+    /// <summary>
+    /// The schedules as the client sees them: the stored record plus the next moment it will fire.
+    /// That is computed here rather than in the browser because the cron parser lives on this side,
+    /// and because "next" depends on when this schedule last actually ran — which only the daemon
+    /// knows after a reboot.
+    /// </summary>
+    private static object WithNext(IReadOnlyList<SessionSchedule> schedules)
+    {
+        var now = DateTimeOffset.Now;
+        return schedules
+            .Select(s =>
+            {
+                var reason = BlockedReason(s);
+                return new
+                {
+                    Schedule = s,
+                    // From the last fire, so a slot already served isn't offered again as the next one.
+                    NextFireAt = s.NextOccurrence(s.LastFiredAt is { } last && last <= now ? last : now),
+                    Blocked = reason is not null,
+                    // *Why* it will never fire, in words. The client cannot work this out: it would
+                    // have to parse cron to tell a bad expression from a deleted template, and saying
+                    // the wrong one ("its template is gone", about a template sitting right there) is
+                    // worse than saying nothing.
+                    BlockedReason = reason,
+                    // The zone the server will ACTUALLY read the cron in. Not always the one stored:
+                    // this app is built with InvariantGlobalization, so an IANA id from a browser
+                    // ("Europe/Berlin") does not resolve on Windows and falls back to the machine's
+                    // own zone. The editor shows this rather than the stored string, so it cannot
+                    // promise an hour that isn't the one that will happen.
+                    ResolvedTimeZoneId = SessionSchedule.ResolveZone(s.TimeZoneId).Id,
+                };
+            })
+            .ToArray();
+    }
+
+    /// <summary>Why a schedule can never fire as it stands, or null when nothing is stopping it.</summary>
+    private static string? BlockedReason(SessionSchedule s) =>
+        s.TemplateId is null ? "It has no template."
+        : s.IntervalMinutes is null && SessionSchedule.ParseCron(s.Cron) is null
+            ? (string.IsNullOrWhiteSpace(s.Cron) ? "It has no clock set." : $"Its schedule “{s.Cron}” is not a valid cron expression.")
+        // An interval schedule with nothing to continue never fires and never records a reason for it,
+        // which made it the one broken state with no symptom at all.
+        : s.Mode == ScheduleMode.ReuseSession && s.TargetConversationId is null ? "It has no session to continue."
+        : null;
+
     private static string? BrowseRoot(SessionInfo info, string? dir, LinkedFolderStore links) =>
         GitService.ResolveWorktree(info.WorkingDirectory, dir) ?? links.Resolve(info.WorkingDirectory, dir);
 
@@ -1462,6 +1566,8 @@ internal record PinRequest(bool Pinned);
 /// told about while it changes.</summary>
 internal record SessionUiRequest(Dictionary<string, System.Text.Json.JsonElement>? State, bool Quiet = false);
 internal record RenameRequest(string Name);
+/// <summary>Body for <c>POST /api/sessions/{id}/message</c>: the text to send to Claude.</summary>
+internal record MessageRequest(string? Text);
 /// <summary>Body for <c>POST /api/self/open</c>: the file(s) to open as tabs in the calling session's
 /// Files panel, named relative to its working directory (or absolutely, inside it). <c>Path</c> and
 /// <c>Paths</c> are both accepted and add up; the last one opened becomes the active tab.

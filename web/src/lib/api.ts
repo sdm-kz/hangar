@@ -17,7 +17,9 @@ import type {
   LinkProbe,
   Project,
   PtyOrphan,
+  ScheduleEntry,
   SessionInfo,
+  SessionSchedule,
   SessionTemplate,
   ShellInfo,
   ShellOption,
@@ -47,6 +49,15 @@ export interface SessionUiState {
  * hint) is done with "" rather than by omitting it.
  */
 export type TemplatePatch = Partial<Omit<SessionTemplate, "id">>;
+
+/**
+ * The fields of a schedule, as a create or an update — same convention as {@link TemplatePatch}: a
+ * field left out is left as it was. The read-only halves of the record (what it has already done)
+ * are not patchable, which is why they are omitted here rather than merely optional.
+ */
+export type SchedulePatch = Partial<
+  Omit<SessionSchedule, "id" | "lastFiredAt" | "runCount" | "history">
+>;
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -446,6 +457,38 @@ export const api = {
   },
   deleteTemplate(id: string): Promise<SessionTemplate[]> {
     return request(`/api/templates/${id}`, { method: "DELETE" });
+  },
+
+  // ---- Schedules (a template plus a clock) ----
+  // Same shape as the templates above. Each entry carries the next fire time worked out server-side:
+  // the cron parser lives there, and after a reboot only the server knows when this last ran.
+  getSchedules(): Promise<ScheduleEntry[]> {
+    return request("/api/schedules");
+  },
+  createSchedule(patch: SchedulePatch): Promise<ScheduleEntry[]> {
+    return request("/api/schedules", { method: "POST", body: JSON.stringify(patch) });
+  },
+  updateSchedule(id: string, patch: SchedulePatch): Promise<ScheduleEntry[]> {
+    return request(`/api/schedules/${id}`, { method: "POST", body: JSON.stringify(patch) });
+  },
+  deleteSchedule(id: string): Promise<ScheduleEntry[]> {
+    return request(`/api/schedules/${id}`, { method: "DELETE" });
+  },
+  /** Fire one now without touching its clock — how you check it does what you meant. */
+  runSchedule(id: string): Promise<void> {
+    return request(`/api/schedules/${id}/run`, { method: "POST" });
+  },
+
+  /**
+   * Send one message to a session's Claude from outside the terminal pane. The pane has its own path
+   * for this over its socket (it is already attached, and it has images to upload first); this is for
+   * everything that isn't attached.
+   */
+  sendMessage(id: string, text: string): Promise<void> {
+    return request(`/api/sessions/${id}/message`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
   },
 
   // ---- In-app update (a build staged by scripts\stage-update.ps1) ----
