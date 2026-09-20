@@ -40,17 +40,41 @@ import {
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import { sessionColor } from "@/lib/sessionColors";
-import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, GitFork, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, GitFork, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, Rows2, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
-// Desktop width of the Files panel in Split view. Persisted per-browser and drag-resizable.
-const SPLIT_MIN = 280; // keep both the files panel and the terminal usable
+// Desktop size of the Files panel in Split view. Persisted per-browser and drag-resizable.
+//
+// Two of everything, because the two arrangements want different numbers: a panel beside the
+// terminal needs width enough for a path, one under it needs rows enough for a listing, and a figure
+// that suits one is wrong for the other. Keeping both means flipping the split and flipping back
+// lands on the sizes you chose rather than on a conversion of the other one.
+const SPLIT_MIN = 280; // side by side: keep both the files panel and the terminal usable
 const SPLIT_DEFAULT = 480;
 const SPLIT_WIDTH_KEY = "claudeweb.splitFilesWidth";
+const SPLIT_MIN_H = 120; // stacked: a few rows of listing, and a terminal still worth reading
+const SPLIT_DEFAULT_H = 300;
+const SPLIT_HEIGHT_KEY = "claudeweb.splitFilesHeight";
+// Which side the Files panel takes. "bottom" is the stacked arrangement; the terminal leads either
+// way, because it is the thing being worked in.
+const SPLIT_SIDE_KEY = "claudeweb.splitSide";
 
 function readSplitWidth() {
   const n = Number(localStorage.getItem(SPLIT_WIDTH_KEY));
   return Number.isFinite(n) && n >= SPLIT_MIN ? n : SPLIT_DEFAULT;
+}
+
+function readSplitHeight() {
+  const n = Number(localStorage.getItem(SPLIT_HEIGHT_KEY));
+  return Number.isFinite(n) && n >= SPLIT_MIN_H ? n : SPLIT_DEFAULT_H;
+}
+
+function readSplitAtBottom(): boolean {
+  try {
+    return localStorage.getItem(SPLIT_SIDE_KEY) === "bottom";
+  } catch {
+    return false; // storage disabled — side by side, the arrangement it has always had
+  }
 }
 
 // Compact process uptime, e.g. "45s", "5m 12s", "2h 8m", "1d 3h".
@@ -140,6 +164,8 @@ export function SessionView({
   const { fileTabs, closeGuard, settleCloseGuard } = useFileTabs(session.id);
   const [copiedPath, setCopiedPath] = useState(false);
   const [splitWidth, setSplitWidth] = useState(readSplitWidth); // Files-panel width in Split view
+  const [splitHeight, setSplitHeight] = useState(readSplitHeight); // ...and its height when stacked
+  const [splitAtBottom, setSplitAtBottom] = useState(readSplitAtBottom);
   // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
   const [wdEnabled, setWdEnabled] = useState(session.watchdogEnabled);
   const [nowTick, setNowTick] = useState(() => Date.now()); // ticks so the header uptime stays live
@@ -220,34 +246,60 @@ export function SessionView({
   }, [session.id]);
 
   // Drag the divider between the terminal and the Files panel (Split view, desktop); persist it.
-  const startSplitResize = useCallback((e: React.PointerEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = readSplitWidth();
-    let width = startW;
-    const onMove = (ev: PointerEvent) => {
-      // The panel being sized is the one on the RIGHT, so a drag to the right narrows it -- hence
-      // the delta is subtracted. Leave at least SPLIT_MIN for the terminal beside it.
-      const max = (contentRef.current?.clientWidth ?? Infinity) - SPLIT_MIN;
-      width = Math.min(max, Math.max(SPLIT_MIN, startW - (ev.clientX - startX)));
-      setSplitWidth(width);
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      localStorage.setItem(SPLIT_WIDTH_KEY, String(width));
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, []);
+  // One handler for both arrangements: the axis decides which coordinate is read, which dimension of
+  // the box it is measured against, and which of the two remembered sizes it writes.
+  const startSplitResize = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const stacked = splitAtBottom;
+      const start = stacked ? e.clientY : e.clientX;
+      const min = stacked ? SPLIT_MIN_H : SPLIT_MIN;
+      const startSize = stacked ? readSplitHeight() : readSplitWidth();
+      let size = startSize;
+      const onMove = (ev: PointerEvent) => {
+        // The panel being sized is the one AFTER the divider -- right, or below -- so dragging
+        // towards it makes it smaller, hence the subtracted delta. The far side keeps `min` too.
+        const box = stacked ? contentRef.current?.clientHeight : contentRef.current?.clientWidth;
+        const max = (box ?? Infinity) - min;
+        size = Math.min(max, Math.max(min, startSize - ((stacked ? ev.clientY : ev.clientX) - start)));
+        (stacked ? setSplitHeight : setSplitWidth)(size);
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        localStorage.setItem(stacked ? SPLIT_HEIGHT_KEY : SPLIT_WIDTH_KEY, String(size));
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      document.body.style.cursor = stacked ? "row-resize" : "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [splitAtBottom]
+  );
 
   const resetSplitWidth = useCallback(() => {
+    if (splitAtBottom) {
+      setSplitHeight(SPLIT_DEFAULT_H);
+      localStorage.setItem(SPLIT_HEIGHT_KEY, String(SPLIT_DEFAULT_H));
+      return;
+    }
     setSplitWidth(SPLIT_DEFAULT);
     localStorage.setItem(SPLIT_WIDTH_KEY, String(SPLIT_DEFAULT));
+  }, [splitAtBottom]);
+
+  /** Flip the split between side-by-side and stacked, and remember which it is. */
+  const toggleSplitSide = useCallback(() => {
+    setSplitAtBottom((atBottom) => {
+      const next = !atBottom;
+      try {
+        localStorage.setItem(SPLIT_SIDE_KEY, next ? "bottom" : "right");
+      } catch {
+        /* storage disabled — the arrangement still flips, it just won't be remembered */
+      }
+      return next;
+    });
   }, []);
 
   const copyPath = useCallback(async () => {
@@ -849,6 +901,20 @@ export function SessionView({
             <Columns2 className="size-4" />
             <span className="hidden sm:inline">Split</span>
           </ViewTab>
+          {/* Which way the split lies, offered only while it is showing -- there is nothing to
+              arrange from any other view, and a control for an absent layout is a puzzle. The icon
+              is the arrangement it switches TO, the way a play button shows what a press will do. */}
+          {view === "split" && (
+            <button
+              type="button"
+              onClick={toggleSplitSide}
+              title={splitAtBottom ? "Put the files beside the terminal" : "Put the files under the terminal"}
+              aria-label={splitAtBottom ? "Split side by side" : "Split top and bottom"}
+              className="hidden shrink-0 self-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground md:block"
+            >
+              {splitAtBottom ? <Columns2 className="size-4" /> : <Rows2 className="size-4" />}
+            </button>
+          )}
           <ViewTab active={view === "files"} onClick={() => changeView("files")}>
             <FolderTree className="size-4" />
             <span className="hidden sm:inline">Files</span>
@@ -915,13 +981,27 @@ export function SessionView({
           by moving the JSX: reordering the children would put a different component at the
           terminal's position, and React would tear the pane down and build it again -- a dropped
           socket and a re-fetched screen every time you touched the tab. */}
-      <div ref={contentRef} className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <div
+        ref={contentRef}
+        className={cn(
+          "flex min-h-0 flex-1 flex-col",
+          // Stacked is the phone's arrangement already, so only the wide layout has a say here.
+          view === "split" && splitAtBottom ? "md:flex-col" : "md:flex-row"
+        )}
+      >
         {(view === "files" || view === "split" || view === "file") && (
           <div
-            style={{ "--split-w": `${splitWidth}px` } as React.CSSProperties}
+            style={
+              {
+                "--split-w": `${splitWidth}px`,
+                "--split-h": `${splitHeight}px`,
+              } as React.CSSProperties
+            }
             className={cn(
               "flex min-h-0 min-w-0 flex-1 flex-col",
-              view === "split" && "md:order-3 md:w-[var(--split-w)] md:flex-none md:shrink-0"
+              view === "split" && "md:order-3 md:flex-none md:shrink-0",
+              view === "split" &&
+                (splitAtBottom ? "md:h-[var(--split-h)] md:w-auto" : "md:w-[var(--split-w)]")
             )}
           >
             <FileBrowser
@@ -942,7 +1022,10 @@ export function SessionView({
             onPointerDown={startSplitResize}
             onDoubleClick={resetSplitWidth}
             title="Drag to resize · double-click to reset"
-            className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:order-2 md:block"
+            className={cn(
+              "hidden shrink-0 bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:order-2 md:block",
+              splitAtBottom ? "h-1.5 w-full cursor-row-resize border-t" : "w-1.5 cursor-col-resize border-l"
+            )}
           />
         )}
 
