@@ -62,6 +62,7 @@ public sealed class SessionHub : BackgroundService
     private readonly HookEventStore _hooks;
     private readonly UpdateService _updates;
     private readonly Shells.ShellManager _shells;
+    private readonly ProjectStore _projects;
     private readonly ILogger<SessionHub> _log;
     private readonly ConcurrentDictionary<Guid, Client> _clients = new();
     // Released by Poke and awaited (with a timeout) by the broadcast loop, so we wake on either an
@@ -70,12 +71,13 @@ public sealed class SessionHub : BackgroundService
     private string? _last;
 
     public SessionHub(SessionManager mgr, HookEventStore hooks, UpdateService updates,
-        Shells.ShellManager shells, ILogger<SessionHub> log)
+        Shells.ShellManager shells, ProjectStore projects, ILogger<SessionHub> log)
     {
         _mgr = mgr;
         _hooks = hooks;
         _updates = updates;
         _shells = shells;
+        _projects = projects;
         _log = log;
         _mgr.Changed += Poke;
         // A hook event (busy/idle/waiting transition) should push to the browser at once, not wait
@@ -147,6 +149,11 @@ public sealed class SessionHub : BackgroundService
                 // re-fetches the session's own tabs, and the rest never hear about it. Same trick as
                 // SessionInfo.UiRev.
                 shellsRev = _shells.Revision,
+                // Same again for the projects: only the revision travels, and a browser that sees it
+                // move re-reads /api/projects. The server changes them on its own now — a child
+                // session joining its host's project — so a browser can no longer assume the list it
+                // holds is the one it last asked for.
+                projectsRev = _projects.Revision,
             },
             JsonOpts);
 

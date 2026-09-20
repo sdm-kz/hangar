@@ -46,6 +46,22 @@ public sealed class ProjectStore
         lock (_lock) return Snapshot();
     }
 
+    private int _revision;
+
+    /// <summary>
+    /// Bumped on every change to the projects. It rides the session hub's snapshot so a browser can
+    /// tell the headings it is drawing are stale and re-fetch the list — the projects themselves are
+    /// not worth broadcasting on every tick, and almost no snapshot changes them. Same trick as
+    /// <see cref="Shells.ShellManager.Revision"/> and <see cref="SessionInfo.UiRev"/>.
+    ///
+    /// <para>Before this, a project only ever changed because the browser looking at it asked for the
+    /// change, and it replaced its own list from the response. That stopped being the whole story when
+    /// the server started linking a folder by itself — a child session joining its host's project (see
+    /// <see cref="SessionManager.CreateAsync"/>) — which no browser asked for and none would have seen
+    /// until it was reloaded.</para>
+    /// </summary>
+    public int Revision => Volatile.Read(ref _revision);
+
     /// <summary>Create a project. Returns the updated list, or null when the name is blank or at capacity.</summary>
     public IReadOnlyList<Project>? Create(string? name, string? color, IEnumerable<string>? folders = null)
     {
@@ -559,6 +575,10 @@ public sealed class ProjectStore
 
     private void Save()
     {
+        // Every mutation funnels through here, so this is the one place the revision has to be bumped.
+        // Bumped even when the write below is skipped or fails: the list callers read is the one in
+        // memory, and it has already changed.
+        Interlocked.Increment(ref _revision);
         if (_unreadable)
         {
             // Debug, not a warning: Load() already said this once, loudly, and this runs on every save.

@@ -11,6 +11,11 @@
     and its own folder -- it is not a fork of the parent, shares no history with it, and can be moved
     out of it later (in the UI, or by POSTing a null parent to /api/sessions/<id>/parent).
 
+    A row is only drawn under something in its own list, so the server puts the new session where the
+    parent is: in the parent's virtual folder if it is filed in one, and -- when the new session runs
+    in a folder no project claims -- in the parent's project, by linking that folder to it. A folder
+    another project already claims keeps the project it has.
+
     Failing rather than guessing is the point of this wrapper: with no parent to nest under it stops,
     because a session that silently arrived at the top level is the one outcome nobody asked for. Use
     new-claude-session.ps1 directly when a top-level session is what you want.

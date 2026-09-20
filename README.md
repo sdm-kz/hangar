@@ -60,7 +60,10 @@ The web UI is a **session manager with a full terminal**:
   conversation, like a pin, so it survives reopening the session, and lives server-side alongside
   the project. A session launched from one that is filed — a fork, or a child session started under
   it — goes into the same box, so a branch is drawn under the session it came from instead of
-  falling out of it into the folder grouping.
+  falling out of it into the folder grouping. A child session started in a folder no project
+  claims takes its host's project too: the link is the only way to say which project a session is
+  in, and a child launched into another repo would otherwise land under *No project*, away from
+  the session that started it. A folder another project already claims is left where it is.
 - **Session templates** — a saved way to start the *same kind* of session again: a project, a folder,
   a prompt, and the launch settings that go with them. The same errands come back week after week —
   *look into this log entry*, *review this support request*, *ship this Jira issue* — and each one is

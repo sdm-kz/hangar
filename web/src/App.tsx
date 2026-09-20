@@ -56,6 +56,10 @@ export function App() {
   // Revision of the server's shell set, pushed on the events hub. The open session watches it to
   // notice a shell opened or closed somewhere else — another browser, or the phone.
   const [shellsRev, setShellsRev] = useState(0);
+  // Same for the projects. They change under this browser without it asking — the server files a
+  // child session into its host's project as it launches — and the list itself is too rarely touched
+  // to be worth pushing in full, so the revision is the signal to re-read it.
+  const [projectsRev, setProjectsRev] = useState(0);
   // Latched once an update starts installing, so the overlay survives the server going away — the
   // hub and the polls both fail while it's down, and this is what says "that's expected, wait".
   const [installing, setInstalling] = useState<string | null>(null); // build id being installed
@@ -311,6 +315,7 @@ export function App() {
             activity?: Record<string, ActivityDetail>;
             update?: UpdateStatus;
             shellsRev?: number;
+            projectsRev?: number;
           };
           applySessions(msg.sessions);
           setBusyIds(new Set(msg.busy));
@@ -321,6 +326,7 @@ export function App() {
           // Only the revision travels; the open session re-fetches its own tabs when it moves (see
           // SessionView). A server that predates shells sends none, which reads as "never changed".
           setShellsRev(msg.shellsRev ?? 0);
+          setProjectsRev(msg.projectsRev ?? 0);
           if (msg.update) {
             setUpdate(msg.update);
             // Another tab (or the tray) started the install: show the overlay here too rather than
@@ -554,6 +560,23 @@ export function App() {
     })();
     loadProjects();
   }, [auth, loadRecents, loadProjects, refresh]);
+
+  // Re-read the projects whenever the server says they moved (see ProjectStore.Revision). Mostly they
+  // move because this browser asked — and it replaced its own list from that response already, so the
+  // re-read agrees with what is on screen — but a child session joining its host's project is the
+  // server's own doing, and nothing else would tell this list about it. The first snapshot after a
+  // connect carries whatever the revision is now, which is why this skips the value it starts at.
+  const knownProjectsRev = useRef<number | null>(null);
+  useEffect(() => {
+    if (auth !== "authed" || projectsRev === knownProjectsRev.current) return;
+    const first = knownProjectsRev.current === null;
+    knownProjectsRev.current = projectsRev;
+    // The first snapshot only says where the revision stands; the load above already read the list at
+    // that point. Anything after it is a change this browser has to go and read. (A server restart
+    // takes the revision back to 0, which reads as a change and re-reads — which is right: the list
+    // it holds came from the server that went away.)
+    if (!first) loadProjects();
+  }, [auth, projectsRev, loadProjects]);
 
   // A Restorable entry has no live terminal, so never treat it as the active view.
   const active = sessions.find((s) => s.id === activeId && s.state !== "Restorable") ?? null;

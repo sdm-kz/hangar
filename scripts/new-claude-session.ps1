@@ -70,7 +70,9 @@ param(
 
     # Put the new session under this one in the sessions list (its nestedUnderId). An arrangement of
     # the list and nothing more — the new session gets its own conversation, so this is not a fork.
-    # new-claude-child-session.ps1 is the wrapper that fills it in from the session it runs inside.
+    # It does take that session's place in the list, though: its virtual folder, and its project when
+    # no project claims the folder this one runs in — a row is only drawn under something in its own
+    # list. new-claude-child-session.ps1 is the wrapper that fills it in from the session it runs inside.
     [string] $NestUnderSessionId,
 
     # Let the hang watchdog auto-continue this session.

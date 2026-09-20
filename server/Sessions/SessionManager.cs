@@ -811,7 +811,15 @@ public sealed class SessionManager : IDisposable
     /// asynchronous — there is a process start and a handshake to wait for — so every caller awaits
     /// rather than blocking a thread on it.
     /// </summary>
-    public async Task<SessionInfo> CreateAsync(CreateSessionRequest req, CancellationToken ct = default)
+    /// <param name="adopt">
+    /// Whether a session launched under another (<see cref="CreateSessionRequest.NestedUnderId"/>)
+    /// should take its host's place in the list — its project, and the virtual folder inside it. True
+    /// for a launch, which is someone asking for the two to be drawn together; false for
+    /// <see cref="RestoreAsync"/>, which relaunches an old session with the same host and must not
+    /// re-claim a folder the user has since taken out of that project.
+    /// </param>
+    public async Task<SessionInfo> CreateAsync(
+        CreateSessionRequest req, bool adopt = true, CancellationToken ct = default)
     {
         var dir = (req.WorkingDirectory ?? "").Trim();
         if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
@@ -856,19 +864,42 @@ public sealed class SessionManager : IDisposable
 
         var info = session.ToInfo(ConversationId(session));
         // A session launched under another — new-claude-child-session.ps1 posts NestedUnderId — is
-        // drawn under it, and a row is only ever drawn under something in its own list: filed in a
-        // virtual folder its host is not in (which includes being filed in none at all), it comes out
-        // at the top level of the other list and the nesting the caller asked for is simply gone. So
-        // it joins its host's box, for the same reason a fork does — see ForkAsync.
-        //
-        // Only when it isn't already filed somewhere itself, which is what keeps a reopen from
-        // dragging a session back: RestoreAsync relaunches with the same NestedUnderId, and a
-        // conversation that was filed by hand is still filed under the id it resumes with.
-        if (req.NestedUnderId is { } host
-            && GroupIdOf(ConversationId(session), session.Id) is null
-            && GroupIdOf(host) is { } hostGroup
-            && SetGroup(new[] { session.Id }, hostGroup) is not null)
-            info = info with { GroupId = hostGroup };
+        // drawn under it, and a row is only ever drawn under something in its own list: placed
+        // anywhere its host is not, it comes out at the top level of that other list and the nesting
+        // the caller asked for is simply gone. So it takes its host's place in the list, for the same
+        // reason a fork does — see ForkAsync — which is two things: the project, and the box inside it.
+        if (req.NestedUnderId is { } host && adopt)
+        {
+            // The project first, because a virtual folder only applies inside the project that owns it
+            // (see ProjectMembership.GroupFor), so filing the session anywhere is pointless until this
+            // is settled. Which project a session is in follows the folder it runs in and nothing else,
+            // and a child need not run in its host's folder — look into another repo from the session
+            // that sent you there and the two are in different folders by design. Linking that folder
+            // is the only way to say "this project" about it at all, and it is exactly the move the
+            // row menu's "Move to project" makes by hand.
+            //
+            // Only a folder no project claims. One that is already in a project stays there: a link is
+            // a statement about the folder rather than about this session, so taking it would re-file
+            // every other session that runs there — including ones this launch has nothing to do with.
+            if (ProjectMembership.ForDirectory(_projects.List(), fullDir) is null
+                && FolderOf(host) is { } hostDir
+                && ProjectMembership.ForDirectory(_projects.List(), hostDir) is { } hostProject)
+            {
+                _projects.AddFolder(hostProject.Id, fullDir);
+                // The projects don't ride the session list, so nothing above would tell a browser this
+                // happened — it reads the revision off the hub's next snapshot and re-fetches them.
+                RaiseChanged();
+            }
+
+            // Then the box, if the host is in one — and only when this session isn't already filed
+            // somewhere itself. That is not hypothetical for a launch: one that resumes a
+            // conversation knows its id from the start, and a conversation filed by hand stays filed
+            // under that id, so a child that reopens it belongs in the box it is already in.
+            if (GroupIdOf(ConversationId(session), session.Id) is null
+                && GroupIdOf(host) is { } hostGroup
+                && SetGroup(new[] { session.Id }, hostGroup) is not null)
+                info = info with { GroupId = hostGroup };
+        }
         return info;
     }
 
@@ -1040,7 +1071,10 @@ public sealed class SessionManager : IDisposable
                 ForkSession: false,
                 ParentSessionId: p.ParentSessionId,
                 ParentName: p.ParentName,
-                NestedUnderId: p.NestedUnderId), ct);
+                NestedUnderId: p.NestedUnderId),
+                // Reopening is not a launch: wherever this session was put since, that is where it
+                // goes back to. See the parameter's remarks.
+                adopt: false, ct);
             // The reopened session has a brand-new id, so anything forked from the old one would be
             // orphaned. Move those links over to the replacement.
             Reparent(id, info.Id);
