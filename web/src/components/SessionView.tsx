@@ -219,16 +219,17 @@ export function SessionView({
     api.continueSession(session.id).catch(() => {});
   }, [session.id]);
 
-  // Drag the divider between the Files panel and the terminal (Split view, desktop); persist it.
+  // Drag the divider between the terminal and the Files panel (Split view, desktop); persist it.
   const startSplitResize = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     const startX = e.clientX;
     const startW = readSplitWidth();
     let width = startW;
     const onMove = (ev: PointerEvent) => {
-      // Leave at least SPLIT_MIN for the terminal on the right.
+      // The panel being sized is the one on the RIGHT, so a drag to the right narrows it -- hence
+      // the delta is subtracted. Leave at least SPLIT_MIN for the terminal beside it.
       const max = (contentRef.current?.clientWidth ?? Infinity) - SPLIT_MIN;
-      width = Math.min(max, Math.max(SPLIT_MIN, startW + ev.clientX - startX));
+      width = Math.min(max, Math.max(SPLIT_MIN, startW - (ev.clientX - startX)));
       setSplitWidth(width);
     };
     const onUp = () => {
@@ -765,17 +766,22 @@ export function SessionView({
                     <Radio className="size-3" /> RC
                   </Badge>
                 ))}
-              {session.canFork && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-[30px]"
-                  onClick={() => onFork(session)}
-                  title="Fork — branch this conversation into a new session"
-                >
-                  <GitFork className="size-4" />
-                </Button>
-              )}
+              {/* Shown greyed rather than dropped while the conversation id is still unknown -- see
+                  the same call in the sidebar's row menu for what is missing and why. */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-[30px]"
+                disabled={!session.canFork}
+                onClick={() => onFork(session)}
+                title={
+                  session.canFork
+                    ? "Fork — branch this conversation into a new session"
+                    : "Fork needs Claude's conversation id — send this session a message first"
+                }
+              >
+                <GitFork className="size-4" />
+              </Button>
               {session.state === "Running" && (
                 <>
                   <Button
@@ -902,14 +908,20 @@ export function SessionView({
       </header>
 
       {/* The terminal stays mounted in every view (hidden in Files) so toggling never drops its
-          connection; the Files panel is a resizable left column in Split and full-width in Files. */}
+          connection; the Files panel is a resizable column beside it in Split and full-width in
+          Files.
+
+          In Split the terminal sits on the left, which is a swap done with flex `order` rather than
+          by moving the JSX: reordering the children would put a different component at the
+          terminal's position, and React would tear the pane down and build it again -- a dropped
+          socket and a re-fetched screen every time you touched the tab. */}
       <div ref={contentRef} className="flex min-h-0 flex-1 flex-col md:flex-row">
         {(view === "files" || view === "split" || view === "file") && (
           <div
             style={{ "--split-w": `${splitWidth}px` } as React.CSSProperties}
             className={cn(
               "flex min-h-0 min-w-0 flex-1 flex-col",
-              view === "split" && "md:w-[var(--split-w)] md:flex-none md:shrink-0"
+              view === "split" && "md:order-3 md:w-[var(--split-w)] md:flex-none md:shrink-0"
             )}
           >
             <FileBrowser
@@ -930,13 +942,14 @@ export function SessionView({
             onPointerDown={startSplitResize}
             onDoubleClick={resetSplitWidth}
             title="Drag to resize · double-click to reset"
-            className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:block"
+            className="hidden w-1.5 shrink-0 cursor-col-resize border-l bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:order-2 md:block"
           />
         )}
 
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-1 flex-col",
+            view === "split" && "md:order-1",
             view !== "terminal" && view !== "split" && "hidden"
           )}
         >
@@ -1276,16 +1289,20 @@ function SessionActionsMenu({
                 </MenuItem>
               </>
             )}
-            {session.canFork && (
-              <MenuItem
-                onClick={() => {
-                  onFork();
-                  setOpen(false);
-                }}
-              >
-                <GitFork className="size-4" /> Fork session…
-              </MenuItem>
-            )}
+            <MenuItem
+              disabled={!session.canFork}
+              title={
+                session.canFork
+                  ? undefined
+                  : "Fork needs Claude's conversation id — send this session a message first"
+              }
+              onClick={() => {
+                onFork();
+                setOpen(false);
+              }}
+            >
+              <GitFork className="size-4" /> Fork session…
+            </MenuItem>
             <MenuItem
               destructive
               disabled={stopping}
@@ -1311,11 +1328,14 @@ function MenuItem({
   onClick,
   destructive,
   disabled,
+  title,
   children,
 }: {
   onClick: () => void;
   destructive?: boolean;
   disabled?: boolean;
+  /** Why an entry is disabled — the one thing a greyed row cannot say for itself. */
+  title?: string;
   children: ReactNode;
 }) {
   return (
@@ -1323,6 +1343,7 @@ function MenuItem({
       type="button"
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={cn(
         "flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent disabled:opacity-50",
         destructive && "text-destructive"

@@ -28,7 +28,9 @@ import {
   ExternalLink,
   FolderTree,
   Loader2,
+  Maximize2,
   Menu,
+  Minimize2,
   PanelLeftOpen,
   Pencil,
   RefreshCw,
@@ -93,6 +95,10 @@ export function ServerFileViewer({
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [rendered, setRendered] = useState(true); // markdown/HTML: rendered preview vs raw source
+  // Full-page preview: the viewer takes the whole window, sidebar and all. The same thing the
+  // session's Files panel offers, and wanted here for the same reason -- a rendered page or a long
+  // document is worth reading at the width of the screen rather than beside a file tree.
+  const [fullscreen, setFullscreen] = useState(false);
   // Text/markdown preview zoom; kept while switching files and across reloads so a chosen size sticks.
   const [zoom, setZoom] = usePersistentZoom("text");
   // Optional left/right margins for the text previews: caps the line length and centers the
@@ -104,6 +110,7 @@ export function ServerFileViewer({
   const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
 
   // Raw-bytes URL for media previews; carries the reload counter so a refresh actually bypasses
@@ -256,8 +263,31 @@ export function ServerFileViewer({
     }
   }, [path, draft]);
 
+  // Esc leaves the full-page view — but not while editing, where it could drop unsaved text. Capture
+  // phase, and the root takes focus on the way in, so the key still lands here after a click inside
+  // the preview. Keys pressed inside an embedded PDF or the HTML iframe never reach this document at
+  // all, which is why the button stays as the way out there.
+  useEffect(() => {
+    if (!fullscreen || editing) return;
+    rootRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [fullscreen, editing]);
+
   return (
-    <div className="flex h-full flex-col">
+    <div
+      ref={rootRef}
+      tabIndex={-1}
+      className={cn(
+        "flex flex-col outline-none",
+        fullscreen ? "fixed inset-0 z-50 bg-background" : "h-full"
+      )}
+    >
       <header className="flex items-center gap-2 border-b px-3 py-2">
         {/* Standalone preview tab: the way back to the app view this preview was opened from. */}
         {back && (
@@ -365,6 +395,21 @@ export function ServerFileViewer({
         {onReveal && (
           <Button variant="ghost" size="icon" onClick={onReveal} title="Show in Files">
             <FolderTree className="size-4" />
+          </Button>
+        )}
+        {/* Embedded in the app: take the whole window, sidebar and all. Pointless in a standalone
+            preview tab, which is already the whole window — hence the same gate as the button
+            below. Leaving is by this button or Esc; Close stays what it is, so the two are never
+            the same X. */}
+        {onClose && !editing && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setFullscreen((f) => !f)}
+            title={fullscreen ? "Exit full page (Esc)" : "Full page"}
+            aria-label={fullscreen ? "Exit full page" : "Full page"}
+          >
+            {fullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
           </Button>
         )}
         {/* Embedded in the app: offer the same file as a standalone full-page preview in its own

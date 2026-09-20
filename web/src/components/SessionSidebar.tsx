@@ -3078,17 +3078,31 @@ function RowActionsMenu({
     run();
   };
 
-  const item = (label: string, icon: ReactNode, run: () => void, destructive = false) => (
+  /**
+   * One entry. `disabled` draws it greyed and inert rather than leaving it out: an action that is
+   * missing teaches nothing, while one you can see but not press says it exists and, in its
+   * tooltip, what it is waiting for.
+   */
+  const item = (
+    label: string,
+    icon: ReactNode,
+    run: () => void,
+    destructive = false,
+    disabled?: string | false
+  ) => (
     <button
       type="button"
+      disabled={!!disabled}
+      title={disabled || undefined}
       onClick={(e) => {
         e.stopPropagation();
         shut();
         run();
       }}
       className={cn(
-        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent",
-        destructive && "text-destructive"
+        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm",
+        disabled ? "cursor-default text-muted-foreground opacity-60" : "hover:bg-accent",
+        destructive && !disabled && "text-destructive"
       )}
     >
       {icon}
@@ -3232,10 +3246,27 @@ function RowActionsMenu({
                 : item("Pin to top", <Pin className="size-3.5" />, onTogglePin)}
               {item("Rename", <Pencil className="size-3.5" />, onRename)}
               {item("Clone", <Copy className="size-3.5" />, onClone)}
-              {canFork && item("Fork", <GitFork className="size-3.5" />, onFork)}
-              {/* Same handle as a fork: both need the conversation id, which is why they appear
-                  together and at the same moment. */}
-              {onSchedule && item("Schedule…", <CalendarClock className="size-3.5" />, onSchedule)}
+              {/* Always listed, greyed until it can run. Forking needs Claude's own conversation id,
+                  which the app learns from the session's first hook event -- so a session resumed
+                  with --continue (which never says which conversation it landed on) has none until
+                  it is used. Leaving the entry out made that read as "this session cannot be
+                  forked", when the truth is "not yet, and here is what is missing". */}
+              {item(
+                "Fork",
+                <GitFork className="size-3.5" />,
+                onFork,
+                false,
+                !canFork && "Fork needs Claude's conversation id — send this session a message first"
+              )}
+              {/* Same handle as a fork: both wait on the conversation id, which is why they appear
+                  together -- and why they grey out and come back together too. */}
+              {item(
+                "Schedule…",
+                <CalendarClock className="size-3.5" />,
+                onSchedule ?? (() => {}),
+                false,
+                !onSchedule && "Scheduling needs Claude's conversation id — send this session a message first"
+              )}
               {/* Only for a row put under another by hand, and only that is undone: a fork goes back
                   to hanging off the session it was forked from, which is where it belongs and was
                   never the user's arrangement to begin with. */}
