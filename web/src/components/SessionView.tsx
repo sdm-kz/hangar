@@ -765,17 +765,22 @@ export function SessionView({
                     <Radio className="size-3" /> RC
                   </Badge>
                 ))}
-              {session.canFork && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-[30px]"
-                  onClick={() => onFork(session)}
-                  title="Fork — branch this conversation into a new session"
-                >
-                  <GitFork className="size-4" />
-                </Button>
-              )}
+              {/* Shown greyed rather than dropped while the conversation id is still unknown -- see
+                  the same call in the sidebar's row menu for what is missing and why. */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-[30px]"
+                disabled={!session.canFork}
+                onClick={() => onFork(session)}
+                title={
+                  session.canFork
+                    ? "Fork — branch this conversation into a new session"
+                    : "Fork needs Claude's conversation id — send this session a message first"
+                }
+              >
+                <GitFork className="size-4" />
+              </Button>
               {session.state === "Running" && (
                 <>
                   <Button
@@ -1276,16 +1281,20 @@ function SessionActionsMenu({
                 </MenuItem>
               </>
             )}
-            {session.canFork && (
-              <MenuItem
-                onClick={() => {
-                  onFork();
-                  setOpen(false);
-                }}
-              >
-                <GitFork className="size-4" /> Fork session…
-              </MenuItem>
-            )}
+            <MenuItem
+              disabled={!session.canFork}
+              title={
+                session.canFork
+                  ? undefined
+                  : "Fork needs Claude's conversation id — send this session a message first"
+              }
+              onClick={() => {
+                onFork();
+                setOpen(false);
+              }}
+            >
+              <GitFork className="size-4" /> Fork session…
+            </MenuItem>
             <MenuItem
               destructive
               disabled={stopping}
@@ -1311,11 +1320,14 @@ function MenuItem({
   onClick,
   destructive,
   disabled,
+  title,
   children,
 }: {
   onClick: () => void;
   destructive?: boolean;
   disabled?: boolean;
+  /** Why an entry is disabled — the one thing a greyed row cannot say for itself. */
+  title?: string;
   children: ReactNode;
 }) {
   return (
@@ -1323,6 +1335,7 @@ function MenuItem({
       type="button"
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={cn(
         "flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent disabled:opacity-50",
         destructive && "text-destructive"
