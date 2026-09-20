@@ -71,6 +71,7 @@ import {
   X,
 } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
+import { nativePath } from "@/lib/paths";
 import { CopyPathButton } from "./CopyPathButton";
 import {
   ScrollJumpButtons,
@@ -2024,12 +2025,15 @@ function FilePreview({
   // instead of losing the final 200ms of scrolling.
   const pendingScrollRef = useRef<(() => void) | null>(null);
 
+  // The whole path, not the session-relative one on show: what gets copied out of here is pasted
+  // into a terminal, an editor, or a message to someone else, and none of those know where the
+  // session's root is. Written in the server's own separator — see nativePath.
   const copyPath = useCallback(async () => {
     if (!file) return;
-    await writeToClipboard(file.path);
+    await writeToClipboard(nativePath(dir || workingDirectory, file.path));
     setCopiedPath(true);
     setTimeout(() => setCopiedPath(false), 1500);
-  }, [file]);
+  }, [file, dir, workingDirectory]);
 
   // Header button: select the whole visible preview and copy the file's raw text.
   const copyContents = useCallback(async () => {
@@ -2412,7 +2416,7 @@ function FilePreview({
           <button
             type="button"
             onClick={copyPath}
-            title="Copy file path"
+            title="Copy the full path"
             className="group/path flex max-w-full items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
           >
             <span className="truncate">
