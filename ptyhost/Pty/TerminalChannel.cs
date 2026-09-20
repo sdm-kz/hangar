@@ -108,6 +108,60 @@ public sealed partial class TerminalChannel : IDisposable
     private string _renameScanTail = "";  // carries a partial confirmation across the read boundary
     private string? _lastRenameSeen;      // dedupe: don't re-fire when the TUI repaints the same line
 
+    /// <summary>
+    /// Whether anything has been <em>typed</em> into this session yet.
+    ///
+    /// A rename (or a colour) is the result of a command someone ran, so nothing that arrives before
+    /// the first keystroke can be one. What does arrive before it, on a session started with
+    /// --resume or --fork-session, is the parent conversation replayed in full -- and if that
+    /// conversation ever ran /rename, the replay carries both the echoed command and its
+    /// confirmation, in the exact shape the detector is looking for. A fork of a renamed session was
+    /// taking the parent's name back off its own transcript seconds after launch, undoing the name
+    /// it had just been given.
+    ///
+    /// Its own clock, not <see cref="_lastInputTick"/>: that one is what tells IsBusy that a burst of
+    /// output is an echo rather than work, and it must go on counting every byte the viewer sends.
+    /// This one counts only what a person could have used to run a command.
+    /// </summary>
+    private bool Typed => Volatile.Read(ref _lastTypedTick) != 0;
+
+    private long _lastTypedTick;
+    private int _dropReplayedTail; // set by the first real keystroke, consumed by the sniffers below
+
+    /// <summary>
+    /// Input the terminal sent of its own accord rather than something a person typed: the focus
+    /// in/out reports (CSI I / CSI O) a pane emits when it is clicked into or away from, and mouse
+    /// reports. Clicking about cannot run /rename, and counting it as typing was enough to let a
+    /// replayed transcript through -- the click came a beat after launch, while the replay was still
+    /// sitting in the scan tail.
+    /// </summary>
+    private static bool IsTerminalReport(ReadOnlySpan<byte> d) =>
+        (d.Length == 3 && d[0] == 0x1b && d[1] == (byte)'[' && (d[2] == (byte)'I' || d[2] == (byte)'O'))
+        || (d.Length > 3 && d[0] == 0x1b && d[1] == (byte)'[' && d[2] == (byte)'<'
+            && (d[^1] == (byte)'M' || d[^1] == (byte)'m'));
+
+    /// <summary>
+    /// Whether everything seen so far is replayed history, and the tails that carry it across reads
+    /// should be dropped rather than matched. Called by both sniffers, under the read lock.
+    /// </summary>
+    private bool ReplayOnly()
+    {
+        if (!Typed)
+        {
+            // Not merely ignored -- forgotten. Left in the tail, the replay would still be there to
+            // match the moment the first keystroke landed, which is exactly how it got through.
+            _renameScanTail = "";
+            _colorScanTail = "";
+            return true;
+        }
+        if (Interlocked.Exchange(ref _dropReplayedTail, 0) == 1)
+        {
+            _renameScanTail = "";
+            _colorScanTail = "";
+        }
+        return false;
+    }
+
     /// <summary>Raised when Claude confirms a <c>/rename</c> in the terminal, with the new name.</summary>
     public event Action<string>? RenameCommandDetected;
 
@@ -177,6 +231,7 @@ public sealed partial class TerminalChannel : IDisposable
     // color isn't reported twice in a row (TUI repaints).
     private string? SniffColor(byte[] buf, int n)
     {
+        if (ReplayOnly()) return null;
         var text = Vt.Strip(_colorScanTail + Encoding.Latin1.GetString(buf, 0, n), cursorMovesEndLines: true);
         string? color = null;
         var repainted = true;
@@ -277,6 +332,7 @@ public sealed partial class TerminalChannel : IDisposable
     // reads isn't captured half-formed; the unterminated tail is retained for the next read.
     private string? SniffRename(byte[] buf, int n)
     {
+        if (ReplayOnly()) return null;
         // Strip ANSI so styling around the line doesn't break the match (Latin1 keeps ASCII 1:1).
         // Line-aware: the TUI opens the echo's screen row with a cursor move, not a CRLF, and both
         // halves of this pattern are anchored to a line start.
@@ -443,6 +499,12 @@ public sealed partial class TerminalChannel : IDisposable
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
     {
         Volatile.Write(ref _lastInputTick, Environment.TickCount64);
+        if (!IsTerminalReport(data.Span))
+        {
+            // The first keystroke is where the replay ends and this session's own transcript begins.
+            if (Volatile.Read(ref _lastTypedTick) == 0) Volatile.Write(ref _dropReplayedTail, 1);
+            Volatile.Write(ref _lastTypedTick, Environment.TickCount64);
+        }
         await _writeLock.WaitAsync(ct);
         try
         {
