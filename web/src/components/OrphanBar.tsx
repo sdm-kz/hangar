@@ -58,16 +58,25 @@ export function OrphanBar() {
     <>
       <div className="flex items-center gap-2 border-t bg-amber-500/10 px-2 py-1.5 text-xs">
         <Unplug className="size-3.5 shrink-0 text-amber-600 dark:text-amber-500" />
-        <span
-          className="truncate text-muted-foreground"
-          title={orphans.map((o) => `claude pid ${o.childPid} — ${o.workingDirectory}`).join("\n")}
+        {/* The whole line opens the details, not just the Stop beside it: what this bar is about is
+            a fair question, and the only way to ask it used to be to press the button that kills
+            things and read the confirmation. The folder rides along when there is just one, which is
+            the usual case and the one thing that says which session this is. */}
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          title="What is still running, and where"
+          className="min-w-0 flex-1 truncate text-left text-muted-foreground hover:text-foreground"
         >
           {orphans.length} untracked session{orphans.length === 1 ? "" : "s"} still running
-        </span>
+          {orphans.length === 1 && (
+            <span className="font-mono"> · {orphans[0].workingDirectory}</span>
+          )}
+        </button>
         <Button
           variant="ghost"
           size="sm"
-          className="ml-auto h-6 shrink-0 px-2 text-xs"
+          className="h-6 shrink-0 px-2 text-xs"
           onClick={() => setConfirming(true)}
         >
           Stop
@@ -78,11 +87,12 @@ export function OrphanBar() {
         <Dialog open onOpenChange={(o) => !o && setConfirming(false)}>
           <DialogContent className="max-w-sm">
             <DialogHeader>
-              <DialogTitle>Stop untracked sessions</DialogTitle>
+              <DialogTitle>Untracked sessions</DialogTitle>
               <DialogDescription>
-                These are still running but nothing in the app points at them — usually because they
-                were detached. Stopping ends each <span className="font-mono">claude</span> process
-                and cannot be undone.
+                A <span className="font-mono">claude</span> still running that no session in the list
+                claims. It happens when a session is detached on purpose, or when the app loses the
+                record of one — either way nothing will close it, so it would sit there until the
+                machine restarts. Stopping ends each process and cannot be undone.
               </DialogDescription>
             </DialogHeader>
 
