@@ -112,20 +112,31 @@ internal static class Program
             {
                 var ct = app.Lifetime.ApplicationStopping;
                 try { await manager.AdoptRunningHostsAsync(ct); }
-                catch (OperationCanceledException) { return; }
+                catch (OperationCanceledException) { manager.MarkSettled(); return; }
                 catch (Exception ex) { startupLog.LogWarning(ex, "Could not re-attach to running pty hosts"); }
 
                 // Shell tabs come back the same way — a build or a tail left running in one is
                 // exactly the thing a restart must not interrupt. There is no resume half for them:
                 // a shell whose process is gone has nothing left worth relaunching.
                 try { await app.Services.GetRequiredService<Sessions.Shells.ShellManager>().AdoptRunningHostsAsync(ct); }
-                catch (OperationCanceledException) { return; }
+                catch (OperationCanceledException) { manager.MarkSettled(); return; }
                 catch (Exception ex) { startupLog.LogWarning(ex, "Could not re-attach to running shells"); }
 
-                if (!resumeSessions) return;
-                try { await manager.ResumePersistedAsync(ct); }
-                catch (OperationCanceledException) { /* app is shutting down */ }
-                catch (Exception ex) { startupLog.LogWarning(ex, "Could not resume sessions"); }
+                try
+                {
+                    if (!resumeSessions) return;
+                    try { await manager.ResumePersistedAsync(ct); }
+                    catch (OperationCanceledException) { /* app is shutting down */ }
+                    catch (Exception ex) { startupLog.LogWarning(ex, "Could not resume sessions"); }
+                }
+                finally
+                {
+                    // Whatever happened above, the list is now as good as it is going to get, and
+                    // anything waiting to act on a session being dead may go (SessionManager.Settled).
+                    // In a finally, and after the early return for resumeSessions=false: a waiter left
+                    // hanging by either would never run again.
+                    manager.MarkSettled();
+                }
             });
         });
 

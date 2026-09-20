@@ -685,30 +685,38 @@ function ScheduleEditor({
                 onChange={(e) => setMaxRunMinutes(Math.max(1, Number(e.target.value) || 1))}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="schedule-keep">Sessions to keep in the list</Label>
-              <Input
-                id="schedule-keep"
-                type="number"
-                min={0}
-                value={keepRuns}
-                onChange={(e) => setKeepRuns(Math.max(0, Number(e.target.value) || 0))}
-              />
-            </div>
-            <label className="flex items-start gap-2 text-sm sm:col-span-2">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={stopWhenDone}
-                onChange={(e) => setStopWhenDone(e.target.checked)}
-              />
-              <span>
-                Stop a session once its turn has finished.
-                <span className="block text-xs text-muted-foreground">
-                  Off, every run stays open — thirty daily runs is thirty rows in the sidebar.
-                </span>
-              </span>
-            </label>
+            {/* Both of these are about sessions this schedule OWNS, so they only mean anything for
+                the mode that creates one per run. A one-shot leaves no session behind, and a
+                schedule continuing an existing session does not own it — offering the controls
+                there promised behaviour that never happened. */}
+            {mode === "NewSession" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="schedule-keep">Sessions to keep in the list</Label>
+                  <Input
+                    id="schedule-keep"
+                    type="number"
+                    min={0}
+                    value={keepRuns}
+                    onChange={(e) => setKeepRuns(Math.max(0, Number(e.target.value) || 0))}
+                  />
+                </div>
+                <label className="flex items-start gap-2 text-sm sm:col-span-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={stopWhenDone}
+                    onChange={(e) => setStopWhenDone(e.target.checked)}
+                  />
+                  <span>
+                    Stop a session once its turn has finished.
+                    <span className="block text-xs text-muted-foreground">
+                      Off, every run stays open — thirty daily runs is thirty rows in the sidebar.
+                    </span>
+                  </span>
+                </label>
+              </>
+            )}
           </div>
         )}
 

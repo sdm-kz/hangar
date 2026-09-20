@@ -149,6 +149,16 @@ public sealed class ScheduleService : BackgroundService
             return;
         }
 
+        // Nothing may fire until the session list means what it says. For the first moments of a run
+        // every session from the previous one is sitting in the restorable set, looking dead, while
+        // its pty host is alive and queued for adoption — and a ReuseSession schedule that fires into
+        // that gap relaunches a conversation that is already running, orphaning the original host.
+        // That is exactly what happened: one duplicate claude per restart, and the app's own
+        // "untracked sessions" warning right behind it.
+        try { await _sessions.Settled.WaitAsync(ct); }
+        catch (OperationCanceledException) { return; }
+        _log.LogInformation("Sessions have settled; the schedule clock is running");
+
         // A machine waking from sleep, or a clock corrected by NTP, both move every due time this loop
         // computed. Neither produces any other signal, so the loop would sit on a stale sleep.
         //
@@ -438,6 +448,12 @@ public sealed class ScheduleService : BackgroundService
             }
 
             ClearBlocked(s.Id);
+            // Re-arm the interval HERE, not when the send finally lands. Recording the fire raises
+            // Changed -> Poke -> an immediate re-tick, and the poke itself runs on a background task:
+            // for the milliseconds in between, the schedule was still due on the same idle time and
+            // the re-tick recorded a bogus "the previous run is still going". Every fire came with a
+            // matching junk skip, which is most of what the history held.
+            if (s.IntervalMinutes is not null) _idleSince[s.Id] = DateTimeOffset.Now;
             var outcome = await DispatchAsync(s, template, prompt, now, run, ct);
             handedOff = true;
             return outcome;
@@ -576,6 +592,17 @@ public sealed class ScheduleService : BackgroundService
             // A reboot leaves the conversation as a Restorable row. Reopening it is the whole reason a
             // schedule survives one, so do that first — claude --resume deliberately refuses to carry a
             // prompt (ClaudeSession.cs), which is why this is two steps and not one.
+            // Belt and braces behind the settle above: a host can also be un-adopted because adoption
+            // could not reach it, and reopening then starts a second claude on the same conversation.
+            // Cheap to ask, and the answer is never wrong in the dangerous direction.
+            if (_sessions.ClosedSessionStillAlive(id))
+            {
+                _store.RecordRun(s.Id, new ScheduleRun(now, id, "skipped",
+                    "Its session is closed but still running; not reopening it"), replaceLast: true);
+                if (s.IntervalMinutes is not null) _idleSince[s.Id] = DateTimeOffset.Now;
+                return;
+            }
+
             var restored = await _sessions.RestoreAsync(id, ct);
             if (restored is null)
             {

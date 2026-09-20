@@ -663,6 +663,37 @@ public sealed class SessionManager : IDisposable
     /// <summary>Filesystem change counter for a session's working directory (null if unknown).</summary>
     public long? FsVersion(string id) => _sessions.TryGetValue(id, out var s) ? s.FsVersion : null;
 
+    /// <summary>
+    /// Completes once the startup work that decides what is actually running has finished — adopting
+    /// the pty hosts that outlived the last run, then auto-resuming what they did not cover.
+    ///
+    /// <para>Until then the session list is a lie of omission: every session from the previous run is
+    /// sitting in <c>_restorable</c>, looking dead, while its pty host is alive and about to be
+    /// re-attached. Anything that would ACT on a session being dead has to wait for this, or it acts
+    /// on the gap. The scheduler learned that the expensive way — it fired in the ~50 ms before
+    /// adoption, found its target "Restorable", relaunched it, and left the original host orphaned;
+    /// one more duplicate claude per restart.</para>
+    /// </summary>
+    public Task Settled => _settled.Task;
+
+    private readonly TaskCompletionSource _settled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Say that startup is done and the list can be trusted. Called once, whether the adoption pass
+    /// succeeded or threw — a failed adoption still ends the window, and leaving it open for ever
+    /// would silently stop every schedule on the machine.
+    /// </summary>
+    public void MarkSettled() => _settled.TrySetResult();
+
+    /// <summary>
+    /// Whether the process a closed session was last launched as is somehow still alive — a session
+    /// whose host outlived us and has not been adopted (yet, or at all). Reopening one of these
+    /// relaunches a conversation that is already running, so the answer is "don't".
+    /// PIDs are recycled, so the start time has to match too; see <see cref="OriginalProcessAlive"/>.
+    /// </summary>
+    public bool ClosedSessionStillAlive(string id) =>
+        _restorable.TryGetValue(id, out var p) && OriginalProcessAlive(p);
+
     /// <summary>The live terminal stream for a session (null if unknown or no longer running).</summary>
     public Pty.ITerminal? GetTerminal(string id) =>
         _sessions.TryGetValue(id, out var s) ? s.Terminal : null;
