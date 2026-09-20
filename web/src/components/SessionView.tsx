@@ -55,8 +55,9 @@ const SPLIT_WIDTH_KEY = "claudeweb.splitFilesWidth";
 const SPLIT_MIN_H = 120; // stacked: a few rows of listing, and a terminal still worth reading
 const SPLIT_DEFAULT_H = 300;
 const SPLIT_HEIGHT_KEY = "claudeweb.splitFilesHeight";
-// Which side the Files panel takes. "bottom" is the stacked arrangement; the terminal leads either
-// way, because it is the thing being worked in.
+// Which arrangement the split is in. "bottom" stacks them, and there the terminal takes the bottom:
+// a prompt belongs at the bottom of the screen, where every terminal has always put it and where the
+// composer under it already sits. Side by side it leads on the left instead.
 const SPLIT_SIDE_KEY = "claudeweb.splitSide";
 
 function readSplitWidth() {
@@ -257,11 +258,14 @@ export function SessionView({
       const startSize = stacked ? readSplitHeight() : readSplitWidth();
       let size = startSize;
       const onMove = (ev: PointerEvent) => {
-        // The panel being sized is the one AFTER the divider -- right, or below -- so dragging
-        // towards it makes it smaller, hence the subtracted delta. The far side keeps `min` too.
+        // Always the Files panel being sized, but it sits on a different side of the divider in each
+        // arrangement: to its right side by side, above it when stacked. So the same drag grows it in
+        // one and shrinks it in the other, and the delta's sign follows which side it is on. The far
+        // pane keeps `min` too, hence the ceiling.
         const box = stacked ? contentRef.current?.clientHeight : contentRef.current?.clientWidth;
         const max = (box ?? Infinity) - min;
-        size = Math.min(max, Math.max(min, startSize - ((stacked ? ev.clientY : ev.clientX) - start)));
+        const moved = (stacked ? ev.clientY : ev.clientX) - start;
+        size = Math.min(max, Math.max(min, startSize + (stacked ? moved : -moved)));
         (stacked ? setSplitHeight : setSplitWidth)(size);
       };
       const onUp = () => {
@@ -908,7 +912,7 @@ export function SessionView({
             <button
               type="button"
               onClick={toggleSplitSide}
-              title={splitAtBottom ? "Put the files beside the terminal" : "Put the files under the terminal"}
+              title={splitAtBottom ? "Put the files beside the terminal" : "Put the terminal under the files"}
               aria-label={splitAtBottom ? "Split side by side" : "Split top and bottom"}
               className="hidden shrink-0 self-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground md:block"
             >
@@ -999,7 +1003,9 @@ export function SessionView({
             }
             className={cn(
               "flex min-h-0 min-w-0 flex-1 flex-col",
-              view === "split" && "md:order-3 md:flex-none md:shrink-0",
+              // Above the terminal when stacked, to its right when not.
+              view === "split" && (splitAtBottom ? "md:order-1" : "md:order-3"),
+              view === "split" && "md:flex-none md:shrink-0",
               view === "split" &&
                 (splitAtBottom ? "md:h-[var(--split-h)] md:w-auto" : "md:w-[var(--split-w)]")
             )}
@@ -1024,7 +1030,7 @@ export function SessionView({
             title="Drag to resize · double-click to reset"
             className={cn(
               "hidden shrink-0 bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:order-2 md:block",
-              splitAtBottom ? "h-1.5 w-full cursor-row-resize border-t" : "w-1.5 cursor-col-resize border-l"
+              splitAtBottom ? "h-1.5 w-full cursor-row-resize border-b" : "w-1.5 cursor-col-resize border-l"
             )}
           />
         )}
@@ -1032,7 +1038,7 @@ export function SessionView({
         <div
           className={cn(
             "flex min-h-0 min-w-0 flex-1 flex-col",
-            view === "split" && "md:order-1",
+            view === "split" && (splitAtBottom ? "md:order-3" : "md:order-1"),
             view !== "terminal" && view !== "split" && "hidden"
           )}
         >
