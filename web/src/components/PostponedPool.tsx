@@ -39,11 +39,15 @@ export function PostponedPool({
   sessionId,
   busy,
   terminalRef,
+  closed = false,
 }: {
   sessionId: string;
   // Whether Claude is currently working in this session (drives the "idle — send now" cue only).
   busy?: boolean;
   terminalRef: React.RefObject<TerminalPaneHandle | null>;
+  // The session is closed: there is no terminal to send into, and there will not be one until it is
+  // reopened. The pool still reads, stashes and discards — sending is what waits.
+  closed?: boolean;
 }) {
   const [messages, setMessages] = useState<PostponedMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -239,7 +243,10 @@ export function PostponedPool({
     }
   };
 
-  const idle = !busy && messages.length > 0;
+  // The nudge to flush the stash, which only means anything while there is something to flush it
+  // into: a closed session is not idle, it is gone, and painting Send all as the obvious next thing
+  // to do would be inviting a click that cannot land.
+  const idle = !closed && !busy && messages.length > 0;
   const canStash = draft.trim().length > 0 || draftImages.length > 0;
 
   return (
@@ -319,7 +326,11 @@ export function PostponedPool({
             <PenLine className="size-4" />
             <span className="hidden sm:inline">Compose</span>
           </Button>
-          {messages.length > 0 && (
+          {/* Not offered at all in a closed session: there is no terminal to send into, and a
+              greyed button cannot say why — a disabled one takes no pointer events, so the title
+              that would have explained it never shows. What the pool still does — read, stash,
+              discard — is all still here, and the panel above says where the terminal went. */}
+          {messages.length > 0 && !closed && (
             <Button
               size="sm"
               variant={idle ? "default" : "outline"}
@@ -384,14 +395,17 @@ export function PostponedPool({
                     )}
                   </button>
                   <div className="flex shrink-0 items-center self-center text-muted-foreground">
-                    <button
-                      type="button"
-                      onClick={() => sendOne(m)}
-                      title="Send this message now"
-                      className="rounded p-1 hover:bg-accent hover:text-foreground"
-                    >
-                      <Send className="size-4" />
-                    </button>
+                    {/* Same as Send all above: absent rather than greyed in a closed session. */}
+                    {!closed && (
+                      <button
+                        type="button"
+                        onClick={() => sendOne(m)}
+                        title="Send this message now"
+                        className="rounded p-1 hover:bg-accent hover:text-foreground"
+                      >
+                        <Send className="size-4" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => deleteMsg(m.id)}
@@ -493,6 +507,7 @@ export function PostponedPool({
       open={!!composer}
       initial={composer?.draft}
       editing={composer?.target.kind === "message"}
+      closed={closed}
       onSend={composerSend}
       onPostpone={composerPostpone}
       onClose={() => setComposer(null)}

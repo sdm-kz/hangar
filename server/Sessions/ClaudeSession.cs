@@ -235,6 +235,10 @@ public sealed class ClaudeSession : IDisposable
         p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.PermissionMode,
         SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color,
         ResumeExact: p.ClaudeSessionId is not null,
+        // Carried across explicitly: the contract's default is `true`, so leaving it out reported
+        // every closed session as watchdogged whatever it was switched to — which the session header
+        // now shows, and which a reopen then contradicts (RestoreAsync relaunches with this value).
+        WatchdogEnabled: p.WatchdogEnabled,
         PostponedCount: PostponedStore.Count(p.WorkingDirectory, p.Id),
         ClaudeSessionId: p.ClaudeSessionId,
         CanFork: p.ClaudeSessionId is not null,

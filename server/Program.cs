@@ -482,7 +482,8 @@ internal static class Program
             // id it nests under comes from a script's environment. A stale one would otherwise be
             // written as a link to nothing and the session would come out at the top level, looking
             // like the request was honoured — so it is refused here, where the caller can still see why.
-            // A live one puts the new session in its host's virtual folder too; see CreateAsync.
+            // A live one also takes the new session into its host's place in the list — the project
+            // its folder is linked to, and the virtual folder inside it; see CreateAsync.
             if (!string.IsNullOrWhiteSpace(req.NestedUnderId) && !mgr.Exists(req.NestedUnderId))
                 return Results.BadRequest(new { error = $"No session '{req.NestedUnderId}' to put this one under." });
             try
@@ -497,12 +498,22 @@ internal static class Program
         });
 
         // Reopen a Restorable session from a previous run (relaunch with --continue).
-        app.MapPost("/api/sessions/{id}/restore", async (string id, SessionManager mgr) =>
+        //
+        // Its shells go with it, exactly as stopping it took them: a reopen mints a new session id, and
+        // a shell left behind under the old one belongs to a session that no longer exists — listed by
+        // nothing, closable by nobody, and re-adopted on every restart of the app. A closed session can
+        // be opened and its folder poked around in now, so that is a tab someone can really have open.
+        //
+        // After the relaunch, not before: a reopen that fails leaves the session closed, and it must
+        // leave the tabs where they were rather than charging the user for the attempt.
+        app.MapPost("/api/sessions/{id}/restore", async (string id, SessionManager mgr, Sessions.Shells.ShellManager shells) =>
         {
             try
             {
                 var info = await mgr.RestoreAsync(id);
-                return info is null ? Results.NotFound() : Results.Created($"/api/sessions/{info.Id}", info);
+                if (info is null) return Results.NotFound();
+                await shells.CloseForSessionAsync(id);
+                return Results.Created($"/api/sessions/{info.Id}", info);
             }
             catch (Exception ex)
             {
@@ -1106,7 +1117,7 @@ internal static class Program
         //      and a resumed session's new id). Each mutation returns the updated list. --------------
         app.MapGet("/api/sessions/{id}/linked-folders", (string id, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             return info is null
                 ? Results.NotFound()
                 : Results.Ok(new { folders = links.Get(info.WorkingDirectory) });
@@ -1114,7 +1125,7 @@ internal static class Program
 
         app.MapPost("/api/sessions/{id}/linked-folders", (string id, FolderRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var folders = links.Add(info.WorkingDirectory, body.Path);
             return folders is null
@@ -1124,7 +1135,7 @@ internal static class Program
 
         app.MapPost("/api/sessions/{id}/linked-folders/remove", (string id, FolderRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             return info is null
                 ? Results.NotFound()
                 : Results.Ok(new { folders = links.Remove(info.WorkingDirectory, body.Path) });
@@ -1132,10 +1143,15 @@ internal static class Program
 
         // ---- Per-session file browsing. `dir` picks the root: empty = the session's working directory,
         //      otherwise another worktree of the same repo (read-only) or one of its linked folders.
-        //      Anything else is rejected, so a client can't point the API at an arbitrary folder. ----
+        //      Anything else is rejected, so a client can't point the API at an arbitrary folder.
+        //
+        //      Asked with GetAny, so a closed session answers too: the folder is still there, and
+        //      being able to read what a session left behind — its files, its diff, its reviews —
+        //      is most of what you want from one you have finished with. Writes come along for the
+        //      ride deliberately; the same reasoning the postponed pool already runs on. ----
         app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, string? dir, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = BrowseRoot(info, dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
@@ -1145,7 +1161,7 @@ internal static class Program
 
         app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, string? dir, SessionManager mgr, LinkedFolderStore links, HttpContext http) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = BrowseRoot(info, dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
@@ -1165,7 +1181,7 @@ internal static class Program
 
         app.MapGet("/api/sessions/{id}/fs/search", (string id, string q, string? dir, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = BrowseRoot(info, dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
@@ -1174,7 +1190,7 @@ internal static class Program
 
         app.MapPost("/api/sessions/{id}/fs/write", (string id, FileWriteRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = WriteRoot(info, body.Dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
@@ -1187,7 +1203,7 @@ internal static class Program
         // dir, so its path can be handed to the Claude session. Body is base64 to keep JSON transport.
         app.MapPost("/api/sessions/{id}/fs/upload-image", (string id, ImageUploadRequest body, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
 
             byte[] bytes;
@@ -1212,7 +1228,7 @@ internal static class Program
         // linked folder to write into, and one or more "files").
         app.MapPost("/api/sessions/{id}/fs/upload", async (string id, HttpRequest req, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (!req.HasFormContentType) return Results.BadRequest(new { error = "expected multipart form" });
 
@@ -1236,7 +1252,7 @@ internal static class Program
         // Rename a file/folder within the write root (bare new name, same parent).
         app.MapPost("/api/sessions/{id}/fs/rename", (string id, FileRenameRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = WriteRoot(info, body.Dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
@@ -1248,7 +1264,7 @@ internal static class Program
         // Delete a file/folder (recursively) within the write root.
         app.MapPost("/api/sessions/{id}/fs/delete", (string id, FolderRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = WriteRoot(info, body.Dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
@@ -1262,7 +1278,7 @@ internal static class Program
         // Create a folder (possibly nested, e.g. "a/b/c") under the write root.
         app.MapPost("/api/sessions/{id}/fs/mkdir", (string id, FolderCreateRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = WriteRoot(info, body.Dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
@@ -1313,13 +1329,13 @@ internal static class Program
         // repo's worktree list so callers can't point git at an arbitrary folder.
         app.MapGet("/api/sessions/{id}/git/worktrees", (string id, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             return info is null ? Results.NotFound() : Results.Ok(GitService.Worktrees(info.WorkingDirectory));
         });
 
         app.MapGet("/api/sessions/{id}/git/status", (string id, string? dir, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
             return root is null ? Results.BadRequest(new { error = "invalid worktree" }) : Results.Ok(GitService.Status(root));
@@ -1327,7 +1343,7 @@ internal static class Program
 
         app.MapGet("/api/sessions/{id}/git/diff", (string id, string path, string? dir, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = GitService.ResolveWorktree(info.WorkingDirectory, dir);
             if (root is null) return Results.BadRequest(new { error = "invalid worktree" });
@@ -1343,7 +1359,7 @@ internal static class Program
         // Commit history (newest first, paged via skip/count).
         app.MapGet("/api/sessions/{id}/git/log", (string id, SessionManager mgr, int? skip, int? count, string? @ref, bool? all) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             return info is null
                 ? Results.NotFound()
                 : Results.Ok(GitService.Log(info.WorkingDirectory, Math.Max(0, skip ?? 0), Math.Clamp(count ?? 50, 1, 200), @ref, all == true));
@@ -1352,14 +1368,14 @@ internal static class Program
         // Local branches (with any other-worktree locations) for the history branch picker.
         app.MapGet("/api/sessions/{id}/git/branches", (string id, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             return info is null ? Results.NotFound() : Results.Ok(GitService.Branches(info.WorkingDirectory));
         });
 
         // Files changed by a single commit.
         app.MapGet("/api/sessions/{id}/git/commit", (string id, string hash, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (!IsCommitHash(hash)) return Results.BadRequest(new { error = "invalid hash" });
             return Results.Ok(GitService.CommitInfo(info.WorkingDirectory, hash));
@@ -1368,7 +1384,7 @@ internal static class Program
         // Diff for one file within a commit.
         app.MapGet("/api/sessions/{id}/git/commit-diff", (string id, string hash, string path, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (!IsCommitHash(hash)) return Results.BadRequest(new { error = "invalid hash" });
             if (SessionFileBrowser.ResolveSafe(info.WorkingDirectory, path) is null)
@@ -1379,7 +1395,7 @@ internal static class Program
         // Full content of one file as of a commit (for the "full" view in the commit preview).
         app.MapGet("/api/sessions/{id}/git/commit-file", (string id, string hash, string path, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (!IsCommitHash(hash)) return Results.BadRequest(new { error = "invalid hash" });
             if (SessionFileBrowser.ResolveSafe(info.WorkingDirectory, path) is null)
@@ -1393,14 +1409,14 @@ internal static class Program
         // button is in the tab bar.
         app.MapGet("/api/sessions/{id}/github/repo", (string id, SessionManager mgr) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             return info is null ? Results.NotFound() : Results.Ok(GitHubService.Repo(info.WorkingDirectory));
         });
 
         // The repo's pull requests. `state` is open (the default), closed, merged or all.
         app.MapGet("/api/sessions/{id}/github/pulls", async (string id, string? state, SessionManager mgr, CancellationToken ct) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             return info is null
                 ? Results.NotFound()
                 : Results.Ok(await GitHubService.PullsAsync(info.WorkingDirectory, state, ct));
@@ -1412,7 +1428,7 @@ internal static class Program
         app.MapGet("/api/sessions/{id}/github/pulls/{number:int}/file",
             async (string id, int number, string path, string? @ref, SessionManager mgr, CancellationToken ct) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
             if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "invalid path" });
@@ -1429,7 +1445,7 @@ internal static class Program
         // One pull request: its description and every changed file, each with its slice of the diff.
         app.MapGet("/api/sessions/{id}/github/pulls/{number:int}", async (string id, int number, SessionManager mgr, CancellationToken ct) =>
         {
-            var info = mgr.Get(id);
+            var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
             return Results.Ok(await GitHubService.PullAsync(info.WorkingDirectory, number, ct));

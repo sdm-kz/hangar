@@ -33,6 +33,7 @@ export function ComposerDialog({
   open,
   initial,
   editing = false,
+  closed = false,
   onSend,
   onPostpone,
   onClose,
@@ -43,6 +44,8 @@ export function ComposerDialog({
   initial?: ComposerDraft;
   /** Editing an existing stashed message rather than writing a new one. */
   editing?: boolean;
+  /** The session has no live terminal: the draft can only be postponed, not sent. */
+  closed?: boolean;
   /** Send into the live terminal. Resolve false to keep the dialog open and show a warning. */
   onSend: (draft: ComposerDraft) => Promise<boolean>;
   onPostpone: (draft: ComposerDraft) => void;
@@ -100,7 +103,7 @@ export function ComposerDialog({
   const draft = (): ComposerDraft => ({ text: text.trim(), images });
 
   const send = useCallback(async () => {
-    if (!canSubmit || sending) return;
+    if (closed || !canSubmit || sending) return;
     setSending(true);
     setError(null);
     const ok = await onSend(draft());
@@ -108,7 +111,7 @@ export function ComposerDialog({
     if (ok) onClose();
     else setError("Terminal not connected — postpone it instead, or try again in a moment.");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSubmit, sending, text, images, onSend, onClose]);
+  }, [closed, canSubmit, sending, text, images, onSend, onClose]);
 
   const postpone = useCallback(() => {
     // Guards on `sending` as well as the button does: a send in flight owns the dialog, and stashing
@@ -142,8 +145,18 @@ export function ComposerDialog({
           <DialogHeader className="shrink-0">
             <DialogTitle>{isEditing ? "Edit postponed message" : "Compose message"}</DialogTitle>
             <DialogDescription>
-              Send it into the terminal now, or postpone it for later. Ctrl+Enter sends, Ctrl+Shift+Enter{" "}
-              {isEditing ? "saves" : "postpones"}.
+              {closed ? (
+                <>
+                  This session is closed, so there is nowhere to send this — postpone it and it stays
+                  with this session&rsquo;s stash, to read back from its row. Ctrl+Shift+Enter{" "}
+                  {isEditing ? "saves" : "postpones"}.
+                </>
+              ) : (
+                <>
+                  Send it into the terminal now, or postpone it for later. Ctrl+Enter sends,
+                  Ctrl+Shift+Enter {isEditing ? "saves" : "postpones"}.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
 
@@ -218,7 +231,13 @@ export function ComposerDialog({
             onChange={(e) => setText(e.target.value)}
             onPaste={onPaste}
             onKeyDown={onKeyDown}
-            placeholder="Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste an image to attach"
+            // The send chord goes with the Send button when there is nothing to send into: offering
+            // a shortcut that returns silently is worse than not mentioning it.
+            placeholder={
+              closed
+                ? "Write your message — Enter for a newline, Ctrl+Shift+Enter to postpone, paste an image to attach"
+                : "Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste an image to attach"
+            }
             className="min-h-[35vh] flex-1 resize-none leading-6"
           />
 
@@ -238,7 +257,13 @@ export function ComposerDialog({
                 <Inbox className="size-4" />
                 {isEditing ? "Save" : "Postpone"}
               </Button>
-              <Button onClick={send} disabled={!canSubmit || sending} title="Send (Ctrl+Enter)">
+              {/* No title for the closed case: a disabled button takes no pointer events, so one
+                  would never be read. The description at the top of the dialog carries the why. */}
+              <Button
+                onClick={send}
+                disabled={closed || !canSubmit || sending}
+                title={closed ? undefined : "Send (Ctrl+Enter)"}
+              >
                 {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                 Send
               </Button>

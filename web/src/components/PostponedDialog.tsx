@@ -19,11 +19,14 @@ const baseName = (p: string) => p.split(/[\\/]/).pop() || "image";
 /**
  * A session's stashed messages, read from the row that counts them.
  *
- * The pool under the terminal can only be reached through a session that has one, which left the
- * stash of a closed session as a number on a row and no way to see what the number stood for --
- * reopening the session (and resuming a whole conversation) to read a note you left yourself. The
- * pool is a file in the working directory and the endpoints serve any session in the list, so
- * nothing but a place to show it was missing.
+ * A number on a row is all a list can say about a stash, and this is where you read what it stood
+ * for -- without leaving the list, and without reopening the session (and resuming a whole
+ * conversation) to get at a note you left yourself. The pool is a file in the working directory and
+ * the endpoints serve any session in the list, so nothing but a place to show it was missing.
+ *
+ * A closed session can be opened now, and its own pool is under the panel where its terminal would
+ * be, so this is no longer the only way in -- but it is still the cheap one: opening the session
+ * takes the main area off whatever is in it, to read a line of text.
  *
  * Reading, copying and discarding, and no sending: a message goes into a terminal, and a closed
  * session has none. For a live one the pool under its terminal is still where that happens, and is

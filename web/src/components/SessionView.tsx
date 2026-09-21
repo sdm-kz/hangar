@@ -40,7 +40,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import { sessionColor } from "@/lib/sessionColors";
-import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, GitFork, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, Rows2, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, GitFork, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, RotateCcw, Rows2, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Desktop size of the Files panel in Split view. Persisted per-browser and drag-resizable.
@@ -102,6 +102,66 @@ function toWorkingDirRelative(workingDir: string, abs: string): string | null {
   return a.toLowerCase().startsWith(wd.toLowerCase() + "/") ? a.slice(wd.length + 1) : null;
 }
 
+/**
+ * What fills the terminal's place in a closed session: no process, no socket, and one button that
+ * brings both back. The rest of the session — its files, its diff, its reviews, and a fresh shell in
+ * the folder it worked in — is reachable from the tabs above without any of that, which is the whole
+ * point of being able to open a closed session at all; this says so, so the missing terminal reads as
+ * a state and not a fault. Not its old shell tabs, though: those went with the process it was stopped
+ * with, so this says what is there rather than promising the session back whole.
+ */
+function ClosedTerminal({
+  session,
+  onReopen,
+  onReopenWithOptions,
+}: {
+  session: SessionInfo;
+  onReopen: () => void;
+  onReopenWithOptions: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+      <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <TerminalSquare className="size-6" />
+      </div>
+      <div className="space-y-1">
+        <p className="text-sm font-medium">This session is closed</p>
+        <p className="max-w-sm text-xs text-muted-foreground">
+          Nothing is running in{" "}
+          <span className="font-mono">{session.workingDirectory}</span>. Its files and git history are
+          in the tabs above, and a shell still opens in that folder — reopen the session to get the
+          terminal back.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button onClick={onReopen} className="gap-2">
+          <Play className="size-4" />
+          Reopen session
+        </Button>
+        {/* The same relaunch, through the create dialog: the model, the permission mode and the
+            prompt are all adjustable there before anything starts. Second, and quieter, because
+            most reopens want the session back exactly as it was. */}
+        <Button variant="outline" onClick={onReopenWithOptions} className="gap-2">
+          <Pencil className="size-4" />
+          Reopen with options…
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Resumes{" "}
+        {session.resumeExact ? (
+          <>
+            this exact conversation (<span className="font-mono">--resume</span>)
+          </>
+        ) : (
+          <>
+            the folder&rsquo;s most recent conversation (<span className="font-mono">--continue</span>)
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
 function StateBadge({ state }: { state: SessionInfo["state"] }) {
   // "running" is the normal case — don't badge it; only surface states that need attention.
   if (state === "Running") return null;
@@ -121,6 +181,8 @@ export function SessionView({
   collapsed,
   onToggleCollapsed,
   onStopped,
+  onReopen,
+  onReopenWithOptions,
   onRename,
   onTerminalRename,
   onTerminalColor,
@@ -141,6 +203,10 @@ export function SessionView({
   onToggleCollapsed: () => void;
   /** The session was closed and stays in the list — the row it should be replaced with. */
   onStopped: (session: SessionInfo) => void;
+  /** Relaunch a closed session, resuming its conversation. Confirmed by the caller. */
+  onReopen: () => void;
+  /** The same, through the create dialog, so the launch can be adjusted before it starts. */
+  onReopenWithOptions: () => void;
   onRename: (id: string, name: string) => void;
   // Apply a rename detected in this session's terminal (Claude's /rename confirmation).
   onTerminalRename?: (id: string, name: string) => void;
@@ -148,6 +214,10 @@ export function SessionView({
   onTerminalColor?: (id: string, color: string) => void;
 }) {
   const confirm = useConfirm();
+  // Closed: the session is a row and a folder, with no process behind either. Everything reading the
+  // folder works as it always did; what needs something to talk to — the terminal, the watchdog,
+  // "continue", stopping — is out, and the Reopen button stands where the terminal would be.
+  const closed = session.state === "Restorable";
   const terminalRef = useRef<TerminalPaneHandle>(null);
   const [stopping, setStopping] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -596,9 +666,14 @@ export function SessionView({
   }, [bump, loadGit]);
 
   // Auto-refresh: poll the working dir's change counter; when it moves, reload tree + git.
+  //
+  // The counter belongs to a live session's folder watcher, so a closed session has none to ask for
+  // — and nothing is writing in there on its behalf anyway. It reads its folder once, on arrival,
+  // and the refresh button covers anything that changes it from outside.
   useEffect(() => {
     setGit(null);
     loadGit();
+    if (closed) return;
     let last = -1;
     let stopped = false;
     const tick = async () => {
@@ -622,7 +697,7 @@ export function SessionView({
       stopped = true;
       clearInterval(t);
     };
-  }, [session.id, loadGit, bump]);
+  }, [session.id, closed, loadGit, bump]);
 
   const changeCount = git?.isRepo ? Object.keys(git.files).length : 0;
 
@@ -869,16 +944,30 @@ export function SessionView({
                   </Button>
                 </>
               )}
-              <Button
-                variant="destructive"
-                size="icon"
-                className="size-[30px]"
-                onClick={stop}
-                disabled={stopping}
-                title={session.state === "Running" ? "Stop session" : "Close session"}
-              >
-                {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
-              </Button>
+              {/* A closed session has no process to stop — the one thing its header can do is start
+                  it again, so the button in the same corner reopens it instead. */}
+              {closed ? (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-[30px]"
+                  onClick={onReopen}
+                  title="Reopen this session — relaunch Claude and resume the conversation"
+                >
+                  <RotateCcw className="size-4" />
+                </Button>
+              ) : (
+                <Button
+                  variant="destructive"
+                  size="icon"
+                  className="size-[30px]"
+                  onClick={stop}
+                  disabled={stopping}
+                  title={session.state === "Running" ? "Stop session" : "Close session"}
+                >
+                  {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
+                </Button>
+              )}
           </div>
 
           <SessionActionsMenu
@@ -889,6 +978,7 @@ export function SessionView({
             onContinue={sendContinue}
             onFork={() => onFork(session)}
             onStop={stop}
+            onReopen={onReopen}
             stopping={stopping}
           />
         </div>
@@ -1044,22 +1134,37 @@ export function SessionView({
         >
           {/* The pane keeps flex-1 so FitAddon measures the height left over by the pool bar below. */}
           <div className="min-h-0 flex-1">
-            <TerminalPane
-              key={session.id}
-              ref={terminalRef}
-              sessionId={session.id}
-              workingDirectory={session.workingDirectory}
-              // A shell is showing: its tab bar and header sit outside the shell pane's own
-              // `data-owns-image-paste` wrapper, so a Ctrl+V there would otherwise land here —
-              // uploading the image and injecting its path into Claude's live prompt.
-              imagePaste={view !== "shell"}
-              onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
-              onColorDetected={(color) => onTerminalColor?.(session.id, color)}
-              onOpenFile={onTerminalOpenFile}
-              onFindFile={onTerminalFindFile}
-            />
+            {/* A closed session has no pty to attach to: mounting the pane would open a socket
+                against nothing and leave a black rectangle that looks like a terminal failing.
+                What goes there instead says what happened and offers the one way out of it. */}
+            {closed ? (
+              <ClosedTerminal
+                session={session}
+                onReopen={onReopen}
+                onReopenWithOptions={onReopenWithOptions}
+              />
+            ) : (
+              <TerminalPane
+                key={session.id}
+                ref={terminalRef}
+                sessionId={session.id}
+                workingDirectory={session.workingDirectory}
+                // A shell is showing: its tab bar and header sit outside the shell pane's own
+                // `data-owns-image-paste` wrapper, so a Ctrl+V there would otherwise land here —
+                // uploading the image and injecting its path into Claude's live prompt.
+                imagePaste={view !== "shell"}
+                onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
+                onColorDetected={(color) => onTerminalColor?.(session.id, color)}
+                onOpenFile={onTerminalOpenFile}
+                onFindFile={onTerminalFindFile}
+              />
+            )}
           </div>
-          <PostponedPool sessionId={session.id} busy={busy} terminalRef={terminalRef} />
+          {/* Still here when the session is closed: the stash was written for this session and is
+              worth reading back, and throwing out a message you are no longer going to send is the
+              other half of that. It does not travel — the pool is keyed by session id and a reopen
+              mints a new one, which starts empty — so sending is the one thing it stops offering. */}
+          <PostponedPool sessionId={session.id} busy={busy} terminalRef={terminalRef} closed={closed} />
         </div>
 
         {/* Every open shell stays mounted, hidden behind the active tab: switching away from a
@@ -1272,14 +1377,18 @@ function SessionInfoList({ session, nowTick }: { session: SessionInfo; nowTick: 
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
       <InfoRow label="State">{session.state}</InfoRow>
-      <InfoRow label="PID">
-        {session.processId}
-        {/* Survived a restart of the app: still the original process, re-attached rather than
-            relaunched, so whatever it was in the middle of is intact. */}
-        {session.adopted && (
-          <span className="text-muted-foreground"> · re-attached after an app restart</span>
-        )}
-      </InfoRow>
+      {/* Only where there was a process to have one. A closed session reports 0, which is not a pid
+          and reads as one. */}
+      {session.state !== "Restorable" && (
+        <InfoRow label="PID">
+          {session.processId}
+          {/* Survived a restart of the app: still the original process, re-attached rather than
+              relaunched, so whatever it was in the middle of is intact. */}
+          {session.adopted && (
+            <span className="text-muted-foreground"> · re-attached after an app restart</span>
+          )}
+        </InfoRow>
+      )}
       {session.model && <InfoRow label="Model">{session.model}</InfoRow>}
       {session.permissionMode && <InfoRow label="Permissions">{session.permissionMode}</InfoRow>}
       <InfoRow label="Remote Control">{session.remoteControl ? "on" : "off"}</InfoRow>
@@ -1307,6 +1416,7 @@ function SessionActionsMenu({
   onContinue,
   onFork,
   onStop,
+  onReopen,
   stopping,
 }: {
   session: SessionInfo;
@@ -1316,11 +1426,13 @@ function SessionActionsMenu({
   onContinue: () => void;
   onFork: () => void;
   onStop: () => void;
+  onReopen: () => void;
   stopping: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useDismissable(open, useCallback(() => setOpen(false), []));
   const running = session.state === "Running";
+  const closed = session.state === "Restorable";
 
   return (
     <div ref={ref} className="relative flex shrink-0 items-center md:hidden">
@@ -1392,17 +1504,29 @@ function SessionActionsMenu({
             >
               <GitFork className="size-4" /> Fork session…
             </MenuItem>
-            <MenuItem
-              destructive
-              disabled={stopping}
-              onClick={() => {
-                onStop();
-                setOpen(false);
-              }}
-            >
-              {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
-              {running ? "Stop session" : "Close session"}
-            </MenuItem>
+            {/* Closed: the only thing left to do to this session is start it again. */}
+            {closed ? (
+              <MenuItem
+                onClick={() => {
+                  onReopen();
+                  setOpen(false);
+                }}
+              >
+                <RotateCcw className="size-4" /> Reopen session
+              </MenuItem>
+            ) : (
+              <MenuItem
+                destructive
+                disabled={stopping}
+                onClick={() => {
+                  onStop();
+                  setOpen(false);
+                }}
+              >
+                {stopping ? <Loader2 className="size-4 animate-spin" /> : <Square className="size-4" />}
+                {running ? "Stop session" : "Close session"}
+              </MenuItem>
+            )}
           </div>
           <div className="max-h-64 overflow-auto border-t p-3">
             <SessionInfoList session={session} nowTick={nowTick} />

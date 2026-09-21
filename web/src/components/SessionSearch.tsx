@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
-import { presetFromSession, recentLabel, type RecentSession } from "@/lib/recentSessions";
+import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionColor } from "@/lib/sessionColors";
 import {
   Dialog,
@@ -11,7 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Radio, RotateCcw, Search, Terminal } from "lucide-react";
+import { Radio, Search, Terminal } from "lucide-react";
 
 /** Split a query into lowercase terms; every term must match somewhere for a row to be a hit. */
 function tokenize(query: string): string[] {
@@ -78,15 +78,15 @@ function SectionLabel({ children, count }: { children: ReactNode; count: number 
 /**
  * Search popup over the sidebar's two lists: live sessions and recent launch presets. Matching is a
  * plain all-terms substring search over exactly the fields each row shows, so every hit is visibly
- * explained by the highlighting. Activating a hit opens the session, or — for a Restorable entry and
- * for a recent preset — opens the New Session dialog prefilled from it, and closes the popup.
+ * explained by the highlighting. Activating a hit opens the session — a closed one included, on its
+ * files, with the button that reopens it where the terminal would be — or, for a recent preset,
+ * opens the New Session dialog prefilled from it. Either way the popup closes.
  */
 export function SessionSearchDialog({
   sessions,
   recents,
   activeId,
   onSelect,
-  onReopen,
   onReuse,
   onClose,
 }: {
@@ -94,8 +94,6 @@ export function SessionSearchDialog({
   recents: RecentSession[];
   activeId: string | null;
   onSelect: (id: string) => void;
-  /** Relaunch a Restorable entry via the create dialog, so it can be adjusted before it starts. */
-  onReopen: (s: SessionInfo, preset: RecentSession) => void;
   onReuse: (r: RecentSession) => void;
   onClose: () => void;
 }) {
@@ -136,9 +134,6 @@ export function SessionSearchDialog({
   function activate(h: Hit) {
     onClose();
     if (h.kind === "recent") onReuse(h.recent);
-    // Restorable sessions have no terminal to open — relaunching is the only way in, so hand them to
-    // the create dialog prefilled (its conversation id included, so "continue" resumes this one).
-    else if (h.session.state === "Restorable") onReopen(h.session, presetFromSession(h.session));
     else onSelect(h.session.id);
   }
 
@@ -208,7 +203,7 @@ export function SessionSearchDialog({
                     onMouseEnter={() => setActive(i)}
                     onClick={() => activate({ kind: "session", session: s })}
                     className={rowClass(i)}
-                    title={restorable ? "Adjust and reopen this session" : "Open this session"}
+                    title={restorable ? "Open this closed session — files, diff, and Reopen" : "Open this session"}
                   >
                     <div className="flex items-center gap-1.5">
                       <span
@@ -235,9 +230,12 @@ export function SessionSearchDialog({
                           current
                         </Badge>
                       )}
+                      {/* What the row is, not what activating it does — that is "open", the same as
+                          every other row here. The word matches the badge the session header shows
+                          and the sidebar's own tooltip, so one state has one name. */}
                       {restorable && (
-                        <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-                          <RotateCcw className="size-3" /> reopen
+                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                          closed
                         </span>
                       )}
                     </div>

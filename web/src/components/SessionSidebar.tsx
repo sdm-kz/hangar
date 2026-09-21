@@ -1658,13 +1658,7 @@ export function SessionSidebar({
       else if (kind === "fold") toggleGroup(id);
       else if (kind === "session") toggleForks(id);
     },
-    onActivateFile: (key) => {
-      const id = parseNavKey(key).id;
-      // A restorable session can't be opened in place — its row ignores clicks too, and reopening it
-      // is a real action that stays behind the menu entry saying so.
-      const s = sessions.find((x) => x.id === id);
-      if (s && s.state !== "Restorable") onSelect(id);
-    },
+    onActivateFile: (key) => onSelect(parseNavKey(key).id),
   });
 
   // Sessions shown after applying the active/all filter ("active" = running only). Recents aren't
@@ -2227,7 +2221,6 @@ export function SessionSidebar({
       : undefined;
     const activity = sessionActivity(s, activityIds);
     const detail = activity ? activityDetail(activity, s.id, activityIds) : null;
-    // Restorable sessions can't be opened in place (they need reopening first), so no new-tab either.
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Enough of a step that a fork reads as sitting under its parent at a glance, but capped after
     // a few levels: a fork of a fork of a fork would otherwise squeeze the name out of a narrow
@@ -2258,29 +2251,27 @@ export function SessionSidebar({
           depth: base + depth,
         })}
         style={{ ...(depth > 0 ? { marginLeft: indent } : null), ...colorEdge }}
-        onClick={
-          restorable
-            ? undefined
-            : (e) => (e.ctrlKey || e.metaKey ? openInNewTab() : onSelect(s.id))
-        }
+        onClick={(e) => (e.ctrlKey || e.metaKey ? openInNewTab() : onSelect(s.id))}
         // Middle-click opens the session in a new tab; suppress the OS autoscroll it would otherwise start.
-        onMouseDown={restorable ? undefined : (e) => e.button === 1 && e.preventDefault()}
-        onAuxClick={restorable ? undefined : (e) => e.button === 1 && openInNewTab()}
+        onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+        onAuxClick={(e) => e.button === 1 && openInNewTab()}
         // With no path line of its own (grouped mode, or under a project), the folder still has to be
         // recoverable — a project can span several, and "which repo is this one in" is a fair question.
-        title={
-          restorable
-            ? undefined
-            : [detail, showPath ? null : s.workingDirectory, "Middle-click or Ctrl/⌘-click to open in a new tab"]
-                .filter(Boolean)
-                .join("\n")
-        }
+        title={[
+          detail,
+          showPath ? null : s.workingDirectory,
+          restorable ? "Closed — opens on its files; reopen to get the terminal back" : null,
+          "Middle-click or Ctrl/⌘-click to open in a new tab",
+        ]
+          .filter(Boolean)
+          .join("\n")}
         className={cn(
-          "group relative flex flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-2 text-sm hover:bg-accent",
+          "group relative flex cursor-pointer flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-2 text-sm hover:bg-accent",
           // Dim a closed session by colour, not opacity: opacity on the row would make its
-          // actions menu translucent too, letting the rows underneath show through it.
-          restorable ? "text-muted-foreground" : "cursor-pointer",
-          activeId === s.id && !restorable && "border-border bg-accent",
+          // actions menu translucent too, letting the rows underneath show through it. It still
+          // opens — the dimming says there is nothing running in it, not that it is out of reach.
+          restorable && "text-muted-foreground",
+          activeId === s.id && "border-border bg-accent",
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
           !restorable && activityIds.waiting.has(s.id) && "ring-1 ring-amber-400/70",
           // Softer than waiting's ring, and deliberately so: one is a request, the other a receipt.

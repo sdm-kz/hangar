@@ -660,6 +660,16 @@ public sealed class SessionManager : IDisposable
         return s.ToInfo(ConversationId(s));
     }
 
+    /// <summary>
+    /// The same lookup, widened to a closed session from a previous run. What every read of a
+    /// session's <em>folder</em> asks with — its files, its git status, the repo's pull requests —
+    /// because none of that needs a process: the work is on disk and stays there once the session
+    /// that did it has gone. <see cref="Get"/> stays the narrower question, for the things that do
+    /// need something alive to talk to.
+    /// </summary>
+    public SessionInfo? GetAny(string id) =>
+        Get(id) ?? (_restorable.TryGetValue(id, out var p) ? ClaudeSession.RestorableInfo(p) : null);
+
     /// <summary>Filesystem change counter for a session's working directory (null if unknown).</summary>
     public long? FsVersion(string id) => _sessions.TryGetValue(id, out var s) ? s.FsVersion : null;
 

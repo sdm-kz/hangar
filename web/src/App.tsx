@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
-import { type RecentSession } from "@/lib/recentSessions";
+import { presetFromSession, type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
@@ -177,13 +177,13 @@ export function App() {
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
     setSessions(list);
-    // Keep a valid current selection (e.g. restored from the URL); otherwise auto-select the
-    // first live session, never a Restorable placeholder (it has no terminal yet). "Valid" has to
-    // mean live, not merely present: a session stopped from its own tab stays in the list as a
-    // closed row, and leaving the selection on it would strand the main area on the empty state —
-    // with the row unhighlighted and ?session= still naming it, so a refresh landed there too.
+    // Keep a valid current selection (e.g. restored from the URL) — a closed session included: it
+    // opens on its files and its diff, with the terminal replaced by the button that reopens it, so
+    // a session stopped from its own tab stays where it was instead of throwing the main area back
+    // to the empty state. Auto-selecting one is still wrong, though: landing on a dead session with
+    // nothing running in it is not where anyone wants to arrive, so that falls to the first live one.
     setActiveId((cur) =>
-      cur && list.some((s) => s.id === cur && s.state !== "Restorable")
+      cur && list.some((s) => s.id === cur)
         ? cur
         : list.find((s) => s.state !== "Restorable")?.id ?? null
     );
@@ -578,8 +578,10 @@ export function App() {
     if (!first) loadProjects();
   }, [auth, projectsRev, loadProjects]);
 
-  // A Restorable entry has no live terminal, so never treat it as the active view.
-  const active = sessions.find((s) => s.id === activeId && s.state !== "Restorable") ?? null;
+  // A closed session is a view like any other — the folder it worked in outlives the process, and
+  // that is what the Files tree, the diff and the reviews are reading. Only the terminal is missing,
+  // and SessionView puts the Reopen button where it would have been.
+  const active = sessions.find((s) => s.id === activeId) ?? null;
   // The session the fork popup is open for, and — for the active session's header link — the one it
   // was forked from. Both resolved from the live list, so they stay current (or drop to null once the
   // session is gone).
@@ -1058,6 +1060,8 @@ export function App() {
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}
             onStopped={(info) => setSessions((prev) => prev.map((s) => (s.id === info.id ? info : s)))}
+            onReopen={() => void onRestore(active.id)}
+            onReopenWithOptions={() => reopenAsNew(active, presetFromSession(active))}
             onRename={onRename}
             onTerminalRename={onTerminalRename}
             onTerminalColor={onTerminalColor}
@@ -1093,7 +1097,6 @@ export function App() {
             selectSession(id);
             setSidebarOpen(false);
           }}
-          onReopen={reopenAsNew}
           onReuse={reuseRecent}
           onClose={() => setSearching(false)}
         />
