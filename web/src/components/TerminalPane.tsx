@@ -1224,7 +1224,7 @@ export const TerminalPane = forwardRef<
           already backing off behind this chip; the button is the escape hatch for when it gave up
           or you'd rather not wait — the same effect as the page reload people did by hand. */}
       {(connection === "closed" || connection === "reconnecting") && (
-        <div className="absolute inset-x-0 bottom-4 flex justify-center">
+        <div className="absolute inset-x-0 bottom-4 z-10 flex justify-center">
           <button
             type="button"
             onClick={() => reattach(true)}
@@ -1239,14 +1239,21 @@ export const TerminalPane = forwardRef<
       )}
       {/* Scrolled off the live tail: one tap back to the bottom, instead of flicking through
           scrollback. Sits in the corner, clear of the centered reconnect chip — image attach lives
-          in the postponed panel's bar, next to Compose. */}
+          in the postponed panel's bar, next to Compose.
+
+          z-10 like the controls above, and for the same reason: xterm's link layer is a canvas at
+          z-index 2 over the whole screen area, so anything laid on the pane without a z-index of its
+          own is under it. The canvas is transparent, so the button still LOOKS right — it just hands
+          the click to the terminal. And since that canvas is only as wide as cols × cell, whether it
+          reaches this corner depends on the leftover slack at the pane's right edge, which is why it
+          worked often enough to look like the button was merely flaky. */}
       {scrolledUp && (
         <button
           type="button"
           onClick={() => termRef.current?.scrollToBottom()}
           title="Jump to the latest output"
           aria-label="Jump to the latest output"
-          className="absolute bottom-4 right-4 rounded-full border bg-background/90 p-3 text-muted-foreground shadow-md backdrop-blur transition hover:text-foreground"
+          className="absolute bottom-4 right-4 z-10 rounded-full border bg-background/90 p-3 text-muted-foreground shadow-md backdrop-blur transition hover:text-foreground"
         >
           <ArrowDown className="size-5" />
         </button>
