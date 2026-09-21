@@ -561,6 +561,23 @@ export const TerminalPane = forwardRef<
       // What fit() does for itself after resizing, in public API: the renderer caches the grid it
       // last drew, and a cell it believes unchanged is not redrawn at its new place.
       term.refresh(0, term.rows - 1);
+      // Spend the "ignore the next scroll event" flag xterm's viewport may have been left holding.
+      //
+      // It arms that flag and then re-pins the scrollbar to the buffer (`scrollTop = ydisp * rowHeight`)
+      // to keep its own sync from looking like a scroll by the user. The flag is only spent when that
+      // assignment actually fires a scroll event -- and after a resize the value it wants is regularly
+      // clamped by the browser to the one already there, so no event comes and the flag sits armed.
+      // The next wheel or scrollbar drag is then eaten: the bar slides, the terminal does not move,
+      // and it takes a second gesture to scroll at all. Since the pane resizes for the sidebar, the
+      // split divider, the postponed panel and the window itself, that first dead gesture is easy to
+      // meet and reads as scrolling being unreliable.
+      //
+      // One synthetic scroll event spends it. With the flag down this is a no-op: the handler just
+      // re-reads a position that already agrees with the buffer. Two frames out, because the re-pin
+      // runs on xterm's own animation frame and has to have happened first.
+      const spendIgnoredScroll = () =>
+        host.querySelector(".xterm-viewport")?.dispatchEvent(new Event("scroll"));
+      requestAnimationFrame(() => requestAnimationFrame(spendIgnoredScroll));
       // Narrowing is the one direction that can leave strays: output already on the wire when the
       // grid shrank was drawn for the old width, and it lands here too wide and wraps. The child has
       // no reason to draw those rows again — its own resize came and went before this frame arrived —
