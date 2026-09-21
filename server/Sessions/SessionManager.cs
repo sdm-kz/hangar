@@ -813,10 +813,14 @@ public sealed class SessionManager : IDisposable
     /// </summary>
     /// <param name="adopt">
     /// Whether a session launched under another (<see cref="CreateSessionRequest.NestedUnderId"/>)
-    /// should take its host's place in the list — its project, and the virtual folder inside it. True
-    /// for a launch, which is someone asking for the two to be drawn together; false for
-    /// <see cref="RestoreAsync"/>, which relaunches an old session with the same host and must not
-    /// re-claim a folder the user has since taken out of that project.
+    /// should have its folder linked into its host's project. True for a launch, which is someone
+    /// asking for the two to be drawn together; false for <see cref="RestoreAsync"/>, which relaunches
+    /// an old session with the same host and must not re-claim a folder the user has since taken out
+    /// of that project.
+    ///
+    /// <para>Only the project link. The virtual folder inside it is filed either way — see below: a
+    /// reopen needs it as much as a launch does, and the guard there already leaves alone a session
+    /// that has a box of its own.</para>
     /// </param>
     public async Task<SessionInfo> CreateAsync(
         CreateSessionRequest req, bool adopt = true, CancellationToken ct = default)
@@ -868,7 +872,7 @@ public sealed class SessionManager : IDisposable
         // anywhere its host is not, it comes out at the top level of that other list and the nesting
         // the caller asked for is simply gone. So it takes its host's place in the list, for the same
         // reason a fork does — see ForkAsync — which is two things: the project, and the box inside it.
-        if (req.NestedUnderId is { } host && adopt)
+        if (req.NestedUnderId is { } host)
         {
             // The project first, because a virtual folder only applies inside the project that owns it
             // (see ProjectMembership.GroupFor), so filing the session anywhere is pointless until this
@@ -881,7 +885,11 @@ public sealed class SessionManager : IDisposable
             // Only a folder no project claims. One that is already in a project stays there: a link is
             // a statement about the folder rather than about this session, so taking it would re-file
             // every other session that runs there — including ones this launch has nothing to do with.
-            if (ProjectMembership.ForDirectory(_projects.List(), fullDir) is null
+            //
+            // Not on a reopen (see `adopt`): that relaunches a session that has been sitting closed,
+            // and a folder someone has taken out of this project since is not ours to take back.
+            if (adopt
+                && ProjectMembership.ForDirectory(_projects.List(), fullDir) is null
                 && FolderOf(host) is { } hostDir
                 && ProjectMembership.ForDirectory(_projects.List(), hostDir) is { } hostProject)
             {
@@ -892,9 +900,15 @@ public sealed class SessionManager : IDisposable
             }
 
             // Then the box, if the host is in one — and only when this session isn't already filed
-            // somewhere itself. That is not hypothetical for a launch: one that resumes a
-            // conversation knows its id from the start, and a conversation filed by hand stays filed
-            // under that id, so a child that reopens it belongs in the box it is already in.
+            // somewhere itself. That is not hypothetical: a session that resumes a conversation knows
+            // its id from the start, and a conversation filed by hand stays filed under that id, so a
+            // child that reopens it belongs in the box it is already in.
+            //
+            // Unlike the project link above, this runs on a reopen too. The membership of a session
+            // that never reported a conversation id was written under its session id, and a reopen
+            // mints a new one — so there is nothing to inherit and nothing that says "moved out",
+            // and skipping this would drop the reopened child out of its host's box and, with it,
+            // out from under the host entirely (a row is only drawn under something in its own list).
             if (GroupIdOf(ConversationId(session), session.Id) is null
                 && GroupIdOf(host) is { } hostGroup
                 && SetGroup(new[] { session.Id }, hostGroup) is not null)
@@ -1072,8 +1086,8 @@ public sealed class SessionManager : IDisposable
                 ParentSessionId: p.ParentSessionId,
                 ParentName: p.ParentName,
                 NestedUnderId: p.NestedUnderId),
-                // Reopening is not a launch: wherever this session was put since, that is where it
-                // goes back to. See the parameter's remarks.
+                // Reopening is not a launch: a folder taken out of this project since is left where
+                // the user put it. The box still follows — see the parameter's remarks.
                 adopt: false, ct);
             // The reopened session has a brand-new id, so anything forked from the old one would be
             // orphaned. Move those links over to the replacement.
