@@ -7,6 +7,7 @@ import { highlightLines, type CodeToken } from "@/lib/highlight";
 import { allRows, oneSidedAs, parseUnifiedDiff, type DiffRow } from "@/lib/unifiedDiff";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./Markdown";
+import { usePersistentZoom, ZOOM_LEVELS } from "./ZoomControls";
 import {
   AlertTriangle,
   Check,
@@ -25,6 +26,8 @@ import {
   RefreshCw,
   SquareArrowOutUpRight,
   WrapText,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 
 // Whether the file sidebar is showing, remembered per browser: it's a use of screen width, like the
@@ -52,8 +55,13 @@ const SHARE_MIN = 0.15;
 const SHARE_MAX = 0.85;
 const SHARE_DEFAULT = 0.5;
 const SHARE_KEY = "claudeweb.prDiffSplit";
-// Width of a line-number column, in pixels rather than rem so the drag can do arithmetic with it.
-const NUM_COL = 52;
+// Code geometry at 100%, in pixels rather than rem so the zoom and the divider drag can both do
+// arithmetic with it. Everything the grid draws is one of these times the zoom; the file headers and
+// the sidebar are not, because zoom here is for reading the code, not for resizing the furniture.
+const NUM_COL = 52; // a line-number column, wide enough for five digits
+const CODE_FS = 12; // matches text-xs, the size these cells used before they could be zoomed
+const NUM_FS = 11;
+const LINE_H = 23.2; // 1.45rem
 // A diff this big is not read top to bottom, and drawing every row of every such file on open would
 // cost seconds. Those files arrive collapsed instead, one click from being read. Both a row count and
 // a size, because they catch different things: a long file, and a generated one whose "two changed
@@ -146,6 +154,12 @@ export function PullRequestView({
   const [wrap, setWrap] = useState(readWrap);
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [share, setShare] = useState(readShare);
+  // Reading size for the code itself. Shares the app's zoom stops and its storage convention, under
+  // a key of its own so a review's size is not whatever the last file preview was left at.
+  const [zoom, setZoom] = usePersistentZoom("prDiff");
+  // The line-number column, at this zoom. The grid and the divider both measure against it, so it is
+  // worked out once here rather than in each of them.
+  const numCol = Math.round(NUM_COL * zoom);
   // Files the reader has collapsed or expanded by hand, by path. Everything not in here follows the
   // default, which is "open unless it is enormous" — so a re-fetch doesn't undo what was folded away.
   const [folded, setFolded] = useState<Record<string, boolean>>({});
@@ -234,7 +248,7 @@ export function PullRequestView({
     const startX = e.clientX;
     const startShare = readShare();
     // The width the two code columns divide between them: the whole row, less the two number columns.
-    const usable = (e.currentTarget.parentElement?.clientWidth ?? 0) - 2 * NUM_COL;
+    const usable = (e.currentTarget.parentElement?.clientWidth ?? 0) - 2 * numCol;
     if (usable <= 0) return;
     let next = startShare;
     const onMove = (ev: PointerEvent) => {
@@ -256,7 +270,7 @@ export function PullRequestView({
     window.addEventListener("pointerup", onUp);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
-  }, []);
+  }, [numCol]);
 
   const resetShare = useCallback(() => {
     setShare(SHARE_DEFAULT);
@@ -266,6 +280,15 @@ export function PullRequestView({
       /* as above */
     }
   }, []);
+
+  // Move one stop along the app's shared zoom scale, stopping at either end.
+  const stepZoom = useCallback(
+    (dir: 1 | -1) => {
+      const i = ZOOM_LEVELS.indexOf(zoom) + dir;
+      setZoom(ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, i))]);
+    },
+    [zoom, setZoom]
+  );
 
   const toggleWrap = useCallback(() => {
     setWrap((on) => {
@@ -356,6 +379,35 @@ export function PullRequestView({
         </div>
         {files.length > 0 && (
           <div className="flex shrink-0 items-center">
+            {/* Reading size for the code. The percentage resets, the way it does on every other
+                zoomed view in the app — and it is the only label here, so it goes on narrow panes. */}
+            <button
+              type="button"
+              onClick={() => stepZoom(-1)}
+              disabled={zoom === ZOOM_LEVELS[0]}
+              title="Make the code smaller"
+              className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              <ZoomOut className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoom(1)}
+              title="Reset the code to 100%"
+              className="mt-0.5 hidden min-w-10 rounded px-1 py-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground sm:block"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              type="button"
+              onClick={() => stepZoom(1)}
+              disabled={zoom === ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}
+              title="Make the code bigger"
+              className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              <ZoomIn className="size-4" />
+            </button>
+            <span aria-hidden className="mx-1 h-4 w-px bg-border" />
             <button
               type="button"
               onClick={() => setAll(false)}
@@ -513,6 +565,8 @@ export function PullRequestView({
                   file={f}
                   open={isOpen(f)}
                   wrap={wrap}
+                  zoom={zoom}
+                  numCol={numCol}
                   share={share}
                   onShareResize={startShareResize}
                   onShareReset={resetShare}
@@ -541,6 +595,8 @@ function FileDiff({
   file,
   open,
   wrap,
+  zoom,
+  numCol,
   share,
   onShareResize,
   onShareReset,
@@ -557,6 +613,9 @@ function FileDiff({
   open: boolean;
   /** Long lines wrap rather than running off to the right — see WRAP_KEY. */
   wrap: boolean;
+  /** Reading size for the code, and the line-number column width that goes with it. */
+  zoom: number;
+  numCol: number;
   /** How much of the width the old side takes, 0..1 — shared by every file (see SHARE_KEY). */
   share: number;
   onShareResize: (e: React.PointerEvent) => void;
@@ -744,7 +803,7 @@ function FileDiff({
         ) : contentError ? (
           <div className="p-4 text-sm text-muted-foreground">{contentError}</div>
         ) : (
-          <FileListing path={file.path} text={content ?? ""} wrap={wrap} />
+          <FileListing path={file.path} text={content ?? ""} wrap={wrap} zoom={zoom} numCol={numCol} />
         )
       ) : open ? (
         file.binary ? (
@@ -760,11 +819,13 @@ function FileDiff({
             {file.status === "R" ? "Renamed with no other change." : "No changes to show."}
           </div>
         ) : side ? (
-          <OneSided hunks={hunks} side={side} wrap={wrap} />
+          <OneSided hunks={hunks} side={side} wrap={wrap} zoom={zoom} numCol={numCol} />
         ) : (
           <SideBySide
             hunks={hunks}
             wrap={wrap}
+            zoom={zoom}
+            numCol={numCol}
             share={share}
             onResize={onShareResize}
             onReset={onShareReset}
@@ -782,9 +843,20 @@ function FileDiff({
 }
 
 // Grid geometry, shared by both views so their line numbers line up down the page.
+// The sizes come from variables the grid sets (see codeVars), so one number changes the whole of a
+// file's text and nothing else on the page moves with it.
 const NUM_CELL =
-  "select-none px-2 text-right font-mono text-[11px] leading-[1.45rem] text-muted-foreground/70";
-const CODE_CELL = "px-2 font-mono text-xs leading-[1.45rem]";
+  "select-none px-2 text-right font-mono text-[length:var(--num-fs)] leading-[var(--line-h)] text-muted-foreground/70";
+const CODE_CELL = "px-2 font-mono text-[length:var(--code-fs)] leading-[var(--line-h)]";
+
+/** The type sizes a zoom level works out to, as the variables the cells above read. */
+function codeVars(zoom: number): React.CSSProperties {
+  return {
+    "--code-fs": `${CODE_FS * zoom}px`,
+    "--num-fs": `${NUM_FS * zoom}px`,
+    "--line-h": `${LINE_H * zoom}px`,
+  } as React.CSSProperties;
+}
 
 /**
  * What a line too long for its column does, and how wide the grid is as a result.
@@ -816,11 +888,11 @@ function lineMode(wrap: boolean) {
  * the pane it was told to fit. A zero floor lets the ratio decide and lets the text wrap, which is
  * the whole premise of the mode.
  */
-function splitColumns(wrap: boolean, share: number): string {
+function splitColumns(wrap: boolean, share: number, numCol: number): string {
   const [oldCol, newCol] = wrap
     ? [`minmax(0, ${share}fr)`, `minmax(0, ${1 - share}fr)`]
     : ["1fr", "1fr"];
-  return `${NUM_COL}px ${oldCol} ${NUM_COL}px ${newCol}`;
+  return `${numCol}px ${oldCol} ${numCol}px ${newCol}`;
 }
 
 /**
@@ -864,12 +936,16 @@ function tint(kind: "add" | "del" | "none" | "gap"): string {
 function SideBySide({
   hunks,
   wrap,
+  zoom,
+  numCol,
   share,
   onResize,
   onReset,
 }: {
   hunks: ShownHunk[];
   wrap: boolean;
+  zoom: number;
+  numCol: number;
   share: number;
   onResize: (e: React.PointerEvent) => void;
   onReset: () => void;
@@ -885,12 +961,12 @@ function SideBySide({
           onPointerDown={onResize}
           onDoubleClick={onReset}
           title="Drag to resize · double-click to reset"
-          style={{ left: `calc(${NUM_COL}px + ${share} * (100% - ${2 * NUM_COL}px))` }}
+          style={{ left: `calc(${numCol}px + ${share} * (100% - ${2 * numCol}px))` }}
           className="absolute inset-y-0 z-[5] -ml-[3px] w-1.5 cursor-col-resize bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30"
         />
       )}
       <div
-        style={{ gridTemplateColumns: splitColumns(wrap, share) }}
+        style={{ ...codeVars(zoom), gridTemplateColumns: splitColumns(wrap, share, numCol) }}
         className={cn("grid", mode.grid)}
       >
         {hunks.map((hunk, h) => (
@@ -927,13 +1003,25 @@ function SideBySide({
  * against, so the second column would be a full-height empty gutter beside the only thing worth
  * reading — the content itself, which is what this shows.
  */
-function OneSided({ hunks, side, wrap }: { hunks: ShownHunk[]; side: "add" | "del"; wrap: boolean }) {
+function OneSided({
+  hunks,
+  side,
+  wrap,
+  zoom,
+  numCol,
+}: {
+  hunks: ShownHunk[];
+  side: "add" | "del";
+  wrap: boolean;
+  zoom: number;
+  numCol: number;
+}) {
   const rows = allRows(hunks);
   const mode = lineMode(wrap);
   return (
     <div className={mode.scroll}>
       <div
-        style={{ gridTemplateColumns: `${NUM_COL}px ${wrap ? "minmax(0, 1fr)" : "1fr"}` }}
+        style={{ ...codeVars(zoom), gridTemplateColumns: `${numCol}px ${wrap ? "minmax(0, 1fr)" : "1fr"}` }}
         className={cn("grid", mode.grid)}
       >
         {rows.map((row, i) => {
@@ -960,7 +1048,19 @@ function OneSided({ hunks, side, wrap }: { hunks: ShownHunk[]; side: "add" | "de
  * grid the one-sided view uses, so the two read the same way — what differs is that this is the file
  * at a commit, and the numbers run from one to the end rather than from wherever a hunk started.
  */
-function FileListing({ path, text, wrap }: { path: string; text: string; wrap: boolean }) {
+function FileListing({
+  path,
+  text,
+  wrap,
+  zoom,
+  numCol,
+}: {
+  path: string;
+  text: string;
+  wrap: boolean;
+  zoom: number;
+  numCol: number;
+}) {
   const mode = lineMode(wrap);
   // One highlight pass over the whole file — the one case where nothing is missing from it, so a
   // block comment or a long string is read exactly as a compiler would read it.
@@ -978,7 +1078,7 @@ function FileListing({ path, text, wrap }: { path: string; text: string; wrap: b
   return (
     <div className={mode.scroll}>
       <div
-        style={{ gridTemplateColumns: `${NUM_COL}px ${wrap ? "minmax(0, 1fr)" : "1fr"}` }}
+        style={{ ...codeVars(zoom), gridTemplateColumns: `${numCol}px ${wrap ? "minmax(0, 1fr)" : "1fr"}` }}
         className={cn("grid", mode.grid)}
       >
         {lines.map((line, i) => (

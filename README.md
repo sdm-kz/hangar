@@ -175,6 +175,10 @@ The web UI is a **session manager with a full terminal**:
   content is drawn as a single full-width column, and a deleted file the same way round. Long lines
   wrap by default, because this pane is often half a screen wide rather than a whole one; the button
   in the header turns that off for GitHub's own behaviour, where the two halves scroll together.
+  The **−/+** beside it sizes the code, on the same stops every other zoomable view in the app uses,
+  and the percentage resets it. It sizes the code and nothing else: the file paths, the sidebar and
+  the header stay where they are, because the point is reading a diff on a laptop screen rather than
+  rescaling the furniture around it.
 
   Both are **syntax highlighted**, in the same palette the file preview uses. Each side of a diff is
   coloured as one text rather than a line at a time, so a comment or a string running over several
