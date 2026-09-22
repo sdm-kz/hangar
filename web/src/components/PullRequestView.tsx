@@ -12,6 +12,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Copy,
   GitMerge,
   GitPullRequest,
@@ -353,20 +355,22 @@ export function PullRequestView({
           )}
         </div>
         {files.length > 0 && (
-          <div className="flex shrink-0 items-center gap-1 text-xs">
+          <div className="flex shrink-0 items-center">
             <button
               type="button"
               onClick={() => setAll(false)}
-              className="rounded px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Collapse every file"
+              className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
             >
-              Collapse all
+              <ChevronsDownUp className="size-4" />
             </button>
             <button
               type="button"
               onClick={() => setAll(true)}
-              className="rounded px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Expand every file"
+              className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
             >
-              Expand all
+              <ChevronsUpDown className="size-4" />
             </button>
           </div>
         )}
