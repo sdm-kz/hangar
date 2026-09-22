@@ -253,20 +253,26 @@ public sealed class SessionManager : IDisposable
     /// <summary>
     /// File sessions into a virtual folder, or (with a null <paramref name="groupId"/>) take them out
     /// of the ones holding them. Keyed by conversation so the grouping survives a reopen, exactly as a
-    /// pin does. Returns the updated project list, or null when none of the ids is a session we know,
-    /// or the group is one of them cannot go in.
+    /// pin does. Returns the updated project list, or null when not one of the ids turned out to be a
+    /// session that could take the group.
     ///
-    /// <para>Several at once because a branch of forks is filed as a unit — see
-    /// <see cref="ProjectStore.SetSessionGroup"/>. Ids that name no session are skipped rather than
-    /// failing the move: the caller worked from a session list that may have lost a row since, and
-    /// filing the rest is better than a drop that silently does nothing. A session that cannot take
-    /// the group is a different matter and refuses the whole call — see below.</para>
+    /// <para>Several at once because a branch is filed as a unit — see
+    /// <see cref="ProjectStore.SetSessionGroup"/>. An id is skipped, not refused, when it names no
+    /// session we know or names one this group is not open to: the caller is moving a row and the
+    /// branch hanging off it, and the rows that can go where it is going should go there.</para>
     ///
     /// <para>The project check is here rather than in the store because it is the manager that knows
     /// where a session runs. It is not a formality: a group only ever applies inside the project that
     /// owns the folder (see <see cref="ProjectMembership.GroupFor"/>), so filing a session into some other
     /// project's group would clear the membership it had and write one that can never be read back —
-    /// the session would come out ungrouped and the caller would have been told it worked.</para>
+    /// the session would come out ungrouped and the caller would have been told it worked. Skipping
+    /// writes nothing for that session, so it simply stays in the box it was already in.</para>
+    ///
+    /// <para>Skipped rather than refused because a branch is not required to live in one project. A
+    /// session put under another by hand brings its own folder, and that folder can belong somewhere
+    /// else entirely — which is the ordinary shape of "look into this other repo from here", not a
+    /// mistake. Failing the whole call over that one row meant the menu's own group did nothing at
+    /// all, silently, for every other row in the branch.</para>
     /// </summary>
     public IReadOnlyList<Project>? SetGroup(IReadOnlyList<string> ids, string? groupId)
     {
@@ -282,7 +288,7 @@ public sealed class SessionManager : IDisposable
             if (groupId is not null)
             {
                 var owner = ProjectMembership.ForDirectory(_projects.List(), dir);
-                if (owner is null || !owner.Groups.Any(g => g.Id == groupId)) return null;
+                if (owner is null || !owner.Groups.Any(g => g.Id == groupId)) continue;
             }
 
             keys.Add(GroupKeys(id));
