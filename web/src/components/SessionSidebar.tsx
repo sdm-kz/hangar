@@ -2529,7 +2529,11 @@ export function SessionSidebar({
     // Depth of the header above these rows in the keyboard tree — see renderRow.
     base = 0
   ) => (
-    <div className={cn("mt-0.5 space-y-0.5", indent)}>
+    // No gap between the rows. The activity ring is drawn inside the row (see renderRow), so what
+    // stands between two ringed neighbours is the pair of transparent borders they already carry --
+    // enough to read as two boxes, and the tightest they go before the lines meet again. Any gap
+    // here is added to that, and two finished sessions end up a visible step apart.
+    <div className={cn("mt-0.5", indent)}>
       {/* A fork always shares its parent's folder, so nesting inside the group is the same
           tree the flat list shows — just scoped to this folder. */}
       {g.nodes.map((n) => {
@@ -2889,7 +2893,9 @@ export function SessionSidebar({
             // 5px, not 6: a row carries a 1px transparent border (it turns solid when selected)
             // and a header does not, so the row needs one pixel less to put its chevron in the
             // same column as a virtual folder's.
-            bodyClassName="space-y-0.5 pl-[15px]"
+            // No row gap, for the reason renderGroupRows gives: the rings are inside the rows and
+            // the borders alone are what stands between two of them.
+            bodyClassName="pl-[15px]"
             countOf={(ss, project) =>
               ss.length + shownGroups(project).reduce((n, g) => n + g.count, 0)
             }
@@ -2908,7 +2914,7 @@ export function SessionSidebar({
         ) : (
           // Plain flat list: no projects to head it, but the same one arrangeable list underneath —
           // pins float to the top, and everything else keeps the place it was dragged to.
-          <div className="space-y-0.5">{renderFlatSection(null, visibleSessions)}</div>
+          <div>{renderFlatSection(null, visibleSessions)}</div>
         )}
       </div>
       )}
