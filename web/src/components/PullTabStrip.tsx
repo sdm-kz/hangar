@@ -63,8 +63,11 @@ export function PullPicker({
   sessionId,
   enabled,
   onOpen,
+  compact = false,
 }: {
   sessionId: string;
+  /** Icon only — the button sits at the end of a split group's strip, where width is scarce. */
+  compact?: boolean;
   /**
    * Offer the picker at all. False while the folder is not known to be a GitHub repo — reviews
    * opened earlier (or on another device) still have their tabs, which are saved state and stay
@@ -178,20 +181,25 @@ export function PullPicker({
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         className={cn(
-          "flex h-full items-center gap-1.5 border-b-2 border-transparent px-3 text-sm font-medium transition-colors",
+          "flex h-full items-center gap-1.5 border-b-2 border-transparent text-sm font-medium transition-colors",
+          compact ? "px-2" : "px-3",
           menuOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground"
         )}
       >
         <GitPullRequest className="size-4" />
-        <span className="hidden sm:inline">PRs</span>
-        <ChevronDown className="size-3.5" />
+        {!compact && <span className="hidden sm:inline">PRs</span>}
+        {!compact && <ChevronDown className="size-3.5" />}
       </button>
 
       {menuOpen && (
         <div
           role="menu"
-          style={{ maxWidth: room }}
-          className="absolute left-0 top-full z-30 mt-1 flex max-h-[70vh] w-[34rem] flex-col overflow-hidden rounded-md popover-edge bg-popover shadow-md"
+          // Compact, the button ends a strip — the list hangs back to the left from its right edge.
+          style={{ maxWidth: compact ? "calc(100vw - 1rem)" : room }}
+          className={cn(
+            "absolute top-full z-30 mt-1 flex max-h-[70vh] w-[34rem] flex-col overflow-hidden rounded-md popover-edge bg-popover shadow-md",
+            compact ? "right-0" : "left-0"
+          )}
         >
           <div className="flex items-center gap-1 border-b p-1.5">
             {STATES.map((s) => (

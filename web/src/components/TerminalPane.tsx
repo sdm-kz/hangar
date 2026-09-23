@@ -235,6 +235,8 @@ export interface TerminalPaneHandle {
   // Send one message to Claude: the text then each image path (both as bracketed pastes so multi-line
   // content stays literal), followed by a single Enter to submit. Resolves false if the socket closed.
   sendMessage: (msg: { text: string; imagePaths: string[] }) => Promise<boolean>;
+  // Put the keyboard in the terminal — for a group of the split pane taking focus.
+  focus: () => void;
 }
 
 /**
@@ -287,6 +289,11 @@ export const TerminalPane = forwardRef<
 ) {
   const path = socketPath ?? `/hub/sessions/${sessionId}/terminal`;
   const hostRef = useRef<HTMLDivElement>(null);
+  // Read by the paste handler rather than closed over by the terminal's effect: it flips as focus
+  // moves between the groups of a split pane, and as an effect dependency every flip tore the
+  // terminal down and built it again — a dropped socket for moving the mouse to a shell.
+  const imagePasteRef = useRef(imagePaste);
+  imagePasteRef.current = imagePaste;
   // Holds the live terminal socket so the imperative handle can write to it; set inside the socket
   // effect below and nulled on teardown. `null` means "not connected" → sendMessage returns false.
   const wsRef = useRef<WebSocket | null>(null);
@@ -351,6 +358,7 @@ export const TerminalPane = forwardRef<
     ref,
     (): TerminalPaneHandle => ({
       isReady: () => wsRef.current?.readyState === WebSocket.OPEN,
+      focus: () => termRef.current?.focus(),
       sendMessage: async ({ text, imagePaths }) => {
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -788,7 +796,7 @@ export const TerminalPane = forwardRef<
     // Non-image pastes fall through to xterm's normal text handling. Listens on document in the
     // capture phase so it fires before xterm processes the paste, regardless of focus target.
     const onPaste = async (e: ClipboardEvent) => {
-      if (!imagePaste) return;
+      if (!imagePasteRef.current) return;
       // Leave alone any surface that attaches images itself — the postponed pool, the compose popup.
       // This listener is on document in the capture phase, so without the exemption it fires FIRST
       // and pastes the image into the live terminal as well as into the composer being written in,
@@ -1046,7 +1054,7 @@ export const TerminalPane = forwardRef<
         /* nothing left to salvage at unmount */
       }
     };
-  }, [sessionId, path, imagePaste, generation, reattach]);
+  }, [sessionId, path, generation, reattach]);
 
   // Apply a zoom change to the live terminal. Only the font moves; the refit that follows works out
   // how many rows and columns now fit and tells Claude, so the TUI reflows to the new grid instead

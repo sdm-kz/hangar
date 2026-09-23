@@ -72,13 +72,15 @@ export function filesUrl(): string {
 }
 
 /**
- * Deep-link URL for a session, used to open it in a new browser tab. Keeps the current
- * layout params (e.g. `tab`) but drops `file`, which belongs to the previously-open session,
- * and `open`, since the session — not a server file — takes over the main area.
+ * Deep-link URL for a session, used to open it in a new browser tab. Drops `tab` and `file`, which
+ * belong to the previously-open session, and `open`, since the session — not a server file — takes
+ * over the main area.
  */
 export function sessionUrl(id: string): string {
   const p = new URLSearchParams(window.location.search);
   p.set("session", id);
+  // A session's layout is its own (saved with it), so no tab of the one being left rides along.
+  p.delete("tab");
   p.delete("file");
   p.delete("open");
   p.delete("shell");

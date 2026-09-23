@@ -20,16 +20,24 @@ const FLUSH_MS = 400; // coalesce bursts (a scroll settling, a tab open) into on
 // Fields saved for next time but not announced: they move continuously while someone scrolls, and a
 // revision bump for each one would have every other browser re-fetching the bag all the way down the
 // tree. A write of only these goes up quiet (see api.patchSessionUi); mixed with anything else it
-// rides along with the rest.
+// rides along with the rest. The pane's layout is quiet for another reason: another browser only
+// takes it when it opens the session (see useSessionLayout), so announcing every focus change and
+// divider drag would have them all re-fetching for a field they then ignore.
 const QUIET_FIELDS = new Set<keyof SessionUi>([
   "filesScroll",
   "changesScroll",
   "fileScroll",
   "pullScroll",
+  "layout",
 ]);
 
 export interface SessionUi {
-  view?: TabName; // active tab: terminal | files | split | file | shell | link | pull (a tab in the bar)
+  // What the pane showed before it could be split into groups — read once, to lay out a session
+  // that has no `layout` yet the way it was last seen, and never written any more.
+  view?: TabName;
+  // The pane's layout: which groups there are, how they are split, and which tabs each one holds
+  // (see lib/layout.ts). Unchecked here — parseLayout vets it on the way in.
+  layout?: unknown;
   // Id of the shell tab filling the pane in the "shell" view. The shells themselves live on the
   // server (they are processes), so only which one is on screen is remembered here.
   shell?: string;

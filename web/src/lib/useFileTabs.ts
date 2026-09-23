@@ -38,6 +38,13 @@ export function restoreTabs(
   return { tabs: paths.map(fileEntryFromPath), active, preview };
 }
 
+/**
+ * The guard key of the Files explorer's own preview. It previews whichever file is active, so its
+ * edits belong to that file only until the active file changes — which is why it is kept apart from
+ * the per-path guards of the file tabs, and asked about whenever the active file moves.
+ */
+export const EXPLORER_GUARD = "<explorer>";
+
 /** How the active preview reports unsaved edits back up, so closing a tab can guard them. */
 export interface PreviewGuard {
   dirty: boolean;
@@ -75,12 +82,25 @@ export interface FileTabs {
    */
   replace: (tabs: FileEntry[], active: string | null, preview: string | null) => void;
   /**
-   * Ask about unsaved edits in the active tab before navigating away from it. Returns false to
-   * abort. Only the active tab can be edited, so it is the only one that can be dirty.
+   * Ask about unsaved edits in every open file before something replaces them all (a switch to an
+   * unrelated root). Returns false to abort.
    */
   guardActiveEdits: () => Promise<boolean>;
-  /** Where the active preview registers its dirty state (passed straight to FilePreview). */
-  previewGuard: React.MutableRefObject<PreviewGuard>;
+  /**
+   * Ask about unsaved edits in one file before its preview goes away — its tab closing, or another
+   * tab taking its place in the group it is shown in. Returns false to abort.
+   */
+  guardEdits: (key: string, name?: string) => Promise<boolean>;
+  /**
+   * Where a file's preview registers its dirty state (passed straight to FilePreview). One per path:
+   * with the pane split, two files can be on screen — and being edited — at once.
+   */
+  guardFor: (path: string) => React.MutableRefObject<PreviewGuard>;
+  /**
+   * The guard keys holding unsaved edits right now — paths, and EXPLORER_GUARD. Reactive, so a file
+   * tab's preview can stay mounted while it has edits even when it is not on screen.
+   */
+  dirty: ReadonlySet<string>;
 }
 
 /**
@@ -97,7 +117,36 @@ export function useFileTabs(sessionId: string): {
   const [previewPath, setPreviewPath] = useState<string | null>(() => restoreTabs(sessionId, true).preview);
   const selected = useMemo(() => tabs.find((t) => t.path === activePath) ?? null, [tabs, activePath]);
 
-  const previewGuard = useRef<PreviewGuard>({ dirty: false, save: async () => true });
+  // Guards by path, created on first ask and kept for the life of the hook: a preview holds on to the
+  // object it was handed, so a path must always get the same one back.
+  // Each guard reports a change of its dirty flag into `dirty`, so what reads it re-renders.
+  const guards = useRef(new Map<string, React.MutableRefObject<PreviewGuard>>());
+  const [dirty, setDirty] = useState<ReadonlySet<string>>(() => new Set());
+  const guardFor = useCallback((key: string) => {
+    let g = guards.current.get(key);
+    if (!g) {
+      let cur: PreviewGuard = { dirty: false, save: async () => true };
+      g = {
+        get current() {
+          return cur;
+        },
+        set current(next: PreviewGuard) {
+          const changed = next.dirty !== cur.dirty;
+          cur = next;
+          if (changed)
+            setDirty((s) => {
+              const n = new Set(s);
+              if (next.dirty) n.add(key);
+              else n.delete(key);
+              return n;
+            });
+        },
+      };
+      guards.current.set(key, g);
+    }
+    return g;
+  }, []);
+  const isDirty = useCallback((key: string | null) => !!key && !!guards.current.get(key)?.current.dirty, []);
   const [closeGuard, setCloseGuard] = useState<CloseGuardPrompt | null>(null);
   const closeGuardResolve = useRef<((choice: "save" | "discard" | "cancel") => void) | null>(null);
 
@@ -135,16 +184,37 @@ export function useFileTabs(sessionId: string): {
     [persist]
   );
 
+  const guardEdits = useCallback(
+    async (key: string, name?: string): Promise<boolean> => {
+      const guard = guards.current.get(key);
+      if (!guard?.current.dirty) return true;
+      setCloseGuard({ name: name ?? (key.split("/").pop() || key) });
+      const choice = await new Promise<"save" | "discard" | "cancel">((resolve) => {
+        // One prompt at a time: a question still open when another arrives is answered "cancel",
+        // rather than left hanging with whatever was waiting on it.
+        closeGuardResolve.current?.("cancel");
+        closeGuardResolve.current = resolve;
+      });
+      if (choice === "cancel") return false;
+      if (choice === "save") return guard.current.save();
+      // Discarded: the edits are as good as gone, so a second question about the same file on the
+      // way out (the layout asks, then the tab api does) would only ask the same thing twice.
+      guard.current = { ...guard.current, dirty: false };
+      return true;
+    },
+    []
+  );
+
+  // The explorer's preview shows the active file; its edits are that file's.
+  const guardExplorer = useCallback(
+    () => guardEdits(EXPLORER_GUARD, activePath ? activePath.split("/").pop() : undefined),
+    [guardEdits, activePath]
+  );
+
   const guardActiveEdits = useCallback(async (): Promise<boolean> => {
-    if (!previewGuard.current.dirty) return true;
-    setCloseGuard({ name: selected?.name ?? "This file" });
-    const choice = await new Promise<"save" | "discard" | "cancel">((resolve) => {
-      closeGuardResolve.current = resolve;
-    });
-    if (choice === "cancel") return false;
-    if (choice === "save") return previewGuard.current.save();
-    return true; // discard
-  }, [selected]);
+    for (const path of [...guards.current.keys()]) if (!(await guardEdits(path))) return false;
+    return true;
+  }, [guardEdits]);
 
   const settleCloseGuard = useCallback((choice: "save" | "discard" | "cancel") => {
     closeGuardResolve.current?.(choice);
@@ -154,8 +224,13 @@ export function useFileTabs(sessionId: string): {
 
   const open = useCallback(
     async (f: FileEntry, pin: boolean) => {
-      // Switching away from an unsaved edit prompts to save first.
-      if (f.path !== activePath && !(await guardActiveEdits())) return;
+      // Reusing the preview slot replaces the file in it, so unsaved edits there are asked about
+      // first. Nothing else is hidden by opening a file here — which tab the pane shows is the
+      // layout's business, and it guards what it hides.
+      if (!pin && previewPath && previewPath !== f.path && !tabs.some((t) => t.path === f.path) && !(await guardEdits(previewPath)))
+        return;
+      // The explorer's preview follows the active file, so moving it off one with edits asks first.
+      if (f.path !== activePath && !(await guardExplorer())) return;
       const isOpen = tabs.some((t) => t.path === f.path);
       let next: FileEntry[];
       let nextPreview = previewPath;
@@ -171,16 +246,16 @@ export function useFileTabs(sessionId: string): {
       }
       apply(next, f.path, nextPreview);
     },
-    [tabs, activePath, previewPath, apply, guardActiveEdits]
+    [tabs, previewPath, apply, guardExplorer]
   );
 
   const activate = useCallback(
     async (path: string) => {
       if (path === activePath) return;
-      if (!(await guardActiveEdits())) return;
+      if (!(await guardExplorer())) return;
       apply(tabs, path, previewPath);
     },
-    [tabs, activePath, previewPath, apply, guardActiveEdits]
+    [tabs, activePath, previewPath, apply, guardExplorer]
   );
 
   const pin = useCallback(
@@ -197,14 +272,14 @@ export function useFileTabs(sessionId: string): {
     async (path: string) => {
       const idx = tabs.findIndex((t) => t.path === path);
       if (idx === -1) return;
-      // Only the active tab can hold unsaved edits — guard just that case.
-      if (path === activePath && !(await guardActiveEdits())) return;
+      if (!(await guardEdits(path))) return;
+      if (path === activePath && !(await guardExplorer())) return;
       const next = tabs.filter((t) => t.path !== path);
       const nextActive =
         activePath === path ? (next.length ? next[Math.min(idx, next.length - 1)].path : null) : activePath;
       apply(next, nextActive, previewPath === path ? null : previewPath);
     },
-    [tabs, activePath, previewPath, apply, guardActiveEdits]
+    [tabs, activePath, previewPath, apply, guardEdits, guardExplorer]
   );
 
   const closeAll = useCallback(async () => {
@@ -242,12 +317,12 @@ export function useFileTabs(sessionId: string): {
         });
         setPreviewPath(restored.preview);
         setActivePath((cur) =>
-          previewGuard.current.dirty && cur && restored.tabs.some((t) => t.path === cur)
+          (isDirty(cur) || isDirty(EXPLORER_GUARD)) && cur && restored.tabs.some((t) => t.path === cur)
             ? cur
             : restored.active
         );
       }),
-    [sessionId]
+    [sessionId, isDirty]
   );
 
   const fileTabs = useMemo<FileTabs>(
@@ -263,9 +338,11 @@ export function useFileTabs(sessionId: string): {
       closeAll,
       replace: apply,
       guardActiveEdits,
-      previewGuard,
+      guardEdits,
+      guardFor,
+      dirty,
     }),
-    [tabs, activePath, previewPath, selected, open, activate, pin, close, closeAll, apply, guardActiveEdits]
+    [tabs, activePath, previewPath, selected, open, activate, pin, close, closeAll, apply, guardActiveEdits, guardEdits, guardFor, dirty]
   );
 
   return { fileTabs, closeGuard, settleCloseGuard };

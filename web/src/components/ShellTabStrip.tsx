@@ -30,12 +30,49 @@ function rememberShell(id: string) {
  * The icon for a shell family. Deliberately a small set: several WSL distributions share one, and a
  * shell nobody anticipated (a future entry in the catalog) still gets the generic terminal.
  */
-function shellIcon(kind: string) {
+export function shellIcon(kind: string) {
   return kind === "cmd" ? SquareTerminal : Terminal;
 }
 
+/**
+ * The shells this machine can open, fetched the first time `wanted` turns true and kept after that,
+ * plus the one a bare "+" should open. Shared by the strip's own menu and the split pane's "+" menu.
+ */
+export function useShellOptions(wanted: boolean) {
+  const [options, setOptions] = useState<ShellOption[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [serverDefault, setServerDefault] = useState<string | null>(null);
+  const fetchingRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!wanted || options || fetchingRef.current) return;
+    fetchingRef.current = true;
+    setFailed(false);
+    void api
+      .shellOptions()
+      .then((r) => {
+        if (cancelled) return;
+        setOptions(r.shells);
+        setServerDefault(r.default);
+      })
+      .catch(() => !cancelled && setFailed(true))
+      .finally(() => {
+        fetchingRef.current = false;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wanted, options]);
+
+  const last = readLastShell();
+  const preferred =
+    last && (!options || options.some((o) => o.id === last)) ? last : serverDefault ?? undefined;
+  return { options, failed, preferred, remember: rememberShell };
+}
+
 /** Short label for a tab — the full one goes in the tooltip, where there's room for the path. */
-function tabLabel(shell: ShellInfo): string {
+export function shellTabLabel(shell: ShellInfo): string {
   // "Ubuntu-24.04 (WSL)" is the menu's phrasing, where the family needs saying; on a tab the
   // distribution name alone is both shorter and more distinguishing.
   return shell.kind === "wsl" ? shell.label.replace(/\s*\(WSL\)$/, "") : shell.label;
@@ -173,7 +210,7 @@ export function ShellTabStrip({
               {/* A shell whose process has ended keeps its tab (the output is still worth reading)
                   but says so, rather than looking like a live prompt that ignores typing. */}
               <span className={cn("max-w-[10rem] truncate", !s.running && "line-through opacity-60")}>
-                {tabLabel(s)}
+                {shellTabLabel(s)}
               </span>
               <button
                 onClick={(e) => {

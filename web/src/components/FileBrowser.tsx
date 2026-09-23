@@ -7,7 +7,7 @@ import { useHtml } from "@/lib/useHtml";
 import { useContentRev } from "@/lib/useContentRev";
 import { readUrlState, previewUrl } from "@/lib/urlState";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
-import { fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type PreviewGuard } from "@/lib/useFileTabs";
+import { EXPLORER_GUARD, fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type PreviewGuard } from "@/lib/useFileTabs";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
@@ -176,6 +176,11 @@ function ancestorDirs(path: string): string[] {
 }
 
 /** Imperative handle: lets a parent (SessionView) open a file in this browser from elsewhere. */
+// Every FileBrowser of a session browses the same root — the explorer, and each file tab on screen
+// in a group of its own. The root is saved in the session's bag, but local saves do not notify, so a
+// switch in one of them is announced here for the others to follow.
+const rootListeners = new Set<(sessionId: string, dir: string) => void>();
+
 export interface FileBrowserHandle {
   revealFile: (path: string) => void;
   showChanges: () => void; // switch this browser into the git-changes view
@@ -195,14 +200,28 @@ export const FileBrowser = forwardRef<
     tabs: FileTabs;
     // Show the preview alone, no tree: the pane a file tab fills when it is the surface on screen.
     previewOnly?: boolean;
+    // Which file that preview shows, when it is not the session's active file: each file tab on
+    // screen has a browser of its own, and several can be on screen at once in a split pane.
+    previewPath?: string;
+    // Show the tree alone, no preview: the files it opens are showing in another group beside it,
+    // the way an IDE's explorer sits beside its editors.
+    treeOnly?: boolean;
     onRefresh?: () => void;
     refreshToken?: number;
   }
 >(function FileBrowser(
-  { sessionId, workingDirectory, gitFiles, tabs, previewOnly = false, onRefresh, refreshToken = 0 },
+  { sessionId, workingDirectory, gitFiles, tabs, previewOnly = false, previewPath, treeOnly = false, onRefresh, refreshToken = 0 },
   ref
 ) {
-  const { selected, guardActiveEdits } = tabs;
+  const { guardActiveEdits } = tabs;
+  if (previewPath !== undefined) previewOnly = true;
+  const selected = useMemo(
+    () =>
+      previewPath === undefined
+        ? tabs.selected
+        : tabs.tabs.find((t) => t.path === previewPath) ?? fileEntryFromPath(previewPath),
+    [previewPath, tabs.selected, tabs.tabs]
+  );
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FileEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -243,9 +262,15 @@ export const FileBrowser = forwardRef<
     (dir: string) => {
       setRootDir(dir);
       saveSessionUi(sessionId, { worktree: dir });
+      for (const cb of rootListeners) cb(sessionId, dir);
     },
     [sessionId]
   );
+  useEffect(() => {
+    const cb = (id: string, dir: string) => id === sessionId && setRootDir(dir);
+    rootListeners.add(cb);
+    return () => void rootListeners.delete(cb);
+  }, [sessionId]);
 
   // Per session: restore its saved root and (re)load the repo's worktrees plus the linked folders. A
   // stale response landing after a quick session switch must be dropped — validating the restored
@@ -950,9 +975,14 @@ export const FileBrowser = forwardRef<
           // divider that would have fixed it — off the bottom of the screen.
           "flex h-[var(--tree-h)] max-h-[var(--tree-h-max)] w-full shrink-0 flex-col border-b",
           "md:h-auto md:max-h-none md:w-[var(--tree-w)] md:border-b-0",
+          // Alone, the tree is the whole pane: no preview below or beside it to leave room for.
+          treeOnly && "h-full max-h-none border-b-0 md:w-full md:flex-1",
           previewOnly && "hidden"
         )}
       >
+        {/* A preview-only browser draws no tree at all: hidden, it would still fetch every folder
+            level it had open, once for each file tab on screen. */}
+        {!previewOnly && (<>
         <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground">
           <span>{changesView ? "Changes" : "Files"}</span>
           <div className="flex items-center gap-1.5">
@@ -1250,11 +1280,12 @@ export const FileBrowser = forwardRef<
             onSelect={setCommitSel}
           />
         )}
+        </>)}
       </div>
 
       {/* Draggable divider between the tree and preview: horizontal when stacked, vertical beside.
           `touch-none` keeps a drag from scrolling the page out from under the finger. */}
-      {!previewOnly && (
+      {!previewOnly && !treeOnly && (
         <div
           onPointerDown={startResize}
           onDoubleClick={resetTreeSize}
@@ -1266,8 +1297,8 @@ export const FileBrowser = forwardRef<
         </div>
       )}
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {commitSel ? (
+      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", treeOnly && "hidden")}>
+        {treeOnly ? null : commitSel ? (
           <div className="min-h-0 flex-1">
             {commitSel.path ? (
               <CommitFilePreview
@@ -1299,7 +1330,9 @@ export const FileBrowser = forwardRef<
               readOnly={readOnly}
               refreshToken={refreshToken}
               onSaved={onRefresh}
-              guard={tabs.previewGuard}
+              // A file tab's own preview guards that file; the explorer's follows the active file, so
+              // it has a guard of its own that is asked about whenever the active file moves.
+              guard={previewPath !== undefined ? tabs.guardFor(previewPath) : tabs.guardFor(EXPLORER_GUARD)}
             />
           </div>
         )}

@@ -1048,6 +1048,10 @@ export function App() {
           />
         ) : active ? (
           <SessionView
+            // One instance per session: its tabs, its layout and its terminal all belong to the
+            // session, and a fresh view restores them from its saved state rather than chasing a
+            // switch through every hook.
+            key={active.id}
             session={active}
             // Compaction is work too: the postponed pool must not flush a stashed message into the
             // terminal mid-compact, and a manual /compact leaves the hook-derived busy set empty.

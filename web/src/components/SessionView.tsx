@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { GitStatus, SessionInfo, SessionLink, SessionPull } from "@/types";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { FileEntry, GitStatus, SessionInfo, SessionLink, SessionPull } from "@/types";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
-import { readUrlState, patchUrlState, type TabName } from "@/lib/urlState";
+import { patchUrlState, readUrlState, type TabName } from "@/lib/urlState";
 import {
   flushSessionUi,
   loadSessionUi,
@@ -11,22 +11,52 @@ import {
   subscribeSessionUi,
   syncSessionUi,
 } from "@/lib/sessionUi";
-import { fileEntryFromPath, useFileTabs } from "@/lib/useFileTabs";
-import { MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
+import { EXPLORER_GUARD, fileEntryFromPath, useFileTabs, type FileTabs } from "@/lib/useFileTabs";
+import { linkTabLabel, MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
 import { useSessionPulls } from "@/lib/sessionPulls";
 import { useShells } from "@/lib/useShells";
+import {
+  activateRef,
+  applyPreset,
+  CLAUDE,
+  FILES,
+  fileRef,
+  findGroup,
+  groupOf,
+  groupsOf,
+  linkRef,
+  moveRef,
+  paneArg,
+  paneKind,
+  placeRef,
+  pullRef,
+  reconcile,
+  revealRef,
+  shellRef,
+  singleLayout,
+  splitGroup,
+  splitLayout,
+  type PaneGroup,
+  type PaneKind,
+  type PaneLayout,
+  type PaneRef,
+} from "@/lib/layout";
+import { useSessionLayout, visibleRefs } from "@/lib/useSessionLayout";
+import { fileKind } from "@/lib/fileKind";
+import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
-import { FileTabs, FileTabsCloseAll } from "./FileTabStrip";
 import { LinkDialog } from "./LinkDialog";
-import { LinkTabStrip } from "./LinkTabStrip";
+import { LinkIcon } from "./LinkIcon";
 import { PullRequestView } from "./PullRequestView";
-import { PullPicker, PullTabs } from "./PullTabStrip";
-import { ShellTabStrip } from "./ShellTabStrip";
-import { TabScroll } from "./TabScroll";
+import { PullPicker } from "./PullTabStrip";
+import { shellIcon, shellTabLabel } from "./ShellTabStrip";
 import { WebLinkView } from "./WebLinkView";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
 import { RenameField } from "./RenameField";
+import { PaneGroups, type DropZone, type PaneTab } from "./PaneGroups";
+import { GroupAddMenu } from "./GroupAddMenu";
+import { LayoutMenu } from "./LayoutMenu";
 import { Button } from "@/components/ui/button";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import {
@@ -40,42 +70,99 @@ import {
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import { sessionColor } from "@/lib/sessionColors";
-import { Check, Columns2, Copy, FileText, FolderTree, GitBranch, GitFork, Info, Loader2, Menu, MoreVertical, PanelLeftOpen, Pencil, Play, Radio, RotateCcw, Rows2, ShieldCheck, ShieldOff, Square, TerminalSquare } from "lucide-react";
+import {
+  Check,
+  Copy,
+  File as FileIcon,
+  FileText,
+  FolderTree,
+  GitBranch,
+  GitFork,
+  GitPullRequest,
+  Image as ImageIcon,
+  Info,
+  Loader2,
+  Menu,
+  MoreVertical,
+  PanelLeftOpen,
+  Pencil,
+  Play,
+  Radio,
+  RotateCcw,
+  ShieldCheck,
+  ShieldOff,
+  Square,
+  SquareArrowOutUpRight,
+  TerminalSquare,
+  Video,
+} from "lucide-react";
 import { writeToClipboard } from "@/lib/clipboard";
 
-// Desktop size of the Files panel in Split view. Persisted per-browser and drag-resizable.
-//
-// Two of everything, because the two arrangements want different numbers: a panel beside the
-// terminal needs width enough for a path, one under it needs rows enough for a listing, and a figure
-// that suits one is wrong for the other. Keeping both means flipping the split and flipping back
-// lands on the sizes you chose rather than on a conversion of the other one.
-const SPLIT_MIN = 280; // side by side: keep both the files panel and the terminal usable
-const SPLIT_DEFAULT = 480;
-const SPLIT_WIDTH_KEY = "claudeweb.splitFilesWidth";
-const SPLIT_MIN_H = 120; // stacked: a few rows of listing, and a terminal still worth reading
-const SPLIT_DEFAULT_H = 300;
-const SPLIT_HEIGHT_KEY = "claudeweb.splitFilesHeight";
-// Which arrangement the split is in. "bottom" stacks them, and there the terminal takes the bottom:
-// a prompt belongs at the bottom of the screen, where every terminal has always put it and where the
-// composer under it already sits. Side by side it leads on the left instead.
-const SPLIT_SIDE_KEY = "claudeweb.splitSide";
+// Wide enough for groups side by side — the width the app has always switched to its desktop
+// layout at. Narrower, the groups fold into a single strip and one of them is drawn.
+const WIDE_QUERY = "(min-width: 48rem)";
 
-function readSplitWidth() {
-  const n = Number(localStorage.getItem(SPLIT_WIDTH_KEY));
-  return Number.isFinite(n) && n >= SPLIT_MIN ? n : SPLIT_DEFAULT;
+function useWide(): boolean {
+  const [wide, setWide] = useState(() => window.matchMedia(WIDE_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(WIDE_QUERY);
+    const on = () => setWide(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return wide;
 }
 
-function readSplitHeight() {
-  const n = Number(localStorage.getItem(SPLIT_HEIGHT_KEY));
-  return Number.isFinite(n) && n >= SPLIT_MIN_H ? n : SPLIT_DEFAULT_H;
-}
-
-function readSplitAtBottom(): boolean {
-  try {
-    return localStorage.getItem(SPLIT_SIDE_KEY) === "bottom";
-  } catch {
-    return false; // storage disabled — side by side, the arrangement it has always had
+/**
+ * The layout for a session that has none saved yet, built from how it was last seen before the pane
+ * could be split into groups: the one surface its `view` named, or — for the old Split view — the
+ * terminal and the files in two groups, arranged the way that split was.
+ */
+function legacyLayout(sessionId: string, present: PaneRef[]): PaneLayout {
+  const ui = loadSessionUi(sessionId);
+  const url = readUrlState();
+  const view: TabName = (url.session === sessionId && url.tab) || ui.view || "terminal";
+  // The shells are fetched from the server and are not in `present` yet; a shell the session was
+  // showing is kept in the layout until they arrive and say whether it is still there.
+  const tabs = view === "shell" && ui.shell && !present.includes(shellRef(ui.shell)) ? [...present, shellRef(ui.shell)] : present;
+  if (view === "split") {
+    const files = tabs.filter((r) => r === FILES || paneKind(r) === "file");
+    const rest = tabs.filter((r) => !files.includes(r));
+    const terminal = { tabs: rest, active: CLAUDE };
+    const side = { tabs: files, active: FILES };
+    let atBottom = false;
+    try {
+      atBottom = localStorage.getItem("claudeweb.splitSide") === "bottom";
+    } catch {
+      /* storage disabled — side by side, as it defaulted to */
+    }
+    return atBottom ? splitLayout("col", [side, terminal], [0.4, 0.6], 1) : splitLayout("row", [terminal, side], [0.6, 0.4]);
   }
+  const active: Record<TabName, PaneRef | null> = {
+    terminal: CLAUDE,
+    split: CLAUDE,
+    files: FILES,
+    file: ui.file ? fileRef(ui.file) : FILES,
+    shell: ui.shell ? shellRef(ui.shell) : CLAUDE,
+    link: ui.link ? linkRef(ui.link) : CLAUDE,
+    pull: ui.pull ? pullRef(ui.pull) : CLAUDE,
+  };
+  return singleLayout(tabs, active[view] ?? CLAUDE);
+}
+
+/**
+ * Show a file that has just been opened, in the group it was meant for. A group whose explorer is
+ * showing keeps it: the explorer previews the file beside its tree, which is what opening one from
+ * the tree has always done.
+ */
+function revealFileIn(l: PaneLayout, ref: PaneRef, target: string): PaneLayout {
+  let g = groupOf(l, ref);
+  if (!g) return l;
+  if (g.id !== target && findGroup(l, target)) {
+    l = placeRef(l, ref, target);
+    g = groupOf(l, ref)!;
+  }
+  return g.active === FILES ? l : activateRef(l, ref);
 }
 
 // Compact process uptime, e.g. "45s", "5m 12s", "2h 8m", "1d 3h".
@@ -221,27 +308,16 @@ export function SessionView({
   const terminalRef = useRef<TerminalPaneHandle>(null);
   const [stopping, setStopping] = useState(false);
   const [renaming, setRenaming] = useState(false);
-  const [git, setGit] = useState<GitStatus | null>(null);
-  const [refreshToken, setRefreshToken] = useState(0);
-  // View mode is remembered per session (in the browser). On first mount honor a deep-linked ?tab=
-  // when it targets this session, otherwise fall back to this session's saved mode.
-  const [view, setView] = useState<TabName>(() => {
-    const url = readUrlState();
-    if (url.session === session.id && url.tab) return url.tab;
-    return loadSessionUi(session.id).view ?? url.tab ?? "terminal";
-  });
-  // The files this session has open. They are tabs in the bar below the header, beside
-  // Terminal/Split/Files, so the state belongs here rather than inside the Files panel.
+  const wide = useWide();
+  // The files this session has open. Each is a tab in whichever group of the pane holds it.
   const { fileTabs, closeGuard, settleCloseGuard } = useFileTabs(session.id);
   const [copiedPath, setCopiedPath] = useState(false);
-  const [splitWidth, setSplitWidth] = useState(readSplitWidth); // Files-panel width in Split view
-  const [splitHeight, setSplitHeight] = useState(readSplitHeight); // ...and its height when stacked
-  const [splitAtBottom, setSplitAtBottom] = useState(readSplitAtBottom);
   // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
   const [wdEnabled, setWdEnabled] = useState(session.watchdogEnabled);
   const [nowTick, setNowTick] = useState(() => Date.now()); // ticks so the header uptime stays live
-  const contentRef = useRef<HTMLDivElement>(null);
   const fileBrowserRef = useRef<FileBrowserHandle>(null);
+  // Each shell's terminal, so a group taking focus from the keyboard can put the keys into it.
+  const shellHandles = useRef(new Map<string, TerminalPaneHandle>());
   // Candidates when a bare filename clicked in the terminal matched more than one file.
   const [filePicker, setFilePicker] = useState<{ name: string; matches: string[] } | null>(null);
   // The session's shell tabs — a real shell in its working folder, beside the Claude terminal. The
@@ -251,9 +327,7 @@ export function SessionView({
     shellsRev,
     initialActive: () => loadSessionUi(session.id).shell ?? null,
     // A click is a choice worth remembering, and the bag is shared, so it follows to every device.
-    // Both fields in one patch: two saveSessionUi calls would rewrite the whole mirrored store twice
-    // for one click, and land as two revisions for every other browser to chase.
-    onActivate: (id) => saveSessionUi(session.id, { shell: id, view: "shell" }),
+    onActivate: (id) => saveSessionUi(session.id, { shell: id }),
     onError: (message) =>
       void confirm({
         title: "Could not open a shell",
@@ -269,27 +343,154 @@ export function SessionView({
   const links = useSessionLinks(session.id);
   // The add/edit dialog: null when closed, `{}` when adding, `{ edit }` when changing one.
   const [linkDialog, setLinkDialog] = useState<{ edit?: SessionLink } | null>(null);
-  // Link ids whose frame has been mounted at least once. A frame is kept alive behind the other
-  // tabs so coming back to a page finds it where it was left, but mounting every link on open would
-  // fetch every pinned page whether or not anyone looked at one.
-  const [mountedLinks, setMountedLinks] = useState<string[]>([]);
 
   // The pull requests this session has open as tabs. Like the links they live in the session's UI
   // bag, so a review follows the session to every device; unlike them, what is drawn under the tab
   // is fetched from GitHub each time it is opened.
   const pulls = useSessionPulls(session.id);
   // Whether this session's folder is a GitHub repo — read from its git remote, so it costs no
-  // network call. It is what decides whether the PR picker is in the tab bar at all.
+  // network call. It is what decides whether the PR picker is offered at all.
   const [isGitHub, setIsGitHub] = useState(false);
-  // Reviews mounted at least once, kept alive behind the other tabs the way the link frames are — so
-  // coming back to one finds it loaded, with the files folded the way they were left, instead of
-  // asking GitHub again. The session they belong to is part of the state because this view is NOT
-  // remounted when the session changes, and a PR number is a small integer that means a different
-  // review in every repo: carried over, session A's #42 would be handed straight to session B's.
-  const [mountedPulls, setMountedPulls] = useState<{ session: string; numbers: number[] }>(() => ({
-    session: session.id,
-    numbers: [],
-  }));
+
+  // ---- The pane's layout ------------------------------------------------------------------------
+  // Every tab the session has, in the order a single group lists them: the two that always exist,
+  // then the reviews, the files, the shells and the pages.
+  const present = useMemo<PaneRef[]>(
+    () => [
+      CLAUDE,
+      FILES,
+      ...pulls.pulls.map((p) => pullRef(p.number)),
+      ...fileTabs.tabs.map((t) => fileRef(t.path)),
+      ...shells.shells.map((s) => shellRef(s.id)),
+      ...links.links.map((l) => linkRef(l.id)),
+    ],
+    [pulls.pulls, fileTabs.tabs, shells.shells, links.links]
+  );
+
+  const { layout, update, current, seedTick, seeded } = useSessionLayout(session.id, () =>
+    legacyLayout(session.id, present)
+  );
+  const groups = groupsOf(layout.root);
+
+  // Groups in the order they last had focus: a file opened from the tree or the terminal goes to the
+  // group most recently used for reading files.
+  const mru = useRef<string[]>([]);
+  useEffect(() => {
+    mru.current = [layout.active, ...mru.current.filter((id) => id !== layout.active)].slice(0, 8);
+  }, [layout.active]);
+  const wideRef = useRef(wide);
+  wideRef.current = wide;
+
+  /**
+   * The group a file being opened should land in: the focused group if it is showing a file, else
+   * the one that showed one most recently, else wherever the explorer is. Narrow, only the focused
+   * group is on screen, so that is where it goes.
+   */
+  const fileTarget = useCallback((l: PaneLayout): string => {
+    if (!wideRef.current) return l.active;
+    const gs = groupsOf(l.root);
+    const showsFile = (g?: PaneGroup) => !!g?.active && paneKind(g.active) === "file";
+    const focused = gs.find((g) => g.id === l.active);
+    if (focused && showsFile(focused)) return focused.id;
+    for (const id of mru.current) {
+      const g = gs.find((x) => x.id === id);
+      if (g && showsFile(g)) return g.id;
+    }
+    return gs.find(showsFile)?.id ?? groupOf(l, FILES)?.id ?? l.active;
+  }, []);
+
+  // A tab about to be created from a group's "+" (a shell, a page, a review) lands in that group and
+  // is shown there. Anything that appears without one (another device opened it) goes to the
+  // focused group, behind whatever it is showing.
+  const pending = useRef<{ kind: PaneKind; group: string; at: number } | null>(null);
+  const expect = useCallback((kind: PaneKind, group: string) => {
+    pending.current = { kind, group, at: Date.now() };
+  }, []);
+  // A file just opened from the tree or the terminal, to be shown once its tab exists.
+  // Stamped, so one whose open was cancelled at a save prompt cannot fire on a later, unrelated open.
+  const pendingReveal = useRef<{ ref: PaneRef; target: string; at: number } | null>(null);
+  // The active file, where the placement below can read it: a file tab that arrives already active
+  // was opened by something that meant it to be seen — the self-open API, another device.
+  const activePathRef = useRef(fileTabs.activePath);
+  activePathRef.current = fileTabs.activePath;
+
+  // Keep the layout in step with the tabs: place what appeared, drop what went away.
+  const presentKey = present.join("\n");
+  useEffect(() => {
+    update((l) => {
+      let next = reconcile(
+        l,
+        present,
+        (kind) => kind !== "shell" || shells.loaded,
+        (cur, ref) => {
+          const p = pending.current;
+          if (p && p.kind === paneKind(ref) && Date.now() - p.at < 15_000 && findGroup(cur, p.group)) {
+            pending.current = null;
+            return { group: p.group, activate: true };
+          }
+          if (paneKind(ref) === "file") {
+            const group = fileTarget(cur);
+            // Shown, unless the explorer is showing there: it previews the active file already.
+            const activate = paneArg(ref) === activePathRef.current && findGroup(cur, group)?.active !== FILES;
+            return { group, activate };
+          }
+          return { group: cur.active, activate: false };
+        }
+      );
+      const r = pendingReveal.current;
+      if (r && Date.now() - r.at > 10_000) pendingReveal.current = null;
+      else if (r && groupOf(next, r.ref)) {
+        pendingReveal.current = null;
+        next = revealFileIn(next, r.ref, r.target);
+      }
+      return next;
+      // Not saved until the server's copy has been seen: a first look from a new device would
+      // otherwise write its own guess over the arrangement another device left.
+    }, seeded());
+    // `present` is read through its key: a new array holding the same tabs is not a change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presentKey, shells.loaded, seedTick, update, fileTarget, seeded]);
+
+  // What is on screen, and what has been at least once. Pages and reviews stay mounted behind the
+  // other tabs after their first showing (a frame keeps its place, a review its folds), and so does
+  // the explorer. A file preview is only mounted while it shows.
+  const visible = useMemo(() => new Set(visibleRefs(layout, wide)), [layout, wide]);
+  const [everShown, setEverShown] = useState<ReadonlySet<PaneRef>>(() => new Set());
+  useEffect(() => {
+    setEverShown((prev) => {
+      const add = [...visible].filter((r) => !prev.has(r));
+      return add.length ? new Set([...prev, ...add]) : prev;
+    });
+  }, [visible]);
+  const kept = (r: PaneRef) => visible.has(r) || everShown.has(r);
+
+  // The explorer drops its own preview while a file is showing in another group beside it: the
+  // files it opens go there, the way an IDE's explorer sits beside its editors.
+  const explorerGroup = groupOf(layout, FILES)?.id;
+  // Not while its own preview holds edits, though — dropping the preview would drop them.
+  const explorerTreeOnly =
+    wide &&
+    !fileTabs.dirty.has(EXPLORER_GUARD) &&
+    [...visible].some((r) => paneKind(r) === "file" && groupOf(layout, r)?.id !== explorerGroup);
+
+  // The focused group's tab. A shell there owns what is pasted (see TerminalPane's imagePaste).
+  const focusedRef = findGroup(layout, layout.active)?.active ?? null;
+
+  /** Open a file (from the tree, a terminal link, the picker) and show it where files are read. */
+  const openFile = useCallback(
+    async (f: FileEntry, pin: boolean) => {
+      const ref = fileRef(f.path);
+      const l0 = current();
+      const target = groupOf(l0, ref)?.id ?? fileTarget(l0);
+      const existed = fileTabs.tabs.some((t) => t.path === f.path);
+      await fileTabs.open(f, pin);
+      if (existed) update((l) => revealFileIn(l, ref, target));
+      else pendingReveal.current = { ref, target, at: Date.now() };
+    },
+    [current, fileTarget, fileTabs, update]
+  );
+  // The tab api the file browsers get: the same, except that opening a file also shows it.
+  const paneTabs = useMemo<FileTabs>(() => ({ ...fileTabs, open: openFile }), [fileTabs, openFile]);
 
   useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
 
@@ -316,116 +517,33 @@ export function SessionView({
     api.continueSession(session.id).catch(() => {});
   }, [session.id]);
 
-  // Drag the divider between the terminal and the Files panel (Split view, desktop); persist it.
-  // One handler for both arrangements: the axis decides which coordinate is read, which dimension of
-  // the box it is measured against, and which of the two remembered sizes it writes.
-  const startSplitResize = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      const stacked = splitAtBottom;
-      const start = stacked ? e.clientY : e.clientX;
-      const min = stacked ? SPLIT_MIN_H : SPLIT_MIN;
-      const startSize = stacked ? readSplitHeight() : readSplitWidth();
-      let size = startSize;
-      const onMove = (ev: PointerEvent) => {
-        // Always the Files panel being sized, but it sits on a different side of the divider in each
-        // arrangement: to its right side by side, above it when stacked. So the same drag grows it in
-        // one and shrinks it in the other, and the delta's sign follows which side it is on. The far
-        // pane keeps `min` too, hence the ceiling.
-        const box = stacked ? contentRef.current?.clientHeight : contentRef.current?.clientWidth;
-        const max = (box ?? Infinity) - min;
-        const moved = (stacked ? ev.clientY : ev.clientX) - start;
-        size = Math.min(max, Math.max(min, startSize + (stacked ? moved : -moved)));
-        (stacked ? setSplitHeight : setSplitWidth)(size);
-      };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        localStorage.setItem(stacked ? SPLIT_HEIGHT_KEY : SPLIT_WIDTH_KEY, String(size));
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-      document.body.style.cursor = stacked ? "row-resize" : "col-resize";
-      document.body.style.userSelect = "none";
-    },
-    [splitAtBottom]
-  );
-
-  const resetSplitWidth = useCallback(() => {
-    if (splitAtBottom) {
-      setSplitHeight(SPLIT_DEFAULT_H);
-      localStorage.setItem(SPLIT_HEIGHT_KEY, String(SPLIT_DEFAULT_H));
-      return;
-    }
-    setSplitWidth(SPLIT_DEFAULT);
-    localStorage.setItem(SPLIT_WIDTH_KEY, String(SPLIT_DEFAULT));
-  }, [splitAtBottom]);
-
-  /** Flip the split between side-by-side and stacked, and remember which it is. */
-  const toggleSplitSide = useCallback(() => {
-    setSplitAtBottom((atBottom) => {
-      const next = !atBottom;
-      try {
-        localStorage.setItem(SPLIT_SIDE_KEY, next ? "bottom" : "right");
-      } catch {
-        /* storage disabled — the arrangement still flips, it just won't be remembered */
-      }
-      return next;
-    });
-  }, []);
-
   const copyPath = useCallback(async () => {
     await writeToClipboard(session.workingDirectory);
     setCopiedPath(true);
     setTimeout(() => setCopiedPath(false), 1500);
   }, [session.workingDirectory]);
 
-  // Mirror the active tab into the URL (deep-linking / refresh restore).
-  useEffect(() => {
-    patchUrlState({ tab: view });
-  }, [view]);
-
-  // Switch a tab and remember it for this session, so returning to the session restores the mode.
-  const changeView = useCallback(
-    (next: TabName) => {
-      setView(next);
-      saveSessionUi(session.id, { view: next });
-    },
-    [session.id]
-  );
-
-  // Open a working-tree-relative file in this session's Files panel. If the panel is already showing
-  // (files/split/a file tab), reveal it via the browser's imperative handle — that also expands the
-  // tree down to it. Otherwise open the tab here and switch to the Files view; the saved `file` is
-  // written first so the tree expands to it as it mounts.
+  // Open a working-tree-relative file. With the explorer mounted, reveal it there: that also expands
+  // the tree down to it, and opens it the way a click in the tree does. Otherwise open the tab
+  // directly; the saved `file` is written first so the tree expands to it when the explorer mounts.
   const openInFiles = useCallback(
     (rel: string) => {
-      // "terminal" and "shell" are the views with no tree on screen — FileBrowser isn't mounted, so
-      // there is no handle to reveal through and the panel has to be brought up instead.
-      if (view === "terminal" || view === "shell") {
-        saveSessionUi(session.id, { file: rel });
-        patchUrlState({ file: rel });
-        void fileTabs.open(fileEntryFromPath(rel), false);
-        changeView("files");
-      } else {
-        fileBrowserRef.current?.revealFile(rel);
+      if (fileBrowserRef.current) {
+        fileBrowserRef.current.revealFile(rel);
+        return;
       }
+      saveSessionUi(session.id, { file: rel });
+      void openFile(fileEntryFromPath(rel), false);
     },
-    [view, session.id, changeView, fileTabs]
+    [session.id, openFile]
   );
 
-  // Open this session's git-changes view (from the header branch badge). If the Files panel is already
-  // showing, flip it via the imperative handle; otherwise seed the mode and switch to the Files view.
+  // Open this session's git-changes view (from the header branch badge): the explorer, showing it.
   const openChanges = useCallback(() => {
-    if (view === "terminal" || view === "shell") {
-      saveSessionUi(session.id, { changes: true });
-      changeView("files");
-    } else {
-      fileBrowserRef.current?.showChanges();
-    }
-  }, [view, session.id, changeView]);
+    saveSessionUi(session.id, { changes: true });
+    fileBrowserRef.current?.showChanges();
+    update((l) => revealRef(l, FILES));
+  }, [session.id, update]);
 
   // A full file path clicked in the terminal: resolve it under the working directory, then open it in
   // this session's Files panel (ignore paths outside the working directory — the browser can't show them).
@@ -456,23 +574,13 @@ export function SessionView({
     [session.id, openInFiles]
   );
 
-  // Seed the store with the initial mode (once), so returning to this session restores it even when
-  // the initial mode came from a deep link rather than a tab click.
-  useEffect(() => {
-    saveSessionUi(session.id, { view });
-    // Mount-only: session switches are handled by the restore effect below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // `?tab=` named the one surface the pane showed; with groups there is no such thing. It is read
+  // once, for a session with no layout yet (see legacyLayout), and cleared so it is not carried on.
+  useEffect(() => patchUrlState({ tab: undefined }), []);
 
-  // On switching to another session, restore that session's last-used view mode — and hand whatever
-  // the browser it was left in still owes the server, so the next device sees it.
-  const prevViewSession = useRef(session.id);
-  useEffect(() => {
-    if (prevViewSession.current === session.id) return;
-    flushSessionUi(prevViewSession.current);
-    prevViewSession.current = session.id;
-    setView(loadSessionUi(session.id).view ?? "terminal");
-  }, [session.id]);
+  // Leaving the session (this view is keyed by it) hands over whatever this browser still owes the
+  // server, so the next device sees it.
+  useEffect(() => () => flushSessionUi(session.id), [session.id]);
 
   // The saved state lives on the server, so opening a session fetches it: this device may never have
   // seen the session, or may have last seen it before another one moved things around.
@@ -481,84 +589,24 @@ export function SessionView({
   }, [session.id]);
 
   // A revision on the session list higher than the one this browser holds means another browser
-  // wrote — re-fetch (the tabs follow through useFileTabs' own subscription).
+  // wrote — re-fetch (the tabs follow through their hooks' own subscriptions).
   useEffect(() => {
     noteSessionUiRev(session.id, session.uiRev);
   }, [session.id, session.uiRev]);
 
-  // Take the view mode from the copy fetched on open, but not from a later remote write: the tab
-  // list is shared state worth following live, while which surface is on screen is whatever the
-  // person in front of this browser last chose.
+  // Which shell the saved state names is handled by useShells, which reconciles the remembered id
+  // against what the server actually has. `restore`, not `activate`: adopting a value that came FROM
+  // the bag must not write it back.
   useEffect(
     () =>
       subscribeSessionUi(session.id, (seed) => {
         if (!seed) return;
         const ui = loadSessionUi(session.id);
-        setView(ui.view ?? "terminal");
-        // Which shell that view names is handled by useShells, which reconciles the remembered id
-        // against what the server actually has. `restore`, not `activate`: adopting a value that
-        // came FROM the bag must not write it back — that is a device merely opening the session
-        // stamping on whichever tab another device is watching.
         if (ui.shell) shells.restore(ui.shell);
       }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [session.id]
   );
-
-  // A file tab has nothing to show once its file is closed; fall back to the tree it came from.
-  useEffect(() => {
-    if (view === "file" && !fileTabs.tabs.length) changeView("files");
-  }, [view, fileTabs.tabs.length, changeView]);
-
-  // Showing a shell tab: the pane is the shell's, and the session remembers which one it was on
-  // (through the hook's onActivate above, which is what a click means).
-  const showShell = useCallback(
-    (id: string) => {
-      shells.activate(id);
-      setView("shell");
-    },
-    // Only the two stable callbacks are used; depending on the handle itself would rebuild these
-    // every render, since the hook returns a fresh object each time.
-    [shells.activate]
-  );
-
-  // Open another shell in the session's folder, and give it the pane.
-  const openShell = useCallback(
-    async (shell: string) => {
-      if (await shells.open(shell)) setView("shell");
-    },
-    [shells.open]
-  );
-
-  // Showing a linked page. Both writes land in one request — saveSessionUi coalesces what a single
-  // click queues — so the session comes back to this page on its other devices too.
-  const showLink = useCallback(
-    (id: string) => {
-      links.activate(id);
-      changeView("link");
-    },
-    [links.activate, changeView]
-  );
-
-  // Mount the frame of whichever link is being looked at, and leave it mounted from then on.
-  useEffect(() => {
-    if (view !== "link" || !links.activeId) return;
-    const id = links.activeId;
-    setMountedLinks((prev) => (prev.includes(id) ? prev : [...prev, id]));
-  }, [view, links.activeId]);
-
-  // Forget frames for links that are gone (removed here, or on another device), so their iframes
-  // are unmounted rather than kept alive behind a tab that no longer exists.
-  useEffect(() => {
-    setMountedLinks((prev) => {
-      const next = prev.filter((id) => links.links.some((l) => l.id === id));
-      return next.length === prev.length ? prev : next;
-    });
-  }, [links.links]);
-
-  // The last link closed: the pane goes back to the terminal, the way it does for the shells.
-  useEffect(() => {
-    if (view === "link" && !links.links.length) changeView("terminal");
-  }, [view, links.links.length, changeView]);
 
   // Ask once per session whether its folder is a GitHub repo. A session doesn't change folders, and
   // a remote is not added mid-session often enough to be worth polling for.
@@ -576,86 +624,97 @@ export function SessionView({
     };
   }, [session.id]);
 
-  // Showing a PR review. Both writes land in one request — saveSessionUi coalesces what a single
-  // click queues — so the session comes back to this review on its other devices too.
-  const showPull = useCallback(
-    (number: number) => {
-      pulls.activate(number);
-      changeView("pull");
+  // ---- Tab actions ------------------------------------------------------------------------------
+
+  /** A tab clicked: show it in its group, focus the group, and tell the tab's own hook. */
+  const activateTab = useCallback(
+    async (ref: PaneRef) => {
+      update((l) => revealRef(l, ref));
+      const arg = paneArg(ref);
+      const kind = paneKind(ref);
+      if (kind === "file") void fileTabs.activate(arg);
+      else if (kind === "shell") shells.activate(arg);
+      else if (kind === "link") links.activate(arg);
+      else if (kind === "pull") pulls.activate(Number(arg));
     },
-    [pulls.activate, changeView]
+    // The hooks' callbacks are stable; the handles themselves are fresh objects every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [update, fileTabs.activate, shells.activate, links.activate, pulls.activate]
   );
 
-  // Opening one from the picker: `open` moves to the tab if it is already there, so this only has to
-  // give the pane over. Looking a PR up is asking to read it.
-  const openPull = useCallback(
-    (pull: SessionPull) => {
-      pulls.open(pull);
-      changeView("pull");
+  const closeTab = useCallback(
+    (ref: PaneRef) => {
+      const arg = paneArg(ref);
+      const kind = paneKind(ref);
+      if (kind === "file") void fileTabs.close(arg);
+      else if (kind === "shell") void shells.close(arg);
+      else if (kind === "link") links.remove(arg);
+      else if (kind === "pull") pulls.close(Number(arg));
     },
-    [pulls.open, changeView]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fileTabs.close, shells.close, links.remove, pulls.close]
   );
 
-  // Mount the review being looked at, and leave it mounted from then on. A session switch starts the
-  // list again rather than clearing it in an effect of its own — which would race this one, and on
-  // the first render would win, leaving the tab with nothing under it.
-  useEffect(() => {
-    if (view !== "pull" || !pulls.activeNumber) return;
-    const n = pulls.activeNumber;
-    setMountedPulls((prev) =>
-      prev.session !== session.id
-        ? { session: session.id, numbers: [n] }
-        : prev.numbers.includes(n)
-          ? prev
-          : { session: prev.session, numbers: [...prev.numbers, n] }
-    );
-  }, [view, pulls.activeNumber, session.id]);
+  /** A tab dropped on a group: its middle to move there, an edge to split it off beside it. */
+  const dropTab = useCallback(
+    (ref: PaneRef, groupId: string, zone: DropZone, index?: number) => {
+      if (zone === "center") {
+        update((l) => moveRef(l, ref, groupId, index));
+        return;
+      }
+      // A group's only tab split off its own edge: there is nothing to leave behind, so what opens
+      // beside it is an empty group, waiting for something to be dropped or opened in it.
+      const g = findGroup(current(), groupId);
+      const alone = !!g && g.tabs.length === 1 && g.tabs[0] === ref;
+      update((l) => splitGroup(l, groupId, zone, alone ? null : ref));
+    },
+    [update, current]
+  );
 
-  // Forget reviews that are gone (closed here, or on another device), so they are unmounted rather
-  // than kept alive behind a tab that no longer exists. A list belonging to the session just left is
-  // dropped whole, for the reason the state carries its session at all.
-  useEffect(() => {
-    setMountedPulls((prev) => {
-      if (prev.session !== session.id)
-        return prev.numbers.length ? { session: session.id, numbers: [] } : prev;
-      const numbers = prev.numbers.filter((n) => pulls.pulls.some((p) => p.number === n));
-      return numbers.length === prev.numbers.length ? prev : { session: prev.session, numbers };
+  const focusContent = useCallback((ref: PaneRef) => {
+    // After the group is drawn: the keys go nowhere while it is still hidden.
+    requestAnimationFrame(() => {
+      if (ref === CLAUDE) terminalRef.current?.focus();
+      else if (paneKind(ref) === "shell") shellHandles.current.get(paneArg(ref))?.focus();
     });
-  }, [pulls.pulls, session.id]);
+  }, []);
 
-  // The last review closed: the pane goes back to the terminal, the way it does for the links.
-  useEffect(() => {
-    if (view === "pull" && !pulls.pulls.length) changeView("terminal");
-  }, [view, pulls.pulls.length, changeView]);
+  // Opening from a group's "+": the new tab is expected there.
+  const openShell = useCallback(
+    (shell: string, group: string) => {
+      expect("shell", group);
+      void shells.open(shell);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [expect, shells.open]
+  );
 
-  // Pinning a page gives it the pane straight away — adding it is asking to look at it. `add` picks
-  // the tab itself (it may have landed on one that was already there), so this only moves the view.
+  const linkTarget = useRef<string | null>(null);
+  // Pinning a page shows it straight away — adding it is asking to look at it. Re-pinning one already
+  // on the bar goes back to its tab instead, wherever that is.
   const addLink = useCallback(
-    (link: Omit<SessionLink, "id">) => {
-      links.add(link);
-      changeView("link");
+    (l: Omit<SessionLink, "id">) => {
+      const had = links.links.some((x) => x.url === l.url);
+      if (!had) expect("link", linkTarget.current ?? current().active);
+      const stored = links.add(l);
+      if (had) update((x) => revealRef(x, linkRef(stored.id)));
     },
-    [links.add, changeView]
+    [links, expect, current, update]
   );
 
-  // No shells left: the pane goes back to the terminal. Keyed on the LIST being empty rather than on
-  // there being no active id — the hook picks the active one in an effect, so on the render where a
-  // session's shells first arrive the id is still null, and reading that as "nothing to show" would
-  // bounce a deep-linked ?tab=shell to the terminal and write that back to the shared bag.
-  useEffect(() => {
-    if (shells.loaded && shells.shells.length === 0 && view === "shell") changeView("terminal");
-  }, [shells.loaded, shells.shells.length, view, changeView]);
-
-  // Clicking a file tab fills the pane with that file. Clicking the one already showing beside the
-  // tree does too — that is what asking for its own tab means.
-  const openFileTab = useCallback(
-    async (path: string) => {
-      await fileTabs.activate(path);
-      changeView("file");
+  // Opening a review from a group's picker: the same, for a PR.
+  const openPull = useCallback(
+    (pull: SessionPull, group: string) => {
+      const had = pulls.pulls.some((p) => p.number === pull.number);
+      if (!had) expect("pull", group);
+      pulls.open(pull);
+      if (had) update((l) => revealRef(l, pullRef(pull.number)));
     },
-    [fileTabs, changeView]
+    [pulls, expect, update]
   );
 
+  const [git, setGit] = useState<GitStatus | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
   const bump = useCallback(() => setRefreshToken((t) => t + 1), []);
   const loadGit = useCallback(() => {
     api.gitStatus(session.id).then(setGit).catch(() => setGit(null));
@@ -735,6 +794,209 @@ export function SessionView({
       setStopping(false);
     }
   }
+
+  const gitFiles = git?.isRepo ? git.files : undefined;
+
+  /** How each tab is drawn in its group's strip; null for one whose tab has already gone. */
+  const tabInfo = (ref: PaneRef): PaneTab | null => {
+    const label = (text: string, className?: string) => (
+      <span className={cn("max-w-[10rem] truncate", className)}>{text}</span>
+    );
+    const arg = paneArg(ref);
+    switch (paneKind(ref)) {
+      case "claude":
+        return {
+          icon: <TerminalSquare className="size-4 shrink-0" />,
+          label: label("Terminal"),
+          title: "Claude's terminal",
+          closable: false,
+        };
+      case "files":
+        return {
+          icon: <FolderTree className="size-4 shrink-0" />,
+          label: label("Files"),
+          title: "The session's files, and its git changes",
+          closable: false,
+        };
+      case "file": {
+        const t = fileTabs.tabs.find((x) => x.path === arg);
+        if (!t) return null;
+        const kind = fileKind(t.name);
+        const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "binary" ? FileIcon : FileText;
+        return {
+          icon: <Icon className="size-4 shrink-0" />,
+          // The transient preview tab (a single click reuses it) is in italics; double-click keeps it.
+          label: label(t.name, cn(t.path === fileTabs.previewPath && "italic", gitFiles?.[t.path] && STATUS_COLOR[gitFiles[t.path]])),
+          title: t.path,
+          closable: true,
+          onDoubleClick: () => fileTabs.pin(t.path),
+        };
+      }
+      case "shell": {
+        const s = shells.shells.find((x) => x.id === arg);
+        if (!s) return null;
+        const Icon = shellIcon(s.kind);
+        return {
+          icon: <Icon className="size-4 shrink-0" />,
+          // A shell whose process has ended keeps its tab (the output is still worth reading) but
+          // says so, rather than looking like a live prompt that ignores typing.
+          label: label(shellTabLabel(s), cn(!s.running && "line-through opacity-60")),
+          title: `${s.label} — ${s.workingDirectory}${s.running ? "" : " (exited)"}`,
+          closable: true,
+        };
+      }
+      case "link": {
+        const l = links.links.find((x) => x.id === arg);
+        if (!l) return null;
+        return {
+          icon: <LinkIcon src={l.icon} className="size-4 shrink-0 rounded-[2px]" />,
+          label: (
+            <>
+              {label(linkTabLabel(l))}
+              {!l.embed && <SquareArrowOutUpRight className="size-3 shrink-0 opacity-60" />}
+            </>
+          ),
+          title: `${linkTabLabel(l)} — ${l.url}${l.embed ? "" : " (opens in a browser tab)"}\nDouble-click to edit`,
+          closable: true,
+          onDoubleClick: () => setLinkDialog({ edit: l }),
+        };
+      }
+      case "pull": {
+        const p = pulls.pulls.find((x) => x.number === Number(arg));
+        if (!p) return null;
+        return {
+          icon: <GitPullRequest className="size-4 shrink-0" />,
+          label: (
+            <>
+              <span className="shrink-0 text-xs text-muted-foreground">#{p.number}</span>
+              {label(p.title)}
+            </>
+          ),
+          title: `#${p.number} ${p.title}`,
+          closable: true,
+        };
+      }
+    }
+  };
+
+  /** What each tab shows. Null leaves it unmounted — not shown yet, or not kept once hidden. */
+  const renderContent = (ref: PaneRef): ReactNode | null => {
+    const arg = paneArg(ref);
+    switch (paneKind(ref)) {
+      case "claude":
+        // Always mounted, whatever is showing: its socket and its screen outlive any tab switch.
+        return (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* The pane keeps flex-1 so FitAddon measures the height left over by the pool bar below. */}
+            <div className="min-h-0 flex-1">
+              {/* A closed session has no pty to attach to: mounting the pane would open a socket
+                  against nothing and leave a black rectangle that looks like a terminal failing.
+                  What goes there instead says what happened and offers the one way out of it. */}
+              {closed ? (
+                <ClosedTerminal session={session} onReopen={onReopen} onReopenWithOptions={onReopenWithOptions} />
+              ) : (
+                <TerminalPane
+                  key={session.id}
+                  ref={terminalRef}
+                  sessionId={session.id}
+                  workingDirectory={session.workingDirectory}
+                  // A shell has focus: an image pasted there is not Claude's to upload.
+                  imagePaste={!focusedRef || paneKind(focusedRef) !== "shell"}
+                  onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
+                  onColorDetected={(color) => onTerminalColor?.(session.id, color)}
+                  onOpenFile={onTerminalOpenFile}
+                  onFindFile={onTerminalFindFile}
+                />
+              )}
+            </div>
+            {/* Still here when the session is closed: the stash was written for this session and is
+                worth reading back, and throwing out a message you are no longer going to send is the
+                other half of that. It does not travel — the pool is keyed by session id and a reopen
+                mints a new one, which starts empty — so sending is the one thing it stops offering. */}
+            <PostponedPool sessionId={session.id} busy={busy} terminalRef={terminalRef} closed={closed} />
+          </div>
+        );
+      case "files":
+        if (!kept(ref)) return null;
+        return (
+          <div className="min-h-0 flex-1">
+            <FileBrowser
+              ref={fileBrowserRef}
+              sessionId={session.id}
+              workingDirectory={session.workingDirectory}
+              gitFiles={gitFiles}
+              tabs={paneTabs}
+              treeOnly={explorerTreeOnly}
+              onRefresh={onRefresh}
+              refreshToken={refreshToken}
+            />
+          </div>
+        );
+      case "file":
+        // Mounted while it shows — and while it holds unsaved edits, showing or not, so moving,
+        // zooming or switching tabs never throws edits away.
+        if ((!visible.has(ref) && !fileTabs.dirty.has(arg)) || !fileTabs.tabs.some((t) => t.path === arg)) return null;
+        return (
+          <div className="min-h-0 flex-1">
+            <FileBrowser
+              sessionId={session.id}
+              workingDirectory={session.workingDirectory}
+              gitFiles={gitFiles}
+              tabs={paneTabs}
+              previewPath={arg}
+              onRefresh={onRefresh}
+              refreshToken={refreshToken}
+            />
+          </div>
+        );
+      case "shell": {
+        // Every open shell stays mounted, showing or not: switching away from a build must not drop
+        // its socket and stop showing its output. `data-owns-image-paste` keeps the Claude
+        // terminal's document-level paste handler out of a shell — an image dropped at a shell
+        // prompt is a path nobody asked for.
+        const sh = shells.shells.find((s) => s.id === arg);
+        if (!sh) return null;
+        return (
+          <div data-owns-image-paste className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <TerminalPane
+              ref={(h) => {
+                if (h) shellHandles.current.set(sh.id, h);
+                else shellHandles.current.delete(sh.id);
+              }}
+              sessionId={session.id}
+              socketPath={`/hub/shells/${sh.id}/terminal`}
+              imagePaste={false}
+              workingDirectory={sh.workingDirectory}
+              onOpenFile={onTerminalOpenFile}
+              onFindFile={onTerminalFindFile}
+            />
+          </div>
+        );
+      }
+      case "link": {
+        // A page stays mounted once it has been opened, so returning to it finds it where it was
+        // left rather than reloading.
+        const l = links.links.find((x) => x.id === arg);
+        if (!l || !kept(ref)) return null;
+        return (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <WebLinkView link={l} onEdit={() => setLinkDialog({ edit: l })} />
+          </div>
+        );
+      }
+      case "pull": {
+        // A review stays mounted once it has been opened, so coming back to it finds it loaded and
+        // folded the way it was left rather than asking GitHub again.
+        const n = Number(arg);
+        if (!pulls.pulls.some((p) => p.number === n) || !kept(ref)) return null;
+        return (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <PullRequestView sessionId={session.id} number={n} onTitle={(title) => pulls.retitle(n, title)} />
+          </div>
+        );
+      }
+    }
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -873,6 +1135,8 @@ export function SessionView({
                   up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
                 </span>
               )}
+              {/* The pane's arrangement: presets, and the keys that split and move between groups. */}
+              <LayoutMenu groups={groups.length} onPick={(preset) => update((l) => applyPreset(l, preset))} />
               <SessionInfoPopover session={session} nowTick={nowTick} />
               {session.remoteControl &&
                 (session.state === "Running" ? (
@@ -983,253 +1247,43 @@ export function SessionView({
           />
         </div>
 
-        {/* Row 2: view tabs resting on the header's bottom border, styled like the sidebar tabs.
-            Terminal is the primary surface; Files is the secondary view of the working directory.
-            Split shows both side by side (desktop only). */}
-        <div className="flex h-10 shrink-0 items-center border-b">
-          <ViewTab active={view === "terminal"} onClick={() => changeView("terminal")}>
-            <TerminalSquare className="size-4" />
-            <span className="hidden sm:inline">Terminal</span>
-          </ViewTab>
-          <ViewTab active={view === "split"} onClick={() => changeView("split")} className="hidden md:flex">
-            <Columns2 className="size-4" />
-            <span className="hidden sm:inline">Split</span>
-          </ViewTab>
-          {/* Which way the split lies, offered only while it is showing -- there is nothing to
-              arrange from any other view, and a control for an absent layout is a puzzle. The icon
-              is the arrangement it switches TO, the way a play button shows what a press will do. */}
-          {view === "split" && (
-            <button
-              type="button"
-              onClick={toggleSplitSide}
-              title={splitAtBottom ? "Put the files beside the terminal" : "Put the terminal under the files"}
-              aria-label={splitAtBottom ? "Split side by side" : "Split top and bottom"}
-              className="hidden shrink-0 self-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground md:block"
-            >
-              {splitAtBottom ? <Columns2 className="size-4" /> : <Rows2 className="size-4" />}
-            </button>
-          )}
-          <ViewTab active={view === "files"} onClick={() => changeView("files")}>
-            <FolderTree className="size-4" />
-            <span className="hidden sm:inline">Files</span>
-          </ViewTab>
-          {/* The repo's pull-request picker, right after Files because a review is a view of the
-              same repo the tree is showing. Only the picker waits on the folder turning out to be on
-              GitHub: the review tabs below are saved state, and a probe that is slow, or that
-              failed, must not leave an open review with no tab to get back to. */}
-          <PullPicker sessionId={session.id} enabled={isGitHub} onOpen={openPull} />
-
-          {/* The reviews and the open files, in one scrolling run: they are one row of tabs and
-              behave like one, rather than two strips clipping at a seam in the middle of the bar. */}
-          <TabScroll revealOn={`${view}|${pulls.activeNumber ?? ""}|${fileTabs.activePath ?? ""}|${pulls.pulls.length}|${fileTabs.tabs.length}`}>
-            <PullTabs
-              pulls={pulls.pulls}
-              activeNumber={pulls.activeNumber}
-              showingPull={view === "pull"}
-              onActivate={showPull}
-              onClose={pulls.close}
-            />
-            {/* One click and the file has the pane, the same standing as a review beside it. */}
-            <FileTabs
-              tabs={fileTabs.tabs}
-              activePath={fileTabs.activePath}
-              previewPath={fileTabs.previewPath}
-              showingFile={view === "file"}
-              gitFiles={git?.isRepo ? git.files : undefined}
-              onActivate={(p) => void openFileTab(p)}
-              onPin={fileTabs.pin}
-              onClose={(p) => void fileTabs.close(p)}
-            />
-          </TabScroll>
-          <FileTabsCloseAll tabs={fileTabs.tabs} onCloseAll={() => void fileTabs.closeAll()} />
-          {/* Shells in the same folder, and the "+" that opens another. After the views that are
-              always there, so those keep their places as shells come and go. */}
-          <ShellTabStrip
-            shells={shells.shells}
-            activeId={shells.activeId}
-            showingShell={view === "shell"}
-            busy={shells.opening}
-            onActivate={showShell}
-            onOpen={(sh) => void openShell(sh)}
-            onClose={(id) => void shells.close(id)}
-          />
-          {/* The pages this session is working from, and the "+" that pins another — last in the
-              row, so that "+" is always in the same place at the end of the bar. */}
-          <LinkTabStrip
-            links={links.links}
-            activeId={links.activeId}
-            showingLink={view === "link"}
-            onActivate={showLink}
-            onEdit={(id) => setLinkDialog({ edit: links.links.find((l) => l.id === id) })}
-            onAdd={() => setLinkDialog({})}
-            onClose={links.remove}
-          />
-        </div>
       </header>
 
-      {/* The terminal stays mounted in every view (hidden in Files) so toggling never drops its
-          connection; the Files panel is a resizable column beside it in Split and full-width in
-          Files.
-
-          In Split the terminal sits on the left, which is a swap done with flex `order` rather than
-          by moving the JSX: reordering the children would put a different component at the
-          terminal's position, and React would tear the pane down and build it again -- a dropped
-          socket and a re-fetched screen every time you touched the tab. */}
-      <div
-        ref={contentRef}
-        className={cn(
-          "flex min-h-0 flex-1 flex-col",
-          // Stacked is the phone's arrangement already, so only the wide layout has a say here.
-          view === "split" && splitAtBottom ? "md:flex-col" : "md:flex-row"
-        )}
-      >
-        {(view === "files" || view === "split" || view === "file") && (
-          <div
-            style={
-              {
-                "--split-w": `${splitWidth}px`,
-                "--split-h": `${splitHeight}px`,
-              } as React.CSSProperties
-            }
-            className={cn(
-              "flex min-h-0 min-w-0 flex-1 flex-col",
-              // Above the terminal when stacked, to its right when not.
-              view === "split" && (splitAtBottom ? "md:order-1" : "md:order-3"),
-              view === "split" && "md:flex-none md:shrink-0",
-              view === "split" &&
-                (splitAtBottom ? "md:h-[var(--split-h)] md:w-auto" : "md:w-[var(--split-w)]")
-            )}
-          >
-            <FileBrowser
-              ref={fileBrowserRef}
-              sessionId={session.id}
-              workingDirectory={session.workingDirectory}
-              gitFiles={git?.isRepo ? git.files : undefined}
-              tabs={fileTabs}
-              previewOnly={view === "file"}
-              onRefresh={onRefresh}
-              refreshToken={refreshToken}
-            />
-          </div>
-        )}
-
-        {view === "split" && (
-          <div
-            onPointerDown={startSplitResize}
-            onDoubleClick={resetSplitWidth}
-            title="Drag to resize · double-click to reset"
-            className={cn(
-              "hidden shrink-0 bg-transparent transition-colors hover:bg-primary/20 active:bg-primary/30 md:order-2 md:block",
-              splitAtBottom ? "h-1.5 w-full cursor-row-resize border-b" : "w-1.5 cursor-col-resize border-l"
-            )}
-          />
-        )}
-
-        <div
-          className={cn(
-            "flex min-h-0 min-w-0 flex-1 flex-col",
-            view === "split" && (splitAtBottom ? "md:order-3" : "md:order-1"),
-            view !== "terminal" && view !== "split" && "hidden"
-          )}
-        >
-          {/* The pane keeps flex-1 so FitAddon measures the height left over by the pool bar below. */}
-          <div className="min-h-0 flex-1">
-            {/* A closed session has no pty to attach to: mounting the pane would open a socket
-                against nothing and leave a black rectangle that looks like a terminal failing.
-                What goes there instead says what happened and offers the one way out of it. */}
-            {closed ? (
-              <ClosedTerminal
-                session={session}
-                onReopen={onReopen}
-                onReopenWithOptions={onReopenWithOptions}
+      {/* The pane: one group of tabs, or several side by side and stacked (see PaneGroups). */}
+      <PaneGroups
+        layout={layout}
+        update={update}
+        wide={wide}
+        tabInfo={tabInfo}
+        renderContent={renderContent}
+        onActivate={(ref) => void activateTab(ref)}
+        onClose={closeTab}
+        onDrop={dropTab}
+        onContentFocus={focusContent}
+        onCloseAllFiles={() => void fileTabs.closeAll()}
+        renderAdd={(groupId) => {
+          const g = findGroup(layout, groupId);
+          return (
+            <>
+              {/* The repo's pull requests, opened into this group. Only the picker waits on the
+                  folder turning out to be on GitHub: the review tabs are saved state, and a probe
+                  that is slow, or that failed, must not leave an open review with no tab. */}
+              <PullPicker compact sessionId={session.id} enabled={isGitHub} onOpen={(p) => openPull(p, groupId)} />
+              <GroupAddMenu
+                busy={shells.opening}
+                hasClaude={!!g?.tabs.includes(CLAUDE)}
+                hasFiles={!!g?.tabs.includes(FILES)}
+                onBring={(what) => update((l) => moveRef(l, what, groupId))}
+                onOpenShell={(sh) => openShell(sh, groupId)}
+                onAddLink={() => {
+                  linkTarget.current = groupId;
+                  setLinkDialog({});
+                }}
               />
-            ) : (
-              <TerminalPane
-                key={session.id}
-                ref={terminalRef}
-                sessionId={session.id}
-                workingDirectory={session.workingDirectory}
-                // A shell is showing: its tab bar and header sit outside the shell pane's own
-                // `data-owns-image-paste` wrapper, so a Ctrl+V there would otherwise land here —
-                // uploading the image and injecting its path into Claude's live prompt.
-                imagePaste={view !== "shell"}
-                onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
-                onColorDetected={(color) => onTerminalColor?.(session.id, color)}
-                onOpenFile={onTerminalOpenFile}
-                onFindFile={onTerminalFindFile}
-              />
-            )}
-          </div>
-          {/* Still here when the session is closed: the stash was written for this session and is
-              worth reading back, and throwing out a message you are no longer going to send is the
-              other half of that. It does not travel — the pool is keyed by session id and a reopen
-              mints a new one, which starts empty — so sending is the one thing it stops offering. */}
-          <PostponedPool sessionId={session.id} busy={busy} terminalRef={terminalRef} closed={closed} />
-        </div>
-
-        {/* Every open shell stays mounted, hidden behind the active tab: switching away from a
-            build must not drop its socket and stop showing its output. `data-owns-image-paste`
-            keeps the Claude terminal's document-level paste handler out of a shell — an image
-            dropped at a shell prompt is a path nobody asked for. */}
-        {shells.shells.map((sh) => (
-          <div
-            key={sh.id}
-            data-owns-image-paste
-            className={cn(
-              "flex min-h-0 min-w-0 flex-1 flex-col",
-              !(view === "shell" && sh.id === shells.activeId) && "hidden"
-            )}
-          >
-            <TerminalPane
-              sessionId={session.id}
-              socketPath={`/hub/shells/${sh.id}/terminal`}
-              imagePaste={false}
-              workingDirectory={sh.workingDirectory}
-              onOpenFile={onTerminalOpenFile}
-              onFindFile={onTerminalFindFile}
-            />
-          </div>
-        ))}
-
-        {/* A linked page stays mounted behind the other tabs once it has been opened, so returning
-            to it finds it where it was left rather than reloading — the same reason the shells and
-            the terminal stay mounted. Only pages actually visited are here (see mountedLinks). */}
-        {links.links
-          .filter((l) => mountedLinks.includes(l.id))
-          .map((l) => (
-            <div
-              key={l.id}
-              className={cn(
-                "flex min-h-0 min-w-0 flex-1 flex-col",
-                !(view === "link" && l.id === links.activeId) && "hidden"
-              )}
-            >
-              <WebLinkView link={l} onEdit={() => setLinkDialog({ edit: l })} />
-            </div>
-          ))}
-
-        {/* A review stays mounted behind the other tabs once it has been opened, so coming back to it
-            finds it loaded and folded the way it was left rather than asking GitHub again. */}
-        {pulls.pulls
-          .filter((p) => mountedPulls.session === session.id && mountedPulls.numbers.includes(p.number))
-          .map((p) => (
-            // Keyed by session as well as number, so a review can never be handed the instance a
-            // different repo's PR of the same number left behind.
-            <div
-              key={`${session.id}:${p.number}`}
-              className={cn(
-                "flex min-h-0 min-w-0 flex-1 flex-col",
-                !(view === "pull" && p.number === pulls.activeNumber) && "hidden"
-              )}
-            >
-              <PullRequestView
-                sessionId={session.id}
-                number={p.number}
-                onTitle={(title) => pulls.retitle(p.number, title)}
-              />
-            </div>
-          ))}
-      </div>
+            </>
+          );
+        }}
+      />
 
       {/* Pin a web page to this session, or change one already pinned. */}
       {linkDialog && (
@@ -1573,33 +1627,5 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
       <dt className="whitespace-nowrap text-muted-foreground">{label}</dt>
       <dd className="min-w-0 break-all font-mono">{children}</dd>
     </>
-  );
-}
-
-function ViewTab({
-  active,
-  onClick,
-  className,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex h-full items-center gap-1.5 border-b-2 px-3 text-sm font-medium transition-colors",
-        active
-          ? "border-primary text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-        className
-      )}
-    >
-      {children}
-    </button>
   );
 }
