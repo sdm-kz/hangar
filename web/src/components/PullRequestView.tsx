@@ -229,6 +229,10 @@ export function PullRequestView({
   // Restored from the bag, so a review comes back where it was left — on this device and the others.
   const [folds, setFolds] = useState<PullFolds>(() => readFolds(sessionId, number));
   const [descriptionOpen, setDescriptionOpen] = useState(false);
+  // Files marked as read. Seeded from the review — the server holds the marks and does the comparing,
+  // so a file the author has pushed over simply is not in the list — and kept here so a click shows
+  // at once rather than after a round trip.
+  const [viewed, setViewed] = useState<Set<string>>(new Set());
   const fileRefs = useRef(new Map<string, HTMLDivElement>());
   // The pane that scrolls through the files, and the two flags its saved offset needs: whether the
   // offset has been replayed yet (scrolls before that are the browser laying rows out, not the
@@ -248,6 +252,7 @@ export function PullRequestView({
     try {
       const res = await api.githubPull(sessionId, number);
       setDetail(res);
+      setViewed(new Set(res.viewed ?? []));
       setError(res.error ?? null);
       if (res.pull?.title) onTitleRef.current?.(res.pull.title);
     } catch {
@@ -494,7 +499,6 @@ export function PullRequestView({
 
   const setAll = (open: boolean) => putFolds({ all: open, except: [] });
 
-  /** Fold or unfold one file, as the exception it is to whatever the rest of the review is doing. */
   const toggleFile = useCallback(
     (f: GitHubPullFile) => {
       const except = folds.except ?? [];
@@ -507,6 +511,52 @@ export function PullRequestView({
     [folds, excepted, putFolds]
   );
 
+  /** Fold or unfold one file to a known state, rather than to the other side of where it is. */
+  const setFileOpen = useCallback(
+    (f: GitHubPullFile, open: boolean) => {
+      if (isOpen(f) !== open) toggleFile(f);
+    },
+    [isOpen, toggleFile]
+  );
+
+  /**
+   * Mark a file read, or unread. Reading one is finishing with it, so it folds away — and unmarking
+   * opens it again, since the reason to unmark is to look at it. The mark itself goes to the server,
+   * where it is kept against the pull request rather than this session: the same review read from
+   * another browser, or from a session reopened tomorrow, is the same review.
+   */
+  const markViewed = useCallback(
+    (f: GitHubPullFile, next: boolean) => {
+      setViewed((prev) => {
+        const out = new Set(prev);
+        if (next) out.add(f.path);
+        else out.delete(f.path);
+        return out;
+      });
+      setFileOpen(f, !next);
+      // Fire and forget, and put the mark back if it did not land: a checkbox that lies about what
+      // was stored is worse than one that flicks back.
+      api.githubSetViewed(sessionId, number, f.path, f.sha, next).catch(() =>
+        setViewed((prev) => {
+          const out = new Set(prev);
+          if (next) out.delete(f.path);
+          else out.add(f.path);
+          return out;
+        })
+      );
+    },
+    [sessionId, number, setFileOpen]
+  );
+
+  /** Everything unread again, and open again — the way back from having marked the lot. */
+  const clearViewed = useCallback(() => {
+    setViewed(new Set());
+    setAll(true);
+    api.githubClearViewed(sessionId, number).catch(() => void load());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, number, load]);
+
+  /** Fold or unfold one file, as the exception it is to whatever the rest of the review is doing. */
   // Clicking a file in the sidebar brings it into view and opens it — asking for a file is asking to
   // read it, and scrolling to a collapsed header would land on nothing.
   const reveal = useCallback(
@@ -566,6 +616,18 @@ export function PullRequestView({
             </div>
           )}
         </div>
+        {/* How much of the review is behind you. A button, because the only thing anyone wants to do
+            with that number is put it back to nothing. */}
+        {viewed.size > 0 && (
+          <button
+            type="button"
+            onClick={clearViewed}
+            title="Mark every file unread"
+            className="mt-0.5 shrink-0 rounded px-1.5 py-1 text-xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {viewed.size}/{files.length} read
+          </button>
+        )}
         {files.length > 0 && (
           <div className="flex shrink-0 items-center">
             {/* Reading size for the code. The percentage resets, the way it does on every other
@@ -730,8 +792,12 @@ export function PullRequestView({
                     {descriptionOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
                     Description
                   </button>
+                  {/* The same typography the file preview renders Markdown with. Without it
+                      Tailwind's reset has already taken the headings' size and the lists' markers
+                      away, and a description comes out as one flat run of text — which is what a
+                      pull request body, all headings and bullets, least survives. */}
                   {descriptionOpen && (
-                    <div className="px-4 pb-4">
+                    <div className="prose prose-sm max-w-none px-4 pb-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
                       <Markdown text={detail.body} />
                     </div>
                   )}
@@ -753,6 +819,8 @@ export function PullRequestView({
                   baseRef={pull?.baseRefOid ?? ""}
                   file={f}
                   open={isOpen(f)}
+                  viewed={viewed.has(f.path)}
+                  onViewed={markViewed}
                   wrap={wrap}
                   zoom={zoom}
                   numCol={numCol}
@@ -783,6 +851,8 @@ function FileDiff({
   baseRef,
   file,
   open,
+  viewed,
+  onViewed,
   wrap,
   zoom,
   numCol,
@@ -800,6 +870,9 @@ function FileDiff({
   baseRef: string;
   file: GitHubPullFile;
   open: boolean;
+  /** Marked as read: the header says so, and the file arrived folded because of it. */
+  viewed: boolean;
+  onViewed: (file: GitHubPullFile, viewed: boolean) => void;
   /** Long lines wrap rather than running off to the right — see WRAP_KEY. */
   wrap: boolean;
   /** Reading size for the code, and the line-number column width that goes with it. */
@@ -929,7 +1002,9 @@ function FileDiff({
           {/* Same shrink order as the sidebar: the folders go before the file name does. */}
           <span className="flex min-w-0 flex-1 items-baseline font-mono">
             <span className="min-w-0 shrink-[999] truncate text-muted-foreground">{dir}</span>
-            <span className="min-w-0 truncate font-medium">{name}</span>
+            <span className={cn("min-w-0 truncate font-medium", viewed && "font-normal line-through")}>
+              {name}
+            </span>
             {file.oldPath && (
               <span className="min-w-0 shrink-[999] truncate text-muted-foreground">
                 &nbsp;← {file.oldPath}
@@ -981,6 +1056,34 @@ function FileDiff({
               </button>
             )}
           </span>
+        )}
+        {/* Read, or not. Last in the row because it is what you reach for having finished with the
+            file above it — and absent where GitHub gave no sha, since a mark with nothing to compare
+            against could never reset when the author pushes again. */}
+        {file.sha && (
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={viewed}
+            onClick={() => onViewed(file, !viewed)}
+            title={viewed ? "Marked read — click to read it again" : "Mark this file read"}
+            className={cn(
+              "flex shrink-0 items-center gap-1 rounded px-1.5 py-1 transition-colors hover:bg-accent",
+              viewed ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <span
+              className={cn(
+                "flex size-3.5 items-center justify-center rounded-[3px] border",
+                viewed
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-muted-foreground/50"
+              )}
+            >
+              {viewed && <Check className="size-3" />}
+            </span>
+            <span className="hidden sm:inline">Viewed</span>
+          </button>
         )}
       </div>
 

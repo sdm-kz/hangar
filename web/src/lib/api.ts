@@ -607,6 +607,17 @@ export const api = {
   },
   // One of a PR's files read whole at one of the two commits the review names — the head unless the
   // base is asked for, which is what a deleted file wants.
+  // Mark one file of a review read, or unmark it. The sha pins the mark to the version being read,
+  // so a later push resets that file and leaves the rest of the review marked.
+  githubSetViewed(id: string, number: number, path: string, sha: string, viewed: boolean): Promise<void> {
+    return request(`/api/sessions/${id}/github/pulls/${number}/viewed`, {
+      method: "POST",
+      body: JSON.stringify({ path, sha, viewed }),
+    });
+  },
+  githubClearViewed(id: string, number: number): Promise<void> {
+    return request(`/api/sessions/${id}/github/pulls/${number}/viewed/clear`, { method: "POST" });
+  },
   githubPullFile(id: string, number: number, path: string, ref: string): Promise<GitHubFileContent> {
     const q = new URLSearchParams({ path, ref });
     return request(`/api/sessions/${id}/github/pulls/${number}/file?${q.toString()}`);

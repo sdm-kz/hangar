@@ -29,9 +29,17 @@ public sealed record GitHubPullList(bool IsGitHub, string? NameWithOwner, IReadO
 /// </summary>
 public sealed record GitHubPullFile(
     string Path, string? OldPath, string Status,
-    int Additions, int Deletions, bool Binary, bool Truncated, string Diff);
+    int Additions, int Deletions, bool Binary, bool Truncated, string Diff,
+    /// <summary>The blob sha of this file's side of the change, which is what says whether it is the
+    /// same file someone marked as read. Empty when GitHub did not give one.</summary>
+    string Sha = "");
 
-public sealed record GitHubPullDetail(GitHubPull? Pull, string Body, IReadOnlyList<GitHubPullFile> Files, string? Error);
+/// <param name="Viewed">Paths the user has marked as read *and* has not changed since — see
+/// PullViewStore. Answered here rather than by a call of its own because the comparison needs the
+/// shas this response already carries.</param>
+public sealed record GitHubPullDetail(
+    GitHubPull? Pull, string Body, IReadOnlyList<GitHubPullFile> Files, string? Error,
+    IReadOnlyList<string> Viewed);
 
 /// <summary>The two commits a pull request names. Read on its own, without its patch.</summary>
 public sealed record GitHubPullRefs(string HeadRefOid, string BaseRefOid, string? Error);
@@ -158,10 +166,14 @@ public static class GitHubService
     /// One pull request with its changed files, each carrying its own slice of the diff. The two gh
     /// calls — the metadata and the patch — run together, since neither needs the other's answer.
     /// </summary>
-    public static async Task<GitHubPullDetail> PullAsync(string workingDir, int number, CancellationToken ct)
+    public static async Task<GitHubPullDetail> PullAsync(
+        string workingDir, int number, PullViewStore? viewed, CancellationToken ct)
     {
-        if (!Repo(workingDir).IsGitHub)
-            return new GitHubPullDetail(null, "", Array.Empty<GitHubPullFile>(), "This folder is not a GitHub repository.");
+        var repo = Repo(workingDir);
+        if (!repo.IsGitHub)
+            return new GitHubPullDetail(
+                null, "", Array.Empty<GitHubPullFile>(), "This folder is not a GitHub repository.",
+                Array.Empty<string>());
 
         var meta = GhAsync(workingDir, ct,
             "pr", "view", number.ToString(),
@@ -170,22 +182,59 @@ public static class GitHubService
         // file once per commit that touched it. The plain form is the combined diff — head against
         // base, one entry per file — which is what the Files tab of a PR shows and what this draws.
         var patch = GhAsync(workingDir, ct, "pr", "diff", number.ToString());
-        await Task.WhenAll(meta, patch);
+        // A third call, for the one thing the other two do not carry: the blob sha of each file. It
+        // is what a "read" mark is pinned to, so that a push resets the files it touched and leaves
+        // the rest read. Started with the others, so it costs no wall clock.
+        var shas = ShasAsync(workingDir, repo.NameWithOwner!, number, ct);
+        await Task.WhenAll(meta, patch, shas);
 
         var (metaOk, metaOut, metaError) = meta.Result;
-        if (!metaOk) return new GitHubPullDetail(null, "", Array.Empty<GitHubPullFile>(), metaError);
+        if (!metaOk)
+            return new GitHubPullDetail(null, "", Array.Empty<GitHubPullFile>(), metaError, Array.Empty<string>());
 
         PullJson? row;
         try { row = JsonSerializer.Deserialize<PullJson>(metaOut, Json); }
         catch (JsonException) { row = null; }
-        if (row is null) return new GitHubPullDetail(null, "", Array.Empty<GitHubPullFile>(), "GitHub returned something we could not read.");
+        if (row is null)
+            return new GitHubPullDetail(
+                null, "", Array.Empty<GitHubPullFile>(), "GitHub returned something we could not read.",
+                Array.Empty<string>());
 
         var (patchOk, patchOut, patchError) = patch.Result;
+        var files = patchOk ? SplitPatch(patchOut) : Array.Empty<GitHubPullFile>();
+        // Attach each file's sha where GitHub gave one. A failure here is not worth failing the
+        // review over: the diff is still readable, and what is lost is the ability to mark it read.
+        var byPath = shas.Result;
+        if (byPath.Count > 0)
+            files = files.Select(f => byPath.TryGetValue(f.Path, out var sha) ? f with { Sha = sha } : f).ToList();
+
         // The PR itself was read: show it, with the diff's failure attached, rather than nothing.
         return new GitHubPullDetail(
-            ToPull(row), row.Body ?? "",
-            patchOk ? SplitPatch(patchOut) : Array.Empty<GitHubPullFile>(),
-            patchOk ? null : patchError);
+            ToPull(row), row.Body ?? "", files,
+            patchOk ? null : patchError,
+            viewed?.Viewed(repo.NameWithOwner!, number, byPath) ?? Array.Empty<string>());
+    }
+
+    /// <summary>
+    /// The blob sha of every file in a pull request, by path. Straight off the REST endpoint, which
+    /// is the only one of the three that carries them; paginated because a large pull request comes
+    /// back thirty files at a time. An empty map means the call failed, which the caller treats as
+    /// "no shas" rather than as an error — the review is readable without them.
+    /// </summary>
+    private static async Task<Dictionary<string, string>> ShasAsync(
+        string workingDir, string repo, int number, CancellationToken ct)
+    {
+        var (ok, stdout, _) = await GhAsync(workingDir, ct,
+            "api", "--paginate", $"repos/{repo}/pulls/{number}/files",
+            "--jq", ".[] | [.filename, .sha] | @tsv");
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!ok) return map;
+        foreach (var line in stdout.Split('\n'))
+        {
+            var row = line.TrimEnd('\r').Split('\t');
+            if (row.Length == 2 && row[0].Length > 0 && row[1].Length > 0) map[row[0]] = row[1];
+        }
+        return map;
     }
 
     /// <summary>

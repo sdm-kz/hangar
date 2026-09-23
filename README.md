@@ -192,6 +192,12 @@ The web UI is a **session manager with a full terminal**:
   which is where copying belongs: a diff copied wholesale is a mix of both sides with markers down
   the left, which is not the file anyone means.
 
+  Each file has a **Viewed** box, the way GitHub's has: tick it and the file folds away, and the
+  header keeps the count. The marks are held against the *pull request* rather than the session, so
+  they are the same in every browser, outlast the session being closed and reopened, and are shared
+  by every session working in that repo. A mark records the file's blob as it was when you read it,
+  which is what makes a push reset **only the files it touched** — the rest of the review stays read.
+
   How far through a review you had got is kept: which files you folded away, and where the pane was
   scrolled to, against the pull request in the session's own state — so it follows the session to
   your other devices, and a tab that goes away takes it with it, whether you closed it or it made

@@ -327,6 +327,7 @@ internal static class Program
         builder.Services.AddSingleton<Sessions.Shells.ShellManager>();
         // Extra folders attached to a session's working directory, browsable from its Files panel.
         builder.Services.AddSingleton<LinkedFolderStore>();
+        builder.Services.AddSingleton<PullViewStore>();
         // Reads the title, icon and — the part a browser is not allowed to see — the framing policy of
         // a web page a session links to. The links themselves are UI state; only this needs a server.
         builder.Services.AddSingleton<Web.LinkProbeService>();
@@ -1443,12 +1444,43 @@ internal static class Program
         });
 
         // One pull request: its description and every changed file, each with its slice of the diff.
-        app.MapGet("/api/sessions/{id}/github/pulls/{number:int}", async (string id, int number, SessionManager mgr, CancellationToken ct) =>
+        app.MapGet("/api/sessions/{id}/github/pulls/{number:int}",
+            async (string id, int number, SessionManager mgr, PullViewStore viewed, CancellationToken ct) =>
         {
             var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
-            return Results.Ok(await GitHubService.PullAsync(info.WorkingDirectory, number, ct));
+            return Results.Ok(await GitHubService.PullAsync(info.WorkingDirectory, number, viewed, ct));
+        });
+
+        // Mark one file of a review read, or unmark it. The sha is the file's, as the client was
+        // just given it: a mark is pinned to the version it was made at, so a later push resets the
+        // files it touched and leaves the rest alone.
+        app.MapPost("/api/sessions/{id}/github/pulls/{number:int}/viewed",
+            (string id, int number, ViewedRequest body, SessionManager mgr, PullViewStore viewed) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
+            if (string.IsNullOrWhiteSpace(body.Path)) return Results.BadRequest(new { error = "invalid path" });
+
+            var repo = GitHubService.Repo(info.WorkingDirectory);
+            if (!repo.IsGitHub) return Results.BadRequest(new { error = "not a GitHub repository" });
+
+            viewed.Set(repo.NameWithOwner!, number, body.Path, body.Sha ?? "", body.Viewed);
+            return Results.Ok();
+        });
+
+        // Everything in this review unread again — the way back from having marked it all.
+        app.MapPost("/api/sessions/{id}/github/pulls/{number:int}/viewed/clear",
+            (string id, int number, SessionManager mgr, PullViewStore viewed) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            var repo = GitHubService.Repo(info.WorkingDirectory);
+            if (!repo.IsGitHub) return Results.BadRequest(new { error = "not a GitHub repository" });
+            viewed.Clear(repo.NameWithOwner!, number);
+            return Results.Ok();
         });
     }
 
@@ -1623,6 +1655,7 @@ internal record SessionGroupRequest(string[]? Ids, string? GroupId);
 internal record SessionParentRequest(string? ParentId);
 internal record FolderCreateRequest(string? Path, string? Dir = null);
 internal record FsWriteRequest(string Path, string? Content);
+internal record ViewedRequest(string? Path, string? Sha, bool Viewed);
 internal record FsPathRequest(string Path);
 internal record FsRenameRequest(string Path, string NewName);
 internal record ImageUploadRequest(string? DataBase64, string? Ext);

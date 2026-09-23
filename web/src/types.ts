@@ -455,6 +455,12 @@ export interface GitHubPullFile {
   /** The diff was cut short because the file's changes are enormous. */
   truncated: boolean;
   diff: string;
+  /**
+   * The blob sha of this file's side of the change — what says whether it is still the same file
+   * somebody marked as read. Empty when GitHub did not give one, which is what stops it being
+   * markable at all: a mark with nothing to compare against could never reset.
+   */
+  sha: string;
 }
 
 /** One file of a pull request read whole at a commit, rather than as a diff. */
@@ -473,6 +479,12 @@ export interface GitHubPullDetail {
   body: string;
   files: GitHubPullFile[];
   error: string | null;
+  /**
+   * Paths marked as read whose file has not changed since. The server does the comparison, because
+   * it is the side that holds the marks and the shas — a file the author has pushed over is simply
+   * absent here, which is the whole of the per-file reset as the client sees it.
+   */
+  viewed: string[];
 }
 
 /**
