@@ -63,11 +63,14 @@ export function PullPicker({
   sessionId,
   enabled,
   onOpen,
-  compact = false,
+  atEnd = false,
+  openSignal = 0,
 }: {
   sessionId: string;
-  /** Icon only — the button sits at the end of a split group's strip, where width is scarce. */
-  compact?: boolean;
+  /** The button ends a split group's strip: the list hangs back to the left from its right edge. */
+  atEnd?: boolean;
+  /** Bumped to open the list from elsewhere — the "+" menu of the group the picker sits in. */
+  openSignal?: number;
   /**
    * Offer the picker at all. False while the folder is not known to be a GitHub repo — reviews
    * opened earlier (or on another device) still have their tabs, which are saved state and stay
@@ -124,6 +127,15 @@ export function PullPicker({
   useEffect(() => {
     if (menuOpen) void load(state, false);
   }, [menuOpen, state, load]);
+
+  // Opened from the "+" menu beside it. Only a rise counts: the signal drops to 0 when another
+  // group's picker is asked instead, and mounting at a non-zero value must not pop the list open.
+  const seenSignal = useRef(openSignal);
+  useEffect(() => {
+    const rose = openSignal > seenSignal.current;
+    seenSignal.current = openSignal;
+    if (rose && enabled) setMenuOpen(true);
+  }, [openSignal, enabled]);
 
   // The picker can go away under an open menu — a session switch, a probe that came back negative.
   useEffect(() => {
@@ -182,23 +194,23 @@ export function PullPicker({
         aria-expanded={menuOpen}
         className={cn(
           "flex h-full items-center gap-1.5 border-b-2 border-transparent text-sm font-medium transition-colors",
-          compact ? "px-2" : "px-3",
+          atEnd ? "px-2" : "px-3",
           menuOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground"
         )}
       >
         <GitPullRequest className="size-4" />
-        {!compact && <span className="hidden sm:inline">PRs</span>}
-        {!compact && <ChevronDown className="size-3.5" />}
+        <span className="hidden sm:inline">PRs</span>
+        {!atEnd && <ChevronDown className="size-3.5" />}
       </button>
 
       {menuOpen && (
         <div
           role="menu"
-          // Compact, the button ends a strip — the list hangs back to the left from its right edge.
-          style={{ maxWidth: compact ? "calc(100vw - 1rem)" : room }}
+          // At the end of a strip the list hangs back to the left from the button's right edge.
+          style={{ maxWidth: atEnd ? "calc(100vw - 1rem)" : room }}
           className={cn(
             "absolute top-full z-30 mt-1 flex max-h-[70vh] w-[34rem] flex-col overflow-hidden rounded-md popover-edge bg-popover shadow-md",
-            compact ? "right-0" : "left-0"
+            atEnd ? "right-0" : "left-0"
           )}
         >
           <div className="flex items-center gap-1 border-b p-1.5">

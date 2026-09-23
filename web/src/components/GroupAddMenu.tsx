@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useDismissable } from "@/lib/useDismissable";
-import { FolderTree, Globe, Loader2, Plus, TerminalSquare } from "lucide-react";
+import { FolderTree, GitPullRequest, Globe, Loader2, Plus, TerminalSquare } from "lucide-react";
 import { shellIcon, useShellOptions } from "./ShellTabStrip";
 
 /**
@@ -15,6 +15,7 @@ export function GroupAddMenu({
   onBring,
   onOpenShell,
   onAddLink,
+  onOpenPull,
 }: {
   /** A shell is being launched. */
   busy: boolean;
@@ -24,6 +25,8 @@ export function GroupAddMenu({
   onBring: (what: "claude" | "files") => void;
   onOpenShell: (shell: string) => void;
   onAddLink: () => void;
+  /** Open the pull-request picker beside this menu; absent when the folder is not on GitHub. */
+  onOpenPull?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -99,6 +102,12 @@ export function GroupAddMenu({
             })
           )}
           <div className="my-1 h-px bg-border" />
+          {onOpenPull && (
+            <button role="menuitem" className={item} onClick={() => (close(), onOpenPull())}>
+              <GitPullRequest className="size-4 shrink-0 text-muted-foreground" />
+              <span className="flex-1">Pull request…</span>
+            </button>
+          )}
           <button role="menuitem" className={item} onClick={() => (onAddLink(), close())}>
             <Globe className="size-4 shrink-0 text-muted-foreground" />
             <span className="flex-1">Link a web page…</span>

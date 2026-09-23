@@ -690,6 +690,9 @@ export function SessionView({
   );
 
   const linkTarget = useRef<string | null>(null);
+  // The "+" menu's "Pull request…" opens the picker of the same group: which group, and a count that
+  // moves on every ask so asking twice opens it twice.
+  const [pullAsk, setPullAsk] = useState<{ group: string; n: number }>({ group: "", n: 0 });
   // Pinning a page shows it straight away — adding it is asking to look at it. Re-pinning one already
   // on the bar goes back to its tab instead, wherever that is.
   const addLink = useCallback(
@@ -1268,13 +1271,20 @@ export function SessionView({
               {/* The repo's pull requests, opened into this group. Only the picker waits on the
                   folder turning out to be on GitHub: the review tabs are saved state, and a probe
                   that is slow, or that failed, must not leave an open review with no tab. */}
-              <PullPicker compact sessionId={session.id} enabled={isGitHub} onOpen={(p) => openPull(p, groupId)} />
+              <PullPicker
+                atEnd
+                sessionId={session.id}
+                enabled={isGitHub}
+                openSignal={pullAsk.group === groupId ? pullAsk.n : 0}
+                onOpen={(p) => openPull(p, groupId)}
+              />
               <GroupAddMenu
                 busy={shells.opening}
                 hasClaude={!!g?.tabs.includes(CLAUDE)}
                 hasFiles={!!g?.tabs.includes(FILES)}
                 onBring={(what) => update((l) => moveRef(l, what, groupId))}
                 onOpenShell={(sh) => openShell(sh, groupId)}
+                onOpenPull={isGitHub ? () => setPullAsk((a) => ({ group: groupId, n: a.n + 1 })) : undefined}
                 onAddLink={() => {
                   linkTarget.current = groupId;
                   setLinkDialog({});
