@@ -2272,17 +2272,24 @@ export function SessionSidebar({
           // opens — the dimming says there is nothing running in it, not that it is out of reach.
           restorable && "text-muted-foreground",
           activeId === s.id && "border-border bg-accent",
+          // All three rings are drawn INSIDE the row. A ring is a box-shadow and sits outside the
+          // box by default, which the 2px between rows exactly cancels: two neighbours both wearing
+          // one met in the middle with no white left between them, and the pair read as a single
+          // tall box with a seam through it rather than as two finished sessions. Ringing the inside
+          // costs no layout — the row keeps its size and the list its density — and leaves the gap
+          // plus both transparent borders standing between the lines.
+          //
           // Claude is waiting on a prompt — draw the eye with a ring even when the row isn't selected.
-          !restorable && activityIds.waiting.has(s.id) && "ring-1 ring-amber-400/70",
+          !restorable && activityIds.waiting.has(s.id) && "ring-1 ring-inset ring-amber-400/70",
           // Softer than waiting's ring, and deliberately so: one is a request, the other a receipt.
           // It is what makes a finished session findable in a long list without reading every row.
           // Guarded like the ring above rather than trusting `done` to be free of closed sessions:
           // what keeps them out of it is a prune that runs in an effect, so a mark restored from
           // storage is on screen for a paint before the prune has had a chance to drop it.
-          !restorable && activity === "done" && "ring-1 ring-emerald-400/40",
+          !restorable && activity === "done" && "ring-1 ring-inset ring-emerald-400/40",
           // Same weight as the tick's ring, in the colour of the cross: the other receipt, for the
           // ending you probably want to do something about.
-          !restorable && activity === "failed" && "ring-1 ring-red-400/40",
+          !restorable && activity === "failed" && "ring-1 ring-inset ring-red-400/40",
           // Where a dropped row would land: inside this one. The box a session is filed into lights
           // up the same way, because it is the same kind of answer — this thing swallows that one.
           nestOver && "bg-accent ring-1 ring-primary"
