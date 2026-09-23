@@ -488,3 +488,21 @@ export interface SessionPull {
   /** The title as it was when the tab was opened — what the tab says before the PR has loaded. */
   title: string;
 }
+
+/**
+ * Which files of a review are folded away, as a baseline and the exceptions to it rather than a flag
+ * per file. The shape is chosen for size: the session's UI bag is capped server-side, and a bag over
+ * the cap is dropped whole rather than trimmed, which would take the open tabs and the open files
+ * down with it.
+ *
+ * So a bulk fold is one boolean however many files it covered. The exceptions are what grow — every
+ * file opened or folded by hand, including one opened by clicking it in the sidebar of a review that
+ * was collapsed — and they are held to a budget across all of a session's reviews (MAX_FOLD_PATHS in
+ * PullRequestView), past which the oldest give up and return to the baseline.
+ */
+export interface PullFolds {
+  /** What Collapse all / Expand all last said. Undefined leaves each file to its own size default. */
+  all?: boolean;
+  /** Paths whose state is the opposite of that baseline — the files folded or opened by hand. */
+  except?: string[];
+}

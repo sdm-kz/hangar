@@ -11,7 +11,7 @@
 // the tab that is already there.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionPull } from "@/types";
-import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "./sessionUi";
+import { loadSessionUi, saveSessionUi, subscribeSessionUi, type SessionUi } from "./sessionUi";
 
 // A session can have this many PRs open at once; opening another evicts the oldest tab. Local to
 // this module because the cap is enforced here — unlike the links, whose dialog refuses past MAX_LINKS
@@ -54,6 +54,32 @@ function restore(sessionId: string): { pulls: SessionPull[]; active: number | nu
   return { pulls, active };
 }
 
+/**
+ * The reading state of the reviews that are still open, when some of what is stored no longer is.
+ *
+ * Every write to the tab list goes through this rather than only a close, because a close is not the
+ * only way a tab goes away: opening a ninth review drops the oldest to keep under MAX_PULLS, and a
+ * tab that leaves that way would otherwise leave its folds and its offset behind for good. What is
+ * stored then grows with every review the session has ever opened — and the bag has a size limit,
+ * past which the server drops the whole thing rather than trimming it, taking the open tabs and the
+ * open files with it.
+ *
+ * Nothing is returned when nothing has gone stale: an unchanged field is a no-op at the server, but
+ * sending it on every tab click would churn the bag's revision and have every other browser re-fetch
+ * for nothing. This is the shape useFileTabs prunes its own scroll offsets with, for those reasons.
+ */
+function pruned(sessionId: string, open: SessionPull[]): SessionUi {
+  const ui = loadSessionUi(sessionId);
+  const keys = new Set(open.map((p) => String(p.number)));
+  const stale = <T,>(from: Record<string, T> | undefined) =>
+    !!from && Object.keys(from).some((k) => !keys.has(k));
+  if (!stale(ui.pullFolds) && !stale(ui.pullScroll)) return {};
+
+  const keep = <T,>(from: Record<string, T> | undefined): Record<string, T> =>
+    Object.fromEntries(Object.entries(from ?? {}).filter(([k]) => keys.has(k)));
+  return { pullFolds: keep(ui.pullFolds), pullScroll: keep(ui.pullScroll) };
+}
+
 /** Own a session's open pull requests: the list, which one is showing, and persisting both. */
 export function useSessionPulls(sessionId: string): SessionPulls {
   const [pulls, setPulls] = useState<SessionPull[]>(() => restore(sessionId).pulls);
@@ -72,7 +98,11 @@ export function useSessionPulls(sessionId: string): SessionPulls {
       setActiveNumber(nextActive);
       // 0, not undefined: the bag merges field by field and only a value can clear one. No PR is
       // number 0, so it reads as "none" on the way back in.
-      saveSessionUi(sessionId, { pulls: nextPulls, pull: nextActive ?? 0 });
+      saveSessionUi(sessionId, {
+        pulls: nextPulls,
+        pull: nextActive ?? 0,
+        ...pruned(sessionId, nextPulls),
+      });
     },
     [sessionId]
   );
@@ -109,7 +139,8 @@ export function useSessionPulls(sessionId: string): SessionPulls {
     [apply]
   );
 
-  // Closing a tab falls back to its neighbour, the way a file tab does.
+  // Closing a tab falls back to its neighbour, the way a file tab does. How far through that review
+  // the reader had got goes with it, through the prune every write runs (see `pruned`).
   const close = useCallback(
     (number: number) => {
       const idx = pullsRef.current.findIndex((p) => p.number === number);

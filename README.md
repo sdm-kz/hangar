@@ -192,6 +192,13 @@ The web UI is a **session manager with a full terminal**:
   which is where copying belongs: a diff copied wholesale is a mix of both sides with markers down
   the left, which is not the file anyone means.
 
+  How far through a review you had got is kept: which files you folded away, and where the pane was
+  scrolled to, against the pull request in the session's own state — so it follows the session to
+  your other devices, and a tab that goes away takes it with it, whether you closed it or it made
+  way for a ninth. *Collapse all* and *Expand all* are stored as that, one word, rather than as a
+  decision per file; the files you then fold or open one at a time are stored by name, and a session
+  keeps a hundred of those across all its reviews before the oldest go back to following the rest.
+
   A review is fetched when its tab is first opened and then stays as it was, so one left open behind
   the terminal is as old as when you last looked at it — the **reload** in its header is what catches
   it up. A file whose diff is enormous arrives folded rather than drawn, and one past the size the

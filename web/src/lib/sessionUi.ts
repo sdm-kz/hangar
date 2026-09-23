@@ -10,7 +10,7 @@
 // the merged bag, which is what the mirror then holds. Other browsers learn about the change from
 // SessionInfo.uiRev on the session list and re-fetch (see noteSessionUiRev).
 import { api } from "./api";
-import type { SessionLink, SessionPull } from "@/types";
+import type { PullFolds, SessionLink, SessionPull } from "@/types";
 import type { TabName } from "./urlState";
 
 const KEY = "claudeweb.sessionUi";
@@ -21,7 +21,12 @@ const FLUSH_MS = 400; // coalesce bursts (a scroll settling, a tab open) into on
 // revision bump for each one would have every other browser re-fetching the bag all the way down the
 // tree. A write of only these goes up quiet (see api.patchSessionUi); mixed with anything else it
 // rides along with the rest.
-const QUIET_FIELDS = new Set<keyof SessionUi>(["filesScroll", "changesScroll", "fileScroll"]);
+const QUIET_FIELDS = new Set<keyof SessionUi>([
+  "filesScroll",
+  "changesScroll",
+  "fileScroll",
+  "pullScroll",
+]);
 
 export interface SessionUi {
   view?: TabName; // active tab: terminal | files | split | file | shell | link | pull (a tab in the bar)
@@ -37,6 +42,13 @@ export interface SessionUi {
   // review itself is re-fetched from GitHub — so the list rides the bag to the user's other devices.
   pulls?: SessionPull[];
   pull?: number; // number of the PR tab filling the pane in the "pull" view
+  // How far through each open review the reader had got, keyed by PR number: which files were folded
+  // away, and where the pane was scrolled to. Pruned to the tabs that are still open on every write
+  // to the tab list (see lib/sessionPulls.ts) — a close is not the only way a tab goes away, since
+  // opening one past the cap drops the oldest — so this stays a fact about the reviews that are open
+  // rather than every one the session has ever opened.
+  pullFolds?: Record<string, PullFolds>;
+  pullScroll?: Record<string, number>;
   file?: string; // path of the active file tab in the Files/Split view (relative to the working dir)
   files?: string[]; // paths of all open file tabs, in order (the active one is `file`)
   preview?: string; // path of the transient "preview" tab (reused by single-click), if any

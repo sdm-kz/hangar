@@ -1,6 +1,16 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { GitHubPullDetail, GitHubPullFile } from "@/types";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type UIEvent,
+} from "react";
+import type { GitHubPullDetail, GitHubPullFile, PullFolds } from "@/types";
 import { api } from "@/lib/api";
+import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
 import { writeToClipboard } from "@/lib/clipboard";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { highlightLines, type CodeToken } from "@/lib/highlight";
@@ -68,6 +78,13 @@ const LINE_H = 23.2; // 1.45rem
 // lines" are two lines of a megabyte each.
 const BIG_DIFF_ROWS = 800;
 const BIG_DIFF_CHARS = 60_000;
+// Paths a session may keep across all the reviews it has open. This is a share of a budget, not a
+// comfort limit: the bag holds everything the session remembers in one entry the server caps at
+// 64KB, and an entry over the cap is dropped whole rather than trimmed — taking the open tabs, the
+// open files and the tree state with it, silently, until the next restart shows them gone. A path
+// runs to eighty-odd bytes, so a hundred of them is a few KB and leaves the rest of the bag its
+// room. The baseline a bulk fold writes costs nothing and is never trimmed.
+const MAX_FOLD_PATHS = 100;
 // Shared empty list, so a PR that has not loaded yet hands out the same array every render and the
 // work keyed on it (the row counts below) is redone when the PR changes rather than on every render.
 const NO_FILES: GitHubPullFile[] = [];
@@ -122,6 +139,45 @@ const STATUS_WORD: Record<string, string> = {
   C: "copied",
 };
 
+/** One review's folds out of the saved bag, ignoring anything that is not the shape we wrote. */
+function readFolds(sessionId: string, number: number): PullFolds {
+  const saved = loadSessionUi(sessionId).pullFolds?.[number];
+  if (!saved || typeof saved !== "object") return {};
+  return {
+    all: typeof saved.all === "boolean" ? saved.all : undefined,
+    // Trimmed as well as type-checked: the budget below is enforced on the way out, and a bag
+    // written by another device — or by a build that bounded this differently — comes in here.
+    except: Array.isArray(saved.except)
+      ? saved.except.filter((p) => typeof p === "string").slice(-MAX_FOLD_PATHS)
+      : [],
+  };
+}
+
+/**
+ * Bring the whole record inside the budget, when the reviews between them have remembered more paths
+ * than a session may keep. The reviews that are not being read give up their exceptions first: they
+ * keep their baseline, which is the bulk decision and costs nothing, while the one in front of the
+ * reader keeps its detail. Past that the oldest of its own exceptions go, each one quietly returning
+ * its file to the baseline — the least surprising thing that can be dropped.
+ */
+function capFolds(folds: Record<string, PullFolds>, current: string): Record<string, PullFolds> {
+  const count = (f: PullFolds) => f.except?.length ?? 0;
+  let total = Object.values(folds).reduce((n, f) => n + count(f), 0);
+  if (total <= MAX_FOLD_PATHS) return folds;
+
+  const out = { ...folds };
+  for (const key of Object.keys(out)) {
+    if (total <= MAX_FOLD_PATHS || key === current) continue;
+    total -= count(out[key]);
+    out[key] = { ...out[key], except: [] };
+  }
+  const mine = out[current];
+  if (total > MAX_FOLD_PATHS && mine?.except) {
+    out[current] = { ...mine, except: mine.except.slice(total - MAX_FOLD_PATHS) };
+  }
+  return out;
+}
+
 /** Split a path into the folders (dimmed) and the file name (the part being looked for). */
 function splitPath(path: string): { dir: string; name: string } {
   const at = path.lastIndexOf("/");
@@ -154,17 +210,32 @@ export function PullRequestView({
   const [wrap, setWrap] = useState(readWrap);
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [share, setShare] = useState(readShare);
+  // Bumped when the server's copy of this session's bag replaces the local mirror. Everything below
+  // reads that mirror synchronously at mount, which on any device that has seen this session before
+  // happens well ahead of the fetch — so without this a review opened on the laptop and reloaded on
+  // the desktop would come back at the desktop's stale folds and offset, and the next fold click
+  // there would write the stale baseline back over the laptop's. FileBrowser carries the same epoch
+  // for the same reason. Only the seed, not every remote write: a fold someone makes elsewhere
+  // should not refold what is under the reader's eyes.
+  const [seedEpoch, setSeedEpoch] = useState(0);
   // Reading size for the code itself. Shares the app's zoom stops and its storage convention, under
   // a key of its own so a review's size is not whatever the last file preview was left at.
   const [zoom, setZoom] = usePersistentZoom("prDiff");
   // The line-number column, at this zoom. The grid and the divider both measure against it, so it is
   // worked out once here rather than in each of them.
   const numCol = Math.round(NUM_COL * zoom);
-  // Files the reader has collapsed or expanded by hand, by path. Everything not in here follows the
-  // default, which is "open unless it is enormous" — so a re-fetch doesn't undo what was folded away.
-  const [folded, setFolded] = useState<Record<string, boolean>>({});
+  // Which files are folded away: what Collapse all / Expand all last said, plus the files toggled by
+  // hand since. Everything else follows the size default, so a re-fetch doesn't undo what was folded.
+  // Restored from the bag, so a review comes back where it was left — on this device and the others.
+  const [folds, setFolds] = useState<PullFolds>(() => readFolds(sessionId, number));
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   const fileRefs = useRef(new Map<string, HTMLDivElement>());
+  // The pane that scrolls through the files, and the two flags its saved offset needs: whether the
+  // offset has been replayed yet (scrolls before that are the browser laying rows out, not the
+  // reader) and the timer that keeps a scroll from writing the bag on every frame.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const restoredRef = useRef(false);
+  const saveScrollRef = useRef(0);
   // The row holding the sidebar and the diffs, so the drag knows how much width there is to divide.
   const splitRef = useRef<HTMLDivElement>(null);
   // Held in a ref rather than depended on: the caller writes it inline, so a new function arrives
@@ -190,6 +261,84 @@ export function PullRequestView({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(
+    () => subscribeSessionUi(sessionId, (seed) => seed && setSeedEpoch((e) => e + 1)),
+    [sessionId]
+  );
+
+  // Take the folds the seed brought. Safe to overwrite what is on screen with: the bag layers this
+  // browser's own unacknowledged writes back on top of the server's answer, so what comes out here
+  // is the server's state with ours already in it.
+  useEffect(() => {
+    if (seedEpoch > 0) setFolds(readFolds(sessionId, number));
+  }, [sessionId, number, seedEpoch]);
+
+  // Replay the remembered offset, but only once the files have stopped arriving: they are drawn as
+  // the fetch resolves, and scrolling while rows are still appearing above the viewport lets the
+  // browser's scroll anchoring drag the offset somewhere else. A quiet DOM means everything that was
+  // going to render has; if the review is shorter than it was — files folded since, or a force-push
+  // that dropped some — go as far as it allows rather than waiting for room that is not coming.
+  useEffect(() => {
+    restoredRef.current = false;
+    const box = scrollRef.current;
+    // Armed by `detail` rather than by the mount: the deadline below is for a layout settling, and
+    // starting it at mount spends it on the `gh` round trip instead — a fetch slower than three
+    // seconds would use the whole budget against an empty pane, mark the restore done, and let the
+    // first scroll write the top of the pane over the remembered offset.
+    if (!box || !detail) return;
+    const target = loadSessionUi(sessionId).pullScroll?.[number] ?? 0;
+    if (!(target > 0)) {
+      restoredRef.current = true;
+      return;
+    }
+    const deadline = Date.now() + 3000;
+    let timer = 0;
+    const apply = () => {
+      if (restoredRef.current) return;
+      const max = Math.max(0, box.scrollHeight - box.clientHeight);
+      if (max < target && Date.now() < deadline) {
+        timer = window.setTimeout(apply, 200); // still filling in — look again
+        return;
+      }
+      box.scrollTop = Math.min(target, max);
+      restoredRef.current = true;
+      obs.disconnect();
+    };
+    const settle = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(apply, 120);
+    };
+    const obs = new MutationObserver(settle);
+    obs.observe(box, { childList: true, subtree: true });
+    settle(); // it may already be complete
+    return () => {
+      obs.disconnect();
+      window.clearTimeout(timer);
+    };
+  }, [sessionId, number, detail, seedEpoch]);
+
+  // Save it back on a short debounce. Scrolls before the restore are the browser shifting rows about
+  // as they load, not the reader, so they must not overwrite the offset being replayed.
+  const onScroll = useCallback(
+    (e: UIEvent<HTMLDivElement>) => {
+      if (!restoredRef.current) return;
+      const top = Math.round(e.currentTarget.scrollTop);
+      window.clearTimeout(saveScrollRef.current);
+      saveScrollRef.current = window.setTimeout(
+        () =>
+          saveSessionUi(sessionId, {
+            pullScroll: { ...loadSessionUi(sessionId).pullScroll, [number]: top },
+          }),
+        200
+      );
+    },
+    [sessionId, number]
+  );
+
+  // A save in flight when the tab closes would write the entry back that closing it just pruned —
+  // for a review with no tab left to prune it again.
+  useEffect(() => () => window.clearTimeout(saveScrollRef.current), []);
 
   const toggleSidebar = useCallback(() => {
     setSidebar((open) => {
@@ -313,23 +462,63 @@ export function PullRequestView({
       ),
     [files]
   );
+  // A file's size default, which is what it follows until somebody says otherwise.
+  const byDefault = useCallback(
+    (f: GitHubPullFile) => !f.binary && !big.has(f.path),
+    [big]
+  );
+  // A set, not the array itself: this is asked once per file per render, and a review of three
+  // hundred files with three hundred exceptions would otherwise be a scan inside a scan.
+  const excepted = useMemo(() => new Set(folds.except ?? []), [folds.except]);
   const isOpen = useCallback(
-    (f: GitHubPullFile) => folded[f.path] ?? (!f.binary && !big.has(f.path)),
-    [folded, big]
+    (f: GitHubPullFile) => {
+      const base = folds.all ?? byDefault(f);
+      return excepted.has(f.path) ? !base : base;
+    },
+    [folds.all, excepted, byDefault]
   );
 
-  const setAll = (open: boolean) =>
-    setFolded(Object.fromEntries(files.map((f) => [f.path, open])));
+  // Every change to the folds goes to the bag as it is made: there is no "done reading" moment to
+  // save at, and the reader may well close the tab as the next thing they do.
+  const putFolds = useCallback(
+    (next: PullFolds) => {
+      const all = capFolds({ ...loadSessionUi(sessionId).pullFolds, [number]: next }, String(number));
+      // What is kept for this review may have been trimmed on the way into the budget, so the state
+      // takes what was actually stored rather than what was asked for — otherwise the screen and the
+      // bag would disagree until the next reload.
+      setFolds(all[number] ?? next);
+      saveSessionUi(sessionId, { pullFolds: all });
+    },
+    [sessionId, number]
+  );
+
+  const setAll = (open: boolean) => putFolds({ all: open, except: [] });
+
+  /** Fold or unfold one file, as the exception it is to whatever the rest of the review is doing. */
+  const toggleFile = useCallback(
+    (f: GitHubPullFile) => {
+      const except = folds.except ?? [];
+      // Back to the baseline rather than a second exception, so toggling twice leaves no trace.
+      const next = excepted.has(f.path)
+        ? except.filter((p) => p !== f.path)
+        : [...except, f.path];
+      putFolds({ ...folds, except: next });
+    },
+    [folds, excepted, putFolds]
+  );
 
   // Clicking a file in the sidebar brings it into view and opens it — asking for a file is asking to
   // read it, and scrolling to a collapsed header would land on nothing.
-  const reveal = useCallback((path: string) => {
-    setFolded((prev) => ({ ...prev, [path]: true }));
-    // After the row has been laid out at its new height.
-    requestAnimationFrame(() =>
-      fileRefs.current.get(path)?.scrollIntoView({ block: "start", behavior: "smooth" })
-    );
-  }, []);
+  const reveal = useCallback(
+    (f: GitHubPullFile) => {
+      if (!isOpen(f)) toggleFile(f);
+      // After the row has been laid out at its new height.
+      requestAnimationFrame(() =>
+        fileRefs.current.get(f.path)?.scrollIntoView({ block: "start", behavior: "smooth" })
+      );
+    },
+    [isOpen, toggleFile]
+  );
 
   const pull = detail?.pull;
   const { Icon: StateIcon, className: stateClass } = (() => {
@@ -478,7 +667,7 @@ export function PullRequestView({
                 <button
                   key={f.path}
                   type="button"
-                  onClick={() => reveal(f.path)}
+                  onClick={() => reveal(f)}
                   title={`${f.path}${f.oldPath ? ` (was ${f.oldPath})` : ""} — ${STATUS_WORD[f.status] ?? "changed"}`}
                   className="flex w-full items-center gap-2 px-3 py-1 text-left text-xs hover:bg-accent"
                 >
@@ -512,7 +701,7 @@ export function PullRequestView({
           />
         )}
 
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <div ref={scrollRef} onScroll={onScroll} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {error && (
             <div className="m-3 flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
@@ -571,7 +760,7 @@ export function PullRequestView({
                   onShareResize={startShareResize}
                   onShareReset={resetShare}
                   bigByDefault={big.has(f.path)}
-                  onToggle={() => setFolded((prev) => ({ ...prev, [f.path]: !isOpen(f) }))}
+                  onToggle={() => toggleFile(f)}
                   register={(el) => {
                     if (el) fileRefs.current.set(f.path, el);
                     else fileRefs.current.delete(f.path);
