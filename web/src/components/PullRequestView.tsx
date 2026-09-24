@@ -989,7 +989,14 @@ function FileDiff({
       {/* Sticky so the name of what you are reading stays on screen through a long diff. The row is
           no longer one big button: the controls at its end are buttons of their own, and a button
           cannot hold another one. */}
-      <div className="sticky top-0 z-10 flex items-center gap-2 border-b bg-muted/60 px-3 py-1.5 text-xs backdrop-blur">
+      {/* The border is the one between this header and what it holds, so a folded file leaves it to
+          the card's own border rather than stacking two rules with nothing in between. */}
+      <div
+        className={cn(
+          "sticky top-0 z-10 flex items-center gap-2 bg-muted/60 px-3 py-1.5 text-xs backdrop-blur",
+          open && "border-b"
+        )}
+      >
         <button
           type="button"
           onClick={onToggle}
@@ -1011,6 +1018,17 @@ function FileDiff({
               </span>
             )}
           </span>
+          {/* Said in the row rather than under it. As a line of its own it made this one file's row
+              half again as tall as every other folded row, and a list you are scanning for what is
+              left to read wants one height, not two. */}
+          {bigByDefault && !open && (
+            <span
+              title="A large diff — it is not drawn until you open it"
+              className="shrink-0 rounded bg-muted-foreground/15 px-1 text-[10px] text-muted-foreground"
+            >
+              large
+            </span>
+          )}
           <span className="shrink-0 font-mono text-[11px]">
             <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>{" "}
             <span className="text-red-600 dark:text-red-400">−{file.deletions}</span>
@@ -1123,13 +1141,7 @@ function FileDiff({
             onReset={onShareReset}
           />
         )
-      ) : (
-        bigByDefault && (
-          <div className="px-4 py-2 text-xs text-muted-foreground">
-            Large diff — click the header to load it.
-          </div>
-        )
-      )}
+      ) : null}
     </div>
   );
 }
