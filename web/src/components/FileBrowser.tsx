@@ -1420,6 +1420,9 @@ function FlatFileList({
       {entries.map((e) => {
         const kind = fileKind(e.name);
         const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : FileText;
+        // Rows here carry the path under the name -- a hit can come from anywhere, so the name alone
+        // does not say where it is. The row is handed the same line so the rename box keeps it.
+        const pathLine = <span className="truncate text-[10px] text-muted-foreground">{e.path}</span>;
         return (
           <Row
             key={e.path}
@@ -1429,11 +1432,12 @@ function FlatFileList({
             actions={actions}
             onClick={() => onSelect(e)}
             onOpenNewTab={() => onSelect(e, true)}
+            lead={<Icon className="size-3.5 shrink-0 text-muted-foreground" />}
+            sub={pathLine}
           >
-            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col">
               <span className={cn("truncate", gitFiles?.[e.path] && STATUS_COLOR[gitFiles[e.path]])}>{e.name}</span>
-              <span className="truncate text-[10px] text-muted-foreground">{e.path}</span>
+              {pathLine}
             </span>
             <GitMarker status={gitFiles?.[e.path]} />
           </Row>
@@ -1576,13 +1580,17 @@ function ChangeDirChildren({ dir, depth, ...rest }: { dir: ChangeDir; depth: num
           actions={rest.actions}
           onClick={() => rest.onSelect(e)}
           onOpenNewTab={() => rest.onSelect(e, true)}
+          lead={
+            <>
+              <span className="size-3.5 shrink-0" />
+              {(() => {
+                const kind = fileKind(e.name);
+                const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : FileText;
+                return <Icon className="size-3.5 shrink-0 text-muted-foreground" />;
+              })()}
+            </>
+          }
         >
-          <span className="size-3.5 shrink-0" />
-          {(() => {
-            const kind = fileKind(e.name);
-            const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : FileText;
-            return <Icon className="size-3.5 shrink-0 text-muted-foreground" />;
-          })()}
           <span className={cn("truncate", rest.gitFiles?.[e.path] && STATUS_COLOR[rest.gitFiles[e.path]])}>
             {e.name}
           </span>
@@ -1766,17 +1774,21 @@ function TreeDir({
             <FolderPlus className="size-3.5" />
           </button>
         }
+        lead={
+          <>
+            {open ? (
+              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+            )}
+            {open ? (
+              <FolderOpen className="size-3.5 shrink-0 text-amber-500" />
+            ) : (
+              <Folder className="size-3.5 shrink-0 text-amber-500" />
+            )}
+          </>
+        }
       >
-        {open ? (
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        {open ? (
-          <FolderOpen className="size-3.5 shrink-0 text-amber-500" />
-        ) : (
-          <Folder className="size-3.5 shrink-0 text-amber-500" />
-        )}
         <span className="truncate">{entry.name}</span>
         {!open && dirHasChanges(gitFiles, entry.path) && (
           <span className="size-1.5 shrink-0 rounded-full bg-amber-500" />
@@ -1837,9 +1849,13 @@ function FileRow({
       actions={actions}
       onClick={() => onSelect(entry)}
       onOpenNewTab={() => onSelect(entry, true)}
+      lead={
+        <>
+          <span className="size-3.5 shrink-0" />
+          <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+        </>
+      }
     >
-      <span className="size-3.5 shrink-0" />
-      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
       <span className={cn("truncate", gitStatus && STATUS_COLOR[gitStatus])}>{entry.name}</span>
       <GitMarker status={gitStatus} />
     </Row>
@@ -1857,15 +1873,31 @@ const Row = forwardRef<
     entry: FileEntry;
     actions: RowActions;
     extraActions?: React.ReactNode; // dir-only: "new folder here"
+    // The glyphs that run ahead of the name -- a fold chevron, a file or folder icon, the blank that
+    // stands in for a chevron on a row that cannot fold. Their own prop rather than the head of
+    // `children` because the rename box has to draw them too: they are what holds the name's column,
+    // and a name that jumps left the moment you start typing is a name you have to find again.
+    lead?: React.ReactNode;
+    // A second line under the name, where a row has one (the flat list writes the path there). Drawn
+    // by the rename box as well, for the same reason as `lead` but in the other axis: without it the
+    // row loses a line the moment you start typing, and every row below it moves up to fill the gap.
+    sub?: React.ReactNode;
     children: React.ReactNode;
   }
->(function Row({ depth, selected, open, onClick, onOpenNewTab, entry, actions, extraActions, children }, ref) {
+>(function Row({ depth, selected, open, onClick, onOpenNewTab, entry, actions, extraActions, lead, sub, children }, ref) {
   const renaming = actions.renamingPath === entry.path;
   const { mark } = actions;
   const marked = mark.has(entry.path);
   // Nothing is markable while browsing another worktree: the delete the mark leads to is one of the
   // actions that root does not get.
   const selecting = mark.selecting && !actions.readOnly;
+  // Written once and drawn by both states. Renaming is offered in select mode too, and a box that
+  // left the tick out started the name one checkbox further left than the row it replaced.
+  const checkbox = selecting && (
+    <span className={cn("shrink-0", marked ? "text-primary" : "text-muted-foreground")}>
+      {marked ? <SquareCheck className="size-3.5" /> : <Square className="size-3.5" />}
+    </span>
+  );
   return (
     <div
       ref={ref}
@@ -1875,15 +1907,34 @@ const Row = forwardRef<
         marked && "bg-primary/10"
       )}
     >
-      {/* The rename box carries the same padding as the row button opposite it, so a row keeps its
-          height -- and every row below it keeps its place -- while it is being renamed. */}
+      {/* The rename box is the row button's own box: the same padding, the same flex line, the same
+          leading glyphs. A row keeps its height while it is being renamed -- and every row below it
+          keeps its place -- and the name stays on the column it was reading from, with the field
+          taking the width the name had rather than collapsing to an input's default size, which left
+          a long name scrolled to its tail with the front of it out of sight. */}
       {renaming ? (
-        <div className="min-w-0 flex-1 py-1 pr-2" style={{ paddingLeft: depth * 12 + 8 }}>
-          <RenameField
-            value={entry.name}
-            onSubmit={(name) => actions.onRename(entry.path, name)}
-            onCancel={actions.onCancelRename}
-          />
+        <div
+          style={{ paddingLeft: depth * 12 + 8 }}
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2"
+        >
+          {checkbox}
+          {lead}
+          {sub ? (
+            <span className="flex min-w-0 flex-1 flex-col">
+              <RenameField
+                value={entry.name}
+                onSubmit={(name) => actions.onRename(entry.path, name)}
+                onCancel={actions.onCancelRename}
+              />
+              {sub}
+            </span>
+          ) : (
+            <RenameField
+              value={entry.name}
+              onSubmit={(name) => actions.onRename(entry.path, name)}
+              onCancel={actions.onCancelRename}
+            />
+          )}
         </div>
       ) : (
         <>
@@ -1919,11 +1970,8 @@ const Row = forwardRef<
             style={{ paddingLeft: depth * 12 + 8 }}
             className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 text-left"
           >
-            {selecting && (
-              <span className={cn("shrink-0", marked ? "text-primary" : "text-muted-foreground")}>
-                {marked ? <SquareCheck className="size-3.5" /> : <Square className="size-3.5" />}
-              </span>
-            )}
+            {checkbox}
+            {lead}
             {children}
           </button>
           {/* Hover actions, overlaid at the right so they don't eat name width when idle. Mutating
