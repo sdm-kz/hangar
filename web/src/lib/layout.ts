@@ -51,14 +51,14 @@ export const FILES: PaneRef = "files";
 export const fileRef = (path: string): PaneRef => `file:${path}`;
 export const shellRef = (id: string): PaneRef => `shell:${id}`;
 export const linkRef = (id: string): PaneRef => `link:${id}`;
-export const pullRef = (n: number): PaneRef => `pull:${n}`;
+export const pullRef = (key: string): PaneRef => `pull:${key}`;
 
 export function paneKind(ref: PaneRef): PaneKind {
   if (ref === CLAUDE || ref === FILES) return ref as PaneKind;
   return ref.slice(0, ref.indexOf(":")) as PaneKind;
 }
 
-/** What follows the kind: the path, the shell or link id, the PR number (as a string). */
+/** What follows the kind: the path, the shell or link id, the review key (see pullKey). */
 export function paneArg(ref: PaneRef): string {
   return ref.slice(ref.indexOf(":") + 1);
 }

@@ -13,7 +13,7 @@ import {
 } from "@/lib/sessionUi";
 import { EXPLORER_GUARD, fileEntryFromPath, useFileTabs, type FileTabs } from "@/lib/useFileTabs";
 import { linkTabLabel, MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
-import { useSessionPulls } from "@/lib/sessionPulls";
+import { parsePullKey, pullKey, useSessionPulls } from "@/lib/sessionPulls";
 import { useShells } from "@/lib/useShells";
 import {
   activateRef,
@@ -145,7 +145,7 @@ function legacyLayout(sessionId: string, present: PaneRef[]): PaneLayout {
     file: ui.file ? fileRef(ui.file) : FILES,
     shell: ui.shell ? shellRef(ui.shell) : CLAUDE,
     link: ui.link ? linkRef(ui.link) : CLAUDE,
-    pull: ui.pull ? pullRef(ui.pull) : CLAUDE,
+    pull: ui.pull ? pullRef(String(ui.pull)) : CLAUDE,
   };
   return singleLayout(tabs, active[view] ?? CLAUDE);
 }
@@ -348,9 +348,6 @@ export function SessionView({
   // bag, so a review follows the session to every device; unlike them, what is drawn under the tab
   // is fetched from GitHub each time it is opened.
   const pulls = useSessionPulls(session.id);
-  // Whether this session's folder is a GitHub repo — read from its git remote, so it costs no
-  // network call. It is what decides whether the PR picker is offered at all.
-  const [isGitHub, setIsGitHub] = useState(false);
 
   // ---- The pane's layout ------------------------------------------------------------------------
   // Every tab the session has, in the order a single group lists them: the two that always exist,
@@ -359,7 +356,7 @@ export function SessionView({
     () => [
       CLAUDE,
       FILES,
-      ...pulls.pulls.map((p) => pullRef(p.number)),
+      ...pulls.pulls.map((p) => pullRef(pullKey(p))),
       ...fileTabs.tabs.map((t) => fileRef(t.path)),
       ...shells.shells.map((s) => shellRef(s.id)),
       ...links.links.map((l) => linkRef(l.id)),
@@ -608,22 +605,6 @@ export function SessionView({
     [session.id]
   );
 
-  // Ask once per session whether its folder is a GitHub repo. A session doesn't change folders, and
-  // a remote is not added mid-session often enough to be worth polling for.
-  useEffect(() => {
-    let cancelled = false;
-    setIsGitHub(false);
-    api
-      .githubRepo(session.id)
-      .then((r) => !cancelled && setIsGitHub(r.isGitHub))
-      .catch(() => {
-        /* not a repo, or the server is not answering — no picker, which is the safe default */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [session.id]);
-
   // ---- Tab actions ------------------------------------------------------------------------------
 
   /** A tab clicked: show it in its group, focus the group, and tell the tab's own hook. */
@@ -635,7 +616,7 @@ export function SessionView({
       if (kind === "file") void fileTabs.activate(arg);
       else if (kind === "shell") shells.activate(arg);
       else if (kind === "link") links.activate(arg);
-      else if (kind === "pull") pulls.activate(Number(arg));
+      else if (kind === "pull") pulls.activate(arg);
     },
     // The hooks' callbacks are stable; the handles themselves are fresh objects every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -649,7 +630,7 @@ export function SessionView({
       if (kind === "file") void fileTabs.close(arg);
       else if (kind === "shell") void shells.close(arg);
       else if (kind === "link") links.remove(arg);
-      else if (kind === "pull") pulls.close(Number(arg));
+      else if (kind === "pull") pulls.close(arg);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [fileTabs.close, shells.close, links.remove, pulls.close]
@@ -708,10 +689,11 @@ export function SessionView({
   // Opening a review from a group's picker: the same, for a PR.
   const openPull = useCallback(
     (pull: SessionPull, group: string) => {
-      const had = pulls.pulls.some((p) => p.number === pull.number);
+      const key = pullKey(pull);
+      const had = pulls.pulls.some((p) => pullKey(p) === key);
       if (!had) expect("pull", group);
       pulls.open(pull);
-      if (had) update((l) => revealRef(l, pullRef(pull.number)));
+      if (had) update((l) => revealRef(l, pullRef(key)));
     },
     [pulls, expect, update]
   );
@@ -865,17 +847,24 @@ export function SessionView({
         };
       }
       case "pull": {
-        const p = pulls.pulls.find((x) => x.number === Number(arg));
+        const p = pulls.pulls.find((x) => pullKey(x) === arg);
         if (!p) return null;
         return {
           icon: <GitPullRequest className="size-4 shrink-0" />,
           label: (
             <>
+              {/* A review of another repo says which: #42 of two repos would otherwise be two tabs
+                  reading as one. Nothing is said for the session's own, which is the usual case. */}
+              {p.repo && (
+                <span className="max-w-[6rem] shrink-0 truncate text-xs text-muted-foreground">
+                  {p.repo.split("/")[1] ?? p.repo}
+                </span>
+              )}
               <span className="shrink-0 text-xs text-muted-foreground">#{p.number}</span>
               {label(p.title)}
             </>
           ),
-          title: `#${p.number} ${p.title}`,
+          title: `${p.repo ? `${p.repo} ` : ""}#${p.number} ${p.title}`,
           closable: true,
         };
       }
@@ -990,11 +979,16 @@ export function SessionView({
       case "pull": {
         // A review stays mounted once it has been opened, so coming back to it finds it loaded and
         // folded the way it was left rather than asking GitHub again.
-        const n = Number(arg);
-        if (!pulls.pulls.some((p) => p.number === n) || !kept(ref)) return null;
+        if (!pulls.pulls.some((p) => pullKey(p) === arg) || !kept(ref)) return null;
+        const { repo, number } = parsePullKey(arg);
         return (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <PullRequestView sessionId={session.id} number={n} onTitle={(title) => pulls.retitle(n, title)} />
+            <PullRequestView
+              sessionId={session.id}
+              number={number}
+              repo={repo}
+              onTitle={(title) => pulls.retitle(arg, title)}
+            />
           </div>
         );
       }
@@ -1268,13 +1262,12 @@ export function SessionView({
           const g = findGroup(layout, groupId);
           return (
             <>
-              {/* The repo's pull requests, opened into this group. Only the picker waits on the
-                  folder turning out to be on GitHub: the review tabs are saved state, and a probe
-                  that is slow, or that failed, must not leave an open review with no tab. */}
+              {/* Pull requests, opened into this group. Which repos this session can review — its
+                  folder's own, the ones linked to it, the ones its project names — is the picker's
+                  own business (lib/sessionRepos.ts), including whether it draws a button at all. */}
               <PullPicker
                 atEnd
                 sessionId={session.id}
-                enabled={isGitHub}
                 openSignal={pullAsk.group === groupId ? pullAsk.n : 0}
                 onOpen={(p) => openPull(p, groupId)}
               />
@@ -1284,7 +1277,7 @@ export function SessionView({
                 hasFiles={!!g?.tabs.includes(FILES)}
                 onBring={(what) => update((l) => moveRef(l, what, groupId))}
                 onOpenShell={(sh) => openShell(sh, groupId)}
-                onOpenPull={isGitHub ? () => setPullAsk((a) => ({ group: groupId, n: a.n + 1 })) : undefined}
+                onOpenPull={() => setPullAsk((a) => ({ group: groupId, n: a.n + 1 }))}
                 onAddLink={() => {
                   linkTarget.current = groupId;
                   setLinkDialog({});

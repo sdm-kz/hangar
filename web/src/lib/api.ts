@@ -12,13 +12,13 @@ import type {
   GitHubFileContent,
   GitHubPullDetail,
   GitHubPullList,
-  GitHubRepo,
   GitWorktree,
   LinkProbe,
   Project,
   PtyOrphan,
   ScheduleEntry,
   SessionInfo,
+  SessionRepo,
   SessionSchedule,
   SessionTemplate,
   ShellInfo,
@@ -99,7 +99,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
  * throwing on the first paint.
  */
 async function projects(answer: Promise<Project[]>): Promise<Project[]> {
-  return (await answer).map((p) => (p.groups ? p : { ...p, groups: [] }));
+  return (await answer).map((p) => ({ ...p, groups: p.groups ?? [], repos: p.repos ?? [] }));
+}
+
+/**
+ * The query string for a GitHub call: whatever the call itself needs, plus the repo being reviewed
+ * when it is not the session's own. An undefined repo is left out rather than sent empty, so the
+ * server falls back to the folder's remote — which is what an older tab, saved before repos could be
+ * linked, still means by saying nothing.
+ */
+function githubQuery(repo?: string, params: Record<string, string | undefined> = {}): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined) q.set(k, v);
+  if (repo) q.set("repo", repo);
+  const text = q.toString();
+  return text ? `?${text}` : "";
 }
 
 export const api = {
@@ -363,6 +377,19 @@ export const api = {
       request(`/api/projects/${id}/folders`, { method: "POST", body: JSON.stringify({ path }) })
     );
   },
+  addProjectRepo(id: string, repo: string): Promise<Project[]> {
+    return projects(
+      request(`/api/projects/${id}/repos`, { method: "POST", body: JSON.stringify({ repo }) })
+    );
+  },
+  removeProjectRepo(id: string, repo: string): Promise<Project[]> {
+    return projects(
+      request(`/api/projects/${id}/repos/remove`, {
+        method: "POST",
+        body: JSON.stringify({ repo }),
+      })
+    );
+  },
   removeProjectFolder(id: string, path: string): Promise<Project[]> {
     return projects(
       request(`/api/projects/${id}/folders/remove`, {
@@ -592,35 +619,60 @@ export const api = {
       `/api/sessions/${id}/git/commit-file?hash=${encodeURIComponent(hash)}&path=${encodeURIComponent(path)}`
     );
   },
-  // ---- GitHub pull requests for the session's repo (server-side, through the gh CLI) ----
-  // Cheap and offline: read from the folder's git remote, not from GitHub.
-  githubRepo(id: string): Promise<GitHubRepo> {
-    return request(`/api/sessions/${id}/github/repo`);
+  // ---- GitHub pull requests the session can review (server-side, through the gh CLI) ----
+  //
+  // Every call below takes an optional `repo` ("owner/name"): the one being reviewed, when it is not
+  // the one the session's own folder points at. gh answers for any repo by name, so a linked repo
+  // needs no checkout — which is what lets a session review a repo it only has to read.
+  // Every repo this session can review: its folder's own, the ones linked to the folder, and the
+  // ones its project names. The folder's own arrives as `source: "folder"`, which is why there is no
+  // separate "is this folder a GitHub repo" probe any more — this one answer covers both questions.
+  async githubRepos(id: string): Promise<SessionRepo[]> {
+    const r = await request<{ repos: SessionRepo[] }>(`/api/sessions/${id}/github/repos`);
+    return r.repos ?? [];
+  },
+  async githubLinkRepo(id: string, repo: string): Promise<SessionRepo[]> {
+    const r = await request<{ repos: SessionRepo[] }>(`/api/sessions/${id}/github/repos`, {
+      method: "POST",
+      body: JSON.stringify({ repo }),
+    });
+    return r.repos ?? [];
+  },
+  async githubUnlinkRepo(id: string, repo: string): Promise<SessionRepo[]> {
+    const r = await request<{ repos: SessionRepo[] }>(`/api/sessions/${id}/github/repos/remove`, {
+      method: "POST",
+      body: JSON.stringify({ repo }),
+    });
+    return r.repos ?? [];
   },
   // state: open (default) | closed | merged | all.
-  githubPulls(id: string, state?: string): Promise<GitHubPullList> {
-    const q = state ? `?state=${encodeURIComponent(state)}` : "";
-    return request(`/api/sessions/${id}/github/pulls${q}`);
+  githubPulls(id: string, state?: string, repo?: string): Promise<GitHubPullList> {
+    return request(`/api/sessions/${id}/github/pulls${githubQuery(repo, { state })}`);
   },
-  githubPull(id: string, number: number): Promise<GitHubPullDetail> {
-    return request(`/api/sessions/${id}/github/pulls/${number}`);
+  githubPull(id: string, number: number, repo?: string): Promise<GitHubPullDetail> {
+    return request(`/api/sessions/${id}/github/pulls/${number}${githubQuery(repo)}`);
   },
   // One of a PR's files read whole at one of the two commits the review names — the head unless the
   // base is asked for, which is what a deleted file wants.
   // Mark one file of a review read, or unmark it. The sha pins the mark to the version being read,
   // so a later push resets that file and leaves the rest of the review marked.
-  githubSetViewed(id: string, number: number, path: string, sha: string, viewed: boolean): Promise<void> {
+  githubSetViewed(
+    id: string, number: number, path: string, sha: string, viewed: boolean, repo?: string
+  ): Promise<void> {
     return request(`/api/sessions/${id}/github/pulls/${number}/viewed`, {
       method: "POST",
-      body: JSON.stringify({ path, sha, viewed }),
+      body: JSON.stringify({ path, sha, viewed, repo }),
     });
   },
-  githubClearViewed(id: string, number: number): Promise<void> {
-    return request(`/api/sessions/${id}/github/pulls/${number}/viewed/clear`, { method: "POST" });
+  githubClearViewed(id: string, number: number, repo?: string): Promise<void> {
+    return request(`/api/sessions/${id}/github/pulls/${number}/viewed/clear${githubQuery(repo)}`, {
+      method: "POST",
+    });
   },
-  githubPullFile(id: string, number: number, path: string, ref: string): Promise<GitHubFileContent> {
-    const q = new URLSearchParams({ path, ref });
-    return request(`/api/sessions/${id}/github/pulls/${number}/file?${q.toString()}`);
+  githubPullFile(
+    id: string, number: number, path: string, ref: string, repo?: string
+  ): Promise<GitHubFileContent> {
+    return request(`/api/sessions/${id}/github/pulls/${number}/file${githubQuery(repo, { path, ref })}`);
   },
   writeSessionFile(id: string, path: string, content: string, dir?: string): Promise<void> {
     return request(`/api/sessions/${id}/fs/write`, {

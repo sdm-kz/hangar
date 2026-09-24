@@ -11,6 +11,7 @@ import {
 import type { GitHubPullDetail, GitHubPullFile, PullFolds } from "@/types";
 import { api } from "@/lib/api";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
+import { reviewKey } from "@/lib/sessionPulls";
 import { writeToClipboard } from "@/lib/clipboard";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { highlightLines, type CodeToken } from "@/lib/highlight";
@@ -140,8 +141,8 @@ const STATUS_WORD: Record<string, string> = {
 };
 
 /** One review's folds out of the saved bag, ignoring anything that is not the shape we wrote. */
-function readFolds(sessionId: string, number: number): PullFolds {
-  const saved = loadSessionUi(sessionId).pullFolds?.[number];
+function readFolds(sessionId: string, review: string): PullFolds {
+  const saved = loadSessionUi(sessionId).pullFolds?.[review];
   if (!saved || typeof saved !== "object") return {};
   return {
     all: typeof saved.all === "boolean" ? saved.all : undefined,
@@ -196,13 +197,23 @@ function splitPath(path: string): { dir: string; name: string } {
 export function PullRequestView({
   sessionId,
   number,
+  repo,
   onTitle,
 }: {
   sessionId: string;
   number: number;
+  /**
+   * The repo the PR is in, when it is not the one the session's own folder points at. Passed on to
+   * every call below — gh answers for any repo by name, so a linked repo reviews like the session's
+   * own without a checkout of it anywhere.
+   */
+  repo?: string;
   /** The PR's real title, once GitHub has given it — the tab may be showing an older one. */
   onTitle?: (title: string) => void;
 }) {
+  // What identifies this review wherever it is remembered — its folds, its scroll offset. Repo and
+  // number together, because #42 of one repo and #42 of another are two reviews.
+  const review = reviewKey(repo, number);
   const [detail, setDetail] = useState<GitHubPullDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -227,7 +238,7 @@ export function PullRequestView({
   // Which files are folded away: what Collapse all / Expand all last said, plus the files toggled by
   // hand since. Everything else follows the size default, so a re-fetch doesn't undo what was folded.
   // Restored from the bag, so a review comes back where it was left — on this device and the others.
-  const [folds, setFolds] = useState<PullFolds>(() => readFolds(sessionId, number));
+  const [folds, setFolds] = useState<PullFolds>(() => readFolds(sessionId, review));
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   // Files marked as read. Seeded from the review — the server holds the marks and does the comparing,
   // so a file the author has pushed over simply is not in the list — and kept here so a click shows
@@ -250,7 +261,7 @@ export function PullRequestView({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.githubPull(sessionId, number);
+      const res = await api.githubPull(sessionId, number, repo);
       setDetail(res);
       setViewed(new Set(res.viewed ?? []));
       setError(res.error ?? null);
@@ -261,7 +272,7 @@ export function PullRequestView({
     } finally {
       setLoading(false);
     }
-  }, [sessionId, number]);
+  }, [sessionId, number, repo]);
 
   useEffect(() => {
     void load();
@@ -276,8 +287,8 @@ export function PullRequestView({
   // browser's own unacknowledged writes back on top of the server's answer, so what comes out here
   // is the server's state with ours already in it.
   useEffect(() => {
-    if (seedEpoch > 0) setFolds(readFolds(sessionId, number));
-  }, [sessionId, number, seedEpoch]);
+    if (seedEpoch > 0) setFolds(readFolds(sessionId, review));
+  }, [sessionId, review, seedEpoch]);
 
   // Replay the remembered offset, but only once the files have stopped arriving: they are drawn as
   // the fetch resolves, and scrolling while rows are still appearing above the viewport lets the
@@ -292,7 +303,7 @@ export function PullRequestView({
     // seconds would use the whole budget against an empty pane, mark the restore done, and let the
     // first scroll write the top of the pane over the remembered offset.
     if (!box || !detail) return;
-    const target = loadSessionUi(sessionId).pullScroll?.[number] ?? 0;
+    const target = loadSessionUi(sessionId).pullScroll?.[review] ?? 0;
     if (!(target > 0)) {
       restoredRef.current = true;
       return;
@@ -321,7 +332,7 @@ export function PullRequestView({
       obs.disconnect();
       window.clearTimeout(timer);
     };
-  }, [sessionId, number, detail, seedEpoch]);
+  }, [sessionId, review, detail, seedEpoch]);
 
   // Save it back on a short debounce. Scrolls before the restore are the browser shifting rows about
   // as they load, not the reader, so they must not overwrite the offset being replayed.
@@ -333,12 +344,12 @@ export function PullRequestView({
       saveScrollRef.current = window.setTimeout(
         () =>
           saveSessionUi(sessionId, {
-            pullScroll: { ...loadSessionUi(sessionId).pullScroll, [number]: top },
+            pullScroll: { ...loadSessionUi(sessionId).pullScroll, [review]: top },
           }),
         200
       );
     },
-    [sessionId, number]
+    [sessionId, review]
   );
 
   // A save in flight when the tab closes would write the entry back that closing it just pruned —
@@ -487,14 +498,14 @@ export function PullRequestView({
   // save at, and the reader may well close the tab as the next thing they do.
   const putFolds = useCallback(
     (next: PullFolds) => {
-      const all = capFolds({ ...loadSessionUi(sessionId).pullFolds, [number]: next }, String(number));
+      const all = capFolds({ ...loadSessionUi(sessionId).pullFolds, [review]: next }, review);
       // What is kept for this review may have been trimmed on the way into the budget, so the state
       // takes what was actually stored rather than what was asked for — otherwise the screen and the
       // bag would disagree until the next reload.
-      setFolds(all[number] ?? next);
+      setFolds(all[review] ?? next);
       saveSessionUi(sessionId, { pullFolds: all });
     },
-    [sessionId, number]
+    [sessionId, review]
   );
 
   const setAll = (open: boolean) => putFolds({ all: open, except: [] });
@@ -536,7 +547,7 @@ export function PullRequestView({
       setFileOpen(f, !next);
       // Fire and forget, and put the mark back if it did not land: a checkbox that lies about what
       // was stored is worse than one that flicks back.
-      api.githubSetViewed(sessionId, number, f.path, f.sha, next).catch(() =>
+      api.githubSetViewed(sessionId, number, f.path, f.sha, next, repo).catch(() =>
         setViewed((prev) => {
           const out = new Set(prev);
           if (next) out.delete(f.path);
@@ -545,16 +556,16 @@ export function PullRequestView({
         })
       );
     },
-    [sessionId, number, setFileOpen]
+    [sessionId, number, repo, setFileOpen]
   );
 
   /** Everything unread again, and open again — the way back from having marked the lot. */
   const clearViewed = useCallback(() => {
     setViewed(new Set());
     setAll(true);
-    api.githubClearViewed(sessionId, number).catch(() => void load());
+    api.githubClearViewed(sessionId, number, repo).catch(() => void load());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, number, load]);
+  }, [sessionId, number, repo, load]);
 
   /** Fold or unfold one file, as the exception it is to whatever the rest of the review is doing. */
   // Clicking a file in the sidebar brings it into view and opens it — asking for a file is asking to
@@ -815,6 +826,7 @@ export function PullRequestView({
                   key={f.path}
                   sessionId={sessionId}
                   number={number}
+                  repo={repo}
                   headRef={pull?.headRefOid ?? ""}
                   baseRef={pull?.baseRefOid ?? ""}
                   file={f}
@@ -847,6 +859,7 @@ export function PullRequestView({
 function FileDiff({
   sessionId,
   number,
+  repo,
   headRef,
   baseRef,
   file,
@@ -865,6 +878,8 @@ function FileDiff({
 }: {
   sessionId: string;
   number: number;
+  /** The repo the review is in, when it is not the session folder's own. */
+  repo?: string;
   /** The commits the review names. A file is read whole at the head, except a deleted one. */
   headRef: string;
   baseRef: string;
@@ -959,7 +974,7 @@ function FileDiff({
       setContentError(message);
     };
     api
-      .githubPullFile(sessionId, number, file.path, readAt)
+      .githubPullFile(sessionId, number, file.path, readAt, repo)
       .then((r) => {
         if (cancelled) return;
         if (r.error) fail(r.error);
@@ -971,7 +986,7 @@ function FileDiff({
     return () => {
       cancelled = true;
     };
-  }, [whole, sessionId, number, file.path, readAt]);
+  }, [whole, sessionId, number, repo, file.path, readAt]);
 
   const copyAll = useCallback(async () => {
     if (content === null) return;

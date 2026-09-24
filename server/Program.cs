@@ -328,6 +328,7 @@ internal static class Program
         // Extra folders attached to a session's working directory, browsable from its Files panel.
         builder.Services.AddSingleton<LinkedFolderStore>();
         builder.Services.AddSingleton<PullViewStore>();
+        builder.Services.AddSingleton<SessionRepoStore>();
         // Reads the title, icon and — the part a browser is not allowed to see — the framing policy of
         // a web page a session links to. The links themselves are UI state; only this needs a server.
         builder.Services.AddSingleton<Web.LinkProbeService>();
@@ -779,6 +780,17 @@ internal static class Program
             store.AddFolder(id, body.Path) is { } list ? Results.Ok(list) : Results.NotFound());
         app.MapPost("/api/projects/{id}/folders/remove", (string id, FolderRequest body, ProjectStore store) =>
             store.RemoveFolder(id, body.Path) is { } list ? Results.Ok(list) : Results.NotFound());
+
+        // The repos a project's sessions can review, beside the folders they run in. A project is a
+        // piece of work rather than a checkout, and the work spans more repos than any one session.
+        // The name is checked here rather than read off a null from the store, which says only
+        // "no" — and would report a project that doesn't exist as a bad repository name.
+        app.MapPost("/api/projects/{id}/repos", (string id, RepoRequest body, ProjectStore store) =>
+            SessionRepoStore.Clean(body.Repo) is null
+                ? Results.BadRequest(new { error = "that is not a repository name" })
+                : store.AddRepo(id, body.Repo) is { } list ? Results.Ok(list) : Results.NotFound());
+        app.MapPost("/api/projects/{id}/repos/remove", (string id, RepoRequest body, ProjectStore store) =>
+            store.RemoveRepo(id, body.Repo) is { } list ? Results.Ok(list) : Results.NotFound());
 
         // ---- Session templates (named launch presets: project, folder, prompt template) ------------
         // Same shape as the projects above — every mutation answers with the whole list, so a client
@@ -1404,53 +1416,77 @@ internal static class Program
             return Results.Ok(GitService.CommitFile(info.WorkingDirectory, hash, path));
         });
 
-        // ---- GitHub pull requests for the session's repo (read through the gh CLI) ----
-        // Whether the folder is a GitHub repo at all: answered from the git remote, so it costs no
-        // network call and can be asked whenever a session opens. It is what decides whether the PR
-        // button is in the tab bar.
-        app.MapGet("/api/sessions/{id}/github/repo", (string id, SessionManager mgr) =>
+        // ---- GitHub pull requests a session can review (read through the gh CLI) ----
+        // Every repo this session can review: its own folder's, the ones linked to the folder, and the
+        // ones its project names. A session works in one folder but the work rarely stays there — and
+        // a folder opened a level up over several repos has no remote of its own to speak for it.
+        app.MapGet("/api/sessions/{id}/github/repos",
+            (string id, SessionManager mgr, SessionRepoStore repos, ProjectStore projects) =>
         {
             var info = mgr.GetAny(id);
-            return info is null ? Results.NotFound() : Results.Ok(GitHubService.Repo(info.WorkingDirectory));
+            if (info is null) return Results.NotFound();
+            return Results.Ok(SessionRepos(info, repos, projects));
+        });
+
+        // Link a repo to this session's folder, or unlink it. Both answer with the whole list, so the
+        // caller replaces its state from the response rather than patching and hoping.
+        app.MapPost("/api/sessions/{id}/github/repos",
+            (string id, RepoRequest body, SessionManager mgr, SessionRepoStore repos, ProjectStore projects) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            if (repos.Add(info.WorkingDirectory, body.Repo) is null)
+                return Results.BadRequest(new { error = "that is not a repository name" });
+            return Results.Ok(SessionRepos(info, repos, projects));
+        });
+
+        app.MapPost("/api/sessions/{id}/github/repos/remove",
+            (string id, RepoRequest body, SessionManager mgr, SessionRepoStore repos, ProjectStore projects) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            repos.Remove(info.WorkingDirectory, body.Repo);
+            return Results.Ok(SessionRepos(info, repos, projects));
         });
 
         // The repo's pull requests. `state` is open (the default), closed, merged or all.
-        app.MapGet("/api/sessions/{id}/github/pulls", async (string id, string? state, SessionManager mgr, CancellationToken ct) =>
+        app.MapGet("/api/sessions/{id}/github/pulls",
+            async (string id, string? state, string? repo, SessionManager mgr, CancellationToken ct) =>
         {
             var info = mgr.GetAny(id);
             return info is null
                 ? Results.NotFound()
-                : Results.Ok(await GitHubService.PullsAsync(info.WorkingDirectory, state, ct));
+                : Results.Ok(await GitHubService.PullsAsync(info.WorkingDirectory, state, repo, ct));
         });
 
         // One file of a pull request, read whole at one of the commits the review points at, for the
         // reader who wants the file rather than the change to it. The ref is checked against the two
         // the pull request actually names, so this cannot be pointed at an arbitrary commit.
         app.MapGet("/api/sessions/{id}/github/pulls/{number:int}/file",
-            async (string id, int number, string path, string? @ref, SessionManager mgr, CancellationToken ct) =>
+            async (string id, int number, string path, string? @ref, string? repo, SessionManager mgr, CancellationToken ct) =>
         {
             var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
             if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "invalid path" });
 
-            var refs = await GitHubService.RefsAsync(info.WorkingDirectory, number, ct);
+            var refs = await GitHubService.RefsAsync(info.WorkingDirectory, number, repo, ct);
             if (refs.Error is not null)
                 return Results.Ok(new GitHubFileContent(path, @ref ?? "", "", false, refs.Error));
             // Only the head or the base of this very pull request: the client hands back one of the
             // two it was given, and anything else is not a question this endpoint answers.
             var sha = @ref == refs.BaseRefOid ? refs.BaseRefOid : refs.HeadRefOid;
-            return Results.Ok(await GitHubService.FileAsync(info.WorkingDirectory, path, sha, ct));
+            return Results.Ok(await GitHubService.FileAsync(info.WorkingDirectory, path, sha, repo, ct));
         });
 
         // One pull request: its description and every changed file, each with its slice of the diff.
         app.MapGet("/api/sessions/{id}/github/pulls/{number:int}",
-            async (string id, int number, SessionManager mgr, PullViewStore viewed, CancellationToken ct) =>
+            async (string id, int number, string? repo, SessionManager mgr, PullViewStore viewed, CancellationToken ct) =>
         {
             var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
-            return Results.Ok(await GitHubService.PullAsync(info.WorkingDirectory, number, viewed, ct));
+            return Results.Ok(await GitHubService.PullAsync(info.WorkingDirectory, number, repo, viewed, ct));
         });
 
         // Mark one file of a review read, or unmark it. The sha is the file's, as the client was
@@ -1464,24 +1500,64 @@ internal static class Program
             if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
             if (string.IsNullOrWhiteSpace(body.Path)) return Results.BadRequest(new { error = "invalid path" });
 
-            var repo = GitHubService.Repo(info.WorkingDirectory);
-            if (!repo.IsGitHub) return Results.BadRequest(new { error = "not a GitHub repository" });
+            var repo = ReviewRepo(info, body.Repo);
+            if (repo is null) return Results.BadRequest(new { error = "not a GitHub repository" });
 
-            viewed.Set(repo.NameWithOwner!, number, body.Path, body.Sha ?? "", body.Viewed);
+            viewed.Set(repo, number, body.Path, body.Sha ?? "", body.Viewed);
             return Results.Ok();
         });
 
         // Everything in this review unread again — the way back from having marked it all.
         app.MapPost("/api/sessions/{id}/github/pulls/{number:int}/viewed/clear",
-            (string id, int number, SessionManager mgr, PullViewStore viewed) =>
+            (string id, int number, string? repo, SessionManager mgr, PullViewStore viewed) =>
         {
             var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
-            var repo = GitHubService.Repo(info.WorkingDirectory);
-            if (!repo.IsGitHub) return Results.BadRequest(new { error = "not a GitHub repository" });
-            viewed.Clear(repo.NameWithOwner!, number);
+            var named = ReviewRepo(info, repo);
+            if (named is null) return Results.BadRequest(new { error = "not a GitHub repository" });
+            viewed.Clear(named, number);
             return Results.Ok();
         });
+    }
+
+    /// <summary>
+    /// The repo a review is in: the one named, or the session folder's own. Null when neither says.
+    /// </summary>
+    private static string? ReviewRepo(SessionInfo info, string? named)
+    {
+        // Naming a repo and naming nothing are different questions. Saying nothing means "the one my
+        // folder is in", which is what a review tab saved before repos could be linked still means.
+        // Saying something unusable is a mistake, and answering it with the folder's own repo would
+        // file this review's read marks against a different repository.
+        if (!string.IsNullOrWhiteSpace(named)) return SessionRepoStore.Clean(named);
+        var own = GitHubService.Repo(info.WorkingDirectory);
+        return own.IsGitHub ? own.NameWithOwner : null;
+    }
+
+    /// <summary>
+    /// Every repo a session can review, and where each came from — its own folder, a link on the
+    /// folder, or the project the folder belongs to. The folder's own comes first, being the one the
+    /// work is in; the rest follow in the order they were linked. Duplicates are dropped, because a
+    /// repo named in two places is still one repo.
+    /// </summary>
+    private static object SessionRepos(SessionInfo info, SessionRepoStore repos, ProjectStore projects)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var list = new List<object>();
+        void Take(string? name, string source)
+        {
+            if (SessionRepoStore.Clean(name) is { } clean && seen.Add(clean))
+                list.Add(new { nameWithOwner = clean, source });
+        }
+
+        var own = GitHubService.Repo(info.WorkingDirectory);
+        if (own.IsGitHub) Take(own.NameWithOwner, "folder");
+        foreach (var r in repos.Get(info.WorkingDirectory)) Take(r, "session");
+
+        var project = ProjectMembership.ForDirectory(projects.List(), info.WorkingDirectory);
+        if (project is not null) foreach (var r in project.Repos) Take(r, "project");
+
+        return new { repos = list };
     }
 
     /// <summary>
@@ -1655,7 +1731,8 @@ internal record SessionGroupRequest(string[]? Ids, string? GroupId);
 internal record SessionParentRequest(string? ParentId);
 internal record FolderCreateRequest(string? Path, string? Dir = null);
 internal record FsWriteRequest(string Path, string? Content);
-internal record ViewedRequest(string? Path, string? Sha, bool Viewed);
+internal record ViewedRequest(string? Path, string? Sha, bool Viewed, string? Repo = null);
+internal record RepoRequest(string? Repo);
 internal record FsPathRequest(string Path);
 internal record FsRenameRequest(string Path, string NewName);
 internal record ImageUploadRequest(string? DataBase64, string? Ext);

@@ -29,6 +29,16 @@ public sealed record Project(
     /// none is one that groups nothing by hand, which is most of them.
     /// </summary>
     public IReadOnlyList<ProjectGroup> Groups { get; init; } = Array.Empty<ProjectGroup>();
+
+    /// <summary>
+    /// GitHub repositories ("owner/name") this project's sessions can review pull requests from,
+    /// beyond whatever their own folders point at. A project is a piece of work rather than a
+    /// checkout, and the work usually spans more repos than any one session sits in.
+    ///
+    /// <para>An init-only property with a default, like Groups above: a projects.json written before
+    /// this existed has no such field, and must go on loading.</para>
+    /// </summary>
+    public IReadOnlyList<string> Repos { get; init; } = Array.Empty<string>();
 }
 
 /// <summary>

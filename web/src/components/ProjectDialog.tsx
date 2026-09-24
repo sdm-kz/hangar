@@ -7,6 +7,7 @@ import { GroupAppearance } from "./GroupDialog";
 import { TemplateDialog } from "./TemplateDialog";
 import { folderName } from "@/lib/recentFolders";
 import { groupIdsAfterMove, sameFolder } from "@/lib/projects";
+import { cleanRepoName, invalidateSessionRepos } from "@/lib/sessionRepos";
 import { useDragReorder } from "@/lib/useDragReorder";
 import { FolderPicker } from "./FolderPicker";
 import { Button } from "@/components/ui/button";
@@ -22,10 +23,21 @@ import {
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
-import { Ban, FolderPlus, GripVertical, Loader2, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import {
+  Ban,
+  FolderPlus,
+  GripVertical,
+  Library,
+  Loader2,
+  Pencil,
+  Plus,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 
 /**
- * A project's settings: its name, its accent colour, and the folders it links.
+ * A project's settings: its name, its accent colour, and the folders and repos it links.
  *
  * Two modes. Editing an existing project writes each change straight through — the popup *is* the
  * project, so there is nothing to "apply" — except the name, which commits when the field is left or
@@ -59,6 +71,9 @@ export function ProjectDialog({
   // Create mode only: the folders to link once the project exists.
   const [draftFolders, setDraftFolders] = useState<string[]>(initialFolders ?? []);
   const [picker, setPicker] = useState<string>("");
+  // The repo being typed into the "link a repository" field, and why the last one was refused.
+  const [newRepo, setNewRepo] = useState("");
+  const [repoError, setRepoError] = useState<string | null>(null);
   // The virtual folder whose colour/icon editor is unfolded (one at a time — the grid is tall), and
   // the name being typed into the "new group" field.
   const [openGroup, setOpenGroup] = useState<string | null>(initialGroup ?? null);
@@ -127,6 +142,27 @@ export function ProjectDialog({
   const removeFolder = (path: string) => {
     if (project) void run(() => api.removeProjectFolder(project.id, path));
     else setDraftFolders((prev) => prev.filter((f) => !sameFolder(f, path)));
+  };
+
+  // A project's repos are in the review list of every session under it, and the lists already
+  // fetched have no way of knowing one changed — so they are dropped and asked for again.
+  const addRepo = async () => {
+    if (!project) return;
+    const clean = cleanRepoName(newRepo);
+    if (!clean) {
+      setRepoError("Give it as owner/name, or paste the repository's GitHub URL.");
+      return;
+    }
+    setRepoError(null);
+    if (await run(() => api.addProjectRepo(project.id, clean))) {
+      setNewRepo("");
+      invalidateSessionRepos();
+    }
+  };
+
+  const removeRepo = async (repo: string) => {
+    if (!project) return;
+    if (await run(() => api.removeProjectRepo(project.id, repo))) invalidateSessionRepos();
   };
 
   const addGroup = async () => {
@@ -322,6 +358,72 @@ export function ProjectDialog({
               </Button>
             </div>
           </div>
+
+          {/* The repos this project's sessions can review. Only once the project exists, for the
+              same reason the groups below are: a draft list would be a second way to add one.
+
+              A project is a piece of work rather than a checkout, and the work usually spans more
+              repos than the folders here point at — so a repo named once is in the PR picker of
+              every session under the project, whether or not it is checked out anywhere. */}
+          {project && (
+            <div className="flex flex-col gap-1.5">
+              <Label>Linked repositories</Label>
+              {project.repos.length === 0 ? (
+                <p className="rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+                  No repositories yet. One linked here can be reviewed from every session in this
+                  project, checked out or not.
+                </p>
+              ) : (
+                <ul className="-mx-1 flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
+                  {project.repos.map((r) => (
+                    <li
+                      key={r}
+                      className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm"
+                    >
+                      <Library className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{r}</span>
+                      <button
+                        type="button"
+                        onClick={() => void removeRepo(r)}
+                        title="Unlink this repository"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex items-start gap-2">
+                <Input
+                  value={newRepo}
+                  onChange={(e) => {
+                    setNewRepo(e.target.value);
+                    setRepoError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void addRepo();
+                    }
+                  }}
+                  placeholder="owner/name, or a link to the repository on GitHub"
+                  className="min-w-0 flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  title="Link this repository"
+                  disabled={!newRepo.trim() || busy}
+                  onClick={() => void addRepo()}
+                >
+                  <Plus className="size-4" />
+                </Button>
+              </div>
+              {repoError && <p className="text-xs text-destructive">{repoError}</p>}
+            </div>
+          )}
 
           {/* Virtual folders. Only once the project exists: a group is created against its id, and a
               draft list here would be a second way to make one that behaves subtly differently. */}

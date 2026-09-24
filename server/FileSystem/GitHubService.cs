@@ -137,16 +137,30 @@ public static class GitHubService
     }
 
     /// <summary>
+    /// The repo a call is about: the one named, or — when nothing is named — whatever the folder's own
+    /// remote points at. A named repo needs no checkout and no remote: gh answers for any repo by
+    /// name, which is what lets a session reach one it has only linked.
+    /// </summary>
+    private static GitHubRepo Target(string workingDir, string? repo) =>
+        SessionRepoStore.Clean(repo) is { } named ? new GitHubRepo(true, named) : Repo(workingDir);
+
+    /// <summary>Run gh against a named repo, by adding the flag that says so.</summary>
+    private static Task<(bool Ok, string Stdout, string? Error)> GhRepoAsync(
+        string workingDir, string repo, CancellationToken ct, params string[] args) =>
+        GhAsync(workingDir, ct, args.Concat(new[] { "--repo", repo }).ToArray());
+
+    /// <summary>
     /// The repo's pull requests in the given state ("open", "closed", "merged" or "all"), newest
     /// first. A folder that isn't a GitHub repo comes back empty rather than as an error — the UI
     /// asks before it knows, and "not GitHub" is an answer, not a failure.
     /// </summary>
-    public static async Task<GitHubPullList> PullsAsync(string workingDir, string? state, CancellationToken ct)
+    public static async Task<GitHubPullList> PullsAsync(
+        string workingDir, string? state, string? named, CancellationToken ct)
     {
-        var repo = Repo(workingDir);
+        var repo = Target(workingDir, named);
         if (!repo.IsGitHub) return new GitHubPullList(false, null, Array.Empty<GitHubPull>(), null);
 
-        var (ok, stdout, error) = await GhAsync(workingDir, ct,
+        var (ok, stdout, error) = await GhRepoAsync(workingDir, repo.NameWithOwner!, ct,
             "pr", "list", "--state", NormalizeState(state), "--limit", MaxPulls.ToString(),
             "--json", "number,title,author,state,isDraft,updatedAt,headRefName,baseRefName,url,additions,deletions,changedFiles");
         if (!ok) return new GitHubPullList(true, repo.NameWithOwner, Array.Empty<GitHubPull>(), error);
@@ -167,21 +181,21 @@ public static class GitHubService
     /// calls — the metadata and the patch — run together, since neither needs the other's answer.
     /// </summary>
     public static async Task<GitHubPullDetail> PullAsync(
-        string workingDir, int number, PullViewStore? viewed, CancellationToken ct)
+        string workingDir, int number, string? named, PullViewStore? viewed, CancellationToken ct)
     {
-        var repo = Repo(workingDir);
+        var repo = Target(workingDir, named);
         if (!repo.IsGitHub)
             return new GitHubPullDetail(
                 null, "", Array.Empty<GitHubPullFile>(), "This folder is not a GitHub repository.",
                 Array.Empty<string>());
 
-        var meta = GhAsync(workingDir, ct,
+        var meta = GhRepoAsync(workingDir, repo.NameWithOwner!, ct,
             "pr", "view", number.ToString(),
             "--json", "number,title,author,state,isDraft,updatedAt,headRefName,baseRefName,url,additions,deletions,changedFiles,body,headRefOid,baseRefOid");
         // No --patch: that asks for the PR's commits as a mail-formatted series, which repeats a
         // file once per commit that touched it. The plain form is the combined diff — head against
         // base, one entry per file — which is what the Files tab of a PR shows and what this draws.
-        var patch = GhAsync(workingDir, ct, "pr", "diff", number.ToString());
+        var patch = GhRepoAsync(workingDir, repo.NameWithOwner!, ct, "pr", "diff", number.ToString());
         // A third call, for the one thing the other two do not carry: the blob sha of each file. It
         // is what a "read" mark is pinned to, so that a push resets the files it touched and leaves
         // the rest read. Started with the others, so it costs no wall clock.
@@ -242,12 +256,14 @@ public static class GitHubService
     /// <see cref="PullAsync"/>, because that one downloads the whole patch — which is a great deal of
     /// work to do again when the question is only "which commit is this file's head".
     /// </summary>
-    public static async Task<GitHubPullRefs> RefsAsync(string workingDir, int number, CancellationToken ct)
+    public static async Task<GitHubPullRefs> RefsAsync(
+        string workingDir, int number, string? named, CancellationToken ct)
     {
-        if (!Repo(workingDir).IsGitHub)
+        var repo = Target(workingDir, named);
+        if (!repo.IsGitHub)
             return new GitHubPullRefs("", "", "This folder is not a GitHub repository.");
 
-        var (ok, stdout, error) = await GhAsync(workingDir, ct,
+        var (ok, stdout, error) = await GhRepoAsync(workingDir, repo.NameWithOwner!, ct,
             "pr", "view", number.ToString(), "--json", "headRefOid,baseRefOid");
         if (!ok) return new GitHubPullRefs("", "", error);
         try
@@ -266,9 +282,10 @@ public static class GitHubService
     /// file rather than the change to it. <paramref name="sha"/> is a commit of this repo; GitHub
     /// keeps a pull request's head commits in the base repo, so a PR from a fork is readable here too.
     /// </summary>
-    public static async Task<GitHubFileContent> FileAsync(string workingDir, string path, string sha, CancellationToken ct)
+    public static async Task<GitHubFileContent> FileAsync(
+        string workingDir, string path, string sha, string? named, CancellationToken ct)
     {
-        var repo = Repo(workingDir);
+        var repo = Target(workingDir, named);
         if (!repo.IsGitHub)
             return new GitHubFileContent(path, sha, "", false, "This folder is not a GitHub repository.");
         if (!IsCommitSha(sha))

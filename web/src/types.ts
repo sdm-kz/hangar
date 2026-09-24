@@ -220,6 +220,9 @@ export interface Project {
   color: string | null; // palette colour name (same names as a session's /color), or null
   folders: string[]; // absolute paths on the server machine
   groups: ProjectGroup[]; // virtual folders, in the order they are drawn (arranged by dragging)
+  // GitHub repos ("owner/name") every session under this project can review, whatever its own
+  // folder points at. A project is a piece of work, and the work usually spans more than one repo.
+  repos: string[];
 }
 
 /**
@@ -406,13 +409,6 @@ export interface LinkProbe {
   error?: string | null;
 }
 
-/** Whether a session's folder is a GitHub repo — see server/FileSystem/GitHubService.cs. */
-export interface GitHubRepo {
-  isGitHub: boolean;
-  /** "owner/name", read from the folder's remote. Null when it isn't a GitHub repo. */
-  nameWithOwner: string | null;
-}
-
 /** A pull request as the picker lists it. */
 export interface GitHubPull {
   number: number;
@@ -488,17 +484,34 @@ export interface GitHubPullDetail {
 }
 
 /**
+ * A GitHub repo a session can review pull requests from, and where it came from: its own folder's
+ * remote, a repo linked to the folder, or one the folder's project names. The source is shown in the
+ * picker and decides what can be unlinked there — a folder's own repo is a fact, not a choice.
+ */
+export interface SessionRepo {
+  nameWithOwner: string;
+  source: "folder" | "session" | "project";
+}
+
+/**
  * A pull request opened as a tab in a session's tab bar. Only what the tab itself says is kept —
  * the review below it is fetched fresh, since a PR moves while you are working on it.
  *
  * Stored in the session's UI bag (see lib/sessionUi.ts) beside the links, so an open PR follows the
- * session to every device and survives a reload. The number is the identity: a session is one repo,
- * so opening #42 twice means going back to the tab that is already there.
+ * session to every device and survives a reload. Repo and number together are the identity (pullKey),
+ * so opening #42 twice means going back to the tab that is already there — while #42 of one repo and
+ * #42 of another are two reviews, which is the whole point of a session reaching more than one repo.
  */
 export interface SessionPull {
   number: number;
   /** The title as it was when the tab was opened — what the tab says before the PR has loaded. */
   title: string;
+  /**
+   * The repo the PR is in ("owner/name"), when it is not the one the session's own folder points at.
+   * Left off for the folder's own repo, which is both the common case and what keeps a tab opened
+   * before repos could be linked identical to the same tab opened now — see pullKey.
+   */
+  repo?: string;
 }
 
 /**

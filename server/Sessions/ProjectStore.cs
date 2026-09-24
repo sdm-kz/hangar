@@ -18,6 +18,7 @@ public sealed class ProjectStore
     private const int MaxProjects = 100;
     private const int MaxFoldersPerProject = 100;
     private const int MaxGroupsPerProject = 50;
+    private const int MaxReposPerProject = 20;
     // A virtual folder is something you file sessions into by hand, so this is a backstop against a
     // runaway writer rather than a limit anyone reaches. Membership keys are never cleaned up (a
     // conversation that is gone looks exactly like one that just isn't loaded), so the list is capped.
@@ -170,6 +171,48 @@ public sealed class ProjectStore
     /// exactly as <see cref="PinStore"/> does for a pin set in that same window.
     /// </summary>
     public static string SessionKey(string sessionId) => "session:" + sessionId;
+
+    /// <summary>
+    /// Attach a GitHub repo to a project, so every session under it can review that repo's pull
+    /// requests. The name is cleaned the way a session's own links are — see SessionRepoStore.Clean,
+    /// which also takes a pasted URL, since that is what tends to be in the clipboard.
+    /// </summary>
+    public IReadOnlyList<Project>? AddRepo(string id, string? repo)
+    {
+        var clean = FileSystem.SessionRepoStore.Clean(repo);
+        if (clean is null) return null;
+        lock (_lock)
+        {
+            var i = IndexOf(id);
+            if (i < 0) return null;
+            var p = _projects[i];
+            if (p.Repos.Contains(clean, StringComparer.OrdinalIgnoreCase)) return Snapshot();
+            if (p.Repos.Count >= MaxReposPerProject) return Snapshot();
+            _projects[i] = p with { Repos = p.Repos.Append(clean).ToList() };
+            Save();
+            return Snapshot();
+        }
+    }
+
+    /// <summary>Detach a repo from a project.</summary>
+    public IReadOnlyList<Project>? RemoveRepo(string id, string? repo)
+    {
+        var clean = FileSystem.SessionRepoStore.Clean(repo);
+        lock (_lock)
+        {
+            var i = IndexOf(id);
+            if (i < 0) return null;
+            if (clean is null) return Snapshot();
+            var p = _projects[i];
+            var kept = p.Repos.Where(r => !string.Equals(r, clean, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (kept.Count != p.Repos.Count)
+            {
+                _projects[i] = p with { Repos = kept };
+                Save();
+            }
+            return Snapshot();
+        }
+    }
 
     /// <summary>Add a virtual folder to a project. Returns null when the project or the name is unusable.</summary>
     public IReadOnlyList<Project>? AddGroup(string projectId, string? name, string? color, string? icon)
@@ -549,6 +592,18 @@ public sealed class ProjectStore
                         .Take(MaxFoldersPerProject)
                         .ToList(),
                     Groups = CleanGroups(x.Groups, seenGroups),
+                    // Null-coalesced like Folders above, and for the same reason: the initializer on
+                    // the property covers a *missing* "repos", but a JSON null is read as null and
+                    // would be iterated later (SessionRepos in Program.cs) as one. Re-cleaned and
+                    // capped here too, so a hand-edited file cannot put a name past Clean or grow
+                    // the list past what AddRepo would allow.
+                    Repos = (x.Repos ?? Array.Empty<string>())
+                        .Select(FileSystem.SessionRepoStore.Clean)
+                        .Where(r => r is not null)
+                        .Select(r => r!)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(MaxReposPerProject)
+                        .ToList(),
                 })
                 .ToList();
         }

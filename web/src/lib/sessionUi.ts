@@ -46,11 +46,14 @@ export interface SessionUi {
   // lives in the bag, which is what carries them to the user's other devices.
   links?: SessionLink[];
   link?: string; // id of the link tab filling the pane in the "link" view
-  // Pull requests of this session's repo opened as tabs. Like the links these ARE the state — the
-  // review itself is re-fetched from GitHub — so the list rides the bag to the user's other devices.
+  // Pull requests opened as tabs — of this session's own repo, and of the repos linked to it. Like
+  // the links these ARE the state — the review itself is re-fetched from GitHub — so the list rides
+  // the bag to the user's other devices.
   pulls?: SessionPull[];
-  pull?: number; // number of the PR tab filling the pane in the "pull" view
-  // How far through each open review the reader had got, keyed by PR number: which files were folded
+  // Key (see pullKey) of the PR tab filling the pane in the "pull" view. A number in a bag written
+  // before repos could be linked, which reads as the key of a review on the session's own repo.
+  pull?: string | number;
+  // How far through each open review the reader had got, keyed by review (pullKey): which files were folded
   // away, and where the pane was scrolled to. Pruned to the tabs that are still open on every write
   // to the tab list (see lib/sessionPulls.ts) — a close is not the only way a tab goes away, since
   // opening one past the cap drops the oldest — so this stays a fact about the reviews that are open

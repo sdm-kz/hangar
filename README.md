@@ -199,7 +199,7 @@ The web UI is a **session manager with a full terminal**:
   which is what makes a push reset **only the files it touched** — the rest of the review stays read.
 
   How far through a review you had got is kept: which files you folded away, and where the pane was
-  scrolled to, against the pull request in the session's own state — so it follows the session to
+  scrolled to, against the repo and number of the pull request in the session's own state — so it follows the session to
   your other devices, and a tab that goes away takes it with it, whether you closed it or it made
   way for a ninth. *Collapse all* and *Expand all* are stored as that, one word, rather than as a
   decision per file; the files you then fold or open one at a time are stored by name, and a session
@@ -210,12 +210,27 @@ The web UI is a **session manager with a full terminal**:
   it up. A file whose diff is enormous arrives folded rather than drawn, and one past the size the
   server will send is listed with its counts and left on GitHub.
 
+  **A session is not limited to the repo it sits in.** Claude changes one repo in answer to another
+  often enough, and a folder opened a level up over several checkouts has no remote of its own to
+  speak for it — so the top of the picker is a strip of the repos this session can review, and the
+  **+** beside it links another by name (`owner/name`) or by pasting its URL. Nothing is checked out
+  to do it: gh answers for any repo by name, so a repo you only have to read is one line of typing.
+  Pick a repo in the strip and the list below is its pull requests; a review opened from one that
+  isn't the session's own says which repo it is in, on its tab and in the picker, since `#42` of two
+  repos would otherwise read as one review. The strip also carries the repos of the **project** the
+  folder belongs to — *Linked repositories* in the project's settings — which is where a repo the
+  whole project cares about belongs, rather than being linked again in every session under it. Only
+  what a session linked itself can be unlinked from the strip; its own folder's repo is a fact about
+  the folder, and a project's is the project's to take back. A session with **no** repo at all has no
+  button in the bar — *Pull request…* in the **+** menu opens the same popup, which is where its
+  first repo gets linked.
+
   It all runs through the **`gh` CLI on the server machine**, which is what makes it work without a
   token of its own: gh already holds your GitHub credentials and resolves the repo from the folder's
   remotes. `gh auth login` there is the whole of the setup, and whatever gh says when it can't answer
   — not installed, not signed in, no such repo — is what the picker says back. Whether a folder is a
-  GitHub repo at all is read from its git remote, so a session in a folder that isn't one simply has
-  no button, and nothing on the network was asked to find that out.
+  GitHub repo at all is read from its git remote, so a session in a folder that isn't one starts with
+  an empty strip, and nothing on the network was asked to find that out.
 - **What each session is doing** — every row carries a mark, read off Claude's own hook callbacks
   rather than scraped off the terminal: a green pulse while it works, a cooler one while it compacts,
   an **amber ring** when it is blocked on you, a **red cross** when the last turn died on an API

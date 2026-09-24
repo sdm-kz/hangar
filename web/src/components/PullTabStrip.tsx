@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GitHubPull, SessionPull } from "@/types";
+import type { GitHubPull, SessionPull, SessionRepo } from "@/types";
 import { api } from "@/lib/api";
-import { pullTabLabel } from "@/lib/sessionPulls";
+import { pullKey, pullTabLabel } from "@/lib/sessionPulls";
+import { useSessionRepos } from "@/lib/sessionRepos";
 import { useDismissable } from "@/lib/useDismissable";
 import { cn } from "@/lib/utils";
 import {
@@ -10,7 +11,9 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
+  Library,
   Loader2,
+  Plus,
   RefreshCw,
   Search,
   X,
@@ -30,6 +33,16 @@ interface Listing {
   pulls?: GitHubPull[];
   error?: string;
 }
+
+/** Where a repo in the strip came from, said on hover — it is also what can be unlinked there. */
+const SOURCE_TITLE: Record<SessionRepo["source"], string> = {
+  folder: "The repository this session's folder points at",
+  session: "Linked to this session",
+  project: "Linked to this session's project",
+};
+
+/** Cache key for a listing: which repo, in which state. Both are picked in the popup. */
+const listingKey = (repo: string, state: PullState) => `${repo}\u0000${state}`;
 
 /** The icon GitHub uses for a PR's state, which is how a row is read before its text is. */
 function stateIcon(pull: GitHubPull) {
@@ -51,17 +64,21 @@ function age(iso: string): string {
 }
 
 /**
- * The pull requests a session has open, as tabs in its tab bar, and the button that picks another
- * one out of the repo. It sits right after Files, because a PR is a view of the same repo the tree
- * below it is showing — the review and the working copy one click apart.
+ * The pull requests a session has open as tabs, and the button that picks another one out of a repo.
+ * It sits right after Files, because a PR is a view of the same repo the tree below it is showing —
+ * the review and the working copy one click apart.
  *
- * The button only exists for a session whose folder is a GitHub repo (SessionView asks the server,
- * which reads the git remote). The list behind it comes from the gh CLI, so it is the PRs of
- * whichever repo that folder's remote points at, seen as whoever is signed into gh.
+ * A session can reach more than one repo: its own folder's, whatever has been linked to the folder
+ * here, and whatever its project names (see lib/sessionRepos.ts). So the popup picks a repo as well
+ * as a PR, and is where a repo is linked — the list behind it comes from the gh CLI, which answers
+ * for any repo by name as whoever is signed into it, so a linked repo needs no checkout.
+ *
+ * The button is only in the tab bar when there is a repo to review. A session with none — a folder
+ * opened a level up over several checkouts, say — reaches the popup through "Pull request…" in the
+ * "+" menu, which is what `openSignal` is, and links its first repo from there.
  */
 export function PullPicker({
   sessionId,
-  enabled,
   onOpen,
   atEnd = false,
   openSignal = 0,
@@ -71,19 +88,24 @@ export function PullPicker({
   atEnd?: boolean;
   /** Bumped to open the list from elsewhere — the "+" menu of the group the picker sits in. */
   openSignal?: number;
-  /**
-   * Offer the picker at all. False while the folder is not known to be a GitHub repo — reviews
-   * opened earlier (or on another device) still have their tabs, which are saved state and stay
-   * reachable whatever the repo probe has to say.
-   */
-  enabled: boolean;
   onOpen: (pull: SessionPull) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [state, setState] = useState<PullState>("open");
-  const [listings, setListings] = useState<Partial<Record<PullState, Listing>>>({});
+  const [listings, setListings] = useState<Record<string, Listing>>({});
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState("");
+  // The repos this session can review, and which of them is being listed. The list is shared with
+  // every other picker on screen, so a repo linked in one group's popup is in the next one's.
+  const repos = useSessionRepos(sessionId);
+  const [chosen, setChosen] = useState<string>("");
+  // The "link a repo" row, unfolded by the + beside the repo strip, and why the last name typed
+  // into it was refused. Both belong to the popup rather than to the session, so both go when it
+  // closes — a typo is not something to be told about again the next time you open the list.
+  const [linking, setLinking] = useState(false);
+  const [newRepo, setNewRepo] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const linkRef = useRef<HTMLInputElement>(null);
   // How much room is left between the button and the right edge of the window. The picker hangs off
   // the button's left edge — which is where it belongs, under the thing that opened it — and the
   // button sits partway along the tab bar, so on a narrow window the list would otherwise run off
@@ -101,20 +123,31 @@ export function PullPicker({
   useEffect(() => {
     setListings({});
     setFilter("");
+    setChosen("");
+    setLinking(false);
+    setLinkError(null);
   }, [sessionId]);
 
+  // The repo being listed: whichever was picked, or the first the server offered — its own folder's
+  // when it has one, since that is the repo the session is working in. A repo that has been unlinked
+  // under us falls back the same way.
+  const names = useMemo(() => repos.repos.map((r) => r.nameWithOwner), [repos.repos]);
+  const repo = chosen && names.includes(chosen) ? chosen : names[0] ?? "";
+
   const load = useCallback(
-    async (which: PullState, force: boolean) => {
-      if (!force && listingsRef.current[which]) return;
+    async (which: PullState, from: string, force: boolean) => {
+      if (!from) return; // no repo to ask about yet — the popup says so rather than fetching
+      const key = listingKey(from, which);
+      if (!force && listingsRef.current[key]) return;
       setLoading(true);
       try {
-        const res = await api.githubPulls(sessionId, which);
+        const res = await api.githubPulls(sessionId, which, from);
         setListings((prev) => ({
           ...prev,
-          [which]: res.error ? { error: res.error } : { pulls: res.pulls },
+          [key]: res.error ? { error: res.error } : { pulls: res.pulls },
         }));
       } catch {
-        setListings((prev) => ({ ...prev, [which]: { error: "Could not reach the server." } }));
+        setListings((prev) => ({ ...prev, [key]: { error: "Could not reach the server." } }));
       } finally {
         setLoading(false);
       }
@@ -122,11 +155,22 @@ export function PullPicker({
     [sessionId]
   );
 
-  // Fetch on open and whenever the state filter moves to one not yet loaded. A PR list is live
-  // enough that opening the menu again is a reasonable time to ask — but only for what is showing.
+  // Fetch on open and whenever the repo or the state moves to a pair not yet loaded. A PR list is
+  // live enough that opening the menu again is a reasonable time to ask — but only for what shows.
   useEffect(() => {
-    if (menuOpen) void load(state, false);
-  }, [menuOpen, state, load]);
+    if (menuOpen) void load(state, repo, false);
+  }, [menuOpen, state, repo, load]);
+
+  // Folding the link row away with the popup. It belongs to the popup rather than to the session,
+  // so a half-typed name left behind by a click outside is not what the next open should show —
+  // and while it is unfolded it takes the caret, which would cost the reader the type-to-filter
+  // below on a popup they opened to look through a list.
+  useEffect(() => {
+    if (!menuOpen) {
+      setLinking(false);
+      setLinkError(null);
+    }
+  }, [menuOpen]);
 
   // Opened from the "+" menu beside it. Only a rise counts: the signal drops to 0 when another
   // group's picker is asked instead, and mounting at a non-zero value must not pop the list open.
@@ -134,18 +178,16 @@ export function PullPicker({
   useEffect(() => {
     const rose = openSignal > seenSignal.current;
     seenSignal.current = openSignal;
-    if (rose && enabled) setMenuOpen(true);
-  }, [openSignal, enabled]);
+    if (rose) setMenuOpen(true);
+  }, [openSignal]);
 
-  // The picker can go away under an open menu — a session switch, a probe that came back negative.
+  // Typing should filter without reaching for the box first: the list is the point of the popup —
+  // except while a repo is being linked, where the box that was just unfolded wants the caret.
   useEffect(() => {
-    if (!enabled) setMenuOpen(false);
-  }, [enabled]);
-
-  // Typing should filter without reaching for the box first: the list is the point of the popup.
-  useEffect(() => {
-    if (menuOpen) filterRef.current?.focus();
-  }, [menuOpen]);
+    if (!menuOpen) return;
+    if (linking) linkRef.current?.focus();
+    else filterRef.current?.focus();
+  }, [menuOpen, linking]);
 
   // Measure the room to the right on open, and keep measuring while it is open: a window resize
   // moves the button, and the picker is tall enough to be worth getting right rather than closing.
@@ -160,7 +202,7 @@ export function PullPicker({
     return () => window.removeEventListener("resize", measure);
   }, [menuOpen, menuRef]);
 
-  const listing = listings[state];
+  const listing = repo ? listings[listingKey(repo, state)] : undefined;
   const shown = useMemo(() => {
     const all = listing?.pulls ?? [];
     // "#42" is how a pull request is written down everywhere else, so the hash is dropped rather
@@ -178,14 +220,33 @@ export function PullPicker({
   }, [listing, filter]);
 
   const pick = (pull: GitHubPull) => {
-    onOpen({ number: pull.number, title: pull.title });
+    // The session's own repo is left off the tab: it is the common case, and a tab saved before
+    // repos could be linked says nothing either — so both land on one tab rather than two (pullKey).
+    const own = repos.repos.find((r) => r.source === "folder")?.nameWithOwner;
+    onOpen({ number: pull.number, title: pull.title, repo: repo === own ? undefined : repo });
     setMenuOpen(false);
+  };
+
+  const link = async () => {
+    if (!newRepo.trim()) return;
+    const { name, error } = await repos.link(newRepo);
+    if (error !== undefined) {
+      setLinkError(error);
+      return;
+    }
+    // Show what was just linked: linking a repo is on the way to reviewing it.
+    setChosen(name);
+    setNewRepo("");
+    setLinking(false);
+    setLinkError(null);
   };
 
   return (
     // In the place a view tab would be, and outside the scrolling run of tabs beside it: opening a
     // PR is choosing a surface, and the way to do it should not scroll off the bar.
-    <div ref={menuRef} className={cn("relative flex h-full shrink-0 items-stretch", !enabled && "hidden")}>
+    // The wrapper stays, empty, for a session with no repo: it is what the popup hangs off, and the
+    // "+" menu can still open that popup — which is where the first repo gets linked.
+    <div ref={menuRef} className="relative flex h-full shrink-0 items-stretch">
     <button
         type="button"
         onClick={() => setMenuOpen((o) => !o)}
@@ -195,7 +256,10 @@ export function PullPicker({
         className={cn(
           "flex h-full items-center gap-1.5 border-b-2 border-transparent text-sm font-medium transition-colors",
           atEnd ? "px-2" : "px-3",
-          menuOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+          menuOpen ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+          // Nothing to review and nothing open: no button. It comes back the moment the popup is
+          // opened from the "+" menu, so the list has something to hang under.
+          names.length === 0 && !menuOpen && "hidden"
         )}
       >
         <GitPullRequest className="size-4" />
@@ -213,6 +277,106 @@ export function PullPicker({
             atEnd ? "right-0" : "left-0"
           )}
         >
+          {/* Which repo is being listed, and where another is linked. Always shown, even for the one
+              repo a session usually has: it is how the second one gets added. */}
+          <div className="flex items-center gap-1 border-b px-1.5 py-1">
+            <Library className="size-3.5 shrink-0 text-muted-foreground" />
+            <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
+              {names.length === 0 ? (
+                <span className="px-1 text-xs text-muted-foreground">
+                  {repos.loading ? "Looking…" : "No repository yet."}
+                </span>
+              ) : (
+                repos.repos.map((r) => (
+                  <span
+                    key={r.nameWithOwner}
+                    className={cn(
+                      "group/repo flex shrink-0 items-center gap-1 rounded py-0.5 pl-1.5 pr-1 text-xs transition-colors",
+                      r.nameWithOwner === repo
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setChosen(r.nameWithOwner)}
+                      title={SOURCE_TITLE[r.source]}
+                      className="max-w-[14rem] truncate"
+                    >
+                      {r.nameWithOwner}
+                    </button>
+                    {/* Only what this session linked can be unlinked here. Its folder's own repo is
+                        a fact about the folder, and a project's is the project's to take back. */}
+                    {r.source === "session" && (
+                      <button
+                        type="button"
+                        onClick={() => void repos.unlink(r.nameWithOwner)}
+                        title="Unlink this repository"
+                        className="opacity-0 transition-opacity hover:text-destructive group-hover/repo:opacity-100"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    )}
+                  </span>
+                ))
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setLinking((o) => !o)}
+              title="Link another repository to this session"
+              className={cn(
+                "shrink-0 rounded p-1 hover:bg-accent hover:text-foreground",
+                linking ? "text-foreground" : "text-muted-foreground"
+              )}
+            >
+              <Plus className="size-3.5" />
+            </button>
+          </div>
+
+          {linking && (
+            <div className="flex items-center gap-2 border-b px-1.5 py-1.5">
+              <input
+                ref={linkRef}
+                value={newRepo}
+                onChange={(e) => {
+                  setNewRepo(e.target.value);
+                  setLinkError(null); // typing is the answer to being told it was wrong
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void link();
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setLinking(false);
+                  }
+                }}
+                placeholder="owner/name, or a link to the repository on GitHub"
+                className="h-7 min-w-0 flex-1 rounded border bg-background px-2 text-xs outline-none focus:border-primary"
+              />
+              <button
+                type="button"
+                onClick={() => void link()}
+                disabled={!newRepo.trim()}
+                className="shrink-0 rounded bg-primary px-2 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50"
+              >
+                Link
+              </button>
+            </div>
+          )}
+
+          {(linkError ?? repos.error) && (
+            <div
+              className={cn(
+                "border-b px-2.5 py-1.5 text-xs",
+                linkError ? "text-destructive" : "text-muted-foreground"
+              )}
+            >
+              {linkError ?? repos.error}
+            </div>
+          )}
+
           <div className="flex items-center gap-1 border-b p-1.5">
             {STATES.map((s) => (
               <button
@@ -241,7 +405,10 @@ export function PullPicker({
             </div>
             <button
               type="button"
-              onClick={() => void load(state, true)}
+              onClick={() => {
+                repos.reload();
+                void load(state, repo, true);
+              }}
               title="Reload from GitHub"
               className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
             >
@@ -250,7 +417,29 @@ export function PullPicker({
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-1">
-            {listing === undefined ? (
+            {!repo ? (
+              <div className="px-2 py-3 text-sm text-muted-foreground">
+                {repos.loading ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="size-3.5 animate-spin" /> Looking for this session's
+                    repositories…
+                  </span>
+                ) : repos.error ? (
+                  // Whatever went wrong is already said above the strip; repeating it here, or
+                  // guessing at "no remote", would be putting words to something we do not know.
+                  "This session's repositories could not be read."
+                ) : (
+                  <>
+                    This session has no GitHub repository.
+                    <div className="mt-1 text-xs">
+                      Its folder has no GitHub remote. Link a repository with the + above to review
+                      its pull requests from here — a session can reach any repository, checked out
+                      or not.
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : listing === undefined ? (
               <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-3.5 animate-spin" /> Asking GitHub…
               </div>
@@ -316,35 +505,37 @@ export function PullPicker({
  */
 export function PullTabs({
   pulls,
-  activeNumber,
+  activeKey,
   showingPull,
   onActivate,
   onClose,
 }: {
   pulls: SessionPull[];
-  activeNumber: number | null;
+  /** The key (pullKey) of the review the pane is on, whether or not it is the surface showing. */
+  activeKey: string | null;
   /** Whether a PR is the surface currently showing, as opposed to open but behind another tab. */
   showingPull: boolean;
-  onActivate: (number: number) => void;
-  onClose: (number: number) => void;
+  onActivate: (key: string) => void;
+  onClose: (key: string) => void;
 }) {
   return (
     <>
       {pulls.map((p) => {
-        const current = p.number === activeNumber;
+        const key = pullKey(p);
+        const current = key === activeKey;
         const active = current && showingPull;
         return (
           <div
-            key={p.number}
+            key={key}
             role="tab"
             aria-selected={active}
             data-current={current}
             title={pullTabLabel(p)}
-            onClick={() => onActivate(p.number)}
+            onClick={() => onActivate(key)}
             onMouseDown={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
-                onClose(p.number);
+                onClose(key);
               }
             }}
             className={cn(
@@ -357,12 +548,19 @@ export function PullTabs({
             )}
           >
             <GitPullRequest className="size-4 shrink-0" />
+            {/* A review of another repo says which, since the number alone would be two reviews
+                looking like one. The session's own repo goes unsaid — it is everything else here. */}
+            {p.repo && (
+              <span className="max-w-[7rem] truncate text-xs text-muted-foreground">
+                {p.repo.split("/")[1] ?? p.repo}
+              </span>
+            )}
             <span className="shrink-0 text-xs text-muted-foreground">#{p.number}</span>
             <span className="max-w-[10rem] truncate">{p.title}</span>
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onClose(p.number);
+                onClose(key);
               }}
               title="Close this review"
               className={cn(
