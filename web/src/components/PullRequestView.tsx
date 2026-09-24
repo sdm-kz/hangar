@@ -257,6 +257,8 @@ export function PullRequestView({
   // at once rather than after a round trip.
   const [viewed, setViewed] = useState<Set<string>>(new Set());
   const fileRefs = useRef(new Map<string, HTMLDivElement>());
+  // The file just marked read, whose header the pane keeps in place as it folds — see markViewed.
+  const anchorRef = useRef<string | null>(null);
   // The pane that scrolls through the files, and the two flags its saved offset needs: whether the
   // offset has been replayed yet (scrolls before that are the browser laying rows out, not the
   // reader) and the timer that keeps a scroll from writing the bag on every frame.
@@ -685,6 +687,7 @@ export function PullRequestView({
    */
   const markViewed = useCallback(
     (f: GitHubPullFile, next: boolean) => {
+      if (next && isOpen(f)) anchorRef.current = f.path;
       setViewed((prev) => {
         const out = new Set(prev);
         if (next) out.add(f.path);
@@ -703,8 +706,24 @@ export function PullRequestView({
         })
       );
     },
-    [sessionId, number, repo, setFileOpen]
+    [sessionId, number, repo, isOpen, setFileOpen]
   );
+
+  // A file marked read folds away, and the diff it held goes with it. Read to its end, the file's
+  // top is far above the pane — its sticky header was all that was left of it on screen — so the
+  // fold would pull the files below it up past the reader, leaving them somewhere in the middle of
+  // the next one. Bring the folded header back to the top of the pane instead, where the next file
+  // starts right under it. A file whose top is still on screen is left where it is.
+  useLayoutEffect(() => {
+    const path = anchorRef.current;
+    if (path === null) return;
+    anchorRef.current = null;
+    const box = scrollRef.current;
+    const el = fileRefs.current.get(path);
+    if (!box || !el) return;
+    const above = box.getBoundingClientRect().top - el.getBoundingClientRect().top;
+    if (above > 0) box.scrollTop -= above;
+  });
 
   /** Everything unread again, and open again — the way back from having marked the lot. */
   const clearViewed = useCallback(() => {

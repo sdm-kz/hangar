@@ -201,7 +201,8 @@ The web UI is a **session manager with a full terminal**:
   review, since a mark says a file has been read as the pull request proposes it.
 
   Each file has a **Viewed** box, the way GitHub's has: tick it and the file folds away, and the
-  header keeps the count. The marks are held against the *pull request* rather than the session, so
+  header keeps the count. Ticked at the end of a long file, the pane goes back to that file's header,
+  so the next file starts right below it rather than somewhere off in its middle. The marks are held against the *pull request* rather than the session, so
   they are the same in every browser, outlast the session being closed and reopened, and are shared
   by every session working in that repo. A mark records the file's blob as it was when you read it,
   which is what makes a push reset **only the files it touched** — the rest of the review stays read.
