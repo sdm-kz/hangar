@@ -48,6 +48,19 @@ public sealed record GitHubPullRefs(string HeadRefOid, string BaseRefOid, string
 public sealed record GitHubFileContent(string Path, string Ref, string Content, bool Truncated, string? Error);
 
 /// <summary>
+/// One commit of a pull request. <see cref="Parent"/> is its first parent — the side a diff of this
+/// commit is drawn against, and where a file the commit deletes can still be read whole. The author
+/// is the GitHub login where the commit is tied to an account, and the name git recorded where not.
+/// </summary>
+public sealed record GitHubPullCommit(string Sha, string Parent, string Author, string Date, string Message);
+
+/// <summary>A pull request's commits, oldest first — the order they were made in, as GitHub lists them.</summary>
+public sealed record GitHubPullCommits(IReadOnlyList<GitHubPullCommit> Commits, string? Error);
+
+/// <summary>What one commit changes, file by file, in the same shape a whole review arrives in.</summary>
+public sealed record GitHubCommitDiff(string Sha, IReadOnlyList<GitHubPullFile> Files, string? Error);
+
+/// <summary>
 /// The pull requests of the repo a folder belongs to, read through the <c>gh</c> CLI. gh is what
 /// makes this practical: it already holds the user's GitHub credentials and resolves the repo from
 /// the folder's remotes, so nothing here needs a token of its own.
@@ -278,6 +291,68 @@ public static class GitHubService
     }
 
     /// <summary>
+    /// The commits a pull request is made of, oldest first. REST rather than <c>gh pr view --json
+    /// commits</c>, because only REST carries each commit's parent — which is what a single commit is
+    /// diffed against, and where a file it deletes is read from. GitHub stops this list at 250
+    /// commits; a pull request longer than that is reviewed as a whole, which is how it is read anyway.
+    /// </summary>
+    public static async Task<GitHubPullCommits> CommitsAsync(
+        string workingDir, int number, string? named, CancellationToken ct)
+    {
+        var repo = Target(workingDir, named);
+        if (!repo.IsGitHub)
+            return new GitHubPullCommits(Array.Empty<GitHubPullCommit>(), "This folder is not a GitHub repository.");
+
+        // One compact JSON object per line (tojson, printed raw), so a message with tabs and newlines
+        // in it comes through as data rather than as the delimiters of some ad-hoc format.
+        var (ok, stdout, error) = await GhAsync(workingDir, ct,
+            // A hundred to a page, GitHub's most: the default thirty would make the longest list it
+            // serves nine round trips, and the file endpoint asks for it on every read at a commit.
+            "api", "--paginate", $"repos/{repo.NameWithOwner}/pulls/{number}/commits?per_page=100",
+            "--jq", ".[] | {sha, parent: (.parents[0].sha // \"\"), author: (.author.login // .commit.author.name // \"\"), date: (.commit.author.date // \"\"), message: (.commit.message // \"\")} | tojson");
+        if (!ok) return new GitHubPullCommits(Array.Empty<GitHubPullCommit>(), error);
+
+        var list = new List<GitHubPullCommit>();
+        foreach (var line in stdout.Split('\n'))
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
+            {
+                var c = JsonSerializer.Deserialize<CommitJson>(line, Json);
+                if (c is not null && IsCommitSha(c.Sha))
+                    list.Add(new GitHubPullCommit(c.Sha!, IsCommitSha(c.Parent) ? c.Parent! : "",
+                        c.Author ?? "", c.Date ?? "", c.Message ?? ""));
+            }
+            catch (JsonException) { /* one unreadable line is one commit missing, not the list */ }
+        }
+        return new GitHubPullCommits(list, null);
+    }
+
+    /// <summary>
+    /// What one commit changes, cut into files the way a whole pull request is. The commit is only
+    /// ever one the caller took from <see cref="CommitsAsync"/>, but it is checked for shape here all
+    /// the same: it is about to be part of a URL. Anything else a commit could be — another branch's,
+    /// an old one of this repo's — shows nothing the person asking could not read on GitHub.
+    /// </summary>
+    public static async Task<GitHubCommitDiff> CommitDiffAsync(
+        string workingDir, string sha, string? named, CancellationToken ct)
+    {
+        var repo = Target(workingDir, named);
+        if (!repo.IsGitHub)
+            return new GitHubCommitDiff(sha, Array.Empty<GitHubPullFile>(), "This folder is not a GitHub repository.");
+        if (!IsCommitSha(sha))
+            return new GitHubCommitDiff(sha, Array.Empty<GitHubPullFile>(), "That is not a commit of this pull request.");
+
+        // The diff media type answers with the same unified patch `gh pr diff` gives for a whole
+        // review, so it goes through the same splitter and the same caps.
+        var (ok, stdout, error) = await GhAsync(workingDir, ct,
+            "api", "-H", "Accept: application/vnd.github.diff", $"repos/{repo.NameWithOwner}/commits/{sha}");
+        return ok
+            ? new GitHubCommitDiff(sha, SplitPatch(stdout), null)
+            : new GitHubCommitDiff(sha, Array.Empty<GitHubPullFile>(), error);
+    }
+
+    /// <summary>
     /// One file of the repo, read whole at a commit — what the review shows when someone asks for the
     /// file rather than the change to it. <paramref name="sha"/> is a commit of this repo; GitHub
     /// keeps a pull request's head commits in the base repo, so a PR from a fork is readable here too.
@@ -304,7 +379,7 @@ public static class GitHubService
     }
 
     /// <summary>A full commit sha, and nothing else — it is about to be part of a URL handed to gh.</summary>
-    private static bool IsCommitSha(string? sha) =>
+    internal static bool IsCommitSha(string? sha) =>
         !string.IsNullOrEmpty(sha) && sha.Length == 40 && sha.All(Uri.IsHexDigit);
 
     /// <summary>
@@ -453,6 +528,15 @@ public static class GitHubService
     private sealed class AuthorJson
     {
         public string? Login { get; set; }
+    }
+
+    private sealed class CommitJson
+    {
+        public string? Sha { get; set; }
+        public string? Parent { get; set; }
+        public string? Author { get; set; }
+        public string? Date { get; set; }
+        public string? Message { get; set; }
     }
 
     /// <summary>

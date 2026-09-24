@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GitHubPull, SessionPull, SessionRepo } from "@/types";
 import { api } from "@/lib/api";
+import { age } from "@/lib/age";
 import { pullKey, pullTabLabel } from "@/lib/sessionPulls";
 import { useSessionRepos } from "@/lib/sessionRepos";
 import { useDismissable } from "@/lib/useDismissable";
@@ -50,17 +51,6 @@ function stateIcon(pull: GitHubPull) {
   if (pull.state === "CLOSED") return { Icon: GitPullRequestClosed, className: "text-red-500" };
   if (pull.draft) return { Icon: GitPullRequestDraft, className: "text-muted-foreground" };
   return { Icon: GitPullRequest, className: "text-emerald-500" };
-}
-
-/** Coarse age — the point is "hours vs days", not precision. */
-function age(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return "";
-  const minutes = ms / 60000;
-  if (minutes < 60) return `${Math.max(1, Math.round(minutes))}m`;
-  if (minutes < 48 * 60) return `${Math.round(minutes / 60)}h`;
-  const days = Math.round(minutes / 1440);
-  return days < 60 ? `${days}d` : `${Math.round(days / 30)}mo`;
 }
 
 /**

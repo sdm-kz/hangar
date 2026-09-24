@@ -2,14 +2,23 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
   type UIEvent,
 } from "react";
-import type { GitHubPullDetail, GitHubPullFile, PullFolds } from "@/types";
+import type {
+  GitHubCommitDiff,
+  GitHubPullCommit,
+  GitHubPullDetail,
+  GitHubPullFile,
+  PullFolds,
+} from "@/types";
 import { api } from "@/lib/api";
+import { age } from "@/lib/age";
+import { useDismissable } from "@/lib/useDismissable";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
 import { reviewKey } from "@/lib/sessionPulls";
 import { writeToClipboard } from "@/lib/clipboard";
@@ -23,10 +32,12 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
   Copy,
+  GitCommitHorizontal,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -37,6 +48,7 @@ import {
   RefreshCw,
   SquareArrowOutUpRight,
   WrapText,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -258,8 +270,48 @@ export function PullRequestView({
   const onTitleRef = useRef(onTitle);
   onTitleRef.current = onTitle;
 
+  // The review narrowed to one commit — GitHub's "Changes from" menu. A pull request is read as a
+  // whole, but written a commit at a time, and "what did this push change" is a question the whole
+  // diff cannot answer. None of this is remembered in the bag: it is a look at one part of the
+  // review, and the review is what a reload, or another device, should come back to.
+  const [commits, setCommits] = useState<GitHubPullCommit[] | null>(null);
+  const [commitsError, setCommitsError] = useState<string | null>(null);
+  const [commitSha, setCommitSha] = useState<string | null>(null);
+  const [commitDiff, setCommitDiff] = useState<GitHubCommitDiff | null>(null);
+  const [commitLoading, setCommitLoading] = useState(false);
+  // Bumped by the reload, so a commit being looked at is fetched again along with everything else.
+  const [commitEpoch, setCommitEpoch] = useState(0);
+  // Folds for the commit on screen. Local, and started afresh for each commit: they are about files
+  // of this commit, and writing them into the review's folds would fold the whole review's copy of
+  // the same path away behind the reader's back.
+  const [commitFolds, setCommitFolds] = useState<PullFolds>({});
+  // Mirrors commitSha for the scroll handler, which has to know *now* — a scroll event can arrive
+  // between the click that switches view and the render that hands it the new value.
+  const inCommitRef = useRef(false);
+  // Where the whole review was scrolled to when a commit was opened, so going back finds it there,
+  // and the offset the pane should take once the view it is switching to has been drawn.
+  const wholeScrollRef = useRef(0);
+  const pendingScrollRef = useRef<number | null>(null);
+
+  // The commit list: asked for beside the review rather than inside it, so the diff is never kept
+  // waiting on a list most readers will not open — but asked for at once, so the header can say
+  // how many there are. A failed ask keeps the list already held: a reload that could not reach
+  // GitHub says nothing about which commits the pull request has, and treating it as "none" would
+  // throw the reader out of the commit they were reading.
+  const loadCommits = useCallback(async () => {
+    try {
+      const res = await api.githubPullCommits(sessionId, number, repo);
+      setCommitsError(res.error ?? null);
+      if (!res.error) setCommits(res.commits ?? []);
+    } catch {
+      setCommitsError("Could not reach the server.");
+    }
+  }, [sessionId, number, repo]);
+
   const load = useCallback(async () => {
     setLoading(true);
+    void loadCommits();
+    setCommitEpoch((e) => e + 1);
     try {
       const res = await api.githubPull(sessionId, number, repo);
       setDetail(res);
@@ -272,11 +324,32 @@ export function PullRequestView({
     } finally {
       setLoading(false);
     }
-  }, [sessionId, number, repo]);
+  }, [sessionId, number, repo, loadCommits]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // One commit's changes, fetched when it is chosen and again on a reload. What arrives for a commit
+  // no longer chosen is dropped rather than drawn: the reader has moved on.
+  useEffect(() => {
+    inCommitRef.current = commitSha !== null;
+    if (!commitSha) return;
+    let cancelled = false;
+    setCommitLoading(true);
+    api
+      .githubPullCommit(sessionId, number, commitSha, repo)
+      .then((r) => !cancelled && setCommitDiff(r))
+      .catch(
+        () =>
+          !cancelled &&
+          setCommitDiff({ sha: commitSha, files: [], error: "Could not reach the server." })
+      )
+      .finally(() => !cancelled && setCommitLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, number, repo, commitSha, commitEpoch]);
 
   useEffect(
     () => subscribeSessionUi(sessionId, (seed) => seed && setSeedEpoch((e) => e + 1)),
@@ -303,6 +376,12 @@ export function PullRequestView({
     // seconds would use the whole budget against an empty pane, mark the restore done, and let the
     // first scroll write the top of the pane over the remembered offset.
     if (!box || !detail) return;
+    // A reload while one commit is on screen: the saved offset is the whole review's, and dropping
+    // it onto the commit would put the reader somewhere arbitrary in a different list of files.
+    if (inCommitRef.current) {
+      restoredRef.current = true;
+      return;
+    }
     const target = loadSessionUi(sessionId).pullScroll?.[review] ?? 0;
     if (!(target > 0)) {
       restoredRef.current = true;
@@ -338,7 +417,9 @@ export function PullRequestView({
   // as they load, not the reader, so they must not overwrite the offset being replayed.
   const onScroll = useCallback(
     (e: UIEvent<HTMLDivElement>) => {
-      if (!restoredRef.current) return;
+      // Where the reader is in one commit is not where they are in the review, which is what the
+      // saved offset is for — so a commit's scrolling is not written anywhere.
+      if (!restoredRef.current || inCommitRef.current) return;
       const top = Math.round(e.currentTarget.scrollTop);
       window.clearTimeout(saveScrollRef.current);
       saveScrollRef.current = window.setTimeout(
@@ -466,7 +547,66 @@ export function PullRequestView({
     });
   }, []);
 
-  const files = detail?.files ?? NO_FILES;
+  const inCommit = commitSha !== null;
+  // The commit's own answer, and only once it is the commit's: while the next one loads, what is in
+  // state is still the last one, and drawing its files under the new commit's name would be a lie.
+  const shownCommit = commitDiff && commitDiff.sha === commitSha ? commitDiff : null;
+  const files = inCommit ? shownCommit?.files ?? NO_FILES : detail?.files ?? NO_FILES;
+  const commitIndex = inCommit && commits ? commits.findIndex((c) => c.sha === commitSha) : -1;
+  const commit = commitIndex >= 0 ? commits![commitIndex] : null;
+
+  /**
+   * Narrow the review to one commit, or open it back out. The whole review's scroll offset is kept
+   * aside on the way in and put back on the way out, because the thing a reader does next after
+   * looking at one commit is carry on with the review where they left it.
+   */
+  const chooseCommit = useCallback(
+    (sha: string | null) => {
+      if (!inCommitRef.current && sha !== null) {
+        // Where the review is "at". Normally where it is scrolled to — but a review opened a moment
+        // ago may still be waiting for its rows to arrive before replaying its saved offset, and
+        // then that offset is where the reader is on their way to. The replay is called off either
+        // way: left running it would land on the commit's files instead.
+        wholeScrollRef.current = restoredRef.current
+          ? scrollRef.current?.scrollTop ?? 0
+          : loadSessionUi(sessionId).pullScroll?.[review] ?? 0;
+        restoredRef.current = true;
+      }
+      inCommitRef.current = sha !== null;
+      pendingScrollRef.current = sha === null ? wholeScrollRef.current : 0;
+      setCommitFolds({});
+      setCommitSha(sha);
+    },
+    [sessionId, review]
+  );
+
+  // A commit the author has since rewritten away: the list no longer holds it, so the reader goes
+  // back to the whole review — the same way "All changes" would take them, place and all.
+  useEffect(() => {
+    if (commitSha && commits && !commits.some((c) => c.sha === commitSha)) chooseCommit(null);
+  }, [commits, commitSha, chooseCommit]);
+
+  // What the commit on screen changes in all, for the counts in the header.
+  const commitTotals = useMemo(
+    () =>
+      shownCommit?.files.reduce(
+        (t, f) => ({ additions: t.additions + f.additions, deletions: t.deletions + f.deletions }),
+        { additions: 0, deletions: 0 }
+      ) ?? null,
+    [shownCommit]
+  );
+
+  // Take the offset chooseCommit set aside, once the view it belongs to is on the page. A layout
+  // effect rather than a frame callback: it runs after React has put the review's rows back and
+  // before anything is painted, so there is height to scroll into and no flash of the top first —
+  // and it does not wait on a frame, which a browser never draws for a tab nobody is looking at.
+  useLayoutEffect(() => {
+    const box = scrollRef.current;
+    if (box && pendingScrollRef.current !== null) {
+      box.scrollTop = pendingScrollRef.current;
+      pendingScrollRef.current = null;
+    }
+  }, [commitSha]);
 
   // Which files are too big to draw on open, worked out once per load rather than per render.
   const big = useMemo(
@@ -483,21 +623,28 @@ export function PullRequestView({
     (f: GitHubPullFile) => !f.binary && !big.has(f.path),
     [big]
   );
+  // The folds in force: the review's, or the commit's own while one is on screen.
+  const shownFolds = inCommit ? commitFolds : folds;
   // A set, not the array itself: this is asked once per file per render, and a review of three
   // hundred files with three hundred exceptions would otherwise be a scan inside a scan.
-  const excepted = useMemo(() => new Set(folds.except ?? []), [folds.except]);
+  const excepted = useMemo(() => new Set(shownFolds.except ?? []), [shownFolds.except]);
   const isOpen = useCallback(
     (f: GitHubPullFile) => {
-      const base = folds.all ?? byDefault(f);
+      const base = shownFolds.all ?? byDefault(f);
       return excepted.has(f.path) ? !base : base;
     },
-    [folds.all, excepted, byDefault]
+    [shownFolds.all, excepted, byDefault]
   );
 
   // Every change to the folds goes to the bag as it is made: there is no "done reading" moment to
   // save at, and the reader may well close the tab as the next thing they do.
   const putFolds = useCallback(
     (next: PullFolds) => {
+      // A commit's folds stay on this screen — see commitFolds.
+      if (inCommitRef.current) {
+        setCommitFolds(next);
+        return;
+      }
       const all = capFolds({ ...loadSessionUi(sessionId).pullFolds, [review]: next }, review);
       // What is kept for this review may have been trimmed on the way into the budget, so the state
       // takes what was actually stored rather than what was asked for — otherwise the screen and the
@@ -512,14 +659,14 @@ export function PullRequestView({
 
   const toggleFile = useCallback(
     (f: GitHubPullFile) => {
-      const except = folds.except ?? [];
+      const except = shownFolds.except ?? [];
       // Back to the baseline rather than a second exception, so toggling twice leaves no trace.
       const next = excepted.has(f.path)
         ? except.filter((p) => p !== f.path)
         : [...except, f.path];
-      putFolds({ ...folds, except: next });
+      putFolds({ ...shownFolds, except: next });
     },
-    [folds, excepted, putFolds]
+    [shownFolds, excepted, putFolds]
   );
 
   /** Fold or unfold one file to a known state, rather than to the other side of where it is. */
@@ -617,19 +764,39 @@ export function PullRequestView({
               <span className="truncate font-mono">
                 {pull.headRefName} → {pull.baseRefName}
               </span>
-              <span>
-                <span className="text-emerald-600 dark:text-emerald-400">+{pull.additions}</span>{" "}
-                <span className="text-red-600 dark:text-red-400">−{pull.deletions}</span>
-              </span>
-              <span>
-                {pull.changedFiles} {pull.changedFiles === 1 ? "file" : "files"}
-              </span>
+              {/* The counts are of whatever is on screen: the pull request, or the one commit it is
+                  narrowed to — they sit beside the menu that says which, and read as that. Nothing
+                  while a commit is still arriving, rather than the pull request's under its name. */}
+              {(() => {
+                const t = inCommit ? commitTotals : pull;
+                const n = inCommit ? files.length : pull.changedFiles;
+                if (!t) return null;
+                return (
+                  <>
+                    <span title={inCommit ? "What this commit changes" : undefined}>
+                      <span className="text-emerald-600 dark:text-emerald-400">+{t.additions}</span>{" "}
+                      <span className="text-red-600 dark:text-red-400">−{t.deletions}</span>
+                    </span>
+                    <span>
+                      {n} {n === 1 ? "file" : "files"}
+                    </span>
+                  </>
+                );
+              })()}
+              {commits && commits.length > 0 && (
+                <CommitMenu commits={commits} selected={commitSha} onSelect={chooseCommit} />
+              )}
+              {commitsError && !commits?.length && (
+                <span title={commitsError} className="text-amber-600 dark:text-amber-400">
+                  commits unavailable
+                </span>
+              )}
             </div>
           )}
         </div>
         {/* How much of the review is behind you. A button, because the only thing anyone wants to do
             with that number is put it back to nothing. */}
-        {viewed.size > 0 && (
+        {viewed.size > 0 && !inCommit && (
           <button
             type="button"
             onClick={clearViewed}
@@ -639,7 +806,9 @@ export function PullRequestView({
             {viewed.size}/{files.length} read
           </button>
         )}
-        {files.length > 0 && (
+        {/* Kept while a commit is on screen even before its files arrive, so the header does not
+            jump twice on the way to it. */}
+        {(files.length > 0 || inCommit) && (
           <div className="flex shrink-0 items-center">
             {/* Reading size for the code. The percentage resets, the way it does on every other
                 zoomed view in the app — and it is the only label here, so it goes on narrow panes. */}
@@ -775,7 +944,9 @@ export function PullRequestView({
         )}
 
         <div ref={scrollRef} onScroll={onScroll} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-          {error && (
+          {/* Not above a commit: a pull request whose diff is too large to fetch whole is exactly
+              the one read a commit at a time, and the warning is about something not on screen. */}
+          {error && !inCommit && (
             <div className="m-3 flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
               <div className="min-w-0">
@@ -787,13 +958,44 @@ export function PullRequestView({
             </div>
           )}
 
-          {loading && !detail ? (
+          {inCommit && (
+            <CommitBanner
+              commit={commit}
+              sha={commitSha!}
+              index={commitIndex}
+              count={commits?.length ?? 0}
+              onPrev={() => commitIndex > 0 && chooseCommit(commits![commitIndex - 1].sha)}
+              onNext={() =>
+                commits && commitIndex < commits.length - 1 && chooseCommit(commits[commitIndex + 1].sha)
+              }
+              onClose={() => chooseCommit(null)}
+            />
+          )}
+
+          {inCommit && shownCommit?.error && (
+            <div className="m-3 flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+              <div className="min-w-0 break-words">{shownCommit.error}</div>
+            </div>
+          )}
+
+          {inCommit ? (
+            !shownCommit && commitLoading ? (
+              <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" /> Reading the commit…
+              </div>
+            ) : shownCommit && !shownCommit.error && files.length === 0 ? (
+              <div className="p-4 text-sm text-muted-foreground">This commit changes no files.</div>
+            ) : null
+          ) : loading && !detail ? (
             <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" /> Asking GitHub…
             </div>
-          ) : (
+          ) : null}
+
+          {(inCommit ? !!shownCommit : !(loading && !detail)) && (
             <>
-              {detail?.body?.trim() && (
+              {!inCommit && detail?.body?.trim() && (
                 <div className="border-b">
                   <button
                     type="button"
@@ -815,7 +1017,7 @@ export function PullRequestView({
                 </div>
               )}
 
-              {!error && files.length === 0 && !loading && (
+              {!inCommit && !error && files.length === 0 && !loading && (
                 <div className="p-4 text-sm text-muted-foreground">
                   This pull request changes no files.
                 </div>
@@ -823,15 +1025,20 @@ export function PullRequestView({
 
               {files.map((f) => (
                 <FileDiff
-                  key={f.path}
+                  // Per commit as well as per path: a file of one commit and the same file of the
+                  // next are two different changes, and neither should inherit the other's state.
+                  key={commitSha ? `${commitSha}:${f.path}` : f.path}
                   sessionId={sessionId}
                   number={number}
                   repo={repo}
-                  headRef={pull?.headRefOid ?? ""}
-                  baseRef={pull?.baseRefOid ?? ""}
+                  // One commit is read at itself, and a file it deletes at the parent it was diffed
+                  // against — the same two sides its diff is drawn from.
+                  headRef={inCommit ? commitSha! : pull?.headRefOid ?? ""}
+                  baseRef={inCommit ? commit?.parent ?? "" : pull?.baseRefOid ?? ""}
+                  scope={inCommit ? "commit" : "pull"}
                   file={f}
                   open={isOpen(f)}
-                  viewed={viewed.has(f.path)}
+                  viewed={!inCommit && viewed.has(f.path)}
                   onViewed={markViewed}
                   wrap={wrap}
                   zoom={zoom}
@@ -855,6 +1062,189 @@ export function PullRequestView({
   );
 }
 
+/** A commit's first line, which is what a list of them is read by. */
+function headline(message: string): string {
+  return message.split("\n", 1)[0].trim() || "(no message)";
+}
+
+/**
+ * The pull request's commits, as a menu off the counts in the header — GitHub's "Changes from" menu,
+ * where the whole review is the first choice and each commit after it narrows the review to that
+ * commit alone. Oldest first, the order they were made in and the order GitHub lists them.
+ */
+function CommitMenu({
+  commits,
+  selected,
+  onSelect,
+}: {
+  commits: GitHubPullCommit[];
+  selected: string | null;
+  onSelect: (sha: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+  const ref = useDismissable<HTMLSpanElement>(open, close);
+  const index = selected ? commits.findIndex((c) => c.sha === selected) : -1;
+  const pick = (sha: string | null) => {
+    // The one already on screen is not a new choice, and treating it as one would unfold its files.
+    if (sha !== selected) onSelect(sha);
+    setOpen(false);
+  };
+
+  return (
+    <span ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Show the changes of one commit, or of the whole pull request"
+        className={cn(
+          "flex items-center gap-1 rounded px-1 hover:bg-accent hover:text-foreground",
+          selected && "text-foreground"
+        )}
+      >
+        <GitCommitHorizontal className="size-3.5" />
+        {index >= 0
+          ? `commit ${index + 1} of ${commits.length}`
+          : `${commits.length} ${commits.length === 1 ? "commit" : "commits"}`}
+        <ChevronDown className="size-3" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute left-0 top-full z-30 mt-1 flex max-h-[60vh] w-[30rem] max-w-[calc(100vw-2rem)] flex-col overflow-y-auto rounded-md popover-edge bg-popover p-1 text-sm shadow-md"
+        >
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={selected === null}
+            onClick={() => pick(null)}
+            className={cn(
+              "flex items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent",
+              selected === null && "bg-accent/60"
+            )}
+          >
+            <span className="flex w-3.5 shrink-0 justify-center">
+              {selected === null && <Check className="size-3.5" />}
+            </span>
+            <span className="font-medium">All changes</span>
+            <span className="text-xs text-muted-foreground">— the whole pull request</span>
+          </button>
+          <div className="my-1 h-px bg-border" />
+          {commits.map((c) => {
+            const on = c.sha === selected;
+            const when = age(c.date);
+            return (
+              <button
+                key={c.sha}
+                type="button"
+                role="menuitemradio"
+                aria-checked={on}
+                onClick={() => pick(c.sha)}
+                title={c.message}
+                className={cn(
+                  "flex items-start gap-2 rounded px-2 py-1.5 text-left hover:bg-accent",
+                  on && "bg-accent/60"
+                )}
+              >
+                <span className="flex w-3.5 shrink-0 justify-center pt-0.5">
+                  {on && <Check className="size-3.5" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{headline(c.message)}</span>
+                  <span className="flex gap-2 text-xs text-muted-foreground">
+                    <span className="font-mono">{c.sha.slice(0, 7)}</span>
+                    <span className="truncate">{c.author}</span>
+                    {when && <span className="shrink-0">{when}</span>}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Which commit the review is narrowed to, above its files: what it is called, who made it and when,
+ * the rest of its message, and the way to the commits either side of it — or back out to the whole
+ * pull request. It stands where the description does, because a commit's message is to its diff what
+ * the description is to the review's.
+ */
+function CommitBanner({
+  commit,
+  sha,
+  index,
+  count,
+  onPrev,
+  onNext,
+  onClose,
+}: {
+  /** Null only for the render in which the list stops holding it, just before the reader is taken
+      back to the whole review — see the effect beside chooseCommit. */
+  commit: GitHubPullCommit | null;
+  sha: string;
+  index: number;
+  count: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}) {
+  const body = commit ? commit.message.split("\n").slice(1).join("\n").trim() : "";
+  const when = commit ? age(commit.date) : "";
+  const step = "rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent";
+  return (
+    <div className="flex items-start gap-2 border-b bg-muted/30 px-3 py-2 text-xs">
+      <div className="flex shrink-0 items-center">
+        <button type="button" onClick={onPrev} disabled={index <= 0} title="The commit before this one" className={step}>
+          <ChevronLeft className="size-4" />
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={index < 0 || index >= count - 1}
+          title="The commit after this one"
+          className={step}
+        >
+          <ChevronRight className="size-4" />
+        </button>
+      </div>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="shrink-0 font-mono text-muted-foreground">{sha.slice(0, 7)}</span>
+          <span className="min-w-0 truncate text-sm font-medium">{commit ? headline(commit.message) : ""}</span>
+        </div>
+        {commit && (
+          <div className="text-muted-foreground">
+            {commit.author}
+            {when && ` · ${when} ago`}
+            {index >= 0 && ` · commit ${index + 1} of ${count}`}
+          </div>
+        )}
+        {body && (
+          // Its own lines, as the author wrapped them: a commit body is plain text, not Markdown, and
+          // trailers like Co-authored-by read as a list only while they keep their line breaks.
+          <pre className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-sans text-muted-foreground">
+            {body}
+          </pre>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        title="Back to every change in the pull request"
+        className="flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+      >
+        <X className="size-3.5" />
+        <span className="hidden sm:inline">All changes</span>
+      </button>
+    </div>
+  );
+}
+
 /** One file of the review: a header that folds it away, and its diff — or the file itself — below. */
 function FileDiff({
   sessionId,
@@ -862,6 +1252,7 @@ function FileDiff({
   repo,
   headRef,
   baseRef,
+  scope,
   file,
   open,
   viewed,
@@ -883,6 +1274,8 @@ function FileDiff({
   /** The commits the review names. A file is read whole at the head, except a deleted one. */
   headRef: string;
   baseRef: string;
+  /** Whether what is on screen is the whole pull request or one of its commits — said in the titles. */
+  scope: "pull" | "commit";
   file: GitHubPullFile;
   open: boolean;
   /** Marked as read: the header says so, and the file arrived folded because of it. */
@@ -1057,7 +1450,7 @@ function FileDiff({
             <button
               type="button"
               onClick={() => setWhole(false)}
-              title="Show what this pull request changes in the file"
+              title={`Show what this ${scope === "commit" ? "commit" : "pull request"} changes in the file`}
               className={cn(
                 "rounded px-1.5 py-0.5 transition-colors",
                 whole ? "text-muted-foreground hover:text-foreground" : "bg-accent text-foreground"
@@ -1068,7 +1461,11 @@ function FileDiff({
             <button
               type="button"
               onClick={() => setWhole(true)}
-              title={`Show the whole file as it is at ${file.status === "D" ? "the base" : "the head"} of this pull request`}
+              title={
+                scope === "commit"
+                  ? `Show the whole file as it is ${file.status === "D" ? "just before" : "at"} this commit`
+                  : `Show the whole file as it is at ${file.status === "D" ? "the base" : "the head"} of this pull request`
+              }
               className={cn(
                 "rounded px-1.5 py-0.5 transition-colors",
                 whole ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"

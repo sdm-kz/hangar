@@ -192,6 +192,14 @@ The web UI is a **session manager with a full terminal**:
   which is where copying belongs: a diff copied wholesale is a mix of both sides with markers down
   the left, which is not the file anyone means.
 
+  The counts under the title end in **N commits**, which is GitHub's *Changes from* menu: the whole
+  pull request first, then each commit oldest first. Pick one and the review narrows to what that
+  commit alone changed — same diffs, same *File* view (read at that commit, or just before it for a
+  file it deletes) — with the commit's message where the description was and arrows to step to the
+  commits either side. *All changes* goes back, to the place in the review you left. A commit's folds
+  and scrolling are its own and are not remembered, and the *Viewed* boxes stay with the whole
+  review, since a mark says a file has been read as the pull request proposes it.
+
   Each file has a **Viewed** box, the way GitHub's has: tick it and the file folds away, and the
   header keeps the count. The marks are held against the *pull request* rather than the session, so
   they are the same in every browser, outlast the session being closed and reopened, and are shared

@@ -1460,8 +1460,8 @@ internal static class Program
         });
 
         // One file of a pull request, read whole at one of the commits the review points at, for the
-        // reader who wants the file rather than the change to it. The ref is checked against the two
-        // the pull request actually names, so this cannot be pointed at an arbitrary commit.
+        // reader who wants the file rather than the change to it. The ref is checked against the
+        // commits the pull request actually names, so this cannot be pointed at an arbitrary one.
         app.MapGet("/api/sessions/{id}/github/pulls/{number:int}/file",
             async (string id, int number, string path, string? @ref, string? repo, SessionManager mgr, CancellationToken ct) =>
         {
@@ -1473,10 +1473,49 @@ internal static class Program
             var refs = await GitHubService.RefsAsync(info.WorkingDirectory, number, repo, ct);
             if (refs.Error is not null)
                 return Results.Ok(new GitHubFileContent(path, @ref ?? "", "", false, refs.Error));
-            // Only the head or the base of this very pull request: the client hands back one of the
-            // two it was given, and anything else is not a question this endpoint answers.
-            var sha = @ref == refs.BaseRefOid ? refs.BaseRefOid : refs.HeadRefOid;
+            // Only a commit this very pull request names: its head or its base, or — for a review
+            // narrowed to one commit — one of its commits or the parent that commit is diffed
+            // against. The commit list is only asked for when the ref is not one of the first two,
+            // so reading a file of the whole review costs what it always did.
+            var sha = refs.HeadRefOid;
+            if (@ref == refs.BaseRefOid) sha = refs.BaseRefOid;
+            else if (@ref != refs.HeadRefOid && GitHubService.IsCommitSha(@ref))
+            {
+                // A commit that cannot be confirmed is an error, not the head. The reader asked for
+                // the file as one commit left it, and the head's copy under that commit's name
+                // would be a different file with the wrong label on it. It happens when the author
+                // has rewritten the branch since the review was loaded, or when the list itself
+                // could not be read — and the two are told apart, since one wants a reload and the
+                // other only a retry.
+                var commits = await GitHubService.CommitsAsync(info.WorkingDirectory, number, repo, ct);
+                if (commits.Error is not null)
+                    return Results.Ok(new GitHubFileContent(path, @ref!, "", false, commits.Error));
+                if (!commits.Commits.Any(c => c.Sha == @ref || c.Parent == @ref))
+                    return Results.Ok(new GitHubFileContent(path, @ref!, "", false,
+                        "That commit is no longer part of this pull request — reload the review."));
+                sha = @ref!;
+            }
             return Results.Ok(await GitHubService.FileAsync(info.WorkingDirectory, path, sha, repo, ct));
+        });
+
+        // A pull request's commits, oldest first, for narrowing the review to one of them.
+        app.MapGet("/api/sessions/{id}/github/pulls/{number:int}/commits",
+            async (string id, int number, string? repo, SessionManager mgr, CancellationToken ct) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
+            return Results.Ok(await GitHubService.CommitsAsync(info.WorkingDirectory, number, repo, ct));
+        });
+
+        // What one of those commits changes, file by file, in the shape the whole review comes in.
+        app.MapGet("/api/sessions/{id}/github/pulls/{number:int}/commits/{sha}",
+            async (string id, int number, string sha, string? repo, SessionManager mgr, CancellationToken ct) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
+            return Results.Ok(await GitHubService.CommitDiffAsync(info.WorkingDirectory, sha, repo, ct));
         });
 
         // One pull request: its description and every changed file, each with its slice of the diff.

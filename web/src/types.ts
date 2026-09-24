@@ -469,6 +469,33 @@ export interface GitHubFileContent {
   error: string | null;
 }
 
+/**
+ * One commit of a pull request. `parent` is its first parent — the side a diff of just this commit is
+ * drawn against, and where a file it deletes can still be read whole. "" where GitHub gave none.
+ */
+export interface GitHubPullCommit {
+  sha: string;
+  parent: string;
+  /** The GitHub login where the commit is tied to an account, otherwise the name git recorded. */
+  author: string;
+  date: string;
+  /** The whole message; its first line is the headline. */
+  message: string;
+}
+
+export interface GitHubPullCommits {
+  /** Oldest first — the order they were made in. */
+  commits: GitHubPullCommit[];
+  error: string | null;
+}
+
+/** What one commit changes, in the same shape as a whole review's files. */
+export interface GitHubCommitDiff {
+  sha: string;
+  files: GitHubPullFile[];
+  error: string | null;
+}
+
 export interface GitHubPullDetail {
   pull: GitHubPull | null;
   /** The PR description, as Markdown. */

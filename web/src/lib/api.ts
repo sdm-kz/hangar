@@ -9,7 +9,9 @@ import type {
   GitLog,
   GitRefs,
   GitStatus,
+  GitHubCommitDiff,
   GitHubFileContent,
+  GitHubPullCommits,
   GitHubPullDetail,
   GitHubPullList,
   GitWorktree,
@@ -651,6 +653,15 @@ export const api = {
   },
   githubPull(id: string, number: number, repo?: string): Promise<GitHubPullDetail> {
     return request(`/api/sessions/${id}/github/pulls/${number}${githubQuery(repo)}`);
+  },
+  // A pull request's commits, oldest first, and what one of them changes on its own.
+  githubPullCommits(id: string, number: number, repo?: string): Promise<GitHubPullCommits> {
+    return request(`/api/sessions/${id}/github/pulls/${number}/commits${githubQuery(repo)}`);
+  },
+  githubPullCommit(id: string, number: number, sha: string, repo?: string): Promise<GitHubCommitDiff> {
+    return request(
+      `/api/sessions/${id}/github/pulls/${number}/commits/${encodeURIComponent(sha)}${githubQuery(repo)}`
+    );
   },
   // One of a PR's files read whole at one of the two commits the review names — the head unless the
   // base is asked for, which is what a deleted file wants.
