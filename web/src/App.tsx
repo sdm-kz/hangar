@@ -23,7 +23,8 @@ import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
-import { Bot, Loader2, Menu, PanelLeftOpen, Plus } from "lucide-react";
+import { Bot, Loader2, Menu, Plus } from "lucide-react";
+import { ShowSidebarButton, SessionsProgressContext } from "@/components/ShowSidebarButton";
 
 type AuthStatus = "loading" | "authed" | "anon";
 
@@ -1027,58 +1028,61 @@ export function App() {
       )}
 
       <main className="min-w-0 flex-1">
-        {openFile ? (
-          <ServerFileViewer
-            path={openFile}
-            onClose={() => setOpenFile(null)}
-            onReveal={revealInFiles}
-            onToggleSidebar={() => setSidebarOpen(true)}
-            collapsed={collapsed}
-            onToggleCollapsed={toggleCollapsed}
-          />
-        ) : shellFolder ? (
-          <ShellView
-            folder={shellFolder}
-            shellsRev={shellsRev}
-            onClose={() => setShellFolder(null)}
-            onReveal={revealFolderInFiles}
-            onToggleSidebar={() => setSidebarOpen(true)}
-            collapsed={collapsed}
-            onToggleCollapsed={toggleCollapsed}
-          />
-        ) : active ? (
-          <SessionView
-            // One instance per session: its tabs, its layout and its terminal all belong to the
-            // session, and a fresh view restores them from its saved state rather than chasing a
-            // switch through every hook.
-            key={active.id}
-            session={active}
-            // Compaction is work too: the postponed pool must not flush a stashed message into the
-            // terminal mid-compact, and a manual /compact leaves the hook-derived busy set empty.
-            busy={busyIds.has(active.id) || compactingIds.has(active.id)}
-            parent={activeParent}
-            shellsRev={shellsRev}
-            onFork={forkSession}
-            onSelectSession={selectSession}
-            onToggleSidebar={() => setSidebarOpen(true)}
-            collapsed={collapsed}
-            onToggleCollapsed={toggleCollapsed}
-            onStopped={(info) => setSessions((prev) => prev.map((s) => (s.id === info.id ? info : s)))}
-            onReopen={() => void onRestore(active.id)}
-            onReopenWithOptions={() => reopenAsNew(active, presetFromSession(active))}
-            onRename={onRename}
-            onTerminalRename={onTerminalRename}
-            onTerminalColor={onTerminalColor}
-          />
-        ) : (
-          <EmptyState
-            onNew={() => openNew()}
-            onOpenSidebar={() => setSidebarOpen(true)}
-            collapsed={collapsed}
-            onToggleCollapsed={toggleCollapsed}
-            update={<UpdateButton status={update} onApplying={setInstalling} />}
-          />
-        )}
+        {/* Feeds the fraction on each view's "Show sidebar" button, since the tab showing it is hidden. */}
+        <SessionsProgressContext.Provider value={totalProgress}>
+          {openFile ? (
+            <ServerFileViewer
+              path={openFile}
+              onClose={() => setOpenFile(null)}
+              onReveal={revealInFiles}
+              onToggleSidebar={() => setSidebarOpen(true)}
+              collapsed={collapsed}
+              onToggleCollapsed={toggleCollapsed}
+            />
+          ) : shellFolder ? (
+            <ShellView
+              folder={shellFolder}
+              shellsRev={shellsRev}
+              onClose={() => setShellFolder(null)}
+              onReveal={revealFolderInFiles}
+              onToggleSidebar={() => setSidebarOpen(true)}
+              collapsed={collapsed}
+              onToggleCollapsed={toggleCollapsed}
+            />
+          ) : active ? (
+            <SessionView
+              // One instance per session: its tabs, its layout and its terminal all belong to the
+              // session, and a fresh view restores them from its saved state rather than chasing a
+              // switch through every hook.
+              key={active.id}
+              session={active}
+              // Compaction is work too: the postponed pool must not flush a stashed message into the
+              // terminal mid-compact, and a manual /compact leaves the hook-derived busy set empty.
+              busy={busyIds.has(active.id) || compactingIds.has(active.id)}
+              parent={activeParent}
+              shellsRev={shellsRev}
+              onFork={forkSession}
+              onSelectSession={selectSession}
+              onToggleSidebar={() => setSidebarOpen(true)}
+              collapsed={collapsed}
+              onToggleCollapsed={toggleCollapsed}
+              onStopped={(info) => setSessions((prev) => prev.map((s) => (s.id === info.id ? info : s)))}
+              onReopen={() => void onRestore(active.id)}
+              onReopenWithOptions={() => reopenAsNew(active, presetFromSession(active))}
+              onRename={onRename}
+              onTerminalRename={onTerminalRename}
+              onTerminalColor={onTerminalColor}
+            />
+          ) : (
+            <EmptyState
+              onNew={() => openNew()}
+              onOpenSidebar={() => setSidebarOpen(true)}
+              collapsed={collapsed}
+              onToggleCollapsed={toggleCollapsed}
+              update={<UpdateButton status={update} onApplying={setInstalling} />}
+            />
+          )}
+        </SessionsProgressContext.Provider>
       </main>
 
       {scheduling && (
@@ -1156,15 +1160,7 @@ function EmptyState({
           <Menu className="size-5" />
         </Button>
         {collapsed && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden md:inline-flex"
-            title="Show sidebar"
-            onClick={onToggleCollapsed}
-          >
-            <PanelLeftOpen className="size-5" />
-          </Button>
+          <ShowSidebarButton onClick={onToggleCollapsed} />
         )}
         <span className="font-semibold">Claude Web</span>
         {update}

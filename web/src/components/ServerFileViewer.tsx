@@ -31,12 +31,12 @@ import {
   Maximize2,
   Menu,
   Minimize2,
-  PanelLeftOpen,
   Pencil,
   RefreshCw,
   Save,
   X,
 } from "lucide-react";
+import { ShowSidebarButton } from "@/components/ShowSidebarButton";
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB — matches the per-session browser's cap
 
@@ -304,15 +304,7 @@ export function ServerFileViewer({
           </Button>
         )}
         {collapsed && onToggleCollapsed && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden md:inline-flex"
-            title="Show sidebar"
-            onClick={onToggleCollapsed}
-          >
-            <PanelLeftOpen className="size-5" />
-          </Button>
+          <ShowSidebarButton onClick={onToggleCollapsed} />
         )}
         <div className="group min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1">

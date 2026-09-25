@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Menu, PanelLeftOpen, TerminalSquare, X } from "lucide-react";
+import { Menu, TerminalSquare, X } from "lucide-react";
+import { ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { useShells } from "@/lib/useShells";
@@ -94,15 +95,7 @@ export function ShellView({
           </Button>
         )}
         {collapsed && onToggleCollapsed && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden md:inline-flex"
-            title="Show sidebar"
-            onClick={onToggleCollapsed}
-          >
-            <PanelLeftOpen className="size-5" />
-          </Button>
+          <ShowSidebarButton onClick={onToggleCollapsed} />
         )}
         <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
         <div className="group min-w-0 flex-1">

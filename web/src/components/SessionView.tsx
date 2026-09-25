@@ -84,7 +84,6 @@ import {
   Loader2,
   Menu,
   MoreVertical,
-  PanelLeftOpen,
   Pencil,
   Play,
   Radio,
@@ -96,6 +95,7 @@ import {
   TerminalSquare,
   Video,
 } from "lucide-react";
+import { ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Wide enough for groups side by side — the width the app has always switched to its desktop
@@ -1031,15 +1031,7 @@ export function SessionView({
             <Menu />
           </Button>
           {collapsed && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="-ml-2.5 hidden md:inline-flex"
-              title="Show sidebar"
-              onClick={onToggleCollapsed}
-            >
-              <PanelLeftOpen />
-            </Button>
+            <ShowSidebarButton className="-ml-2.5" onClick={onToggleCollapsed} />
           )}
           {/* No overflow-hidden here — it would clip the info popup; children truncate themselves.
               Two stacked lines on a phone (name, then folder/branch), one line from md up. */}
