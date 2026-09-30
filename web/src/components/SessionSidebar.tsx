@@ -2250,6 +2250,17 @@ export function SessionSidebar({
       : undefined;
     const activity = sessionActivity(s, activityIds);
     const detail = activity ? activityDetail(activity, s.id, activityIds) : null;
+    // What the sessions nested under this one are up to, said the way a folder heading says it: the
+    // most urgent mark among them and how many of them have finished. The corner dot is this
+    // session's own, so without this a parent reads as idle while a fork three levels down waits
+    // on you -- and folded, the fork isn't on screen to say so itself. Counted over every
+    // descendant, not just the rows drawn, for the same reason: a folded branch is still running.
+    const nested = hasChildren
+      ? (() => {
+          const below = forkDescendants(sessions, s.id);
+          return { activity: folderActivity(below, activityIds), ...folderProgress(below, activityIds) };
+        })()
+      : null;
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Enough of a step that a fork reads as sitting under its parent at a glance, but capped after
     // a few levels: a fork of a fork of a fork would otherwise squeeze the name out of a narrow
@@ -2447,6 +2458,16 @@ export function SessionSidebar({
                 title={depth > 0 ? `${s.name} — double-click to rename` : "Double-click to rename"}
               >
                 {depth > 0 ? <MiddleTruncated text={s.name} /> : s.name}
+              </span>
+            )}
+            {nested && editingId !== s.id && (
+              <span className="flex shrink-0 items-center gap-0.5">
+                {nested.activity && (
+                  <span className="flex" title={`Nested sessions: ${ACTIVITY_MARK[nested.activity].label}`}>
+                    <ActivityMark activity={nested.activity} />
+                  </span>
+                )}
+                <HeadingProgress done={nested.done} active={nested.active} />
               </span>
             )}
             {s.remoteControl && editingId !== s.id && (
