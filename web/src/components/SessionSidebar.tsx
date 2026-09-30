@@ -2261,6 +2261,20 @@ export function SessionSidebar({
           return { activity: folderActivity(below, activityIds), ...folderProgress(below, activityIds) };
         })()
       : null;
+    // The corner holds one mark, so a parent's is the more urgent of its own and its branch's -- the
+    // same rule a folder heading's dot follows. Drawn anywhere else the branch's mark either sat
+    // away from every other dot in the list or collided with this one in the corner. Only the mark
+    // is shared: the ring and the mark-as-seen button still answer for this session alone.
+    // A closed session has no mark of its own (a restored one can be on screen for a paint before the
+    // prune drops it), but a live branch under it still gets one.
+    const own = restorable ? null : activity;
+    const ownRanks = !!own && (!nested?.activity || FOLDER_URGENCY[own] >= FOLDER_URGENCY[nested.activity]);
+    const cornerActivity = ownRanks ? own : (nested?.activity ?? null);
+    const cornerLabel = ownRanks
+      ? (detail ?? undefined)
+      : cornerActivity
+        ? `Nested sessions: ${ACTIVITY_MARK[cornerActivity].label}`
+        : undefined;
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Enough of a step that a fork reads as sitting under its parent at a glance, but capped after
     // a few levels: a fork of a fork of a fork would otherwise squeeze the name out of a narrow
@@ -2369,9 +2383,9 @@ export function SessionSidebar({
             the colour band deliberately, and with no padding of its own: the background stops at the
             glyph rather than ringing it, which at this size read as a halo rather than as breathing
             room. The offset carries the 2px that padding used to hold, so the mark has not moved. */}
-        {!restorable && activity && (
+        {cornerActivity && (
           <span className="pointer-events-none absolute left-1 top-1 rounded-full bg-background leading-none">
-            <ActivityMark activity={activity} label={detail ?? undefined} />
+            <ActivityMark activity={cornerActivity} label={cornerLabel} />
           </span>
         )}
         <div className="flex items-center justify-between gap-1">
@@ -2460,16 +2474,7 @@ export function SessionSidebar({
                 {depth > 0 ? <MiddleTruncated text={s.name} /> : s.name}
               </span>
             )}
-            {nested && editingId !== s.id && (
-              <span className="flex shrink-0 items-center gap-0.5">
-                {nested.activity && (
-                  <span className="flex" title={`Nested sessions: ${ACTIVITY_MARK[nested.activity].label}`}>
-                    <ActivityMark activity={nested.activity} />
-                  </span>
-                )}
-                <HeadingProgress done={nested.done} active={nested.active} />
-              </span>
-            )}
+            {nested && editingId !== s.id && <HeadingProgress done={nested.done} active={nested.active} />}
             {s.remoteControl && editingId !== s.id && (
               <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
             )}
