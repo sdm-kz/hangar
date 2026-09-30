@@ -374,6 +374,35 @@ export function HeadingProgress({ done, active }: { done: number; active: number
   );
 }
 
+const MIDDLE_TRUNCATE_HEAD = 10;
+
+/**
+ * A name cut in the middle when it doesn't fit: the first few characters stay, the ellipsis goes
+ * after them, and the tail is kept for as much as there is room.
+ *
+ * A fork's name starts with its parent's, so cutting the tail would leave every row in a branch
+ * looking identical -- but cutting the head alone, as these rows used to, leaves a line that starts
+ * mid-word and no longer says which session it came from. Keeping both ends answers both. CSS has
+ * no middle ellipsis, so the name is split in two: the head never shrinks, and the tail is laid out
+ * right-to-left so its ellipsis lands on the left, next to the head; the bdi keeps the text itself
+ * reading left-to-right. When the name fits, the two halves just sit side by side.
+ */
+function MiddleTruncated({ text }: { text: string }) {
+  // By code point, so an emoji or other astral character is never split between the halves.
+  const chars = Array.from(text);
+  if (chars.length <= MIDDLE_TRUNCATE_HEAD) return <span className="truncate">{text}</span>;
+  return (
+    <>
+      {/* whitespace-pre on both: a space on either side of the split would otherwise be dropped at
+          the edge of its box, gluing the two words together. */}
+      <span className="shrink-0 whitespace-pre">{chars.slice(0, MIDDLE_TRUNCATE_HEAD).join("")}</span>
+      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-pre text-left [direction:rtl]">
+        <bdi dir="ltr">{chars.slice(MIDDLE_TRUNCATE_HEAD).join("")}</bdi>
+      </span>
+    </>
+  );
+}
+
 function folderActivity(items: SessionInfo[], ids: ActivityIds): Activity | null {
   let top: Activity | null = null;
   for (const s of items) {
@@ -2408,12 +2437,7 @@ export function SessionSidebar({
             ) : (
               <span
                 className={cn(
-                  "truncate",
-                  // A fork's name starts with its parent's, so cutting the tail would leave every
-                  // row in a branch looking identical. Lay the text out right-to-left instead so the
-                  // ellipsis eats the shared head and the distinguishing tail survives; the inner
-                  // bdi keeps the name itself reading left-to-right.
-                  depth > 0 && "text-left [direction:rtl]",
+                  depth > 0 ? "flex min-w-0" : "truncate",
                   s.state !== "Running" && "text-muted-foreground"
                 )}
                 onDoubleClick={(e) => {
@@ -2422,7 +2446,7 @@ export function SessionSidebar({
                 }}
                 title={depth > 0 ? `${s.name} — double-click to rename` : "Double-click to rename"}
               >
-                {depth > 0 ? <bdi dir="ltr">{s.name}</bdi> : s.name}
+                {depth > 0 ? <MiddleTruncated text={s.name} /> : s.name}
               </span>
             )}
             {s.remoteControl && editingId !== s.id && (
