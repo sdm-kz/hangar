@@ -469,7 +469,8 @@ function GroupView({
       {/* The strip. With several groups on screen the focused one says so along its top edge. */}
       <div
         className={cn(
-          "relative flex h-9 shrink-0 items-stretch border-b",
+          // h-10, the height of the sidebar's own tab bar beside it, so the two lines under them meet.
+          "relative flex h-10 shrink-0 items-stretch border-b",
           many && (focused ? "bg-background" : "bg-muted/40")
         )}
         onDragOver={(e) => {
