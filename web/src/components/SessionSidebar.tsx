@@ -60,6 +60,7 @@ import {
   CalendarClock,
   Copy,
   CornerLeftUp,
+  Activity as ActivityIcon,
   Filter,
   FolderPlus,
   FolderSearch,
@@ -124,13 +125,15 @@ function saveGrouped(v: boolean) {
   }
 }
 
-// Session-state filter: "active" shows only running sessions, "all" shows everything (exited/closed
-// too). Per-browser preference, remembered across refreshes like the grouped toggle.
-type SessionFilter = "active" | "all";
+// Session-state filter: "active" shows only running sessions, "activity" only the ones carrying an
+// activity mark (working, waiting, failed, finished-but-unseen…), "all" shows everything
+// (exited/closed too). Per-browser preference, remembered across refreshes like the grouped toggle.
+type SessionFilter = "active" | "activity" | "all";
 const FILTER_KEY = "claudeweb.sessionsFilter";
 function loadFilter(): SessionFilter {
   try {
-    return localStorage.getItem(FILTER_KEY) === "active" ? "active" : "all";
+    const v = localStorage.getItem(FILTER_KEY);
+    return v === "active" || v === "activity" ? v : "all";
   } catch {
     return "all";
   }
@@ -411,6 +414,40 @@ function folderActivity(items: SessionInfo[], ids: ActivityIds): Activity | null
     if (a && (!top || FOLDER_URGENCY[a] > FOLDER_URGENCY[top])) top = a;
   }
   return top;
+}
+
+/** Whether a row is showing an activity mark. A closed session isn't, whatever the sets say. */
+function hasMark(s: SessionInfo, ids: ActivityIds): boolean {
+  return s.state !== "Restorable" && sessionActivity(s, ids) !== null;
+}
+
+/**
+ * The activity filter's list: every session carrying a mark, plus what it takes to read them.
+ *
+ * - Their ancestors, so a nested session stays drawn under the session it belongs to rather than
+ *   surfacing as a stray root — the parent is the context the mark is about.
+ * - The session on screen. Looking at a finished one clears its tick a few seconds in, and the row
+ *   you are reading vanishing from under the pointer is not what "seen" should do.
+ *
+ * Order is kept, so the folder sort and the drag lists see the same sequence they always do.
+ */
+function withActivity(
+  sessions: SessionInfo[],
+  ids: ActivityIds,
+  keepId: string | null
+): SessionInfo[] {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const keep = new Set<string>();
+  for (const s of sessions) {
+    if (!hasMark(s, ids) && s.id !== keepId) continue;
+    // Walk up until the chain leaves the list or meets a row already kept (which covers a cycle).
+    for (let cur: SessionInfo | undefined = s; cur && !keep.has(cur.id); ) {
+      keep.add(cur.id);
+      const parent = parentOf(cur);
+      cur = parent ? byId.get(parent) : undefined;
+    }
+  }
+  return sessions.filter((s) => keep.has(s.id));
 }
 
 /**
@@ -1690,11 +1727,21 @@ export function SessionSidebar({
     onActivateFile: (key) => onSelect(parseNavKey(key).id),
   });
 
-  // Sessions shown after applying the active/all filter ("active" = running only). Recents aren't
-  // filtered (they're presets, not live sessions).
-  const visibleSessions =
-    filter === "active" ? sessions.filter((s) => s.state === "Running") : sessions;
+  // Sessions shown after applying the filter ("active" = running only, "activity" = carrying a mark).
+  // Recents aren't filtered (they're presets, not live sessions).
+  const visibleSessions = useMemo(
+    () =>
+      filter === "active"
+        ? sessions.filter((s) => s.state === "Running")
+        : filter === "activity"
+          ? withActivity(sessions, activityIds, activeId)
+          : sessions,
+    [filter, sessions, activityIds, activeId]
+  );
   const activeCount = sessions.filter((s) => s.state === "Running").length;
+  const activityCount = sessions.filter((s) => hasMark(s, activityIds)).length;
+  // Any filter but "all" hides what has nothing to show under it: empty projects, empty boxes.
+  const narrowed = filter !== "all";
   /**
    * The sessions filed into a virtual folder by hand, and everything the folder grouping still owns.
    * A filed session is drawn in its box and nowhere else — showing it in both places would double
@@ -1777,7 +1824,7 @@ export function SessionSidebar({
    */
   const shownGroups = (project: Project | null) => {
     const gs = project ? virtualGroups.get(project.id) ?? [] : [];
-    return filter === "active" ? gs.filter((g) => g.count > 0) : gs;
+    return narrowed ? gs.filter((g) => g.count > 0) : gs;
   };
 
   // The same groups, filed under the project each one's folder belongs to (see sectionsByProject).
@@ -1828,7 +1875,7 @@ export function SessionSidebar({
    * and hiding it would leave a project you just made nowhere to be seen.
    */
   const shown = <T,>(sections: ProjectSection<T>[]) =>
-    filter === "active"
+    narrowed
       ? sections.filter((s) => s.items.length > 0 || shownGroups(s.project).length > 0)
       : sections;
 
@@ -2212,9 +2259,11 @@ export function SessionSidebar({
       return !v;
     });
 
-  const toggleFilter = () =>
+  // The two filter buttons are one setting: turning one on switches the other off, and clicking the
+  // one that is on goes back to everything.
+  const toggleFilter = (mode: Exclude<SessionFilter, "all">) =>
     setFilter((v) => {
-      const next = v === "active" ? "all" : "active";
+      const next = v === mode ? "all" : mode;
       saveFilter(next);
       return next;
     });
@@ -2779,12 +2828,28 @@ export function SessionSidebar({
             size="sm"
             className="size-6 shrink-0 px-0 text-muted-foreground"
             title={
+              filter === "activity"
+                ? `Showing ${activityCount} session${activityCount === 1 ? "" : "s"} with activity — click to show all`
+                : "Show only sessions with activity (working, waiting, finished…)"
+            }
+            aria-pressed={filter === "activity"}
+            onClick={() => toggleFilter("activity")}
+          >
+            <ActivityIcon className={cn("size-3.5", filter === "activity" && "text-emerald-500")} />
+          </Button>
+        )}
+        {tab === "sessions" && sessions.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="size-6 shrink-0 px-0 text-muted-foreground"
+            title={
               filter === "active"
                 ? `Showing ${activeCount} running session${activeCount === 1 ? "" : "s"} — click to show all`
-                : "Showing all sessions — click to show running only"
+                : "Show running sessions only"
             }
             aria-pressed={filter === "active"}
-            onClick={toggleFilter}
+            onClick={() => toggleFilter("active")}
           >
             <Filter className={cn("size-3.5", filter === "active" && "text-emerald-500")} />
           </Button>
@@ -2873,7 +2938,9 @@ export function SessionSidebar({
         {sessions.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
         ) : visibleSessions.length === 0 ? (
-          <p className="px-2 py-6 text-center text-xs text-muted-foreground">No running sessions</p>
+          <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+            {filter === "activity" ? "Nothing going on right now" : "No running sessions"}
+          </p>
         ) : null}
         {grouped ? (
           projects.length > 0 ? (
