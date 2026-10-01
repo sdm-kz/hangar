@@ -2258,13 +2258,17 @@ export function SessionSidebar({
     const nested = hasChildren
       ? (() => {
           const below = forkDescendants(sessions, s.id);
-          return { activity: folderActivity(below, activityIds), ...folderProgress(below, activityIds) };
+          return {
+            activity: folderActivity(below, activityIds),
+            doneIds: doneIn(below),
+            ...folderProgress(below, activityIds),
+          };
         })()
       : null;
     // The corner holds one mark, so a parent's is the more urgent of its own and its branch's -- the
     // same rule a folder heading's dot follows. Drawn anywhere else the branch's mark either sat
-    // away from every other dot in the list or collided with this one in the corner. Only the mark
-    // is shared: the ring and the mark-as-seen button still answer for this session alone.
+    // away from every other dot in the list or collided with this one in the corner. The ring still
+    // answers for this session alone; the mark-as-seen button below answers for the corner.
     // A closed session has no mark of its own (a restored one can be on screen for a paint before the
     // prune drops it), but a live branch under it still gets one.
     const own = restorable ? null : activity;
@@ -2275,6 +2279,9 @@ export function SessionSidebar({
       : cornerActivity
         ? `Nested sessions: ${ACTIVITY_MARK[cornerActivity].label}`
         : undefined;
+    // Every tick this row can clear: its own, and on a parent, each one in the branch under it -- a
+    // tick in the corner that came from a fork is one the row has to be able to answer for too.
+    const seenIds = [...(activity === "done" ? [s.id] : []), ...(nested?.doneIds ?? [])];
     const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
     // Enough of a step that a fork reads as sitting under its parent at a glance, but capped after
     // a few levels: a fork of a fork of a fork would otherwise squeeze the name out of a narrow
@@ -2490,14 +2497,14 @@ export function SessionSidebar({
                 opening it, which is the one thing you don't want to do to the ones you already know
                 the ending of — and opening it to dismiss a tick costs a terminal attach and takes
                 the main area off whatever you were reading. Shown only while this row is the one
-                ticking: `activity` is what the corner mark says, so the button appears exactly when
-                there is a mark to answer for and goes when it does. */}
-            {activity === "done" && editingId !== s.id && (
+                ticking, here or anywhere in the branch under it, so the button appears exactly when
+                there is a tick to answer for and goes when it does. */}
+            {seenIds.length > 0 && editingId !== s.id && (
               <MarkSeenButton
-                count={1}
+                count={seenIds.length}
                 reveal="row"
-                label="Mark as seen"
-                onMarkSeen={() => onMarkSeen([s.id])}
+                label={seenIds.length === 1 && seenIds[0] === s.id ? "Mark as seen" : undefined}
+                onMarkSeen={() => onMarkSeen(seenIds)}
               />
             )}
             {/* Postponed-message counter, so a stashed pool is discoverable from the list. It sits
