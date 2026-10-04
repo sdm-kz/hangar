@@ -9,12 +9,12 @@ namespace ClaudeWeb.Server.Sessions.Pty;
 ///   <item>server → client: <b>Binary</b> = raw VT output (fed straight to xterm.js).</item>
 ///   <item>client → server: <b>Binary</b> = raw keystroke/paste bytes → PTY stdin;
 ///         <b>Text</b> = JSON control, e.g. <c>{"type":"resize","cols":120,"rows":40}</c> (cols/rows of
-///         zero mean "hidden — do not count me") or <c>{"type":"ping"}</c>, answered with a
-///         <c>{"type":"pong"}</c> text frame.</item>
+///         zero mean "hidden — do not count me"), <c>{"type":"active"}</c> ("someone is using me"),
+///         or <c>{"type":"ping"}</c>, answered with a <c>{"type":"pong"}</c> text frame.</item>
 ///   <item>server → client: <b>Text</b> <c>{"type":"size","cols":100,"rows":30}</c> = the size the
 ///         child is actually drawn at. A resize is a request, not a setting: one pseudoconsole serves
-///         every viewer of a session and it is driven at the smallest of their grids, so a viewer
-///         bigger than this must letterbox rather than paint cells the child does not have.</item>
+///         every viewer of a session and it is driven at the grid of the one used last, so any other
+///         viewer must letterbox or scale down rather than paint cells the child does not have.</item>
 /// </list>
 /// </summary>
 public static class TerminalSocket
@@ -138,7 +138,7 @@ public static class TerminalSocket
         switch (msg)
         {
             // What this viewer can show, not what the session becomes: the terminal answers with the
-            // size it settled on across every viewer, which may be smaller.
+            // size it settled on across every viewer, which may differ.
             case { Type: "resize" }:
                 // Logged when it changes, with the box it was measured from. Every size a session
                 // takes mid-draw costs it a stale copy of the frame on screen, so a viewer that keeps
@@ -152,6 +152,12 @@ public static class TerminalSocket
                         msg.Cols, msg.Rows, msg.W, msg.H);
                 }
                 sub.Resize((short)msg.Cols, (short)msg.Rows);
+                break;
+            // Someone is at this viewer — typed, clicked, opened the session, brought it back into
+            // view. Never sent for heartbeats or for the replies xterm makes to the child by itself,
+            // which every viewer makes whether anyone is there or not.
+            case { Type: "active" }:
+                sub.Claim();
                 break;
             // "I have attached and my screen is blank below the scrollback — draw it." The viewer used
             // to arrange this itself by sending two resizes it did not want, which from out there is

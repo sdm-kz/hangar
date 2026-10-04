@@ -197,6 +197,8 @@ const IMAGE_SETTLE_MS = 600;
 // the handshake with a 404, and retrying that forever would just spin.
 // How long the measured grid has to stop changing before the session is told (see sendResize).
 const RESIZE_SETTLE_MS = 150;
+// The least time between two "someone is using this" messages (see `claim`).
+const CLAIM_THROTTLE_MS = 1000;
 
 const RECONNECT_DELAYS_MS = [300, 1000, 2000, 4000, 8000, 8000, 8000, 8000];
 
@@ -326,6 +328,14 @@ export const TerminalPane = forwardRef<
   // Ask the host to make the TUI redraw its whole frame. Same ownership story as refitRef — it needs
   // the socket — and exposed here for the toolbar's repaint button.
   const repaintRef = useRef<() => void>(() => {});
+  // Tell the session someone is using it here (see `claim` in the socket effect). Same ownership
+  // story again; exposed for sendMessage, whose typing happens in the composer, outside the pane.
+  const claimRef = useRef<() => void>(() => {});
+  // Whether the next socket to open was asked for by someone at this screen — opening the session,
+  // coming back to the tab, the Reconnect button — and so should claim the session's size as it
+  // attaches. An automatic retry after a drop must not: it happens with nobody there, and would take
+  // the size away from whoever is actually using the session on another machine.
+  const claimOnOpenRef = useRef(true);
   // True while the viewport sits above the live tail — gates the jump-to-bottom button.
   const [scrolledUp, setScrolledUp] = useState(false);
   // Spins the repaint button for a moment after a press. A repaint that had nothing to fix looks
@@ -362,6 +372,7 @@ export const TerminalPane = forwardRef<
       sendMessage: async ({ text, imagePaths }) => {
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        claimRef.current();
         const enc = new TextEncoder();
         // Bracketed paste keeps any embedded newlines literal; the separate trailing \r is the one
         // submit — sending raw \n/\r inside the text would split one message into several prompts.
@@ -547,10 +558,11 @@ export const TerminalPane = forwardRef<
     wsRef.current = ws; // expose to the imperative handle (sendMessage)
 
     // What this box could show, and what the server settled on across every viewer of the session.
-    // They part company only while a smaller viewer is attached: one pseudoconsole serves them all,
-    // so it runs at the smallest grid among them and we letterbox into the difference. The grid
-    // follows the agreed size rather than our own, because that is the frame Claude is drawing — a
-    // grid narrower than the frame wraps the last cell of every line onto the front of the next row,
+    // They part company while the session is open somewhere else as well: one pseudoconsole serves
+    // every viewer, sized for whichever was used last, and the rest adapt — letterbox into the
+    // difference when they are bigger, scale the frame down when they are smaller (see fitScale). The
+    // grid follows the agreed size rather than our own, because that is the frame Claude is drawing —
+    // a grid narrower than the frame wraps the last cell of every line onto the front of the next row,
     // and Ink, painting only the rows it believes changed, never takes those strays back. Zero means
     // not known yet (or a server too old to say), where our own fit stands in as it always did.
     // A drag fires the observer dozens of times a second; only the size it ends on is worth sending.
@@ -559,13 +571,34 @@ export const TerminalPane = forwardRef<
     let desiredRows = 0;
     let agreedCols = 0;
     let agreedRows = 0;
+    // Shrink the grid to fit when it is bigger than this box: the session is sized for another screen,
+    // the one used last, and until someone uses this one the frame is shown whole rather than cropped.
+    // A transform rather than a smaller font, so the box keeps measuring at the font it really wants
+    // — that measurement is the size it asks for the moment it is used. xterm maps the pointer without
+    // knowing about the transform, so a click lands a little off while scaled; the click is also what
+    // claims the session, and the grid comes back to full size a moment later.
+    const fitScale = () => {
+      const el = term.element;
+      if (!el) return;
+      const scale =
+        desiredCols > 0 && desiredRows > 0
+          ? Math.min(1, desiredCols / term.cols, desiredRows / term.rows)
+          : 1;
+      // Bottom-left, where the host anchors the grid (justify-end): the prompt stays where it was.
+      el.style.transformOrigin = "left bottom";
+      el.style.transform = scale < 1 ? `scale(${scale})` : "";
+    };
     const applyGrid = () => {
       const cols = agreedCols || desiredCols;
       const rows = agreedRows || desiredRows;
       if (cols <= 0 || rows <= 0) return;
-      if (term.cols === cols && term.rows === rows) return;
+      if (term.cols === cols && term.rows === rows) {
+        fitScale(); // our own box may have changed around the same grid
+        return;
+      }
       const shrank = cols < term.cols;
       term.resize(cols, rows);
+      fitScale();
       // What fit() does for itself after resizing, in public API: the renderer caches the grid it
       // last drew, and a cell it believes unchanged is not redrawn at its new place.
       term.refresh(0, term.rows - 1);
@@ -610,7 +643,7 @@ export const TerminalPane = forwardRef<
       // Local work is free and immediate; telling the session is not, so that part waits below.
       // Repaint xterm's own cells in case the renderer left them stale after being hidden.
       term.refresh(0, term.rows - 1);
-      // A request, not a setting — the answer comes back as a `size` frame, which may be smaller.
+      // A request, not a setting — the answer comes back as a `size` frame, which may differ.
       if (ws.readyState === WebSocket.OPEN)
         // Coalesced, because a drag is not one resize. Pulling the split divider across a session
         // measured 42 of them inside a single second, and the child answers every one by laying its
@@ -642,9 +675,10 @@ export const TerminalPane = forwardRef<
     };
 
     // Stop counting towards the session's size. One pseudoconsole serves every viewer and it runs at
-    // the smallest grid among them, so a phone left on a session in a background tab would keep the
-    // desktop pinned to phone width for as long as it sat there. A tab that is not on screen is not
-    // showing the session, and says so; it declares its size again the moment it comes back.
+    // the grid of the one used last, so a phone last used on a session and then put in a background
+    // tab would keep the desktop pinned to phone width until someone touched the desktop. A tab that
+    // is not on screen is not showing the session, and says so; it declares its size again the
+    // moment it comes back.
     const withdrawSize = () => {
       if (ws.readyState !== WebSocket.OPEN) return;
       // At once, and cancelling anything a drag left pending: going away is not a size to settle on.
@@ -675,10 +709,30 @@ export const TerminalPane = forwardRef<
       ws.send(JSON.stringify({ type: "repaint" }));
     };
 
+    // Someone is using the session here, so size it for this screen. The session follows whichever
+    // viewer was used last, and only a person counts: never a heartbeat, a reconnect nobody asked
+    // for, or the replies xterm sends the child by itself — those come from every screen the session
+    // is open on, used or not. At most once a second; a keystroke at a time would be all claims.
+    let lastClaim = 0;
+    const claim = () => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const now = Date.now();
+      if (now - lastClaim < CLAIM_THROTTLE_MS) return;
+      lastClaim = now;
+      ws.send(JSON.stringify({ type: "active" }));
+    };
+    claimRef.current = claim;
+
     ws.onopen = () => {
       retryRef.current = 0;
       lastInbound = Date.now();
       setConnection("open");
+      // Opened by someone here: the size is theirs. The resize that follows (it settles first) is
+      // what puts it into effect — the server counts this viewer once it has a size.
+      if (claimOnOpenRef.current) {
+        claimOnOpenRef.current = false;
+        claim();
+      }
       // The flex layout may still be settling on open; refit across a few frames so the size we
       // send matches what's actually displayed (otherwise Claude renders at a stale row count).
       sendResize();
@@ -952,9 +1006,10 @@ export const TerminalPane = forwardRef<
       // frame that disagree about their size — so saying again what we can show, and taking back
       // whatever the session settles on, is half the repair. The nudge is the other half.
       //
-      // This is also the way back from a session still sized to a phone that has since gone: asking
-      // again makes the terminal work out afresh who is really watching, and the viewer that answered
-      // for that width is no longer among them.
+      // This is also the way back from a session still sized for another screen: the press is
+      // someone using this one, so it claims the size, and asking again makes the terminal work out
+      // afresh who is really watching.
+      claim();
       sendResize();
       requestRepaint();
     };
@@ -962,6 +1017,14 @@ export const TerminalPane = forwardRef<
     // Refit + notify the PTY whenever the pane resizes.
     const ro = new ResizeObserver(() => sendResize());
     ro.observe(host);
+
+    // Using the terminal claims it. Listened for on the pane, not the page: the same session can sit
+    // in two panes of one window, and a click in one is not a vote for the other's size. Focus covers
+    // coming back to the window, which hands focus back to the terminal that had it. Capture, so a
+    // key xterm swallows still counts.
+    host.addEventListener("pointerdown", claim, true);
+    host.addEventListener("keydown", claim, true);
+    host.addEventListener("focusin", claim);
 
     // Backgrounding the tab throttles rAF/timers and pauses xterm's renderer; the ResizeObserver
     // stays silent because the size never changed, so nothing refits on return. Refit across a
@@ -971,12 +1034,16 @@ export const TerminalPane = forwardRef<
         withdrawSize();
         return;
       }
+      // Coming back to the tab is someone at this screen, so the size follows them back.
+      claimOnOpenRef.current = true;
       // A phone suspends the tab and the socket dies with it — often without the close event
       // landing until we're back. Re-attach right away instead of sitting out the backoff.
       if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
         reattach(true);
         return;
       }
+      claimOnOpenRef.current = false;
+      claim();
       // Coming back from a suspended tab is exactly when a socket turns out to be half-open, and
       // the liveness clock is stale from the time away. Probe now and allow one interval for the
       // answer, so a dead socket surfaces in ~15s rather than after the full silence window.
@@ -1006,7 +1073,11 @@ export const TerminalPane = forwardRef<
     return () => {
       refitRef.current = () => {};
       repaintRef.current = () => {};
+      claimRef.current = () => {};
       ro.disconnect();
+      host.removeEventListener("pointerdown", claim, true);
+      host.removeEventListener("keydown", claim, true);
+      host.removeEventListener("focusin", claim);
       fileLinks.dispose();
       scrollSub.dispose();
       bufferSub.dispose();
@@ -1252,7 +1323,10 @@ export const TerminalPane = forwardRef<
         <div className="absolute inset-x-0 bottom-4 z-10 flex justify-center">
           <button
             type="button"
-            onClick={() => reattach(true)}
+            onClick={() => {
+              claimOnOpenRef.current = true;
+              reattach(true);
+            }}
             disabled={connection === "reconnecting"}
             title="Reattach this terminal to the session"
             className="flex items-center gap-2 rounded-full border bg-background/90 px-4 py-2 text-sm text-muted-foreground shadow-md backdrop-blur transition hover:text-foreground disabled:opacity-70"

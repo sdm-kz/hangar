@@ -42,7 +42,7 @@ public sealed class PtyHostClient : ITerminal
     // wherever it happened to be leaving from.
     private short _cols;
     private short _rows;
-    // The size every viewer is drawn at: the smallest grid among them (see AgreeSize).
+    // The size every viewer is drawn at: the grid of the one used last (see AgreeSize).
     private short _wantCols;
     private short _wantRows;
 
@@ -313,6 +313,10 @@ public sealed class PtyHostClient : ITerminal
         public short Cols;
         public short Rows;
         public long LastSeen = Environment.TickCount64;
+        // When someone last used the session through this viewer — typed, clicked, focused it, opened
+        // it, brought it back on screen. Zero until then. The most recent of these decides the size
+        // (see AgreeSize); a heartbeat is not use, so this is not touched by one.
+        public long LastActive;
         public TerminalSubscription? Handle;
     }
 
@@ -377,6 +381,15 @@ public sealed class PtyHostClient : ITerminal
                     // without anyone having to do anything.
                     AgreeSize(wasQuiet ? viewer : null);
                 },
+                claim: () =>
+                {
+                    lock (_lock)
+                    {
+                        viewer.LastActive = Environment.TickCount64;
+                        viewer.LastSeen = viewer.LastActive;
+                    }
+                    AgreeSize(viewer);
+                },
                 takeDropped: () =>
                 {
                     lock (_lock)
@@ -403,10 +416,18 @@ public sealed class PtyHostClient : ITerminal
     }
 
     /// <summary>
-    /// Settle on the size the child is drawn at: the smallest grid among the viewers that are actually
-    /// watching — one that has hidden its tab or gone quiet is not one of them — each axis on its own. tmux's rule, for tmux's reason — every viewer can then show the whole screen,
-    /// and the ones with room to spare letterbox rather than be sent a frame wider than they can
-    /// hold, where each line's last cell spills onto the front of the next row and stays there.
+    /// Settle on the size the child is drawn at: the grid of whichever viewer was used last, among the
+    /// ones actually watching — one that has hidden its tab or gone quiet is not one of them. tmux's
+    /// <c>window-size latest</c>, for the reason tmux moved to it: the same session left open on a
+    /// second machine is the normal case, and sizing to the smallest viewer let a screen nobody was
+    /// looking at — still visible, still answering heartbeats — hold the one being used down to its
+    /// size, letterboxed into a corner of a much bigger window.
+    ///
+    /// The others adapt rather than the child: a bigger viewer letterboxes, and a smaller one scales
+    /// the frame down to fit, until it is used and the size follows it. Nobody is ever sent a grid
+    /// narrower than the frame, where each line's last cell spills onto the front of the next row and
+    /// stays there. Viewers that never say they were used (a tab still on an older build) fall back to
+    /// the old rule, the smallest grid among them, each axis on its own.
     ///
     /// The <paramref name="asker"/> is told the answer even when it did not change it, which is how a
     /// viewer that has just joined — or just asked for more than it can have — learns to letterbox.
@@ -418,12 +439,19 @@ public sealed class PtyHostClient : ITerminal
         lock (_lock)
         {
             var now = Environment.TickCount64;
+            Viewer? latest = null;
             foreach (var v in _subs.Values)
             {
                 if (v.Cols <= 0 || v.Rows <= 0) continue;
                 if (now - v.LastSeen > ViewerQuietMs) continue; // gone quiet; see ViewerQuietMs
                 cols = cols == 0 ? v.Cols : Math.Min(cols, v.Cols);
                 rows = rows == 0 ? v.Rows : Math.Min(rows, v.Rows);
+                if (v.LastActive > 0 && (latest is null || v.LastActive > latest.LastActive)) latest = v;
+            }
+            if (latest is not null)
+            {
+                cols = latest.Cols;
+                rows = latest.Rows;
             }
             // Nobody has a grid to fit: the last viewer has gone, or none has measured itself yet.
             // Leave the child at the size it has rather than resize it to nothing on the way out.
@@ -432,12 +460,14 @@ public sealed class PtyHostClient : ITerminal
             // Named, when it moves. Every resize of a session that is mid-turn costs it a stale copy
             // of the frame on screen (see TerminalChannel.ApplySize), and the sizes of the viewers
             // that produced this one are what say whether it was a zoom, a pane, or a second device
-            // arriving — which is not a thing anyone can reconstruct afterwards.
+            // arriving — which is not a thing anyone can reconstruct afterwards. The one being followed
+            // is starred.
             if (changed)
                 _log.LogInformation(
                     "Session {Id} sized to {Cols}x{Rows} by {Count} viewer(s): {Sizes}.",
                     SessionId, cols, rows, _subs.Count,
-                    string.Join(", ", _subs.Values.Select(v => v.Cols > 0 ? $"{v.Cols}x{v.Rows}" : "hidden")));
+                    string.Join(", ", _subs.Values.Select(v =>
+                        (v.Cols > 0 ? $"{v.Cols}x{v.Rows}" : "hidden") + (ReferenceEquals(v, latest) ? "*" : ""))));
             _wantCols = cols;
             _wantRows = rows;
             foreach (var v in _subs.Values)

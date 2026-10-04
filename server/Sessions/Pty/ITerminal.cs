@@ -47,10 +47,10 @@ public interface ITerminal : IDisposable
     /// </summary>
     void RequestRepaint();
 
-    /// <summary>The width every viewer is being drawn at — the narrowest attached grid.</summary>
+    /// <summary>The width every viewer is being drawn at — that of the viewer used last.</summary>
     short Cols { get; }
 
-    /// <summary>The height every viewer is being drawn at — the shortest attached grid.</summary>
+    /// <summary>The height every viewer is being drawn at — that of the viewer used last.</summary>
     short Rows { get; }
 
     /// <summary>True when Claude appears to be actively generating (not just echoing your typing).</summary>
@@ -94,20 +94,21 @@ public interface ITerminal : IDisposable
 /// </summary>
 /// <remarks>
 /// Sizing belongs to the viewer rather than to the terminal because one pseudoconsole serves all of
-/// them, and they are not the same shape. Each says what it can show; the terminal drives the child
-/// at the smallest of those and tells everyone what it settled on, which is tmux's rule and exists
-/// for the same reason: a grid narrower than the child is drawing for wraps the last cell of every
-/// line onto the front of the next row, and a TUI that paints differentially never takes it back.
+/// them, and they are not the same shape. Each says what it can show and when it is being used; the
+/// terminal drives the child at the grid of the one used last and tells everyone what it settled on,
+/// which is tmux's <c>window-size latest</c>. The rest adapt on their side — letterboxing, or scaling
+/// the frame down — and never paint a grid narrower than the child is drawing for, which wraps the
+/// last cell of every line onto the front of the next row where a differential TUI never takes it back.
 /// </remarks>
 public sealed class TerminalSubscription(
     byte[] replay, ChannelReader<byte[]> reader, Action unsubscribe, Action<short, short> resize,
-    Action touch, Func<bool> takeDropped) : IDisposable
+    Action touch, Action claim, Func<bool> takeDropped) : IDisposable
 {
     public byte[] Replay { get; } = replay;
     public ChannelReader<byte[]> Reader { get; } = reader;
 
     /// <summary>
-    /// Tell the terminal how big this viewer's grid is. It may settle on something smaller. A size of
+    /// Tell the terminal how big this viewer's grid is. It may settle on something else. A size of
     /// zero withdraws: this viewer is not showing the session at all — its tab is hidden — and a grid
     /// nobody is looking at has no business holding the session down to its width.
     /// </summary>
@@ -122,6 +123,13 @@ public sealed class TerminalSubscription(
     public void Touch() => touch();
 
     /// <summary>
+    /// Note that someone is using the session through this viewer — typing, clicking, opening it — as
+    /// opposed to merely having it on a screen. The viewer used last is the one the session is sized
+    /// for, so leaving it open on another machine no longer holds this one down to that machine's size.
+    /// </summary>
+    public void Claim() => claim();
+
+    /// <summary>
     /// Whether this viewer has had output dropped since the last time anyone asked — and clearing the
     /// flag in the asking. A viewer that stops draining (a phone whose tab is frozen, a socket under
     /// backpressure) loses the oldest chunks rather than holding the session up, which leaves a hole
@@ -134,7 +142,7 @@ public sealed class TerminalSubscription(
     /// The size the child is actually being drawn at, once it has been worked out: answered whenever
     /// this viewer asks, and pushed to every viewer when another one changes it. A viewer larger than
     /// this letterboxes — it must not paint the extra cells, or it is back to drawing a grid the child
-    /// does not have.
+    /// does not have — and a smaller one scales the frame down to fit.
     /// </summary>
     public Action<short, short>? SizeChanged { get; set; }
 
