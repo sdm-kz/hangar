@@ -682,6 +682,50 @@ internal static class Program
                 : Results.Ok(new { id, opened, missing, active = opened[^1] });
         });
 
+        // Self-open for a pull request: the review a session has just opened, or wants looked at,
+        // as a tab in its own tab bar — the tab the PR picker would have made. Named by repo and
+        // number, or by the URL `gh pr create` printed; no repo means the session folder's own. GitHub
+        // is asked for the title before anything is stored, which is also what turns a wrong number
+        // into an answer here rather than a tab that can only show an error.
+        app.MapPost("/api/self/open-pr", async (HttpContext ctx, SelfOpenPullRequest body, TokenStore tokens,
+            SessionManager mgr, ILoggerFactory lf, CancellationToken ct) =>
+        {
+            if (SelfCaller(ctx, tokens, lf, "open-pr") is not { } id)
+                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            if (mgr.Get(id) is not { } info) return Results.NotFound();
+
+            string? repo = null;
+            var number = body.Number ?? 0;
+            if (!string.IsNullOrWhiteSpace(body.Url))
+            {
+                if (GitHubService.ParsePullUrl(body.Url) is not { } fromUrl)
+                    return Results.BadRequest(new { error = "not a GitHub pull request URL" });
+                (repo, number) = fromUrl;
+            }
+            else if (!string.IsNullOrWhiteSpace(body.Repo))
+            {
+                repo = SessionRepoStore.Clean(body.Repo);
+                if (repo is null) return Results.BadRequest(new { error = "repo must be \"owner/name\"" });
+            }
+            if (number <= 0) return Results.BadRequest(new { error = "no pull request number given" });
+
+            // The folder's own repo is stored without a name, as the picker stores it, so the same
+            // review opened either way is one tab rather than two.
+            var own = GitHubService.Repo(info.WorkingDirectory);
+            if (repo is not null && own.IsGitHub && string.Equals(repo, own.NameWithOwner, StringComparison.OrdinalIgnoreCase))
+                repo = null;
+            if (repo is null && !own.IsGitHub)
+                return Results.BadRequest(new { error = "the session's folder is not a GitHub repository — name the repo" });
+
+            var found = await GitHubService.TitleAsync(info.WorkingDirectory, number, repo, ct);
+            if (found.Error is not null) return Results.BadRequest(new { error = found.Error });
+
+            var key = mgr.OpenPullTab(id, repo, number, found.Title);
+            return key is null
+                ? Results.NotFound()
+                : Results.Ok(new { id, repo = repo ?? own.NameWithOwner, number, title = found.Title, key });
+        });
+
         // Which session is calling an /api/self endpoint: the id it was launched with, once the hook
         // token it was launched with checks out. Null — and a logged line, because from inside a
         // session this otherwise reads as a bare 401 with nothing to chase — when either is missing or
@@ -1748,6 +1792,10 @@ internal record MessageRequest(string? Text);
 /// <c>Pin</c> (the default) gives each file a tab of its own — false puts it in the single transient
 /// "preview" slot that a click in the tree reuses.</summary>
 internal record SelfOpenRequest(string? Path, string[]? Paths = null, bool Pin = true);
+/// <summary>Body for <c>POST /api/self/open-pr</c>: the pull request to open as a tab in the calling
+/// session's tab bar — <c>Repo</c> ("owner/name"; absent for the session folder's own) and
+/// <c>Number</c>, or the PR's web address as <c>Url</c>, which names both.</summary>
+internal record SelfOpenPullRequest(string? Repo = null, int? Number = null, string? Url = null);
 // Name for a forked session; blank/absent falls back to a "<parent> (fork)" default server-side.
 internal record ForkRequest(string? Name);
 // `Dir` on the session file-mutation payloads names the write root: empty (the default) is the

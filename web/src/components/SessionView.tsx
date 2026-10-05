@@ -410,6 +410,9 @@ export function SessionView({
   // was opened by something that meant it to be seen — the self-open API, another device.
   const activePathRef = useRef(fileTabs.activePath);
   activePathRef.current = fileTabs.activePath;
+  // The same, for a review: one that arrives already active was opened to be looked at.
+  const activePullRef = useRef(pulls.activeKey);
+  activePullRef.current = pulls.activeKey;
 
   // Keep the layout in step with the tabs: place what appeared, drop what went away.
   const presentKey = present.join("\n");
@@ -430,6 +433,14 @@ export function SessionView({
             // Shown, unless the explorer is showing there: it previews the active file already.
             const activate = paneArg(ref) === activePathRef.current && findGroup(cur, group)?.active !== FILES;
             return { group, activate };
+          }
+          if (paneKind(ref) === "pull" && paneArg(ref) === activePullRef.current) {
+            // Where reviews are being read, if one is on screen; else where files are.
+            const showsPull = (g?: PaneGroup) => !!g?.active && paneKind(g.active) === "pull";
+            const gs = groupsOf(cur.root);
+            const focused = gs.find((g) => g.id === cur.active);
+            const group = (showsPull(focused) ? focused : gs.find(showsPull))?.id ?? fileTarget(cur);
+            return { group, activate: true };
           }
           return { group: cur.active, activate: false };
         }

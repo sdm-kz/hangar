@@ -690,6 +690,38 @@ screen belongs to the person looking at it; the open tabs are shared state.
 Fifty tabs is the ceiling for one session (the panel itself has none — a person closes tabs, and
 this endpoint can be called in a loop); past it the oldest give way.
 
+## Opening a pull request in a session's tab bar from inside it (API)
+
+The same again for reviews: `POST /api/self/open-pr` opens a GitHub pull request as a tab in the
+calling session's tab bar — the tab the PR picker would have made — with the same three
+environment variables and nothing else. Name it by `repo` and `number`, or by its `url` (the one
+`gh pr create` prints):
+
+```bash
+curl -s -X POST "$CLAUDEWEB_URL/api/self/open-pr" \
+  -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
+  -H "X-Hook-Token: $CLAUDEWEB_HOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"repo":"cli/cli","number":42}'
+# {"id":"664d6618…","repo":"cli/cli","number":42,"title":"…","key":"cli/cli#42"}
+```
+
+Leave `repo` out for the session folder's own repo (its `origin` remote). Any repo `gh` can read
+works — it doesn't have to be one of the repos linked to the session. GitHub is asked for the
+title before the tab is made, so a wrong number or repo comes back as an error instead of a tab
+that can only show one.
+
+Responses are `200` with what opened, `400` with an `error` when the PR can't be named or read (no
+number, a malformed repo or URL, a folder that isn't a GitHub repo and no `repo` given, or `gh`'s
+own answer — no such PR, not signed in, offline), `401` on missing/stale headers, and `404` when
+the id names no live session.
+
+The tab goes into the shared UI bag like the picker's, so it reaches every device, and a PR that
+is already open is the same tab, not a second one, with its title refreshed. A *new* tab arrives
+active: a browser with the session open shows it, in the group already showing a review if there
+is one. Re-opening one that is already in the bar does not move anyone's view. Eight reviews is the
+ceiling, as in the picker; past it the oldest gives way, along with its folds and scroll position.
+
 ## Security notes
 
 - Auth is a single shared password that mints an in-memory bearer token. The password is stored

@@ -198,10 +198,14 @@ export function useSessionPulls(sessionId: string): SessionPulls {
    * device's write — without saving it back.
    */
   const adopt = useCallback((next: { pulls: SessionPull[]; active: string | null }) => {
+    const before = new Set(pullsRef.current.map(pullKey));
     pullsRef.current = next.pulls;
     setPulls(next.pulls);
-    // A remote change only moves the tab being looked at if that tab has gone.
-    const keep = activeRef.current && next.pulls.some((p) => pullKey(p) === activeRef.current);
+    // A remote change only moves the tab being looked at if that tab has gone — or if it opened a
+    // review that arrives already active, which is something meant to be seen (the self-open API).
+    const arrived = !!next.active && !before.has(next.active);
+    const keep =
+      !arrived && activeRef.current && next.pulls.some((p) => pullKey(p) === activeRef.current);
     activeRef.current = keep ? activeRef.current : next.active;
     setActiveKey(activeRef.current);
   }, []);

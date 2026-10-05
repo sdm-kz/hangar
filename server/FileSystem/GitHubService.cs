@@ -44,6 +44,9 @@ public sealed record GitHubPullDetail(
 /// <summary>The two commits a pull request names. Read on its own, without its patch.</summary>
 public sealed record GitHubPullRefs(string HeadRefOid, string BaseRefOid, string? Error);
 
+/// <summary>A pull request's title, read on its own.</summary>
+public sealed record GitHubPullTitle(string Title, string? Error);
+
 /// <summary>One file of a pull request read whole at a commit, rather than as a diff.</summary>
 public sealed record GitHubFileContent(string Path, string Ref, string Content, bool Truncated, string? Error);
 
@@ -288,6 +291,47 @@ public static class GitHubService
         {
             return new GitHubPullRefs("", "", "GitHub returned something we could not read.");
         }
+    }
+
+    /// <summary>
+    /// Just a pull request's title — what a tab says before the review has loaded. Asking for it is
+    /// also how a PR opened by number alone is known to exist, before a tab is made for it.
+    /// </summary>
+    public static async Task<GitHubPullTitle> TitleAsync(
+        string workingDir, int number, string? named, CancellationToken ct)
+    {
+        var repo = Target(workingDir, named);
+        if (!repo.IsGitHub) return new GitHubPullTitle("", "This folder is not a GitHub repository.");
+
+        var (ok, stdout, error) = await GhRepoAsync(workingDir, repo.NameWithOwner!, ct,
+            "pr", "view", number.ToString(), "--json", "title");
+        if (!ok) return new GitHubPullTitle("", error);
+        try
+        {
+            var row = JsonSerializer.Deserialize<PullJson>(stdout, Json);
+            return new GitHubPullTitle(row?.Title ?? "", null);
+        }
+        catch (JsonException)
+        {
+            return new GitHubPullTitle("", "GitHub returned something we could not read.");
+        }
+    }
+
+    /// <summary>
+    /// The repo and number a pull request's web address names —
+    /// <c>https://github.com/owner/name/pull/42</c>, with or without anything after the number — or
+    /// null for anything else. A PR is usually in hand as the URL <c>gh pr create</c> printed, and
+    /// <see cref="ParseRemote"/> would read that one as the repo "pull/42".
+    /// </summary>
+    internal static (string Repo, int Number)? ParsePullUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)) return null;
+        if (!uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+            && !uri.Host.StartsWith("github.", StringComparison.OrdinalIgnoreCase)) return null;
+        var parts = uri.AbsolutePath.Trim('/').Split('/');
+        if (parts.Length < 4 || !parts[2].Equals("pull", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!int.TryParse(parts[3], out var number) || number <= 0) return null;
+        return SessionRepoStore.Clean($"{parts[0]}/{parts[1]}") is { } repo ? (repo, number) : null;
     }
 
     /// <summary>

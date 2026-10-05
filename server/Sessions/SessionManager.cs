@@ -493,6 +493,81 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
+    /// How many pull requests a session may have open as tabs — the cap the browser keeps
+    /// (MAX_PULLS in lib/sessionPulls.ts), so a tab opened here and one opened from the picker make
+    /// way for each other the same way.
+    /// </summary>
+    private const int MaxPullTabs = 8;
+
+    /// <summary>
+    /// Open a pull request as a tab in a session's tab bar, exactly as picking it from a group's PR
+    /// picker does: the same fields of the saved UI bag the browser writes (lib/sessionPulls.ts), so
+    /// every device picks the tab up on the next list push.
+    ///
+    /// <para><paramref name="repo"/> is null for the session folder's own repo, which is how the
+    /// browser stores those tabs too — the key of a review is then its number alone, and opening one
+    /// already on the bar goes back to it. Re-opening takes the new title, since the PR may have been
+    /// renamed. The PR becomes the active review either way.</para>
+    ///
+    /// <para>Returns the key the tab is stored under, or null when there is no such session.</para>
+    /// </summary>
+    public string? OpenPullTab(string id, string? repo, int number, string title)
+    {
+        if (GetUi(id) is not { } ui) return null;
+
+        var pulls = ui.State.TryGetValue("pulls", out var p) && p.ValueKind == JsonValueKind.Array
+            ? p.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).ToList()
+            : new List<JsonElement>();
+
+        string KeyOf(JsonElement e)
+        {
+            var r = e.TryGetProperty("repo", out var rv) && rv.ValueKind == JsonValueKind.String ? rv.GetString() : null;
+            var n = e.TryGetProperty("number", out var nv) && nv.TryGetInt32(out var i) ? i : 0;
+            return string.IsNullOrEmpty(r) ? n.ToString() : $"{r}#{n}";
+        }
+
+        // GitHub reads a repo's name in any case, so "CLI/cli" here and "cli/cli" from the picker are
+        // one review — and the tab already open keeps its spelling, which is what its folds and its
+        // place in the pane are keyed by.
+        var key = repo is null ? number.ToString() : $"{repo}#{number}";
+        var at = pulls.FindIndex(e => string.Equals(KeyOf(e), key, StringComparison.OrdinalIgnoreCase));
+        if (at >= 0 && repo is not null)
+        {
+            key = KeyOf(pulls[at]);
+            repo = key[..key.LastIndexOf('#')];
+        }
+
+        var tab = JsonSerializer.SerializeToElement(repo is null
+            ? new Dictionary<string, object> { ["number"] = number, ["title"] = title }
+            : new Dictionary<string, object> { ["number"] = number, ["title"] = title, ["repo"] = repo });
+
+        if (at >= 0) pulls[at] = tab;
+        else pulls.Add(tab);
+        if (pulls.Count > MaxPullTabs) pulls = pulls.Skip(pulls.Count - MaxPullTabs).ToList();
+
+        var patch = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+        {
+            ["pulls"] = JsonSerializer.SerializeToElement(pulls),
+            ["pull"] = JsonSerializer.SerializeToElement(key),
+        };
+
+        // A tab pushed off the end takes how far through it the reader had got with it, as the
+        // browser's own writes do (`pruned` in lib/sessionPulls.ts): the bag is capped, and these
+        // would otherwise grow with every review the session has ever opened.
+        var open = pulls.Select(KeyOf).ToHashSet(StringComparer.Ordinal);
+        foreach (var field in new[] { "pullFolds", "pullScroll" })
+        {
+            if (!ui.State.TryGetValue(field, out var v) || v.ValueKind != JsonValueKind.Object) continue;
+            var props = v.EnumerateObject().ToList();
+            if (props.All(x => open.Contains(x.Name))) continue;
+            patch[field] = JsonSerializer.SerializeToElement(
+                props.Where(x => open.Contains(x.Name)).ToDictionary(x => x.Name, x => x.Value));
+        }
+
+        return MergeUi(id, patch) is null ? null : key;
+    }
+
+    /// <summary>
     /// Pin or unpin a session, keyed by its conversation so the pin survives a reopen (which mints a
     /// new session id) and reaches every browser through the session list. Returns false when there
     /// is no such session.
