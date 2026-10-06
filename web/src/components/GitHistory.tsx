@@ -7,14 +7,17 @@ import { DiffView } from "./FileBrowser";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import {
   ArrowLeft,
+  Check,
   ChevronDown,
   ChevronRight,
   FileSymlink,
   FileText,
+  GitBranch,
   GitCommitHorizontal,
   History,
   Image as ImageIcon,
   Loader2,
+  Search,
   X,
 } from "lucide-react";
 
@@ -51,19 +54,25 @@ function readHeight() {
 /**
  * Collapsible commit-history panel shown under the changes list. Selecting a commit previews its
  * full details (message, author, files) on the right; picking a file there shows its diff.
+ *
+ * With `fill` it is the whole tree pane instead (the Files panel's Commits view): always open,
+ * taking the height it is given, so there is nothing to fold or drag.
  */
 export function GitHistory({
   sessionId,
   refreshToken,
   selected,
   onSelect,
+  fill = false,
 }: {
   sessionId: string;
   refreshToken: number;
   selected: CommitSelection | null;
   onSelect: (sel: CommitSelection) => void;
+  fill?: boolean;
 }) {
-  const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
+  const [unfolded, setUnfolded] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
+  const open = fill || unfolded;
   const [commits, setCommits] = useState<GitCommit[] | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState(false);
@@ -124,7 +133,7 @@ export function GitHistory({
   }, []);
 
   const toggleOpen = useCallback(() => {
-    setOpen((v) => {
+    setUnfolded((v) => {
       const next = !v;
       localStorage.setItem(OPEN_KEY, next ? "1" : "0");
       return next;
@@ -173,9 +182,9 @@ export function GitHistory({
   }, [sessionId, commits, scope]);
 
   return (
-    <div className="flex shrink-0 flex-col border-t">
+    <div className={cn("flex flex-col", fill ? "min-h-0 flex-1" : "shrink-0 border-t")}>
       {/* Drag the top edge to resize the panel (desktop). */}
-      {open && (
+      {open && !fill && (
         <div
           onPointerDown={startResize}
           onDoubleClick={resetHeight}
@@ -184,44 +193,35 @@ export function GitHistory({
         />
       )}
       <div className="flex items-center justify-between gap-2 pr-2">
-        <button
-          onClick={toggleOpen}
-          className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
-        >
-          {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          <History className="size-3.5" />
-          <span>History</span>
-        </button>
+        {fill ? (
+          <span className="flex items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground">Branch:</span>
+        ) : (
+          <button
+            onClick={toggleOpen}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+          >
+            {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+            <History className="size-3.5" />
+            <span>History</span>
+          </button>
+        )}
 
         {/* Branch / worktree picker: view the current branch, all branches, or one specific branch. */}
         {open && (
-          <select
+          <BranchPicker
             value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            title="Choose which branch(es) to show in the history"
-            className="max-w-[55%] truncate rounded border bg-background px-1.5 py-1 text-xs text-muted-foreground outline-none focus:ring-1 focus:ring-primary"
-          >
-            <option value="HEAD">
-              Current branch{refs?.current ? ` (${refs.current})` : ""}
-            </option>
-            <option value="*">All branches</option>
-            {refs && refs.branches.length > 0 && (
-              <optgroup label="Branches">
-                {refs.branches.map((b) => (
-                  <option key={b.name} value={b.name}>
-                    {b.name}
-                    {b.isCurrent ? " ✓" : ""}
-                    {b.worktreePath ? ` — @${worktreeLabel(b.worktreePath)}` : ""}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
+            refs={refs}
+            onPick={setScope}
+            className={fill ? "flex-1" : "max-w-[55%] flex-1"}
+          />
         )}
       </div>
 
       {open && (
-        <div style={{ height, maxHeight: "75vh" }} className="min-h-0 shrink-0 overflow-auto pb-2">
+        <div
+          style={fill ? undefined : { height, maxHeight: "75vh" }}
+          className={cn("min-h-0 overflow-auto pb-2", fill ? "flex-1" : "shrink-0")}
+        >
           {commits === null ? (
             <Note>
               <Loader2 className="size-3 animate-spin" /> Loading history…
@@ -267,6 +267,193 @@ export function GitHistory({
               )}
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One row of the branch picker: what `scope` becomes when it is picked, and what it says. */
+type ScopeOption = { value: string; label: string; current?: boolean; worktree?: string };
+
+/** A named branch, as opposed to the two fixed scopes ("HEAD" and "*") above them. */
+const isBranch = (o: ScopeOption) => o.value !== "HEAD" && o.value !== "*";
+
+/**
+ * Which branch(es) the history shows: the current one, all of them, or one by name.
+ *
+ * A `<select>` until repos with a branch per ticket made the list too long to pick from by eye — the
+ * same reason the Files panel's folder picker grew a filter (see RootPicker, whose shape this
+ * follows). Terms are matched separately against the branch name and the worktree it is checked out
+ * in, so "auth retry" finds feat/auth-retry, and a worktree's folder name finds its branch.
+ *
+ * Keyboard: the filter takes focus on open, ↓/↑ move the highlight, Enter picks it, Esc closes.
+ */
+function BranchPicker({
+  value,
+  refs,
+  onPick,
+  className,
+}: {
+  value: string;
+  refs: GitRefs | null;
+  onPick: (scope: string) => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const options = useMemo<ScopeOption[]>(
+    () => [
+      { value: "HEAD", label: `Current branch${refs?.current ? ` (${refs.current})` : ""}` },
+      { value: "*", label: "All branches" },
+      ...(refs?.branches ?? []).map((b) => ({
+        value: b.name,
+        label: b.name,
+        current: b.isCurrent,
+        worktree: b.worktreePath ? worktreeLabel(b.worktreePath) : undefined,
+      })),
+    ],
+    [refs]
+  );
+  const current = options.find((o) => o.value === value);
+
+  const shown = useMemo(() => {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return options;
+    return options.filter((o) => {
+      const hay = `${o.label} ${o.worktree ?? ""}`.toLowerCase();
+      return terms.every((t) => hay.includes(t));
+    });
+  }, [options, query]);
+
+  // Opening starts on the current pick, so Enter without typing changes nothing.
+  useEffect(() => {
+    if (!open) return;
+    setQuery("");
+    const i = options.findIndex((o) => o.value === value);
+    setActive(i < 0 ? 0 : i);
+    inputRef.current?.focus();
+    // `options` is left out: the branch list re-polls while the popup is open, and that must not
+    // wipe what is being typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, value]);
+
+  useEffect(() => {
+    setActive((i) => (i < shown.length ? i : 0));
+  }, [shown.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    boxRef.current?.querySelector(`[data-scope-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active, open]);
+
+  const pick = (scope: string) => {
+    setOpen(false);
+    if (scope !== value) onPick(scope);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (shown.length === 0) return;
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setActive((i) => (i + step + shown.length) % shown.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const o = shown[active];
+      if (o) pick(o.value);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={boxRef} className={cn("relative min-w-0", className)}>
+      <button
+        type="button"
+        title="Choose which branch(es) to show in the history"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" && !open) {
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
+        className="flex w-full min-w-0 items-center gap-1 rounded border bg-background px-1.5 py-1 text-left text-xs text-muted-foreground outline-none focus:ring-1 focus:ring-primary"
+      >
+        <span className="min-w-0 flex-1 truncate">{current?.label ?? value}</span>
+        <ChevronDown className="size-3 shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-max min-w-full max-w-[min(22rem,80vw)] overflow-hidden rounded-md popover-edge bg-popover shadow-md">
+          <div className="flex items-center gap-1 border-b px-1.5 py-1">
+            <Search className="size-3 shrink-0 text-muted-foreground" />
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Filter branches…"
+              spellCheck={false}
+              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <div role="listbox" className="max-h-64 overflow-y-auto overscroll-contain p-1">
+            {shown.length === 0 && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">No branch matches</p>
+            )}
+            {shown.map((o, i) => {
+              // The branches get a heading where they follow the two fixed rows — filtered down to
+              // branches alone it would be a label over the whole list.
+              const heading = isBranch(o) && i > 0 && !isBranch(shown[i - 1]);
+              return (
+                <div key={o.value}>
+                  {heading && (
+                    <p className="px-2 pb-0.5 pt-1 text-[9px] uppercase tracking-wide text-muted-foreground">
+                      Branches
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={o.value === value}
+                    data-scope-index={i}
+                    onClick={() => pick(o.value)}
+                    onMouseEnter={() => setActive(i)}
+                    className={cn(
+                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-xs text-foreground",
+                      i === active && "bg-accent",
+                      o.value === value && "font-medium"
+                    )}
+                  >
+                    {isBranch(o) && <GitBranch className="size-3 shrink-0 text-muted-foreground" />}
+                    <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                    {o.current && <Check className="size-3 shrink-0 text-primary" />}
+                    {o.worktree && (
+                      <span className="shrink-0 text-[10px] text-muted-foreground">@{o.worktree}</span>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>

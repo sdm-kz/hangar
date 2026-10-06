@@ -64,6 +64,7 @@ export interface SessionUi {
   files?: string[]; // paths of all open file tabs, in order (the active one is `file`)
   preview?: string; // path of the transient "preview" tab (reused by single-click), if any
   changes?: boolean; // Files tree showing git changes (+ history panel) instead of all files
+  commits?: boolean; // the commit history filling the tree pane instead of the files (or the changes)
   // Absolute path of the root the Files panel is browsing — another worktree of the session's repo,
   // or one of its linked folders ("" = the session's own working dir). Named `worktree` because
   // worktrees were the only alternate root when it was introduced.

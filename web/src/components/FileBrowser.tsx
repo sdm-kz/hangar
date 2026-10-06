@@ -54,6 +54,7 @@ import {
   FolderPlus,
   FolderSymlink,
   GitCompare,
+  History,
   Image as ImageIcon,
   ListChecks,
   ListTree,
@@ -210,7 +211,7 @@ export const FileBrowser = forwardRef<
     refreshToken?: number;
   }
 >(function FileBrowser(
-  { sessionId, workingDirectory, gitFiles, tabs, previewOnly = false, previewPath, treeOnly = false, onRefresh, refreshToken = 0 },
+  { sessionId, workingDirectory, gitFiles, tabs, previewOnly = false, previewPath, treeOnly: treeOnlyAsked = false, onRefresh, refreshToken = 0 },
   ref
 ) {
   const { guardActiveEdits } = tabs;
@@ -228,14 +229,24 @@ export const FileBrowser = forwardRef<
   // Whether the tree shows git changes (+ the history panel) instead of all files — remembered per
   // session so returning to it (or reloading) restores the changes/history view.
   const [showChanges, setShowChanges] = useState(() => loadSessionUi(sessionId).changes ?? false);
+  // Or the commit history alone, in place of the tree — the history without having to go through
+  // the changes view to reach it. The two views are exclusive; each button switches straight to its
+  // own from the other.
+  const [showCommits, setShowCommits] = useState(() => loadSessionUi(sessionId).commits ?? false);
   const toggleChanges = useCallback(() => {
-    setShowChanges((v) => {
-      const next = !v;
-      if (v) setCommitSel(null); // leaving changes mode drops the commit preview
-      saveSessionUi(sessionId, { changes: next });
-      return next;
-    });
-  }, [sessionId]);
+    const next = !showChanges || showCommits;
+    setShowChanges(next);
+    setShowCommits(false);
+    if (!next) setCommitSel(null); // back to the files drops the commit preview
+    saveSessionUi(sessionId, { changes: next, commits: false });
+  }, [sessionId, showChanges, showCommits]);
+  const toggleCommits = useCallback(() => {
+    const next = !showCommits;
+    setShowCommits(next);
+    if (next) setShowChanges(false);
+    else setCommitSel(null);
+    saveSessionUi(sessionId, next ? { commits: true, changes: false } : { commits: false });
+  }, [sessionId, showCommits]);
   // The whole browser (Files tree, search, changes, preview) can be pointed at another root: either
   // another worktree of the session's repo, or a folder the user has linked to the session. "" = the
   // session's own working dir. A worktree is browsed read-only (the mutating endpoints refuse it); a
@@ -354,6 +365,7 @@ export const FileBrowser = forwardRef<
         const ui = loadSessionUi(sessionId);
         setRootDir(ui.worktree ?? "");
         setShowChanges(ui.changes ?? false);
+        setShowCommits(ui.commits ?? false);
         setChangesTree(ui.changesTree ?? false);
         setFilesExpanded((cur) => {
           const next = new Set(ui.filesExpanded ?? []);
@@ -405,6 +417,9 @@ export const FileBrowser = forwardRef<
   );
   // A file picked out of a commit in the History panel — previewed in place of a working-tree file.
   const [commitSel, setCommitSel] = useState<CommitSelection | null>(null);
+  // Tree alone, as asked — except while a commit is picked: its preview has nowhere to show but
+  // beside the tree, unlike a file, which has a tab of its own in the other group.
+  const treeOnly = treeOnlyAsked && !commitSel;
   const [treeWidth, setTreeWidth] = useState(readTreeWidth); // desktop tree-pane width (px)
   const [treeHeight, setTreeHeight] = useState(readTreeHeight); // mobile tree-pane height (px)
 
@@ -529,7 +544,8 @@ export const FileBrowser = forwardRef<
   // The changes are the session repo's, so a linked folder is left behind first.
   const openChanges = useCallback(() => {
     setShowChanges(true);
-    saveSessionUi(sessionId, { changes: true });
+    setShowCommits(false);
+    saveSessionUi(sessionId, { changes: true, commits: false });
     if (isLinkedRoot) pickRoot("");
   }, [sessionId, isLinkedRoot, pickRoot]);
 
@@ -589,7 +605,8 @@ export const FileBrowser = forwardRef<
   // simply comes back when the session's own folder is selected again.
   const effectiveGitFiles = isLinkedRoot ? undefined : rootDir ? altStatus?.files : gitFiles;
   const gitAvailable = !!gitFiles && !isLinkedRoot;
-  const changesView = showChanges && gitAvailable;
+  const commitsView = showCommits && gitAvailable;
+  const changesView = showChanges && gitAvailable && !commitsView;
 
   // The tree pane's scroll container. Its offset is remembered per session and per view, so
   // switching sessions (or reloading) comes back to the same place rather than the top of the tree.
@@ -776,6 +793,7 @@ export const FileBrowser = forwardRef<
       // through the picker would. (The plain path guards inside the tab api's open.)
       if (isLinkedRoot && !(await guardActiveEdits())) return;
       setShowChanges(false);
+      setShowCommits(false);
       setQuery("");
       expandFilesTo(path);
       // The path is relative to the session's own working dir, so step out of any linked folder
@@ -813,6 +831,7 @@ export const FileBrowser = forwardRef<
     setCommitSel(null);
     setQuery("");
     setShowChanges(ui.changes ?? false);
+    setShowCommits(ui.commits ?? false);
     setChangesTree(ui.changesTree ?? false);
     setUploadDir("");
     setUploadError(null);
@@ -875,12 +894,13 @@ export const FileBrowser = forwardRef<
   });
   const restoredScrollRef = useRef(false);
   const saveScrollRef = useRef<number | undefined>(undefined);
-  const searchActive = !changesView && !!query.trim(); // results are transient — no offset kept
+  // Results are transient — no offset kept. The commits view has no search box (nor a tree).
+  const searchActive = !changesView && !commitsView && !!query.trim();
 
   // Re-arm the restore whenever the pane switches to showing something else.
   useEffect(() => {
     restoredScrollRef.current = false;
-  }, [sessionId, changesView, searchActive, seedEpoch]);
+  }, [sessionId, changesView, commitsView, searchActive, seedEpoch]);
 
   // Replay the remembered offset, but only once the tree has stopped growing: folder levels each
   // fetch on their own, and scrolling while rows are still arriving above the viewport lets the
@@ -921,7 +941,7 @@ export const FileBrowser = forwardRef<
       obs.disconnect();
       window.clearTimeout(timer);
     };
-  }, [sessionId, changesView, searchActive, seedEpoch]);
+  }, [sessionId, changesView, commitsView, searchActive, seedEpoch]);
 
   // Save it back, debounced. Scrolls that land before the restore are the browser shifting rows
   // around as they load, not the user, so they mustn't overwrite the remembered offset.
@@ -941,7 +961,7 @@ export const FileBrowser = forwardRef<
   // Debounced recursive search — only for the all-files tree; the changes view filters locally.
   useEffect(() => {
     const q = query.trim();
-    if (!q || changesView) {
+    if (!q || changesView || commitsView) {
       setResults(null);
       setSearching(false);
       return;
@@ -955,7 +975,7 @@ export const FileBrowser = forwardRef<
         .finally(() => setSearching(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [query, sessionId, refreshToken, changesView, rootDir]);
+  }, [query, sessionId, refreshToken, changesView, commitsView, rootDir]);
 
   return (
     <div className="flex h-full flex-col md:flex-row">
@@ -984,7 +1004,7 @@ export const FileBrowser = forwardRef<
             level it had open, once for each file tab on screen. */}
         {!previewOnly && (<>
         <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground">
-          <span>{changesView ? "Changes" : "Files"}</span>
+          <span>{commitsView ? "Commits" : changesView ? "Changes" : "Files"}</span>
           <div className="flex items-center gap-1.5">
             {gitAvailable && (
               <button
@@ -997,6 +1017,19 @@ export const FileBrowser = forwardRef<
               >
                 <GitCompare className="size-3.5" />
                 {changeCount > 0 && <span className="text-[10px] font-semibold">{changeCount}</span>}
+              </button>
+            )}
+            {gitAvailable && (
+              <button
+                title={commitsView ? "Show all files" : "Show commits"}
+                aria-pressed={commitsView}
+                onClick={toggleCommits}
+                className={cn(
+                  "flex items-center rounded px-1 py-0.5 hover:text-foreground",
+                  commitsView && "bg-accent text-foreground"
+                )}
+              >
+                <History className="size-3.5" />
               </button>
             )}
             {changesView && (
@@ -1024,7 +1057,7 @@ export const FileBrowser = forwardRef<
                 )}
               </button>
             )}
-            {!readOnly && (
+            {!readOnly && !commitsView && (
               <button
                 title="New folder at root"
                 onClick={() => (creatingFolder ? setCreatingFolder(false) : newFolderIn(""))}
@@ -1043,7 +1076,7 @@ export const FileBrowser = forwardRef<
                 e.target.value = ""; // allow re-selecting the same file later
               }}
             />
-            {!readOnly && (
+            {!readOnly && !commitsView && (
               <button
                 title={uploadError ?? `Upload file(s) to ${uploadDir || "root"}`}
                 onClick={() => fileInputRef.current?.click()}
@@ -1073,7 +1106,7 @@ export const FileBrowser = forwardRef<
             </button>
             {/* The way into select mode where there is no hover to reveal a row's own box, and a
                 plain way out of it once there is nothing marked left to act on. */}
-            {!readOnly && (
+            {!readOnly && !commitsView && (
               <button
                 title={mark.selecting ? "Leave select mode" : "Select files"}
                 aria-pressed={mark.selecting}
@@ -1088,7 +1121,7 @@ export const FileBrowser = forwardRef<
             </button>
           </div>
         </div>
-        {!changesView && !readOnly && !query.trim() && (
+        {!changesView && !commitsView && !readOnly && !query.trim() && (
           <div className="flex items-center gap-1 px-3 pb-1 text-[10px] text-muted-foreground">
             <span className="shrink-0">Upload target:</span>
             <span className="truncate font-medium text-foreground">{uploadDir || "root"}</span>
@@ -1126,7 +1159,7 @@ export const FileBrowser = forwardRef<
           </div>
         )}
 
-        {creatingFolder && !readOnly && (
+        {creatingFolder && !readOnly && !commitsView && (
           <div className="px-2 pb-1">
             <div className="flex items-center gap-1">
               <Input
@@ -1150,6 +1183,7 @@ export const FileBrowser = forwardRef<
           </div>
         )}
 
+        {!commitsView && (
         <div className="px-2 pb-1">
           <div className="relative">
             <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1171,11 +1205,12 @@ export const FileBrowser = forwardRef<
             )}
           </div>
         </div>
+        )}
 
         {/* What is marked and what can be done with it. Shown from the moment select mode starts, so
             the mode always says out loud that it is on -- a tree of empty boxes with no explanation
             is how you end up clicking a file and wondering why it did not open. */}
-        {mark.selecting && !readOnly && (
+        {mark.selecting && !readOnly && !commitsView && (
           <div className="mx-2 mb-1 flex items-center gap-1 rounded bg-accent/60 px-2 py-1 text-xs">
             <span className="min-w-0 flex-1 truncate text-muted-foreground">
               {mark.count > 0 ? `${mark.count} selected` : "Select files and folders"}
@@ -1204,6 +1239,16 @@ export const FileBrowser = forwardRef<
           </p>
         )}
 
+        {/* The commits view: the history alone, filling what the tree would. */}
+        {commitsView ? (
+          <GitHistory
+            fill
+            sessionId={sessionId}
+            refreshToken={refreshToken}
+            selected={commitSel}
+            onSelect={setCommitSel}
+          />
+        ) : (
         <div
           ref={treeScrollRef}
           onScroll={onTreeScroll}
@@ -1270,6 +1315,7 @@ export const FileBrowser = forwardRef<
             />
           )}
         </div>
+        )}
 
         {/* Commit history, collapsible, shown only in the changes view. */}
         {changesView && (
