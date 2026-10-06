@@ -26,7 +26,20 @@ import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { highlightLines, type CodeToken } from "@/lib/highlight";
 import { allRows, oneSidedAs, parseUnifiedDiff, type DiffRow } from "@/lib/unifiedDiff";
 import { cn } from "@/lib/utils";
+import {
+  appendComment,
+  commentBlock,
+  commentMessage,
+  countComments,
+  deleteReview,
+  readReview,
+  reviewFilePath,
+  writeReview,
+  type ReviewContext,
+  type ReviewTarget,
+} from "@/lib/prReview";
 import { Markdown } from "./Markdown";
+import { CommentButton, CommentCard, pickLines, ReviewButton, ReviewDialog, spotFor, type Spot } from "./PullReview";
 import { usePersistentZoom, ZOOM_LEVELS } from "./ZoomControls";
 import {
   AlertTriangle,
@@ -210,6 +223,7 @@ export function PullRequestView({
   sessionId,
   number,
   repo,
+  closed = false,
   onTitle,
 }: {
   sessionId: string;
@@ -220,6 +234,8 @@ export function PullRequestView({
    * own without a checkout of it anywhere.
    */
   repo?: string;
+  /** The session is not running: comments can still go into the review, but nothing can be sent. */
+  closed?: boolean;
   /** The PR's real title, once GitHub has given it — the tab may be showing an older one. */
   onTitle?: (title: string) => void;
 }) {
@@ -295,6 +311,99 @@ export function PullRequestView({
   const wholeScrollRef = useRef(0);
   const pendingScrollRef = useRef<number | null>(null);
 
+  // Comments for the session's own Claude, on lines picked out of the diff — see prReview. What is
+  // held here mirrors the review file, which is read again before each comment is added to it, so
+  // one added from another device in the meantime is kept rather than written over.
+  const reviewPath = reviewFilePath(repo, number);
+  const [reviewText, setReviewText] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  // The lines a selection covers, with the Comment button under them; then the comment being written.
+  const [picked, setPicked] = useState<{ target: ReviewTarget; spot: Spot } | null>(null);
+  // The comment carries the review's context as it was when its lines were picked: the page stays
+  // usable while the card is open, and a switch to one commit after picking lines of the whole pull
+  // request must not relabel those line numbers as the commit's.
+  const [commenting, setCommenting] = useState<{ target: ReviewTarget; spot: Spot; ctx: ReviewContext } | null>(
+    null
+  );
+  // Bumped by every write to the review, so a read that set off before one is dropped when it lands
+  // rather than putting back what the write replaced.
+  const reviewSeqRef = useRef(0);
+
+  const loadReview = useCallback(async () => {
+    const seq = reviewSeqRef.current;
+    try {
+      const text = await readReview(sessionId, reviewPath);
+      if (seq === reviewSeqRef.current) setReviewText(text);
+    } catch {
+      /* the server is out of reach — what is on screen stands until the next reload */
+    }
+  }, [sessionId, reviewPath]);
+
+  /** Take in a review that now holds something else, so the screen never shows a write it lost. */
+  const putReviewText = useCallback((text: string) => {
+    reviewSeqRef.current++;
+    setReviewText(text);
+  }, []);
+
+  // Watch for a selection in the code. Looked at once the button is let go — a Comment button
+  // chasing the pointer through a drag would be in the drag's way — and, on a touch screen, where a
+  // selection is made with handles rather than a drag, once it stops changing.
+  useEffect(() => {
+    const box = scrollRef.current;
+    if (!box) return;
+    let pressed = false;
+    let timer = 0;
+    let frame = 0;
+    const check = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (pressed) return;
+        const sel = window.getSelection();
+        const range = sel?.rangeCount ? sel.getRangeAt(0) : null;
+        const target = range ? pickLines(range, box) : null;
+        setPicked(target && range ? { target, spot: spotFor(range) } : null);
+      }, 150);
+    };
+    // A split diff selects down one column, the way GitHub's does: the side a drag starts on is the
+    // side it stays on, because the other is unselectable until the next press (see index.css).
+    const down = (e: PointerEvent) => {
+      pressed = true;
+      const side = (e.target as Element | null)?.closest?.("[data-side]")?.getAttribute("data-side");
+      if (side) box.dataset.selSide = side;
+      else delete box.dataset.selSide;
+    };
+    const up = () => {
+      if (!pressed) return;
+      pressed = false;
+      check();
+    };
+    // The button stays with the selection as the pane scrolls under it.
+    const scrolled = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const sel = window.getSelection();
+        if (!sel?.rangeCount) return;
+        const range = sel.getRangeAt(0);
+        setPicked((p) => (p ? { ...p, spot: spotFor(range) } : p));
+      });
+    };
+    box.addEventListener("pointerdown", down);
+    // Captured, so the scroll of one file's own sideways scroller — unwrapped lines — counts too.
+    box.addEventListener("scroll", scrolled, { capture: true, passive: true });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    document.addEventListener("selectionchange", check);
+    return () => {
+      window.clearTimeout(timer);
+      cancelAnimationFrame(frame);
+      box.removeEventListener("pointerdown", down);
+      box.removeEventListener("scroll", scrolled, { capture: true });
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      document.removeEventListener("selectionchange", check);
+    };
+  }, []);
+
   // The commit list: asked for beside the review rather than inside it, so the diff is never kept
   // waiting on a list most readers will not open — but asked for at once, so the header can say
   // how many there are. A failed ask keeps the list already held: a reload that could not reach
@@ -313,6 +422,7 @@ export function PullRequestView({
   const load = useCallback(async () => {
     setLoading(true);
     void loadCommits();
+    void loadReview();
     setCommitEpoch((e) => e + 1);
     try {
       const res = await api.githubPull(sessionId, number, repo);
@@ -326,7 +436,7 @@ export function PullRequestView({
     } finally {
       setLoading(false);
     }
-  }, [sessionId, number, repo, loadCommits]);
+  }, [sessionId, number, repo, loadCommits, loadReview]);
 
   useEffect(() => {
     void load();
@@ -756,6 +866,64 @@ export function PullRequestView({
     return { Icon: GitPullRequest, className: "text-emerald-500" };
   })();
 
+  // What a comment says about where it is, beyond its own lines.
+  const reviewCtx = useMemo<ReviewContext>(
+    () => ({
+      number,
+      repo,
+      title: pull?.title,
+      head: pull?.headRefName,
+      base: pull?.baseRefName,
+      commit: commitSha?.slice(0, 7),
+    }),
+    [number, repo, pull?.title, pull?.headRefName, pull?.baseRefName, commitSha]
+  );
+
+  const sendComment = useCallback(
+    async (t: ReviewTarget, body: string, ctx: ReviewContext) => {
+      await api.sendMessage(sessionId, commentMessage(t, body, ctx));
+    },
+    [sessionId]
+  );
+
+  const addComment = useCallback(
+    async (t: ReviewTarget, body: string, ctx: ReviewContext) => {
+      const next = appendComment(await readReview(sessionId, reviewPath), commentBlock(t, body, ctx), ctx);
+      await writeReview(sessionId, reviewPath, next);
+      putReviewText(next);
+    },
+    [sessionId, reviewPath, putReviewText]
+  );
+
+  const saveReview = useCallback(
+    async (text: string) => {
+      await writeReview(sessionId, reviewPath, text);
+      putReviewText(text);
+    },
+    [sessionId, reviewPath, putReviewText]
+  );
+
+  // Whether the file is still the one the dialog opened on, asked before anything replaces or
+  // deletes it — a comment added from another device since then must not go unsent and unseen.
+  // When it is not, the new version is taken in and the reader decides again.
+  const reviewUnchanged = useCallback(
+    async (expected: string) => {
+      const fresh = await readReview(sessionId, reviewPath);
+      if (fresh === expected) return true;
+      putReviewText(fresh);
+      return false;
+    },
+    [sessionId, reviewPath, putReviewText]
+  );
+
+  // Sent or thrown away: either way the file goes. Should deleting it fail, reading it back puts the
+  // review on offer again rather than leaving the header claiming there is none.
+  const finishReview = useCallback(() => {
+    putReviewText("");
+    setReviewOpen(false);
+    deleteReview(sessionId, reviewPath).catch(() => void loadReview());
+  }, [sessionId, reviewPath, loadReview, putReviewText]);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex shrink-0 items-start gap-2 border-b px-3 py-2">
@@ -813,6 +981,15 @@ export function PullRequestView({
             </div>
           )}
         </div>
+        {reviewText.trim() && (
+          <ReviewButton
+            count={countComments(reviewText)}
+            onClick={() => {
+              void loadReview();
+              setReviewOpen(true);
+            }}
+          />
+        )}
         {/* How much of the review is behind you. A button, because the only thing anyone wants to do
             with that number is put it back to nothing. */}
         {viewed.size > 0 && !inCommit && (
@@ -1077,6 +1254,39 @@ export function PullRequestView({
           )}
         </div>
       </div>
+
+      {/* Outside the scrolling pane, so a press in them is not taken for the start of a selection. */}
+      {picked && !commenting && (
+        <CommentButton
+          spot={picked.spot}
+          onClick={() => {
+            setCommenting({ ...picked, ctx: reviewCtx });
+            setPicked(null);
+          }}
+        />
+      )}
+      {commenting && (
+        <CommentCard
+          target={commenting.target}
+          spot={commenting.spot}
+          closed={closed}
+          onSend={(body) => sendComment(commenting.target, body, commenting.ctx)}
+          onAdd={(body) => addComment(commenting.target, body, commenting.ctx)}
+          onClose={() => setCommenting(null)}
+        />
+      )}
+      {reviewOpen && (
+        <ReviewDialog
+          sessionId={sessionId}
+          path={reviewPath}
+          text={reviewText}
+          closed={closed}
+          onSave={saveReview}
+          onCheck={reviewUnchanged}
+          onDone={finishReview}
+          onClose={() => setReviewOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1412,7 +1622,12 @@ function FileDiff({
   const canReadWhole = !file.binary && !!readAt;
 
   return (
-    <div ref={register} className="border-b last:border-b-0">
+    <div
+      ref={register}
+      data-review-path={file.path}
+      data-review-old-path={file.oldPath}
+      className="border-b last:border-b-0"
+    >
       {/* Sticky so the name of what you are reading stays on screen through a long diff. The row is
           no longer one big button: the controls at its end are buttons of their own, and a button
           cannot hold another one. */}
@@ -1544,7 +1759,14 @@ function FileDiff({
         ) : contentError ? (
           <div className="p-4 text-sm text-muted-foreground">{contentError}</div>
         ) : (
-          <FileListing path={file.path} text={content ?? ""} wrap={wrap} zoom={zoom} numCol={numCol} />
+          <FileListing
+            path={file.path}
+            text={content ?? ""}
+            side={file.status === "D" ? "old" : "new"}
+            wrap={wrap}
+            zoom={zoom}
+            numCol={numCol}
+          />
         )
       ) : open ? (
         file.binary ? (
@@ -1642,11 +1864,26 @@ function splitColumns(wrap: boolean, share: number, numCol: number): string {
  *
  * A blank line still has to occupy its row, hence the space standing in for empty content.
  */
-function Code({ tokens, text, className }: { tokens?: CodeToken[]; text: string; className: string }) {
-  if (!tokens) return <div className={className}>{text || " "}</div>;
-  if (!tokens.length) return <div className={className}> </div>;
+function Code({
+  tokens,
+  text,
+  className,
+  side,
+  line,
+}: {
+  tokens?: CodeToken[];
+  text: string;
+  className: string;
+  /** Which version of the file this cell is from, and its line number there — what a selection is
+   *  turned into lines with (see pickLines). A cell with no line is the empty side of a change. */
+  side: "old" | "new";
+  line?: number;
+}) {
+  const attrs = { className, "data-side": side, "data-line": line };
+  if (!tokens) return <div {...attrs}>{text || " "}</div>;
+  if (!tokens.length) return <div {...attrs}> </div>;
   return (
-    <div className={className}>
+    <div {...attrs}>
       {tokens.map((t, i) => (
         <Fragment key={i}>
           {t.classes.reduceRight<ReactNode>(
@@ -1716,12 +1953,16 @@ function SideBySide({
                     tokens={row.leftTokens}
                     text={row.left?.text ?? ""}
                     className={cn(CODE_CELL, mode.code, tint(leftKind))}
+                    side="old"
+                    line={row.left?.number}
                   />
                   <div className={cn(NUM_CELL, "border-l", tint(rightKind))}>{row.right?.number ?? ""}</div>
                   <Code
                     tokens={row.rightTokens}
                     text={row.right?.text ?? ""}
                     className={cn(CODE_CELL, mode.code, tint(rightKind))}
+                    side="new"
+                    line={row.right?.number}
                   />
                 </div>
               );
@@ -1769,7 +2010,13 @@ function OneSided({
           return (
             <div key={i} className="contents">
               <div className={cn(NUM_CELL, tint(kind))}>{line.number}</div>
-              <Code tokens={tokens} text={line.text} className={cn(CODE_CELL, mode.code, tint(kind))} />
+              <Code
+                tokens={tokens}
+                text={line.text}
+                className={cn(CODE_CELL, mode.code, tint(kind))}
+                side={side === "add" ? "new" : "old"}
+                line={line.number}
+              />
             </div>
           );
         })}
@@ -1786,12 +2033,15 @@ function OneSided({
 function FileListing({
   path,
   text,
+  side,
   wrap,
   zoom,
   numCol,
 }: {
   path: string;
   text: string;
+  /** The version the file was read at: the head, or the base for a file the change deletes. */
+  side: "old" | "new";
   wrap: boolean;
   zoom: number;
   numCol: number;
@@ -1819,7 +2069,7 @@ function FileListing({
         {lines.map((line, i) => (
           <div key={i} className="contents">
             <div className={NUM_CELL}>{i + 1}</div>
-            <Code tokens={tokens?.[i]} text={line} className={cn(CODE_CELL, mode.code)} />
+            <Code tokens={tokens?.[i]} text={line} className={cn(CODE_CELL, mode.code)} side={side} line={i + 1} />
           </div>
         ))}
       </div>

@@ -998,6 +998,7 @@ export function SessionView({
               sessionId={session.id}
               number={number}
               repo={repo}
+              closed={closed}
               onTitle={(title) => pulls.retitle(arg, title)}
             />
           </div>

@@ -302,3 +302,11 @@
   border-style: solid;
   border-color: var(--popover-border);
 }
+
+/* A split diff in a pull request selects down one column: whichever side a drag starts on, the other
+   is out of the selection until the next press (PullRequestView sets data-sel-side on that press).
+   Without it a drag down the new side picks up the old side's lines row by row in between. */
+[data-sel-side="old"] [data-side="new"],
+[data-sel-side="new"] [data-side="old"] {
+  user-select: none;
+}

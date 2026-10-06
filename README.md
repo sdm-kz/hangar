@@ -207,6 +207,18 @@ The web UI is a **session manager with a full terminal**:
   by every session working in that repo. A mark records the file's blob as it was when you read it,
   which is what makes a push reset **only the files it touched** — the rest of the review stays read.
 
+  **Comments for the session's Claude.** Select some lines in a diff, or in a file read whole, and a
+  **Comment** button appears under them. It turns the selection into whole lines on one side — a
+  drag in a split diff stays in the column it started in — and opens a small card to say what
+  should change. **Send now** (Ctrl+Enter) puts the comment straight into the session's terminal,
+  with the file, the line numbers and the lines themselves. **Add to review** (Ctrl+Shift+Enter)
+  keeps it in the pull request's review file instead, `.claudeweb/reviews/<repo>-pr-<n>.md` in the
+  session's folder, and a **Review** count appears in the header. That opens the file for a last
+  read: it is plain Markdown and exactly what will be sent, so edit it freely, then **Send review**
+  hands the whole of it to the session as one message and deletes the file. Lines on the old side
+  are said to be the old version's, and in a single commit's view, that commit's. A closed session
+  still collects comments; sending waits until it is running.
+
   How far through a review you had got is kept: which files you folded away, and where the pane was
   scrolled to, against the repo and number of the pull request in the session's own state — so it follows the session to
   your other devices, and a tab that goes away takes it with it, whether you closed it or it made
