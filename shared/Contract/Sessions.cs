@@ -133,4 +133,10 @@ public sealed record SessionInfo(
     /// What that schedule's clock says, in a few words ("0 9 * * 1-5", "every 10 min"), for the
     /// tooltip on the mark. Carried beside the id so the sessions list needn't hold the schedules too.
     /// </summary>
-    string? ScheduleLabel = null);
+    string? ScheduleLabel = null,
+    /// <summary>
+    /// Whether this session's postponed messages are on auto-send: each time Claude finishes a turn,
+    /// the next one goes in. Off unless switched on from the Postponed bar; it switches itself off
+    /// once the pool is empty and the turn the last message started has finished.
+    /// </summary>
+    bool PostponedAutoSend = false);

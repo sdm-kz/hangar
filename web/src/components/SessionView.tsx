@@ -916,7 +916,14 @@ export function SessionView({
                 worth reading back, and throwing out a message you are no longer going to send is the
                 other half of that. It does not travel — the pool is keyed by session id and a reopen
                 mints a new one, which starts empty — so sending is the one thing it stops offering. */}
-            <PostponedPool sessionId={session.id} busy={busy} terminalRef={terminalRef} closed={closed} />
+            <PostponedPool
+              sessionId={session.id}
+              busy={busy}
+              terminalRef={terminalRef}
+              closed={closed}
+              serverCount={session.postponedCount}
+              autoSend={!!session.postponedAutoSend}
+            />
           </div>
         );
       case "files":

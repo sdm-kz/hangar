@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, ImagePlus, Inbox, Maximize2, PenLine, Send, Trash2, X } from "lucide-react";
-import { sessionFileUrl } from "@/lib/api";
+import {
+  ChevronDown,
+  ChevronUp,
+  ImagePlus,
+  Inbox,
+  Maximize2,
+  Pause,
+  PenLine,
+  Play,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
+import { api, sessionFileUrl } from "@/lib/api";
 import { uploadImageFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -33,13 +45,17 @@ type ComposerTarget = { kind: "draft" } | { kind: "message"; id: string };
 /**
  * Per-session pool of "postponed" messages: a composer pinned under the terminal where the user can
  * stash text and pasted images while Claude is busy, then send them into the live terminal on demand.
- * Nothing sends automatically — when the session goes idle the bar just highlights as a nudge.
+ * Nothing sends by itself unless auto-send is switched on (the play button): then the server types the
+ * next message in each time Claude finishes a turn (PostponedAutoSender), and switches it back off once
+ * the pool has run dry. With it off, an idle session just highlights the bar as a nudge.
  */
 export function PostponedPool({
   sessionId,
   busy,
   terminalRef,
   closed = false,
+  serverCount,
+  autoSend = false,
 }: {
   sessionId: string;
   // Whether Claude is currently working in this session (drives the "idle — send now" cue only).
@@ -48,6 +64,12 @@ export function PostponedPool({
   // The session is closed: there is no terminal to send into, and there will not be one until it is
   // reopened. The pool still reads, stashes and discards — sending is what waits.
   closed?: boolean;
+  // The pool's size as the server last reported it (on the session list). When it stops matching
+  // ours, someone else changed the pool — auto-send taking a message, a schedule stashing one,
+  // another device — and the list here is re-read rather than saved back over theirs.
+  serverCount?: number;
+  // Whether auto-send is on, as the server reports it.
+  autoSend?: boolean;
 }) {
   const [messages, setMessages] = useState<PostponedMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -58,8 +80,19 @@ export function PostponedPool({
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   // Non-null while the full-size composer dialog is open: what it edits, plus its seed content.
   const [composer, setComposer] = useState<{ target: ComposerTarget; draft: ComposerDraft } | null>(null);
+  // What the play button last asked for, until the server's report catches up — so the button answers
+  // the click at once instead of a hub tick later. Null once the two agree.
+  const [autoAsked, setAutoAsked] = useState<boolean | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Read by the re-sync effect below without making it re-run on every local edit.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const flushingRef = useRef(flushing);
+  flushingRef.current = flushing;
+  // Bumped by every local change, so a re-read that was asked for before one lands as stale and is
+  // dropped rather than undoing it.
+  const generationRef = useRef(0);
 
   // Reload (from the server) and reset the composer when switching sessions — each session has its
   // own stash. `cancelled` guards against a slow load landing after another session switch.
@@ -70,9 +103,41 @@ export function PostponedPool({
     setDraftImages([]);
     setComposer(null);
     setError(null);
+    setAutoAsked(null);
     loadPostponed(sessionId).then((m) => { if (!cancelled) setMessages(m); }).catch(() => {});
     return () => { cancelled = true; };
   }, [sessionId]);
+
+  // Re-read the pool when the server's count moves away from ours. Keyed on the count alone: our own
+  // saves move it to where we already are, so only a change made elsewhere leaves the two apart. Not
+  // mid-flush, whose own sends are still landing.
+  useEffect(() => {
+    if (serverCount === undefined || flushingRef.current) return;
+    if (serverCount === messagesRef.current.length) return;
+    let cancelled = false;
+    const generation = generationRef.current;
+    loadPostponed(sessionId)
+      .then((m) => { if (!cancelled && generation === generationRef.current) setMessages(m); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [serverCount, sessionId]);
+
+  useEffect(() => {
+    if (autoAsked !== null && autoAsked === autoSend) setAutoAsked(null);
+  }, [autoAsked, autoSend]);
+  const auto = autoAsked ?? autoSend;
+
+  const toggleAuto = useCallback(async () => {
+    const next = !auto;
+    setAutoAsked(next);
+    setError(null);
+    try {
+      await api.setPostponedAuto(sessionId, next);
+    } catch {
+      setAutoAsked(null);
+      setError(next ? "Could not switch auto-send on." : "Could not switch auto-send off.");
+    }
+  }, [auto, sessionId]);
 
   // Grow the composer with its content, up to 3 lines (then it scrolls). Re-runs on every draft change
   // — including the reset to empty after a stash — so the box springs back down once sent.
@@ -88,6 +153,7 @@ export function PostponedPool({
   // fire-and-forget and captures the sessionId it was created for.
   const commit = useCallback(
     (next: PostponedMessage[]) => {
+      generationRef.current++;
       setMessages(next);
       void savePostponed(sessionId, next);
     },
@@ -143,7 +209,13 @@ export function PostponedPool({
     (d: ComposerDraft) => {
       if (composer?.target.kind === "message") {
         const id = composer.target.id;
-        commit(messages.map((m) => (m.id === id ? { ...m, text: d.text, images: d.images } : m)));
+        // Gone while it was open (auto-send took it, or another device sent it): keep the rewrite as
+        // a new message rather than drop it on the floor.
+        commit(
+          messages.some((m) => m.id === id)
+            ? messages.map((m) => (m.id === id ? { ...m, text: d.text, images: d.images } : m))
+            : [...messages, newMessage(d.text, d.images)]
+        );
       } else {
         commit([...messages, newMessage(d.text, d.images)]);
         setDraft("");
@@ -246,7 +318,9 @@ export function PostponedPool({
   // The nudge to flush the stash, which only means anything while there is something to flush it
   // into: a closed session is not idle, it is gone, and painting Send all as the obvious next thing
   // to do would be inviting a click that cannot land.
-  const idle = !closed && !busy && messages.length > 0;
+  // Not while auto-send is on either: the server is about to send, and a green Send all would invite a
+  // click that races it.
+  const idle = !closed && !busy && !auto && messages.length > 0;
   const canStash = draft.trim().length > 0 || draftImages.length > 0;
 
   return (
@@ -294,6 +368,11 @@ export function PostponedPool({
           {idle && (
             <span className="text-xs font-medium text-emerald-600 dark:text-emerald-500">Claude is idle</span>
           )}
+          {auto && !closed && (
+            <span className="hidden whitespace-nowrap text-xs font-medium text-emerald-600 sm:inline dark:text-emerald-500">
+              {messages.length > 0 ? "Auto-sending" : "Sending the last one"}
+            </span>
+          )}
           {/* Always reachable, collapsed or not — the way in for anything longer than a line, and
               (next to it) for a photo; this replaces the button that used to float over the
               terminal. Attaching leaves the panel exactly as it was: the image joins the draft
@@ -330,7 +409,36 @@ export function PostponedPool({
               greyed button cannot say why — a disabled one takes no pointer events, so the title
               that would have explained it never shows. What the pool still does — read, stash,
               discard — is all still here, and the panel above says where the terminal went. */}
-          {messages.length > 0 && !closed && (
+          {/* Auto-send. Offered while there is something to queue, and kept while it is on so it can
+              be paused even after the last message has gone in. Absent in a closed session, like
+              Send all: a reopen is a new session, with a pool of its own. */}
+          {(messages.length > 0 || auto) && !closed && (
+            <Button
+              size="sm"
+              variant={auto ? "default" : "outline"}
+              onClick={(e) => {
+                e.stopPropagation();
+                void toggleAuto();
+              }}
+              aria-pressed={auto}
+              className={cn(
+                "size-9 px-0 sm:size-8 sm:w-auto sm:px-3",
+                auto && "bg-emerald-600 text-white hover:bg-emerald-600/90"
+              )}
+              title={
+                auto
+                  ? "Auto-send is on: each time Claude finishes, the next message goes in. Click to pause."
+                  : "Auto-send: each time Claude finishes, send the next message — one at a time, in order"
+              }
+              aria-label={auto ? "Pause auto-send" : "Start auto-send"}
+            >
+              {auto ? <Pause className="size-4" /> : <Play className="size-4" />}
+              <span className="hidden sm:inline">Auto</span>
+            </Button>
+          )}
+          {/* Hidden while auto-send is on: the server is sending these, and a click here could race
+              it into sending one twice. Pause to send by hand. */}
+          {messages.length > 0 && !closed && !auto && (
             <Button
               size="sm"
               variant={idle ? "default" : "outline"}
@@ -395,8 +503,8 @@ export function PostponedPool({
                     )}
                   </button>
                   <div className="flex shrink-0 items-center self-center text-muted-foreground">
-                    {/* Same as Send all above: absent rather than greyed in a closed session. */}
-                    {!closed && (
+                    {/* Same as Send all above: absent in a closed session, and while auto-send is on. */}
+                    {!closed && !auto && (
                       <button
                         type="button"
                         onClick={() => sendOne(m)}

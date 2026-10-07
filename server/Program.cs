@@ -322,6 +322,9 @@ internal static class Program
         builder.Services.AddSingleton<ScheduleStore>();
         builder.Services.AddSingleton<ScheduleService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<ScheduleService>());
+        // Postponed auto-send: works a session's stashed messages through one per finished turn, for
+        // the sessions where someone pressed play. Server-side so the queue runs with every tab closed.
+        builder.Services.AddHostedService<PostponedAutoSender>();
         // Shell tabs: a plain interactive shell (cmd/PowerShell/Git Bash/WSL) in a session's folder,
         // on its own pty hosts so a build left running survives a restart of this app.
         builder.Services.AddSingleton<Sessions.Shells.ShellManager>();
@@ -1369,10 +1372,15 @@ internal static class Program
             using var reader = new StreamReader(ctx.Request.Body);
             var body = await reader.ReadToEndAsync();
             if (body.Length > 512 * 1024) return Results.BadRequest(new { error = "too large" });
-            return SessionFileBrowser.WriteBytes(dir, PostponedStore.RelPathFor(id), System.Text.Encoding.UTF8.GetBytes(body)) is not null
+            return PostponedStore.Write(dir, id, System.Text.Encoding.UTF8.GetBytes(body))
                 ? Results.Ok()
-                : Results.BadRequest(new { error = "invalid path" });
+                : Results.BadRequest(new { error = "Could not save the postponed messages." });
         });
+
+        // Auto-send on or off for a session's pool (PostponedAutoSender does the sending). On needs a
+        // live session — there is nothing to send into otherwise; off is accepted for any.
+        app.MapPost("/api/sessions/{id}/postponed/auto", (string id, PostponedAutoRequest body, SessionManager mgr) =>
+            mgr.SetPostponedAutoSend(id, body.Enabled) ? Results.Ok() : Results.NotFound());
 
         // Filesystem change counter — the UI polls this to auto-refresh the tree.
         app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
@@ -1778,6 +1786,7 @@ internal record LoginRequest(string? Password);
 internal record StopOrphansRequest(string? SessionId);
 internal record WatchdogRequest(bool Enabled);
 internal record PinRequest(bool Pinned);
+internal record PostponedAutoRequest(bool Enabled);
 /// <summary>Body for <c>POST /api/sessions/{id}/ui</c>: the UI-state fields to merge (a null value
 /// removes that field). The shape of the bag belongs to the client; the server only merges it.
 /// <c>Quiet</c> saves without advancing the revision, for a field the other browsers need not be

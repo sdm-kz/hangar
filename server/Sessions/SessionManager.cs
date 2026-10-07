@@ -702,6 +702,45 @@ public sealed class SessionManager : IDisposable
             : s.Terminal is { IsAwaitingInput: true };
 
     /// <summary>
+    /// Whether a live session is somewhere a message can be typed without interrupting anything: not
+    /// working, not compacting, not blocked on a prompt, not sitting on a turn that died, and past its
+    /// opening paint. Each of those is the reading the hub sends the browser, so "quiet" here is
+    /// exactly a row with no activity mark on it.
+    /// </summary>
+    public bool IsQuiet(string id) =>
+        _sessions.TryGetValue(id, out var s)
+        && s.State == SessionState.Running
+        && !StillStartingUp(s)
+        && !IsBusy(s)
+        && !IsAwaitingInput(s)
+        && s.Terminal is { IsCompacting: false }
+        && !(_hooks.TryGetStatus(s.Id, out var st) && st.Failure is not null);
+
+    /// <summary>Id and folder of every live session — what a loop over them needs, without a full snapshot.</summary>
+    public IReadOnlyList<(string Id, string WorkingDirectory)> RunningSessions() =>
+        _sessions.Values
+            .Where(s => s.State == SessionState.Running)
+            .Select(s => (s.Id, s.WorkingDirectory))
+            .ToArray();
+
+    /// <summary>
+    /// Switch a session's postponed pool to auto-send or back (see <see cref="PostponedAutoSender"/>).
+    /// On only for a live session: a reopen is a new session with a pool of its own, so a closed one
+    /// has no queue left to run. Off for either. False if that leaves nothing to do it to, or the flag
+    /// could not be stored.
+    /// </summary>
+    public bool SetPostponedAutoSend(string id, bool on)
+    {
+        var dir = on
+            ? _sessions.TryGetValue(id, out var s) && s.State == SessionState.Running ? s.WorkingDirectory : null
+            : FolderOf(id);
+        if (dir is null) return false;
+        if (!PostponedStore.SetAutoSend(dir, id, on)) return false;
+        RaiseChanged();
+        return true;
+    }
+
+    /// <summary>
     /// Ids of live sessions whose last turn ended on an API error — a rate limit, an overload — rather
     /// than on an answer. Hook-derived only, with no heuristic fallback: a failed turn and a finished
     /// one look identical on screen (both stop printing), which is the whole reason this is worth
@@ -870,18 +909,35 @@ public sealed class SessionManager : IDisposable
     /// gone — never throws for those, because every caller here is reacting to a timer rather than
     /// to a person, and a session that ended is an outcome to record, not an error to propagate.</para>
     /// </summary>
-    public async Task<bool> SendMessageAsync(string id, string text, CancellationToken ct = default)
+    public Task<bool> SendMessageAsync(string id, string text, CancellationToken ct = default) =>
+        SendMessageAsync(id, text, [], ct);
+
+    /// <summary>
+    /// The same, with images: each path is pasted after the text as its own bracketed paste — which
+    /// is how Claude Code takes an image dropped on it — and the submit waits for them to be taken in.
+    /// What the browser's <c>TerminalPane.sendMessage</c> does with an image from the composer.
+    /// </summary>
+    public async Task<bool> SendMessageAsync(
+        string id, string text, IReadOnlyList<string> imagePaths, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (string.IsNullOrWhiteSpace(text) && imagePaths.Count == 0) return false;
         if (!_sessions.TryGetValue(id, out var s) || s.State != SessionState.Running) return false;
         if (s.Terminal is not { } term) return false;
 
         // \x1b[200~ … \x1b[201~ is the paste; the \r after it is deliberately a separate write and a
         // separate byte — inside the brackets it would be pasted text, not a submit.
-        var paste = Encoding.UTF8.GetBytes($"\x1b[200~{text.Replace("\r\n", "\n")}\x1b[201~");
+        // Control characters other than newline and tab are dropped from what goes inside: an ESC in
+        // there could close the paste early ("\x1b[201~") and turn the rest into keystrokes, and a
+        // message read off disk with nobody watching (auto-send, a schedule) must not be able to.
+        static byte[] Paste(string t) => Encoding.UTF8.GetBytes(
+            $"\x1b[200~{new string(t.Replace("\r\n", "\n").Where(c => !char.IsControl(c) || c is '\n' or '\t').ToArray())}\x1b[201~");
         try
         {
-            await term.WriteAsync(paste, ct);
+            if (!string.IsNullOrWhiteSpace(text)) await term.WriteAsync(Paste(text), ct);
+            foreach (var path in imagePaths) await term.WriteAsync(Paste(path), ct);
+            // Claude Code reads a pasted image in the background and swaps in an "[Image #N]" chip; an
+            // Enter that arrives before that is swallowed, and the message sits unsent in the box.
+            if (imagePaths.Count > 0) await Task.Delay(ImageSettle, ct);
             await term.WriteAsync(Cr, ct);
             _log.LogInformation("Sent a {Length}-char message to session {Id} ('{Name}')", text.Length, id, s.Name);
             return true;
@@ -896,6 +952,9 @@ public sealed class SessionManager : IDisposable
     }
 
     private static readonly ReadOnlyMemory<byte> Cr = new(new[] { (byte)'\r' });
+
+    /// <summary>The browser's <c>IMAGE_SETTLE_MS</c>: how long a pasted image takes to be taken in.</summary>
+    private static readonly TimeSpan ImageSettle = TimeSpan.FromMilliseconds(600);
 
     /// <summary>
     /// Launch a new session: spawn its pty host, then attach to it over the host's pipe. Genuinely
@@ -1576,6 +1635,9 @@ public sealed class SessionManager : IDisposable
         s.Stop();
         s.Dispose();
         _hooks.Forget(id);
+        // A queue being worked through stops with the session: a reopen is a new session, with a pool
+        // of its own, and nothing should be left switched on for it to find.
+        PostponedStore.SetAutoSend(s.WorkingDirectory, id, false);
         // _launchedFrom is deliberately left alone: the preset this session was launched from is still
         // what it should be remembered as when the row is finally closed. See RememberAsRecent.
         _log.LogInformation("Stopped session {Id} ('{Name}'); it stays in the list as a closed session.", id, s.Name);

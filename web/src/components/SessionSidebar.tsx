@@ -68,6 +68,7 @@ import {
   MoreVertical,
   GitFork,
   Inbox,
+  Play,
   Plus,
   Settings,
   Radio,
@@ -2563,7 +2564,9 @@ export function SessionSidebar({
             {s.postponedCount > 0 && (
               <button
                 type="button"
-                title={`${s.postponedCount} postponed message${s.postponedCount === 1 ? "" : "s"} — click to read`}
+                title={`${s.postponedCount} postponed message${s.postponedCount === 1 ? "" : "s"}${
+                  s.postponedAutoSend ? ", auto-sending" : ""
+                } — click to read`}
                 onClick={(e) => {
                   e.stopPropagation();
                   setPostponedId(s.id);
@@ -2573,7 +2576,9 @@ export function SessionSidebar({
                   "gap-0.5 px-1.5 transition-colors hover:bg-accent"
                 )}
               >
-                <Inbox className="size-3" />
+                {/* A play glyph when the pool is working itself through, so a queue left running is
+                    visible from the list and not only from inside the session. */}
+                {s.postponedAutoSend ? <Play className="size-3" /> : <Inbox className="size-3" />}
                 {s.postponedCount}
               </button>
             )}

@@ -330,6 +330,13 @@ export const api = {
   putPostponed(sessionId: string, body: string): Promise<void> {
     return request(`/api/sessions/${sessionId}/postponed`, { method: "PUT", body });
   },
+  // Auto-send on/off. The server does the sending, and reports the flag back on the session list.
+  setPostponedAuto(sessionId: string, enabled: boolean): Promise<void> {
+    return request(`/api/sessions/${sessionId}/postponed/auto`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+  },
 
   // ---- Recent launch presets & folders (server-backed, shared across devices) ----
   // Each mutation returns the full updated set so the caller can setState from the response.

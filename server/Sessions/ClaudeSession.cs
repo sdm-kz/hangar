@@ -258,6 +258,9 @@ public sealed class ClaudeSession : IDisposable
         WatchdogStatus: WatchdogStatus,
         Color: Color,
         PostponedCount: PostponedStore.Count(WorkingDirectory, Id),
+        // Only while it runs: a session that exited by itself has nothing left to send into, and the
+        // marker it leaves behind must not paint a queue as running.
+        PostponedAutoSend: State == SessionState.Running && PostponedStore.IsAutoSend(WorkingDirectory, Id),
         ClaudeSessionId: claudeSessionId ?? OwnConversationId,
         CanFork: (claudeSessionId ?? OwnConversationId) is not null,
         ParentSessionId: ParentSessionId,

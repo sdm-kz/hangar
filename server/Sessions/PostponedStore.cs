@@ -57,4 +57,172 @@ public static class PostponedStore
         }
         catch { return 0; }
     }
+
+    // ---- auto-send ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Working-dir-relative path of the marker that says a session's pool is on auto-send (see
+    /// <see cref="PostponedAutoSender"/>). A file beside the pool rather than a field inside it: the
+    /// pool is a bare array that every browser rewrites whole, and a flag in there would be lost to
+    /// the first save from a tab that loaded it before the flag was set.
+    /// </summary>
+    public static string AutoRelPathFor(string sessionId) => $".claudeweb/postponed/{sessionId}.auto";
+
+    /// <summary>The flag per marker path, read from disk once and then kept here — the hub asks every tick.</summary>
+    private static readonly ConcurrentDictionary<string, bool> _auto = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Serialises every write this process makes to a pool or its marker. The pool has two writers —
+    /// a browser's PUT and auto-send taking a message out — and a read-edit-write from one must not
+    /// straddle a write from the other, or a stash that landed in between is lost. One lock for all
+    /// sessions: the writes are tiny and rare.
+    /// </summary>
+    private static readonly object _gate = new();
+
+    /// <summary>
+    /// Replace a session's pool with <paramref name="bytes"/> (what the PUT endpoint stores). Written to
+    /// a temporary file and moved into place, so a reader never sees half of it. False if the path
+    /// escapes the folder or the write failed.
+    /// </summary>
+    public static bool Write(string workingDirectory, string sessionId, byte[] bytes)
+    {
+        lock (_gate) return WriteAtomic(workingDirectory, RelPathFor(sessionId), bytes);
+    }
+
+    private static bool WriteAtomic(string workingDirectory, string rel, byte[] bytes)
+    {
+        var full = SessionFileBrowser.ResolveSafe(workingDirectory, rel);
+        if (full is null) return false;
+        var tmp = full + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllBytes(tmp, bytes);
+            File.Move(tmp, full, overwrite: true);
+            return true;
+        }
+        catch
+        {
+            try { File.Delete(tmp); } catch { /* best-effort */ }
+            return false;
+        }
+    }
+
+    /// <summary>Whether the session's pool is on auto-send. Off unless someone switched it on.</summary>
+    public static bool IsAutoSend(string workingDirectory, string sessionId)
+    {
+        var full = SessionFileBrowser.ResolveSafe(workingDirectory, AutoRelPathFor(sessionId));
+        if (full is null) return false;
+        return _auto.GetOrAdd(full, f =>
+        {
+            try { return File.Exists(f); }
+            catch { return false; }
+        });
+    }
+
+    /// <summary>
+    /// Switch auto-send on or off. Returns whether the flag now says what was asked — false only when
+    /// the marker could not be written or removed.
+    /// </summary>
+    public static bool SetAutoSend(string workingDirectory, string sessionId, bool on)
+    {
+        var full = SessionFileBrowser.ResolveSafe(workingDirectory, AutoRelPathFor(sessionId));
+        if (full is null) return false;
+        lock (_gate)
+        {
+            try
+            {
+                if (on)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+                    File.WriteAllText(full, "");
+                }
+                else if (File.Exists(full))
+                {
+                    File.Delete(full);
+                }
+                _auto[full] = on;
+                return true;
+            }
+            catch
+            {
+                _auto.TryRemove(full, out _); // unsure what is on disk now — read it afresh next time
+                return false;
+            }
+        }
+    }
+
+    /// <summary>One stashed message, as much of it as sending needs.</summary>
+    public sealed record Item(string Id, string Text, IReadOnlyList<string> ImagePaths);
+
+    /// <summary>
+    /// The session's stashed messages, oldest first; entries it cannot make sense of are skipped. Null
+    /// when the pool is there but could not be read — distinct from empty, because "empty" is what
+    /// switches auto-send off, and a file caught mid-write by another process is not an empty pool.
+    /// </summary>
+    public static IReadOnlyList<Item>? Read(string workingDirectory, string sessionId)
+    {
+        var full = SessionFileBrowser.ResolveSafe(workingDirectory, RelPathFor(sessionId));
+        if (full is null) return null;
+        string json;
+        try
+        {
+            if (!File.Exists(full)) return [];
+            json = File.ReadAllText(full);
+        }
+        catch { return null; }
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+            var items = new List<Item>();
+            foreach (var e in doc.RootElement.EnumerateArray())
+            {
+                if (e.ValueKind != JsonValueKind.Object) continue;
+                if (!e.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String) continue;
+                var text = e.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String
+                    ? t.GetString() ?? "" : "";
+                var images = new List<string>();
+                if (e.TryGetProperty("images", out var imgs) && imgs.ValueKind == JsonValueKind.Array)
+                    foreach (var img in imgs.EnumerateArray())
+                        if (img.ValueKind == JsonValueKind.Object
+                            && img.TryGetProperty("fullPath", out var fp) && fp.ValueKind == JsonValueKind.String
+                            && !string.IsNullOrWhiteSpace(fp.GetString()))
+                            images.Add(fp.GetString()!);
+                items.Add(new Item(id.GetString()!, text, images));
+            }
+            return items;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Drop the given messages from the pool, leaving every other entry exactly as it was written.
+    /// Re-reads the file rather than trusting an earlier <see cref="Read"/>, so a stash that landed in
+    /// between survives. Returns false if the pool could not be rewritten.
+    /// </summary>
+    public static bool Remove(string workingDirectory, string sessionId, IReadOnlyCollection<string> ids)
+    {
+        lock (_gate) return RemoveLocked(workingDirectory, RelPathFor(sessionId), ids);
+    }
+
+    private static bool RemoveLocked(string workingDirectory, string rel, IReadOnlyCollection<string> ids)
+    {
+        var json = SessionFileBrowser.ReadTextSafe(workingDirectory, rel);
+        if (string.IsNullOrWhiteSpace(json)) return true;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return false;
+            var kept = doc.RootElement.EnumerateArray()
+                .Where(e => !(e.ValueKind == JsonValueKind.Object
+                              && e.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String
+                              && ids.Contains(id.GetString()!)))
+                .ToList();
+            if (kept.Count == doc.RootElement.GetArrayLength()) return true;
+            return WriteAtomic(workingDirectory, rel, JsonSerializer.SerializeToUtf8Bytes(kept));
+        }
+        catch { return false; }
+    }
 }
