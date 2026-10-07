@@ -356,6 +356,16 @@ internal static class Program
         return app;
     }
 
+    /// <summary>Where upload-image puts an image, under the session's working directory.</summary>
+    private const string UploadsFolder = ".claudeweb/uploads";
+
+    /// <summary>How many images one message may paste. Each is its own bracketed paste and a moment of
+    /// Claude Code reading it in; a screenshot tool sends one.</summary>
+    private const int MaxImagesPerMessage = 10;
+
+    /// <summary>upload-image's largest accepted image, decoded.</summary>
+    private const int MaxImageBytes = 25 * 1024 * 1024;
+
     private static readonly HashSet<string> AllowedImageExts =
         new(StringComparer.OrdinalIgnoreCase) { "png", "jpg", "jpeg", "gif", "webp", "bmp" };
 
@@ -777,9 +787,10 @@ internal static class Program
 
         // Send one message to a session's Claude, as typing it into the terminal would. The browser
         // has always been able to do this over the terminal socket; this is the same thing for
-        // everything that isn't a browser — the scheduler, and anything driving a session from a
-        // script. Text only: an image rides the socket as a path after an upload, which is a
-        // conversation between the pane and the session that has no business here.
+        // everything that isn't a browser — the scheduler, the screenshot app, and anything driving a
+        // session from a script. Images go up first through fs/upload-image, and the paths it
+        // answered with come back here in Images, to be pasted after the text the way the pane pastes
+        // them.
         app.MapPost("/api/sessions/{id}/message", async (string id, MessageRequest body, SessionManager mgr) =>
             await SendMessage(id, body, mgr));
 
@@ -791,11 +802,50 @@ internal static class Program
 
         static async Task<IResult> SendMessage(string id, MessageRequest body, SessionManager mgr)
         {
-            if (string.IsNullOrWhiteSpace(body.Text))
+            var images = (body.Images ?? []).Distinct().ToArray();
+            if (string.IsNullOrWhiteSpace(body.Text) && images.Length == 0)
                 return Results.BadRequest(new { error = "Nothing to send." });
-            return await mgr.SendMessageAsync(id, body.Text)
+            if (images.Length > MaxImagesPerMessage)
+                return Results.BadRequest(new { error = $"At most {MaxImagesPerMessage} images per message." });
+            if (images.Length > 0)
+            {
+                var info = mgr.GetAny(id);
+                if (info is null) return Results.NotFound(new { error = "No running session with that id." });
+                var resolved = new List<string>(images.Length);
+                foreach (var image in images)
+                {
+                    var full = UploadedImagePath(info.WorkingDirectory, image);
+                    if (full is null)
+                        return Results.BadRequest(new { error = $"Not an uploaded image: {image}" });
+                    resolved.Add(full);
+                }
+                return await mgr.SendMessageAsync(id, body.Text ?? "", resolved)
+                    ? Results.Ok()
+                    : Results.NotFound(new { error = "No running session with that id." });
+            }
+            return await mgr.SendMessageAsync(id, body.Text!)
                 ? Results.Ok()
                 : Results.NotFound(new { error = "No running session with that id." });
+        }
+
+        // An image named in a message must be one upload-image wrote: a file in the session's
+        // .claudeweb/uploads/. Anything else would make the message endpoint a way to have Claude read
+        // an arbitrary path — and /api/external carries only an API key, not the run of the disk. The
+        // checks above are on the path's text, so a link (a symlink or junction, at the file or at the
+        // uploads folder) could still point it elsewhere; upload-image never writes one, so none is
+        // accepted.
+        static string? UploadedImagePath(string workingDirectory, string rel)
+        {
+            var full = SessionFileBrowser.ResolveSafe(workingDirectory, rel);
+            var uploads = SessionFileBrowser.ResolveSafe(workingDirectory, UploadsFolder);
+            if (full is null || uploads is null) return null;
+            var inUploads = string.Equals(Path.GetDirectoryName(full), uploads,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+            if (!inUploads || !AllowedImageExts.Contains(Path.GetExtension(full).TrimStart('.'))) return null;
+            var file = new FileInfo(full);
+            return file.Exists && file.LinkTarget is null && new DirectoryInfo(uploads).LinkTarget is null
+                ? full
+                : null;
         }
 
         // ---- Recent launch presets & folders (shared across devices, persisted server-side) ---
@@ -1269,19 +1319,23 @@ internal static class Program
             byte[] bytes;
             try { bytes = Convert.FromBase64String(body.DataBase64 ?? ""); }
             catch { return Results.BadRequest(new { error = "invalid base64" }); }
-            if (bytes.Length == 0 || bytes.Length > 25 * 1024 * 1024)
+            if (bytes.Length == 0 || bytes.Length > MaxImageBytes)
                 return Results.BadRequest(new { error = "empty or too large" });
 
             var ext = (body.Ext ?? "png").Trim().TrimStart('.').ToLowerInvariant();
             if (!AllowedImageExts.Contains(ext)) ext = "png";
             var name = $"pasted-{DateTime.Now:yyyyMMdd-HHmmss-fff}.{ext}";
-            var rel = $".claudeweb/uploads/{name}";
+            var rel = $"{UploadsFolder}/{name}";
 
             var full = SessionFileBrowser.WriteBytes(info.WorkingDirectory, rel, bytes);
             return full is null
                 ? Results.BadRequest(new { error = "invalid path" })
                 : Results.Ok(new { path = rel, fullPath = full });
-        });
+        })
+        // The image arrives base64-encoded, a third bigger than itself: room for the largest one accepted
+        // above, which Kestrel's default 30 MB body limit cuts off at ~22 MB — a full-screen 5K capture
+        // of a photo gets there.
+        .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(MaxImageBytes / 3 * 4 + 64 * 1024));
 
         // Upload one or more arbitrary files into a folder under the write root (multipart form:
         // a "path" field for the target folder — empty means the root — an optional "dir" naming a
@@ -1793,8 +1847,9 @@ internal record PostponedAutoRequest(bool Enabled);
 /// told about while it changes.</summary>
 internal record SessionUiRequest(Dictionary<string, System.Text.Json.JsonElement>? State, bool Quiet = false);
 internal record RenameRequest(string Name);
-/// <summary>Body for <c>POST /api/sessions/{id}/message</c>: the text to send to Claude.</summary>
-internal record MessageRequest(string? Text);
+/// <summary>Body for <c>POST /api/sessions/{id}/message</c>: the text, and any images to paste after
+/// it — each a path upload-image answered with, inside the session's <c>.claudeweb/uploads/</c>.</summary>
+internal record MessageRequest(string? Text, string[]? Images = null);
 /// <summary>Body for <c>POST /api/self/open</c>: the file(s) to open as tabs in the calling session's
 /// Files panel, named relative to its working directory (or absolutely, inside it). <c>Path</c> and
 /// <c>Paths</c> are both accepted and add up; the last one opened becomes the active tab.

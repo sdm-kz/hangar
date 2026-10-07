@@ -140,6 +140,7 @@ public sealed class SessionManager : IDisposable
     public IReadOnlyCollection<SessionInfo> List()
     {
         foreach (var s in _sessions.Values) s.Refresh();
+        var projects = _projects.List();
         return _sessions.Values
             .Select(s => s.ToInfo(ConversationId(s)) with
             {
@@ -157,6 +158,7 @@ public sealed class SessionManager : IDisposable
                 ScheduleId = ScheduleOf(p.ClaudeSessionId, p.Id)?.Id,
                 ScheduleLabel = ScheduleOf(p.ClaudeSessionId, p.Id)?.Label,
             }))
+            .Select(i => i with { ProjectId = ProjectMembership.ForDirectory(projects, i.WorkingDirectory)?.Id })
             .OrderBy(i => i.CreatedAt)
             .ToArray();
     }

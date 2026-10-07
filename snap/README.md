@@ -1,0 +1,107 @@
+# Homeport Snap
+
+A tray app for Windows, macOS and Linux: press a hotkey, pick part of the screen, mark it up, type a
+message, and send both to one of the Claude sessions a Homeport server is running. The picture lands in
+the session's prompt exactly as an image pasted in the web UI does.
+
+Built with [Tauri 2](https://tauri.app): a small Rust shell (tray, hotkeys, screen capture, talking to
+the server) and a React page for the overlay, the editor and the settings.
+
+## Using it
+
+| Hotkey (default) | Capture | How |
+|---|---|---|
+| `Ctrl+Shift+1` | Region | Drag a rectangle. Or click: the window under the pointer, or the whole screen on the desktop. Shift squares it, Space moves it while dragging. |
+| `Ctrl+Shift+2` | Window | Hover to see which window, click to take it. |
+| `Ctrl+Shift+3` | Full screen | The screen under the pointer, straight into the editor. |
+| `Ctrl+Shift+4` | Freeform | Trace any shape; everything outside it comes out transparent. |
+
+`Esc` cancels; a right-click drops a drag in progress. The screens are frozen the moment the hotkey
+fires, so open menus, hover states and tooltips are captured as they were. A loupe shows the exact pixel
+under the pointer.
+
+The **editor** opens with the message box focused. The quickest path is: capture, type, `Ctrl+Enter`
+(`⌘↵` on a Mac).
+
+- Tools: select `V`, arrow `A`, rectangle `R`, ellipse `E`, line `L`, pen `P`, highlighter `H`,
+  text `T`, numbered step `N`, pixelate `B`, crop `C`. These single-letter keys work while focus isn't in
+  a text box; `Esc` leaves the message box.
+- `Shift` snaps lines to 45° and squares shapes.
+- Any shape can be dragged, and clicking it selects it: then `Delete` removes it, and colour and weight
+  apply to it. Double-click text to edit it.
+- `Ctrl+Z` undoes, `Ctrl+Shift+Z` redoes; `Ctrl+C` copies the image and `Ctrl+S` saves it.
+- The tool, colour and weight you used last are kept for the next capture.
+
+The **session picker** lists the server's running sessions, the ones you sent to most recently first.
+`Alt+↑/↓` changes the target from the message box. `/` searches by name, project or folder. Double-click
+a row to send straight to it.
+
+## Installing (Windows)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\deploy-snap.ps1            # build, install to C:\apps\homeport-snap, start
+powershell -ExecutionPolicy Bypass -File scripts\deploy-snap.ps1 -Autostart # …and start it at sign-in
+```
+
+It builds the release exe (`-SkipBuild` reuses the last one), stops any running copy, installs, and
+starts it. Settings and recents live in `%LOCALAPPDATA%\io.github.sdm-kz.homeport.snap` and survive a reinstall.
+Starting at sign-in is a toggle in the tray menu (*Start when I sign in*) and in Settings; a reinstall
+points an existing registration at the installed exe.
+
+## Connecting to a server
+
+Settings → *Homeport address*. On the machine that runs Homeport (`http://127.0.0.1:5099`) there is
+nothing else to do: Snap reads the server's instance file, the same way the tray does. Any other address
+asks for the server's password once; the token is kept in the app's settings file (readable only by you
+on macOS/Linux) until it expires, then the editor asks you to sign in again.
+
+## Platform notes
+
+- **macOS** asks for *Screen Recording* permission on the first capture (System Settings → Privacy &
+  Security). Without it, captures show only the wallpaper. Snap runs as a menu-bar app with no Dock icon.
+- **Linux, X11**: everything works. The tray needs `libayatana-appindicator3`.
+- **Linux, Wayland**: apps can't register global hotkeys or list windows, so bind
+  `homeport-snap --capture region` (or `window`, `fullscreen`, `freeform`) in your desktop's keyboard
+  settings. Region and freeform still work on the frozen screen; window mode falls back to the whole
+  screen.
+- **Windows**: `Ctrl+Shift+digit` overrides apps that use those keys (Excel's number formats, for
+  example). Change them in Settings; a combo another app already holds is reported there.
+
+`homeport-snap --capture <mode>` works on every platform, and goes to the running instance.
+
+## Developing
+
+```sh
+npm install
+npm run tauri dev        # the app, with the page hot-reloading
+npm test                 # frontend unit tests (vitest)
+cd src-tauri && cargo test   # Rust unit tests
+npm run tauri build      # installers for this platform
+```
+
+Linux needs the [Tauri prerequisites](https://tauri.app/start/prerequisites/) plus `libxcb1-dev
+libxrandr-dev libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev` for screen capture.
+
+Set `HOMEPORT_SNAP_CONFIG_DIR` to keep a test run's settings and recents apart from your real ones
+(otherwise they live in the app's local data folder, e.g. `%LOCALAPPDATA%\io.github.sdm-kz.homeport.snap`). In
+a debug build, `HOMEPORT_SNAP_TEST_FRAMES=1` makes every capture a generated picture per screen, for
+exercising the overlays and editor where there is nothing to capture (a disconnected remote session, CI).
+The log (`…\logs`) records how long each overlay and editor took to come up.
+
+### How it fits together
+
+- `src-tauri/src/capture.rs` freezes every monitor and lists the windows (via `xcap`).
+  `geometry.rs` maps a window onto its monitor's frame. The OS reports both in the same units: points
+  on macOS, pixels elsewhere.
+- `windows.rs` puts an overlay over each monitor and opens the editor on the monitor the capture came
+  from. The overlays and one spare editor stay loaded and hidden between captures: building a webview
+  is the slow part (and with none alive WebView2 shuts its browser process down too), so a warm overlay
+  is up in about 60 ms against about 650 ms cold. The price is roughly 300 MB of WebView2 memory
+  while idle.
+- The session picker shows each session's project as the server files it (`projectId` on
+  `/api/sessions`) and its colours from the web UI's own table (`@web/lib/sessionColors`), so neither
+  rule has a second copy here.
+- The editor (`src/editor`) draws with Konva in the capture's own pixels. It exports the full-resolution
+  PNG and hands it back over IPC. `api.rs` uploads it (`POST /api/sessions/{id}/fs/upload-image`) and
+  sends the message with the uploaded path (`POST /api/sessions/{id}/message`, `images`), which types
+  both into the session the way the web composer does.

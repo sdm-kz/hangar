@@ -139,4 +139,10 @@ public sealed record SessionInfo(
     /// the next one goes in. Off unless switched on from the Postponed bar; it switches itself off
     /// once the pool is empty and the turn the last message started has finished.
     /// </summary>
-    bool PostponedAutoSend = false);
+    bool PostponedAutoSend = false,
+    /// <summary>
+    /// The project whose linked folders cover this session's working directory
+    /// (<see cref="ProjectMembership.ForDirectory"/>), or null when none does. Worked out here so a
+    /// client that only lists sessions — the screenshot app — needn't carry its own copy of that rule.
+    /// </summary>
+    string? ProjectId = null);

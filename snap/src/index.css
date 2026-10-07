@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* The same neutral scale as the Homeport web UI, with the icon's coral as the one accent. The editor is
+   a tool window full of someone else's pixels, so it stays quiet: greys, and colour only where it means
+   "this is what will happen". Light and dark follow the OS. */
+:root {
+  color-scheme: light dark;
+  --background: oklch(0.985 0 0);
+  --foreground: oklch(0.145 0 0);
+  --panel: oklch(1 0 0);
+  --muted: oklch(0.95 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --border: oklch(0.87 0 0);
+  --canvas: oklch(0.93 0 0);
+  --accent: oklch(0.7 0.16 37);
+  --accent-foreground: oklch(0.99 0 0);
+  --danger: oklch(0.577 0.245 27.325);
+  --ok: oklch(0.62 0.15 150);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.17 0.005 265);
+    --foreground: oklch(0.96 0 0);
+    --panel: oklch(0.21 0.006 265);
+    --muted: oklch(0.26 0.006 265);
+    --muted-foreground: oklch(0.7 0 0);
+    --border: oklch(1 0 0 / 12%);
+    --canvas: oklch(0.13 0.004 265);
+    --accent: oklch(0.72 0.16 37);
+    --danger: oklch(0.7 0.19 22);
+    --ok: oklch(0.72 0.15 150);
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-canvas: var(--canvas);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* The overlay paints the frozen screen itself; nothing of the page may show around it. */
+body.overlay {
+  background: #000;
+  cursor: crosshair;
+}
+
+input, textarea {
+  user-select: text;
+}
+
+@layer base {
+  kbd {
+    font-family: inherit;
+    font-size: 11px;
+    padding: 0 4px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--muted);
+  }
+}

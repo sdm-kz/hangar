@@ -23,6 +23,12 @@ LAN. It is two programs:
     *Sessions survive an app restart* below). The icon greys out while the server isn't running, and
     the menu then offers **Start server**.
 
+Beside them sits **Homeport Snap** (`snap/`), a separate tray app for Windows, macOS and Linux: a hotkey
+freezes the screen, you pick a region, window, screen or freeform shape, mark it up, type a message, and
+send both to one of the server's running sessions — the picture lands in the prompt as a pasted image
+would. It is a client of the same API and can run on any machine that reaches the server. See
+[snap/README.md](snap/README.md).
+
 The web UI is a **session manager with a full terminal**:
 
 - **Create / select sessions** — each session is a live `claude --remote-control` process in a
