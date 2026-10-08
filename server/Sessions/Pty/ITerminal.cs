@@ -36,9 +36,6 @@ public interface ITerminal : IDisposable
     /// <summary>Write to the child's stdin (a keystroke, a paste, the watchdog's recovery sequence).</summary>
     ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct);
 
-    /// <summary>Type text as if the user entered it — used to inject a <c>/rename</c>.</summary>
-    void InjectInput(string text);
-
     /// <summary>
     /// Ask the child to redraw its whole screen, for a viewer that has just attached — it would
     /// otherwise get the replayed scrollback and no SIGWINCH, leaving the input box unpainted.

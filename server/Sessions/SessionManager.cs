@@ -848,8 +848,11 @@ public sealed class SessionManager : IDisposable
 
         if (_sessions.TryGetValue(id, out var s))
         {
+            // Sent as a message (paste, then a separate Enter), never "/rename X\r" in one write: Claude
+            // Code takes that chunk as typed text, the \r becomes a newline in the box, and the command
+            // sits there unsent — mid-turn especially, which is when a session renames itself.
             if (s.Rename(clean)) // raises MetadataChanged -> SavePersisted
-                s.Terminal?.InjectInput($"/rename {clean}\r");
+                _ = SendMessageAsync(id, $"/rename {clean}");
             return true;
         }
         if (_restorable.TryGetValue(id, out var p))

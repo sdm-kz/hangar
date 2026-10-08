@@ -515,10 +515,6 @@ public sealed partial class TerminalChannel : IDisposable
         finally { _writeLock.Release(); }
     }
 
-    /// <summary>Type text into the terminal as if the user entered it (used to inject a rename command).</summary>
-    public void InjectInput(string text) =>
-        _ = WriteAsync(Encoding.UTF8.GetBytes(text), CancellationToken.None);
-
     public void Resize(short cols, short rows)
     {
         cols = Math.Max((short)1, cols);

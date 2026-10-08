@@ -1,5 +1,4 @@
 using System.IO.Pipes;
-using System.Text;
 using System.Threading.Channels;
 using ClaudeWeb.Pty;
 
@@ -485,10 +484,6 @@ public sealed class PtyHostClient : ITerminal
 
     public ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct) =>
         SendAsync(PtyFrameType.Input, data, ct);
-
-    /// <summary>Type text into the terminal as if the user entered it (used to inject a rename command).</summary>
-    public void InjectInput(string text) =>
-        _ = WriteAsync(Encoding.UTF8.GetBytes(text), CancellationToken.None);
 
     // Attaching a viewer nudges the pseudoconsole size on purpose — TerminalPane sends cols-1 and then
     // cols back, so Ink redraws its whole frame rather than leaving the input box unpainted — and a
