@@ -14,6 +14,15 @@ public sealed record FsListing(
     IReadOnlyList<FsNode> Entries);
 
 /// <summary>
+/// Where a typed path leads (see <see cref="ServerFileBrowser.Resolve"/>): the folder to open, and the
+/// file it named, if it named one. <paramref name="Error"/> says why there is nowhere to go.
+/// </summary>
+public sealed record FsResolved(bool Found, string? Dir, string? File, string? Path = null, string? Error = null)
+{
+    public static FsResolved NotFound(string? path, string error) => new(false, null, null, path, error);
+}
+
+/// <summary>
 /// General read/write access to the server machine's filesystem for the sidebar Files panel. Unlike
 /// <see cref="SessionFileBrowser"/> this is NOT confined to a session's working directory — it takes
 /// absolute paths, matching the whole-filesystem reach the folder picker already exposes. It is still
@@ -69,6 +78,119 @@ public static class ServerFileBrowser
 
         var parent = Directory.GetParent(full)?.FullName;
         return new FsListing(full, parent, drives, entries);
+    }
+
+    /// <summary>
+    /// Turn a path someone typed or pasted into the folder the Files tree should open. Lenient about
+    /// how it was written — either slash on any platform, surrounding quotes from a copied path, a
+    /// leading <c>~</c> for the home folder, a path relative to <paramref name="baseDir"/> — and
+    /// strict about what comes back: the real on-disk spelling of every segment, because the tree
+    /// keys its rows by exact path and <c>c:/git</c> would otherwise open beside <c>C:\Git</c> rather
+    /// than onto it. A file resolves to the folder holding it, with the file named alongside.
+    /// </summary>
+    public static FsResolved Resolve(string? input, string? baseDir, string? defaultFolder)
+    {
+        var raw = (input ?? "").Trim();
+        // A path copied from Explorer ("Copy as path") or a shell arrives quoted.
+        if (raw.Length >= 2 && (raw[0] == '"' && raw[^1] == '"' || raw[0] == '\'' && raw[^1] == '\''))
+            raw = raw[1..^1].Trim();
+        if (raw.Length == 0) return FsResolved.NotFound(null, "Type a path.");
+
+        // Both separators mean "separator" here. On Windows both already are; elsewhere a backslash is
+        // a legal filename character, but nobody types one into an address bar meaning that.
+        var sep = Path.DirectorySeparatorChar;
+        raw = raw.Replace('/', sep).Replace('\\', sep);
+
+        if (raw == "~" || raw.StartsWith("~" + sep))
+            raw = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + raw[1..];
+
+        string full;
+        try
+        {
+            if (!Path.IsPathRooted(raw))
+            {
+                var root = !string.IsNullOrWhiteSpace(baseDir) && Directory.Exists(baseDir) ? baseDir!
+                    : !string.IsNullOrWhiteSpace(defaultFolder) && Directory.Exists(defaultFolder) ? defaultFolder!
+                    : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                raw = Path.Combine(root, raw);
+            }
+            // "C:" alone, or "C:foo", is relative to the server's current directory on C: as far as
+            // GetFullPath is concerned -- never what someone typing it meant.
+            if (raw.Length >= 2 && raw[1] == ':' && (raw.Length == 2 || raw[2] != sep))
+                raw = raw[..2] + sep + raw[2..];
+            full = Path.GetFullPath(raw);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return FsResolved.NotFound(null, "That isn't a valid path.");
+        }
+
+        var isDir = Directory.Exists(full);
+        if (!isDir && !File.Exists(full)) return FsResolved.NotFound(full, "Nothing at that path.");
+        var real = TrueCase(full);
+
+        // The tree starts at its drive roots and lists neither hidden nor system entries, so a path
+        // outside those can exist and still never be shown -- refused here, rather than sending the
+        // tree after rows that will not appear (a network share, a CD drive, ~/.config, a .git folder).
+        var drive = DriveRoots().FirstOrDefault(d => real.StartsWith(d.Path, StringComparison.OrdinalIgnoreCase));
+        if (drive is null) return FsResolved.NotFound(real, "That drive isn't in the Files tree.");
+        var dir = isDir ? real : Path.GetDirectoryName(real);
+        if (dir is null) return FsResolved.NotFound(real, "No folder holds that file.");
+        if (HiddenBelow(drive.Path, dir))
+            return FsResolved.NotFound(real, "That's inside a hidden folder, which the Files tree doesn't list.");
+        // A hidden file still has a visible folder to land in; there is just no row of its to point at.
+        var file = isDir || IsHidden(real) ? null : real;
+        return new FsResolved(true, dir, file);
+    }
+
+    /// <summary>Whether any folder between <paramref name="root"/> (exclusive) and <paramref name="dir"/> is hidden.</summary>
+    private static bool HiddenBelow(string root, string dir)
+    {
+        // The root itself is skipped: a Windows drive root reports Hidden|System, and is listed anyway.
+        var cur = dir;
+        while (cur.Length > root.Length)
+        {
+            if (IsHidden(cur)) return true;
+            cur = Path.GetDirectoryName(cur) ?? root;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// An existing path as the filesystem spells it, so a case-insensitive match comes back in the
+    /// case on disk. The drive root takes the form the tree's own roots use (<c>C:\</c>), and a trailing
+    /// separator is dropped from everything below it.
+    /// </summary>
+    private static string TrueCase(string full)
+    {
+        var root = Path.GetPathRoot(full);
+        if (string.IsNullOrEmpty(root)) return full;
+        // Drive letters are listed upper-case (DriveInfo), so a typed "c:" has to become "C:".
+        var cur = root.Length >= 2 && root[1] == ':' ? char.ToUpperInvariant(root[0]) + root[1..] : root;
+        var rest = full[root.Length..].Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+        // Only Windows needs the lookup: there a name matches whatever its case. Elsewhere the path
+        // exists exactly as typed, so as typed is how it is spelled.
+        var lookup = OperatingSystem.IsWindows()
+            ? new EnumerationOptions { MatchType = MatchType.Simple, MatchCasing = MatchCasing.CaseInsensitive, AttributesToSkip = 0, IgnoreInaccessible = true }
+            : null;
+        foreach (var seg in rest)
+        {
+            var name = seg;
+            if (lookup is not null)
+            {
+                try
+                {
+                    // The segment as the pattern, matched literally (Simple): only the entry it names is
+                    // turned into an object, not every sibling -- which matters in node_modules.
+                    var hit = new DirectoryInfo(cur).EnumerateFileSystemInfos(seg, lookup).FirstOrDefault();
+                    if (hit is not null) name = hit.Name;
+                }
+                catch { /* unreadable parent: keep the segment as typed */ }
+            }
+            cur = Path.Combine(cur, name);
+        }
+        return cur;
     }
 
     /// <summary>Overwrite (or create) a text file. Returns false if its parent directory is missing.</summary>

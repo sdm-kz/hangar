@@ -3,6 +3,7 @@ import type {
   CreateSessionRequest,
   FileListing,
   FsListing,
+  FsResolved,
   GitCommitDetail,
   GitDiff,
   GitFileContent,
@@ -270,6 +271,12 @@ export const api = {
   fsList(path?: string): Promise<FsListing> {
     const q = path ? `?path=${encodeURIComponent(path)}` : "";
     return request(`/api/fs/list${q}`);
+  },
+  // Resolve a typed path (either slash, quotes, ~, relative to `base`) to the folder to open.
+  fsResolve(path: string, base?: string | null): Promise<FsResolved> {
+    const q = new URLSearchParams({ path });
+    if (base) q.set("base", base);
+    return request(`/api/fs/resolve?${q}`);
   },
   async fetchServerFileText(path: string): Promise<string> {
     const res = await fetch(serverFileUrl(path));

@@ -13,12 +13,14 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  CornerDownLeft,
   File as FileIcon,
   FileText,
   FilePlus,
   Folder,
   FolderOpen,
   FolderPlus,
+  FolderSearch,
   TerminalSquare,
   HardDrive,
   Image as ImageIcon,
@@ -83,7 +85,9 @@ function baseName(p: string): string {
 function parentOf(p: string): string | null {
   const norm = p.replace(/[/\\]+$/, "");
   const idx = Math.max(norm.lastIndexOf("/"), norm.lastIndexOf("\\"));
-  if (idx <= 0) return null;
+  if (idx < 0) return null;
+  // "/home" sits under "/", the one root a Unix tree has; "/" itself sits under nothing.
+  if (idx === 0) return norm.length > 1 && norm[0] === "/" ? "/" : null;
   const parent = norm.slice(0, idx);
   // Keep the trailing slash on a Windows drive root ("C:" -> "C:\").
   return /^[A-Za-z]:$/.test(parent) ? parent + "\\" : parent;
@@ -134,6 +138,15 @@ export function FilesSidebar({
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false); // has the initial batch of folder listings landed?
   const uploadRef = useRef<HTMLInputElement>(null);
+  // The address field: open while a path is being typed, what is typed, and why the last one led
+  // nowhere. `goTo` is the row a successful jump still has to scroll to, once its folder has listed.
+  const [addressOpen, setAddressOpen] = useState(false);
+  const [address, setAddress] = useState("");
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const [goingTo, setGoingTo] = useState(false);
+  const [goTo, setGoTo] = useState<string | null>(null);
+  const addressRef = useRef<HTMLInputElement>(null);
+  const addressButtonRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null); // tree scroll container, for scroll-into-view
   const openPathRef = useRef(openPath);
   openPathRef.current = openPath;
@@ -299,6 +312,69 @@ export function FilesSidebar({
     if (r.top >= c.top && r.bottom <= c.bottom) return;
     el.scrollIntoView({ block: "center" });
   }, [revealDir, revealToken, children]);
+
+  // Jump to a typed path. The server resolves it -- either slash, quotes, ~, relative to the selected
+  // folder -- to the folder's real on-disk spelling, which is what the tree's rows are keyed by; a
+  // file resolves to the folder holding it, and the file's row is the one scrolled to.
+  const openAddress = useCallback(() => {
+    setAddress(selectedDir ?? "");
+    setAddressError(null);
+    setAddressOpen(true);
+  }, [selectedDir]);
+
+  // Focus goes back to the button that opened the field, rather than falling to the page.
+  const closeAddress = useCallback(() => {
+    setAddressOpen(false);
+    setAddressError(null);
+    requestAnimationFrame(() => addressButtonRef.current?.focus());
+  }, []);
+
+  const goToAddress = useCallback(async () => {
+    const typed = address.trim();
+    if (!typed || goingTo) return;
+    setGoingTo(true);
+    setAddressError(null);
+    try {
+      const res = await api.fsResolve(typed, selectedDir);
+      if (!res.found || !res.dir) {
+        setAddressError(res.error ?? "Nothing at that path.");
+        return;
+      }
+      // This jump is where the tree is meant to be, so the remembered scroll must not undo it.
+      restoredScrollRef.current = true;
+      const target = res.file ?? res.dir;
+      setGoTo(target);
+      setAddressOpen(false);
+      await expandTo(res.dir);
+      // Every listing on the way down has landed, so the row is there by the next paint or not at
+      // all (a listing that failed). Either way the jump is over: a target left standing would yank
+      // the tree to it the next time that folder happened to list, long after anyone asked.
+      window.setTimeout(() => setGoTo((cur) => (cur === target ? null : cur)), 500);
+    } catch {
+      setAddressError("Could not look that path up.");
+    } finally {
+      setGoingTo(false);
+    }
+  }, [address, goingTo, selectedDir, expandTo]);
+
+  // Select the whole path when the field opens, so typing replaces it and a paste lands clean.
+  useEffect(() => {
+    if (addressOpen) addressRef.current?.select();
+  }, [addressOpen]);
+
+  // ...and scroll the jumped-to row into view once it exists -- always centred, unlike the reveals
+  // above: a jump is a deliberate move somewhere else, so there is no position to preserve.
+  useEffect(() => {
+    if (!goTo) return;
+    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-fspath="${CSS.escape(goTo)}"]`);
+    if (!el) return;
+    setGoTo(null);
+    el.scrollIntoView({ block: "center" });
+    // Focus lands on the row, so the arrow keys carry on from where the jump arrived.
+    scrollRef.current
+      ?.querySelector<HTMLElement>(`[data-nav-row="${CSS.escape(goTo)}"]`)
+      ?.focus({ preventScroll: true });
+  }, [goTo, children]);
 
   // Once the revealed file's row is rendered, scroll it into view (once per open file). Rows that are
   // already visible stay put — otherwise clicking from one file to the next re-centres the tree and
@@ -483,9 +559,27 @@ export function FilesSidebar({
     <div className="flex h-full min-h-0 flex-col">
       {/* Toolbar: actions target the selected folder. */}
       <div className="flex items-center gap-0.5 border-b px-2 py-1.5">
-        <span className="mr-auto truncate text-xs text-muted-foreground" title={selectedDir ?? undefined}>
+        {/* The folder's name doubles as the way into the address field: it is where a path would be
+            shown anyway, and the toolbar has no width left for a field of its own. */}
+        <button
+          type="button"
+          onClick={() => (addressOpen ? closeAddress() : openAddress())}
+          className="mr-auto min-w-0 truncate rounded px-1 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+          title={selectedDir ? `${selectedDir} — click to go to another path` : "Go to a path"}
+        >
           {selectedDir ? baseName(selectedDir) : "Select a folder"}
-        </span>
+        </button>
+        <Button
+          ref={addressButtonRef}
+          variant="ghost"
+          size="icon"
+          className={cn("size-7", addressOpen && "text-foreground")}
+          title="Go to a folder or file by its path"
+          aria-pressed={addressOpen}
+          onClick={() => (addressOpen ? closeAddress() : openAddress())}
+        >
+          <FolderSearch className="size-4" />
+        </Button>
         {/* Same action as the row's hover button, reachable where there is no hover (touch). */}
         <Button
           variant="ghost"
@@ -555,6 +649,53 @@ export function FilesSidebar({
           }}
         />
       </div>
+
+      {/* The address field: a folder or a file, written either way round. Enter goes, Escape leaves. */}
+      {addressOpen && (
+        <div className="border-b px-2 py-1.5">
+          <form
+            className="flex items-center gap-1"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void goToAddress();
+            }}
+          >
+            <input
+              ref={addressRef}
+              value={address}
+              autoFocus
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder={"C:\\path\\to\\folder, or /path/to/file"}
+              aria-label="Path to go to"
+              onChange={(e) => {
+                setAddress(e.target.value);
+                setAddressError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  closeAddress();
+                }
+              }}
+              className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <Button
+              type="submit"
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0"
+              title="Go (Enter)"
+              disabled={!address.trim() || goingTo}
+            >
+              {goingTo ? <Loader2 className="size-4 animate-spin" /> : <CornerDownLeft className="size-4" />}
+            </Button>
+          </form>
+          {addressError && <p className="mt-1 text-xs text-destructive">{addressError}</p>}
+        </div>
+      )}
 
       {error && (
         <div className="border-b bg-destructive/10 px-2 py-1 text-xs text-destructive" onClick={() => setError(null)}>

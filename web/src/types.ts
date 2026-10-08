@@ -103,6 +103,15 @@ export interface FsListing {
   entries: FsNode[];
 }
 
+/** Where a path typed into the Files panel leads: the folder to open, and the file it named, if any. */
+export interface FsResolved {
+  found: boolean;
+  dir: string | null;
+  file: string | null;
+  path: string | null; // the path as resolved, when nothing was found there
+  error: string | null;
+}
+
 export interface GitStatus {
   isRepo: boolean;
   branch: string | null;
