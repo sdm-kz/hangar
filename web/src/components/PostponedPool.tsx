@@ -370,7 +370,7 @@ export function PostponedPool({
       />
 
       {open && (
-        <div className="absolute bottom-14 right-5 z-10 w-[min(32rem,calc(100%-2.5rem))] rounded-lg border bg-background p-2 shadow-lg">
+        <div className="absolute bottom-10 right-5 z-10 w-[min(32rem,calc(100%-2.5rem))] rounded-lg border bg-background p-2 shadow-lg">
           {/* Wraps: in a narrow split the buttons drop to a line of their own rather than spill out. */}
           <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 px-1">
             <span className="text-sm font-medium text-muted-foreground">Postponed</span>
@@ -581,7 +581,7 @@ export function PostponedPool({
         </div>
       )}
 
-      <div className="absolute bottom-3 right-5 z-10 flex items-center gap-1.5">
+      <div className="absolute bottom-1 right-5 z-10 flex items-center gap-1">
         {/* The pool's toggle: its count, green when Claude is idle and there is something to send
             (the nudge the old bar gave), and a dot for a draft left unstashed in the drop-up. */}
         <Button
@@ -590,7 +590,7 @@ export function PostponedPool({
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           className={cn(
-            "relative h-9 gap-1.5 bg-background/90 px-2.5 shadow-md backdrop-blur sm:h-8",
+            "relative h-7 gap-1 bg-background/90 px-2 shadow-md backdrop-blur [&_svg]:size-3.5",
             idle && "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-600/90 hover:text-white",
             auto && !closed && "border-emerald-600 text-emerald-600 dark:text-emerald-500"
           )}
@@ -603,7 +603,7 @@ export function PostponedPool({
           }
           aria-label={`Postponed messages (${messages.length})`}
         >
-          {auto && !closed ? <Play className="size-4" /> : <Inbox className="size-4" />}
+          {auto && !closed ? <Play /> : <Inbox />}
           {messages.length > 0 && <span className="tabular-nums">{messages.length}</span>}
           {!open && canStash && (
             <span className="absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
@@ -612,22 +612,22 @@ export function PostponedPool({
         <Button
           size="sm"
           variant="outline"
-          className="size-9 bg-background/90 px-0 shadow-md backdrop-blur sm:size-8"
+          className="size-7 bg-background/90 px-0 shadow-md backdrop-blur [&_svg]:size-3.5"
           onClick={() => fileInputRef.current?.click()}
           title="Attach an image (photo library or camera)"
           aria-label="Attach an image"
         >
-          <ImagePlus className="size-4" />
+          <ImagePlus />
         </Button>
         <Button
           size="sm"
           variant="outline"
-          className="size-9 bg-background/90 px-0 shadow-md backdrop-blur sm:size-8"
+          className="size-7 bg-background/90 px-0 shadow-md backdrop-blur [&_svg]:size-3.5"
           onClick={openComposer}
           title="Write a message in a full-size window — send it now or postpone it"
           aria-label="Compose a message"
         >
-          <PenLine className="size-4" />
+          <PenLine />
         </Button>
       </div>
     </div>

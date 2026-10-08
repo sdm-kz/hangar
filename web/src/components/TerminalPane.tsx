@@ -1358,7 +1358,7 @@ export const TerminalPane = forwardRef<
           aria-label="Jump to the latest output"
           className={cn(
             "absolute right-4 z-10 rounded-full border bg-background/90 p-3 text-muted-foreground shadow-md backdrop-blur transition hover:text-foreground",
-            cornerTaken ? "bottom-16" : "bottom-4"
+            cornerTaken ? "bottom-12" : "bottom-4"
           )}
         >
           <ArrowDown className="size-5" />
