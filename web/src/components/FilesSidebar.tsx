@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type UIEvent } from "react";
 import { api } from "@/lib/api";
 import type { DirEntry, FsNode } from "@/types";
 import { fileKind } from "@/lib/fileKind";
@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
 import { useConfirm } from "@/components/ui/confirm";
+import { useDismissable } from "@/lib/useDismissable";
 import { RenameField } from "./RenameField";
 import { CopyPathButton } from "./CopyPathButton";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,10 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   CornerDownLeft,
+  Ellipsis,
   File as FileIcon,
   FileText,
   FilePlus,
@@ -93,9 +97,34 @@ function parentOf(p: string): string | null {
   return /^[A-Za-z]:$/.test(parent) ? parent + "\\" : parent;
 }
 
+// Whether a folder's row is on screen: every folder above it is open. Drive roots have nothing above.
+function isVisible(dir: string, expanded: Set<string>): boolean {
+  for (let p = parentOf(dir); p; p = parentOf(p)) if (!expanded.has(p)) return false;
+  return true;
+}
+
 function join(dir: string, name: string): string {
   const sep = dir.includes("\\") || /^[A-Za-z]:/.test(dir) ? "\\" : "/";
   return dir.replace(/[/\\]+$/, "") + sep + name;
+}
+
+// How many folders one press of "expand one more level" opens at most. A level under a folder like
+// node_modules is hundreds of listings at once; the next press carries on from where this one stopped.
+const EXPAND_BATCH = 40;
+
+// The toolbar's geometry, for working out how many of its buttons fit: each is a 28px square with a
+// 2px gap, and the folder name keeps at least this much of the row.
+const TOOL_SLOT = 30;
+const LABEL_MIN = 56;
+
+/** One toolbar action: drawn as an icon button while there is room, and as a menu entry after. */
+interface ToolAction {
+  id: string;
+  label: string; // the button's tooltip, and the menu entry's text
+  icon: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  pressed?: boolean; // a toggle that is on (select mode, the address field)
 }
 
 function FileGlyph({ name }: { name: string }) {
@@ -104,6 +133,91 @@ function FileGlyph({ name }: { name: string }) {
   if (kind === "video") return <Video className="size-4 shrink-0 text-muted-foreground" />;
   if (kind === "text") return <FileText className="size-4 shrink-0 text-muted-foreground" />;
   return <FileIcon className="size-4 shrink-0 text-muted-foreground" />;
+}
+
+/**
+ * The toolbar's "more" button: the actions there was no room for, as a menu of icon-and-label rows.
+ * A toggle that is on says so with a highlighted row, as its button would with its colour.
+ */
+function ToolbarMore({
+  actions,
+  buttonRef,
+}: {
+  actions: ToolAction[];
+  buttonRef?: React.Ref<HTMLButtonElement>;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useDismissable(open, useCallback(() => setOpen(false), []));
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Focus goes into the menu as it opens, so the arrow keys work from the first press.
+  useEffect(() => {
+    if (open) menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+  }, [open]);
+
+  // Up and down step through the enabled entries, wrapping; Home and End jump to the ends.
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []);
+    if (!items.length) return;
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next: number;
+    if (e.key === "ArrowDown") next = (i + 1) % items.length;
+    else if (e.key === "ArrowUp") next = (i - 1 + items.length) % items.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = items.length - 1;
+    else return;
+    e.preventDefault();
+    items[next].focus();
+  };
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <Button
+        ref={buttonRef}
+        variant="ghost"
+        size="icon"
+        className={cn("size-7", open && "text-foreground")}
+        title="More actions"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Ellipsis className="size-4" />
+      </Button>
+      {open && (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="More actions"
+          onKeyDown={onKeyDown}
+          className="absolute right-0 top-full z-50 mt-1 w-60 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md popover-edge bg-popover py-1 text-popover-foreground shadow-md"
+        >
+          {actions.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              // A toggle (select mode, the address field) is a checkbox entry, and says whether it is on.
+              role={a.pressed === undefined ? "menuitem" : "menuitemcheckbox"}
+              aria-checked={a.pressed === undefined ? undefined : a.pressed}
+              disabled={a.disabled}
+              onClick={() => {
+                setOpen(false);
+                a.onClick();
+              }}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-50",
+                a.pressed && "bg-accent/60"
+              )}
+            >
+              <span className="shrink-0 text-muted-foreground">{a.icon}</span>
+              <span className="min-w-0 truncate">{a.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -147,6 +261,7 @@ export function FilesSidebar({
   const [goTo, setGoTo] = useState<string | null>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const addressButtonRef = useRef<HTMLButtonElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null); // tree scroll container, for scroll-into-view
   const openPathRef = useRef(openPath);
   openPathRef.current = openPath;
@@ -207,6 +322,15 @@ export function FilesSidebar({
     saveExpanded(expanded);
   }, [expanded]);
 
+  // List any folder that is open and on screen but has no listing yet: one remembered open inside a
+  // parent that has just been reopened, or one "expand one more level" opened. A failed listing
+  // stores an empty one, so nothing here is asked for twice.
+  useEffect(() => {
+    if (!ready) return; // the initial load lists what it needs itself
+    for (const dir of expanded)
+      if (!children.has(dir) && !loading.has(dir) && isVisible(dir, expanded)) void listDir(dir);
+  }, [ready, expanded, children, loading, listDir]);
+
   // ...and the selected folder alongside it.
   useEffect(() => {
     writeStored(SELECTED_KEY, selectedDir);
@@ -258,7 +382,10 @@ export function FilesSidebar({
         if (persisted.size > 0) {
           // Keep the folder that was selected last time; only fall back to the default start folder.
           if (res.current && !readStored(SELECTED_KEY) && !revealDirRef.current) setSelectedDir(res.current);
-          await Promise.all([...persisted].map(listDir));
+          // Only the ones that will be on screen. The set also remembers folders left open inside ones
+          // since closed, and listing those up front is work nobody sees; the effect below lists them
+          // when a parent opening brings them back into view.
+          await Promise.all([...persisted].filter((d) => isVisible(d, persisted)).map(listDir));
           return;
         }
         // A file is open, or a folder was asked for — the reveal effects below expand to those
@@ -326,7 +453,10 @@ export function FilesSidebar({
   const closeAddress = useCallback(() => {
     setAddressOpen(false);
     setAddressError(null);
-    requestAnimationFrame(() => addressButtonRef.current?.focus());
+    requestAnimationFrame(() =>
+      // The button, or -- when it has moved into the "more" menu -- the menu's own button.
+      (addressButtonRef.current ?? moreButtonRef.current)?.focus()
+    );
   }, []);
 
   const goToAddress = useCallback(async () => {
@@ -555,10 +685,120 @@ export function FilesSidebar({
     [selectedDir, listDir]
   );
 
+  // Open one more level under the selected folder: the shallowest folders in its subtree that are
+  // showing but closed. A whole-filesystem tree has no safe "expand everything" -- a drive is millions
+  // of entries -- so each press goes one level deeper instead, EXPAND_BATCH folders at a time, and
+  // breadth first, so a level too big for one press is finished by the next before going deeper.
+  const expandLevel = useCallback(() => {
+    if (!selectedDir) return;
+    // Folded out of sight (Collapse all, or a parent closed by hand): bring it back into view first,
+    // or the press would open folders nobody can see.
+    if (!isVisible(selectedDir, expanded)) {
+      void expandTo(selectedDir);
+      return;
+    }
+    const frontier: string[] = [];
+    const queue = [selectedDir];
+    while (queue.length && frontier.length < EXPAND_BATCH) {
+      const dir = queue.shift()!;
+      if (!expanded.has(dir)) frontier.push(dir);
+      else for (const c of children.get(dir) ?? []) if (c.isDir) queue.push(c.path);
+    }
+    if (frontier.length === 0) return;
+    // The listings follow from the effect above, which lists every open folder on screen that has none.
+    setExpanded((s) => new Set([...s, ...frontier]));
+  }, [selectedDir, expanded, children, expandTo]);
+
+  // Fold the whole tree back to its drives. The selected folder stays selected -- the toolbar still
+  // acts on it, and the address field still opens on it -- it just isn't on screen.
+  const collapseAll = useCallback(() => {
+    setExpanded(new Set());
+    scrollRef.current?.scrollTo({ top: 0 });
+    // The top is where the tree is now meant to be: a scroll restore still pending must not undo
+    // that, and an already-top tree fires no scroll event to record it.
+    restoredScrollRef.current = true;
+    writeStored(SCROLL_KEY, "0");
+  }, []);
+
+  // Everything the toolbar offers, most-used first: when the panel is too narrow for all of them,
+  // the ones at the end move into the "more" menu, so what stays out is what is reached for most.
+  const actions: ToolAction[] = [
+    {
+      id: "goto",
+      label: "Go to a folder or file by its path",
+      icon: <FolderSearch className="size-4" />,
+      onClick: () => (addressOpen ? closeAddress() : openAddress()),
+      pressed: addressOpen,
+    },
+    {
+      // Same action as the row's hover button, reachable where there is no hover (touch).
+      id: "session",
+      label: "New session in this folder",
+      icon: <Bot className="size-4" />,
+      onClick: () => selectedDir && onNewSession(selectedDir),
+      disabled: !selectedDir,
+    },
+    {
+      id: "shell",
+      label: "Open a shell in this folder",
+      icon: <TerminalSquare className="size-4" />,
+      onClick: () => selectedDir && onOpenShell(selectedDir),
+      disabled: !selectedDir,
+    },
+    { id: "file", label: "New file", icon: <FilePlus className="size-4" />, onClick: newFile, disabled: !selectedDir },
+    { id: "folder", label: "New folder", icon: <FolderPlus className="size-4" />, onClick: newFolder, disabled: !selectedDir },
+    {
+      id: "upload",
+      label: "Upload files",
+      icon: <Upload className="size-4" />,
+      onClick: () => uploadRef.current?.click(),
+      disabled: !selectedDir,
+    },
+    {
+      id: "expand",
+      // The folder it acts on is the one named at the toolbar's left, so the label needn't repeat it.
+      label: "Expand one more level",
+      icon: <ChevronsUpDown className="size-4" />,
+      onClick: expandLevel,
+      disabled: !selectedDir,
+    },
+    { id: "collapse", label: "Collapse all", icon: <ChevronsDownUp className="size-4" />, onClick: collapseAll },
+    {
+      // The way into select mode where there is no hover to reveal a row's own box, and a plain
+      // way out of it once there is nothing marked left to act on.
+      id: "select",
+      label: mark.selecting ? "Leave select mode" : "Select files",
+      icon: <ListChecks className="size-4" />,
+      onClick: () => (mark.selecting ? mark.clear() : mark.start()),
+      pressed: mark.selecting,
+    },
+    { id: "refresh", label: "Refresh", icon: <RefreshCw className="size-4" />, onClick: () => reload(selectedDir) },
+  ];
+
+  // How many of them fit beside the folder name, re-measured whenever the panel is resized. Null
+  // until the first measurement, which draws them all -- the common case, and no flash of a menu.
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarWidth, setToolbarWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    // The content box: the row's padding is already out of it.
+    const ro = new ResizeObserver(([entry]) => setToolbarWidth(entry.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const room = toolbarWidth === null ? Infinity : toolbarWidth - LABEL_MIN;
+  const fitsAll = actions.length * TOOL_SLOT <= room;
+  // When they don't all fit, one slot goes to the menu button itself.
+  const shown = fitsAll ? actions.length : Math.max(0, Math.floor(room / TOOL_SLOT) - 1);
+  const inline = actions.slice(0, shown);
+  const overflow = actions.slice(shown);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Toolbar: actions target the selected folder. */}
-      <div className="flex items-center gap-0.5 border-b px-2 py-1.5">
+      {/* Toolbar: actions target the selected folder. Too narrow for all of them, and the ones at
+          the end of the list move into a "more" menu rather than squeezing the folder name out. */}
+      <div ref={toolbarRef} className="flex items-center gap-0.5 border-b px-2 py-1.5">
         {/* The folder's name doubles as the way into the address field: it is where a path would be
             shown anyway, and the toolbar has no width left for a field of its own. */}
         <button
@@ -569,75 +809,23 @@ export function FilesSidebar({
         >
           {selectedDir ? baseName(selectedDir) : "Select a folder"}
         </button>
-        <Button
-          ref={addressButtonRef}
-          variant="ghost"
-          size="icon"
-          className={cn("size-7", addressOpen && "text-foreground")}
-          title="Go to a folder or file by its path"
-          aria-pressed={addressOpen}
-          onClick={() => (addressOpen ? closeAddress() : openAddress())}
-        >
-          <FolderSearch className="size-4" />
-        </Button>
-        {/* Same action as the row's hover button, reachable where there is no hover (touch). */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          title="New session in this folder"
-          disabled={!selectedDir}
-          onClick={() => selectedDir && onNewSession(selectedDir)}
-        >
-          <Bot className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          title="Open a shell in this folder"
-          disabled={!selectedDir}
-          onClick={() => selectedDir && onOpenShell(selectedDir)}
-        >
-          <TerminalSquare className="size-4" />
-        </Button>
-        <Button variant="ghost" size="icon" className="size-7" title="New file" disabled={!selectedDir} onClick={newFile}>
-          <FilePlus className="size-4" />
-        </Button>
-        <Button variant="ghost" size="icon" className="size-7" title="New folder" disabled={!selectedDir} onClick={newFolder}>
-          <FolderPlus className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          title="Upload files"
-          disabled={!selectedDir}
-          onClick={() => uploadRef.current?.click()}
-        >
-          <Upload className="size-4" />
-        </Button>
-        {/* The way into select mode where there is no hover to reveal a row's own box, and a plain
-            way out of it once there is nothing marked left to act on. */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn("size-7", mark.selecting && "text-foreground")}
-          title={mark.selecting ? "Leave select mode" : "Select files"}
-          aria-pressed={mark.selecting}
-          onClick={() => (mark.selecting ? mark.clear() : mark.start())}
-        >
-          <ListChecks className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          title="Refresh"
-          onClick={() => reload(selectedDir)}
-        >
-          <RefreshCw className="size-4" />
-        </Button>
+        {inline.map((a) => (
+          <Button
+            key={a.id}
+            ref={a.id === "goto" ? addressButtonRef : undefined}
+            variant="ghost"
+            size="icon"
+            className={cn("size-7 shrink-0", a.pressed && "text-foreground")}
+            title={a.label}
+            aria-label={a.label}
+            aria-pressed={a.pressed}
+            disabled={a.disabled}
+            onClick={a.onClick}
+          >
+            {a.icon}
+          </Button>
+        ))}
+        {overflow.length > 0 && <ToolbarMore actions={overflow} buttonRef={moreButtonRef} />}
         <input
           ref={uploadRef}
           type="file"
