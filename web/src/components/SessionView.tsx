@@ -53,6 +53,7 @@ import { shellIcon, shellTabLabel } from "./ShellTabStrip";
 import { WebLinkView } from "./WebLinkView";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
+import { HeadingActivityMark, type Activity } from "./ActivityMark";
 import { RenameField } from "./RenameField";
 import { PaneGroups, type DropZone, type PaneTab } from "./PaneGroups";
 import { GroupAddMenu } from "./GroupAddMenu";
@@ -260,6 +261,9 @@ function StateBadge({ state }: { state: SessionInfo["state"] }) {
 export function SessionView({
   session,
   busy,
+  activity = null,
+  activityLabel,
+  onTerminalShown,
   parent,
   shellsRev,
   onFork,
@@ -277,6 +281,13 @@ export function SessionView({
   session: SessionInfo;
   // Whether Claude is currently working in this session (from the live /hub/events busy set).
   busy?: boolean;
+  // This session's activity mark, as its row in the sidebar wears it, and what it says -- drawn on the
+  // Terminal tab, so a terminal tucked behind a pull request or a file still says what it is doing.
+  activity?: Activity | null;
+  activityLabel?: string;
+  // Whether Claude's terminal is on screen right now -- the active tab of a group that is showing --
+  // reported up so a finished turn only counts as seen once its terminal has actually been looked at.
+  onTerminalShown?: (id: string, shown: boolean) => void;
   // The session this one was forked from, when it's still around — null once it's been closed and
   // forgotten, in which case the header falls back to the name recorded at fork time.
   parent?: SessionInfo | null;
@@ -463,6 +474,14 @@ export function SessionView({
   // other tabs after their first showing (a frame keeps its place, a review its folds), and so does
   // the explorer. A file preview is only mounted while it shows.
   const visible = useMemo(() => new Set(visibleRefs(layout, wide)), [layout, wide]);
+  const terminalShown = visible.has(CLAUDE);
+  const onTerminalShownRef = useRef(onTerminalShown);
+  onTerminalShownRef.current = onTerminalShown;
+  useEffect(() => {
+    onTerminalShownRef.current?.(session.id, terminalShown);
+  }, [session.id, terminalShown]);
+  // Gone with the view: whatever replaces it reports for itself.
+  useEffect(() => () => onTerminalShownRef.current?.(session.id, false), [session.id]);
   const [everShown, setEverShown] = useState<ReadonlySet<PaneRef>>(() => new Set());
   useEffect(() => {
     setEverShown((prev) => {
@@ -802,9 +821,14 @@ export function SessionView({
     switch (paneKind(ref)) {
       case "claude":
         return {
-          icon: <TerminalSquare className="size-4 shrink-0" />,
+          icon: (
+            <span className="relative inline-flex shrink-0">
+              <TerminalSquare className="size-4" />
+              <HeadingActivityMark activity={activity} label={activityLabel} />
+            </span>
+          ),
           label: label("Terminal"),
-          title: "Claude's terminal",
+          title: activityLabel ? `Claude's terminal — ${activityLabel}` : "Claude's terminal",
           closable: false,
         };
       case "files":

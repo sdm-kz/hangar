@@ -10,6 +10,7 @@ import { setFaviconStatus } from "@/lib/favicon";
 import type { Project, SessionInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar, type SessionListTab, folderProgress, HeadingProgress } from "@/components/SessionSidebar";
+import { ACTIVITY_MARK, activityDetail as activityDetailOf, sessionActivity } from "@/components/ActivityMark";
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
 import { FilesSidebar } from "@/components/FilesSidebar";
@@ -246,6 +247,13 @@ export function App() {
   // Sessions that finished something you haven't seen yet — the gap the green pulse leaves behind
   // when it simply stops. Owned here, beside the sets it is derived from, because the sidebar is
   // mounted twice (desktop column and mobile drawer) and a mark cleared in one has been seen in both.
+  // Which session's terminal is on screen, as its view reports it. Selecting a session is not the
+  // same as looking at its terminal: on its pull request or a file, the terminal is a tab away, and a
+  // turn that finished there has not been seen.
+  const [terminalShownId, setTerminalShownId] = useState<string | null>(null);
+  const onTerminalShown = useCallback((id: string, shown: boolean) => {
+    setTerminalShownId((cur) => (shown ? id : cur === id ? null : cur));
+  }, []);
   const { done: doneIds, markSeen } = useDoneSessions({
     sessions,
     busyIds,
@@ -254,7 +262,7 @@ export function App() {
     failedIds,
     // A file or a folder's shells take the main area from the session pane without touching the
     // selection, so `activeId` alone would clear the mark of a session you never actually saw.
-    shownSessionId: openFile || shellFolder ? null : activeId,
+    shownSessionId: openFile || shellFolder || terminalShownId !== activeId ? null : activeId,
     streamUp,
   });
   // One bag for the sets, so the sidebar takes a single prop instead of five parallel ones.
@@ -583,6 +591,13 @@ export function App() {
   // that is what the Files tree, the diff and the reviews are reading. Only the terminal is missing,
   // and SessionView puts the Reopen button where it would have been.
   const active = sessions.find((s) => s.id === activeId) ?? null;
+  // The open session's own mark, for its Terminal tab -- the same reading as its row's corner, and
+  // like the row, none for a closed session. Its branch's activity stays in the sidebar: the tab is
+  // this session's terminal, not its forks'.
+  const activeActivity = active && active.state !== "Restorable" ? sessionActivity(active, activityIds) : null;
+  const activeActivityLabel = activeActivity
+    ? (activityDetailOf(activeActivity, active!.id, activityIds) ?? ACTIVITY_MARK[activeActivity].label)
+    : undefined;
   // The session the fork popup is open for, and — for the active session's header link — the one it
   // was forked from. Both resolved from the live list, so they stay current (or drop to null once the
   // session is gone).
@@ -1059,6 +1074,9 @@ export function App() {
               // Compaction is work too: the postponed pool must not flush a stashed message into the
               // terminal mid-compact, and a manual /compact leaves the hook-derived busy set empty.
               busy={busyIds.has(active.id) || compactingIds.has(active.id)}
+              activity={activeActivity}
+              activityLabel={activeActivityLabel}
+              onTerminalShown={onTerminalShown}
               parent={activeParent}
               shellsRev={shellsRev}
               onFork={forkSession}
