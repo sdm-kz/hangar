@@ -261,6 +261,9 @@ export const TerminalPane = forwardRef<
     // Whether a pasted image is uploaded into the session's folder and its path pasted in. On for
     // Claude, which reads images; off for a shell, where a path appearing at the prompt is noise.
     imagePaste?: boolean;
+    // Whether something else floats over the pane's bottom-right corner (the Claude terminal's
+    // postponed-pool buttons), so the jump-to-bottom button sits above it rather than under it.
+    cornerTaken?: boolean;
     // The session's working directory, used to resolve a relative file path clicked in the terminal.
     workingDirectory: string;
     // Fired with the new name when Claude's "Session renamed to:" confirmation appears in this
@@ -281,6 +284,7 @@ export const TerminalPane = forwardRef<
     sessionId,
     socketPath,
     imagePaste = true,
+    cornerTaken = false,
     workingDirectory,
     onRenameDetected,
     onColorDetected,
@@ -1337,8 +1341,8 @@ export const TerminalPane = forwardRef<
         </div>
       )}
       {/* Scrolled off the live tail: one tap back to the bottom, instead of flicking through
-          scrollback. Sits in the corner, clear of the centered reconnect chip — image attach lives
-          in the postponed panel's bar, next to Compose.
+          scrollback. Sits in the corner, clear of the centered reconnect chip — and, in Claude's
+          terminal, stacked above the postponed pool's buttons, which SessionView floats there.
 
           z-10 like the controls above, and for the same reason: xterm's link layer is a canvas at
           z-index 2 over the whole screen area, so anything laid on the pane without a z-index of its
@@ -1352,7 +1356,10 @@ export const TerminalPane = forwardRef<
           onClick={() => termRef.current?.scrollToBottom()}
           title="Jump to the latest output"
           aria-label="Jump to the latest output"
-          className="absolute bottom-4 right-4 z-10 rounded-full border bg-background/90 p-3 text-muted-foreground shadow-md backdrop-blur transition hover:text-foreground"
+          className={cn(
+            "absolute right-4 z-10 rounded-full border bg-background/90 p-3 text-muted-foreground shadow-md backdrop-blur transition hover:text-foreground",
+            cornerTaken ? "bottom-16" : "bottom-4"
+          )}
         >
           <ArrowDown className="size-5" />
         </button>

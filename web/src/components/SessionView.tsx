@@ -913,8 +913,8 @@ export function SessionView({
       case "claude":
         // Always mounted, whatever is showing: its socket and its screen outlive any tab switch.
         return (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {/* The pane keeps flex-1 so FitAddon measures the height left over by the pool bar below. */}
+          // relative: the postponed pool floats over this corner rather than taking a bar under it.
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="min-h-0 flex-1">
               {/* A closed session has no pty to attach to: mounting the pane would open a socket
                   against nothing and leave a black rectangle that looks like a terminal failing.
@@ -929,6 +929,7 @@ export function SessionView({
                   workingDirectory={session.workingDirectory}
                   // A shell has focus: an image pasted there is not Claude's to upload.
                   imagePaste={!focusedRef || paneKind(focusedRef) !== "shell"}
+                  cornerTaken
                   onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
                   onColorDetected={(color) => onTerminalColor?.(session.id, color)}
                   onOpenFile={onTerminalOpenFile}

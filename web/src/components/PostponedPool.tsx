@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ChevronDown,
-  ChevronUp,
   ImagePlus,
   Inbox,
   Maximize2,
@@ -15,7 +13,6 @@ import {
 import { api, sessionFileUrl } from "@/lib/api";
 import { uploadImageFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ImageLightbox } from "./ImageLightbox";
@@ -43,11 +40,12 @@ const baseName = (p: string) => p.split(/[\\/]/).pop() || "image";
 type ComposerTarget = { kind: "draft" } | { kind: "message"; id: string };
 
 /**
- * Per-session pool of "postponed" messages: a composer pinned under the terminal where the user can
+ * Per-session pool of "postponed" messages: buttons floating over the terminal's bottom-right corner,
+ * with a drop-up holding the pool and a quick composer, where the user can
  * stash text and pasted images while Claude is busy, then send them into the live terminal on demand.
  * Nothing sends by itself unless auto-send is switched on (the play button): then the server types the
  * next message in each time Claude finishes a turn (PostponedAutoSender), and switches it back off once
- * the pool has run dry. With it off, an idle session just highlights the bar as a nudge.
+ * the pool has run dry. With it off, an idle session just turns the pool button green as a nudge.
  */
 export function PostponedPool({
   sessionId,
@@ -74,7 +72,7 @@ export function PostponedPool({
   const [messages, setMessages] = useState<PostponedMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [draftImages, setDraftImages] = useState<PostponedImage[]>([]);
-  const [expanded, setExpanded] = useState(false);
+  const [open, setOpen] = useState(false);
   const [flushing, setFlushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
@@ -85,6 +83,7 @@ export function PostponedPool({
   const [autoAsked, setAutoAsked] = useState<boolean | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   // Read by the re-sync effect below without making it re-run on every local edit.
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -104,9 +103,28 @@ export function PostponedPool({
     setComposer(null);
     setError(null);
     setAutoAsked(null);
+    setOpen(false);
     loadPostponed(sessionId).then((m) => { if (!cancelled) setMessages(m); }).catch(() => {});
     return () => { cancelled = true; };
   }, [sessionId]);
+
+  // The drop-up closes on a click anywhere else, or Escape — but not while the full-size composer or
+  // an image preview is up over it: those are opened from the drop-up and should land back on it.
+  useEffect(() => {
+    if (!open || composer || preview) return;
+    const onDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, composer, preview]);
 
   // Re-read the pool when the server's count moves away from ours. Keyed on the count alone: our own
   // saves move it to where we already are, so only a change made elsewhere leaves the two apart. Not
@@ -145,8 +163,10 @@ export function PostponedPool({
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [draft, expanded]);
+    // scrollHeight leaves out the border, which a border-box height includes: without adding it back
+    // the box comes out a hair short of one line and shows a scrollbar while empty.
+    el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+  }, [draft, open]);
 
   // Persist (to the server) alongside every mutation rather than via an effect, so a session switch
   // can't race a save of the previous session's messages under the new session's id. The save is
@@ -204,7 +224,7 @@ export function PostponedPool({
   );
 
   // Composer "Postpone"/"Save": stash a new message, or overwrite the one being edited in place (so it
-  // keeps its position in the pool). Expands the pool so the result is visible.
+  // keeps its position in the pool). Opens the drop-up so the result is visible.
   const composerPostpone = useCallback(
     (d: ComposerDraft) => {
       if (composer?.target.kind === "message") {
@@ -222,7 +242,7 @@ export function PostponedPool({
         setDraftImages([]);
       }
       setError(null);
-      setExpanded(true);
+      setOpen(true);
     },
     [composer, messages, commit]
   );
@@ -279,6 +299,9 @@ export function PostponedPool({
           setError("Image upload failed.");
         }
       }
+      // The image joins the draft, which lives in the drop-up — open it, or the attach looks like it
+      // did nothing (and an upload error would go unseen).
+      setOpen(true);
     },
     [sessionId]
   );
@@ -325,9 +348,15 @@ export function PostponedPool({
 
   return (
     <>
-    <div data-owns-image-paste className="shrink-0 border-t bg-background">
-      {/* One picker for both attach buttons (the bar's and the composer's), mounted outside the
-          collapsible body so the bar can open it while the panel is still collapsed. */}
+    {/* Floats over the terminal's bottom-right corner instead of taking a bar's worth of height
+        under it: the count, attach and Compose, with the pool itself in a drop-up above them. Both
+        are placed against the pane (SessionView makes it relative), so the drop-up is sized to the
+        pane and stays inside a narrow split rather than spilling out of it and being clipped.
+        right-5 keeps them off xterm's scrollbar; z-10 for the same reason as the terminal's own
+        corner controls — xterm's link canvas sits at z-index 2. `contents` keeps this wrapper out of
+        the layout while it still holds both for the outside-click check and the paste guard. */}
+    <div ref={rootRef} data-owns-image-paste className="contents">
+      {/* The picker behind the corner's attach button. */}
       <input
         ref={fileInputRef}
         type="file"
@@ -339,129 +368,79 @@ export function PostponedPool({
           e.target.value = ""; // allow re-picking the same file
         }}
       />
-      {/* Header: the whole bar toggles expand/collapse; the flush-all action stops propagation. */}
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => setExpanded((v) => !v)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setExpanded((v) => !v);
-          }
-        }}
-        aria-expanded={expanded}
-        className="flex cursor-pointer select-none items-center gap-2 px-3 py-1.5"
-        title={expanded ? "Collapse postponed messages" : "Expand postponed messages"}
-      >
-        <div className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-          {expanded ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
-          <Inbox className="size-4" />
-          <span>Postponed</span>
-          {messages.length > 0 && (
-            <Badge variant="secondary" className="px-1.5">
-              {messages.length}
-            </Badge>
-          )}
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          {idle && (
-            <span className="text-xs font-medium text-emerald-600 dark:text-emerald-500">Claude is idle</span>
-          )}
-          {auto && !closed && (
-            <span className="hidden whitespace-nowrap text-xs font-medium text-emerald-600 sm:inline dark:text-emerald-500">
-              {messages.length > 0 ? "Auto-sending" : "Sending the last one"}
-            </span>
-          )}
-          {/* Always reachable, collapsed or not — the way in for anything longer than a line, and
-              (next to it) for a photo; this replaces the button that used to float over the
-              terminal. Attaching leaves the panel exactly as it was: the image joins the draft
-              either way, and expanding under someone's thumb is more disruptive than helpful. */}
-          <Button
-            size="sm"
-            variant="outline"
-            className="size-9 px-0 sm:size-8"
-            onClick={(e) => {
-              e.stopPropagation();
-              fileInputRef.current?.click();
-            }}
-            title="Attach an image (photo library or camera)"
-            aria-label="Attach an image"
-          >
-            <ImagePlus className="size-4" />
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            // Square icon button on a phone (matching attach), label back from sm up.
-            className="size-9 px-0 sm:size-8 sm:w-auto sm:px-3"
-            onClick={(e) => {
-              e.stopPropagation();
-              openComposer();
-            }}
-            title="Write a message in a full-size window — send it now or postpone it"
-            aria-label="Compose a message"
-          >
-            <PenLine className="size-4" />
-            <span className="hidden sm:inline">Compose</span>
-          </Button>
-          {/* Not offered at all in a closed session: there is no terminal to send into, and a
-              greyed button cannot say why — a disabled one takes no pointer events, so the title
-              that would have explained it never shows. What the pool still does — read, stash,
-              discard — is all still here, and the panel above says where the terminal went. */}
-          {/* Auto-send. Offered while there is something to queue, and kept while it is on so it can
-              be paused even after the last message has gone in. Absent in a closed session, like
-              Send all: a reopen is a new session, with a pool of its own. */}
-          {(messages.length > 0 || auto) && !closed && (
-            <Button
-              size="sm"
-              variant={auto ? "default" : "outline"}
-              onClick={(e) => {
-                e.stopPropagation();
-                void toggleAuto();
-              }}
-              aria-pressed={auto}
-              className={cn(
-                "size-9 px-0 sm:size-8 sm:w-auto sm:px-3",
-                auto && "bg-emerald-600 text-white hover:bg-emerald-600/90"
-              )}
-              title={
-                auto
-                  ? "Auto-send is on: each time Claude finishes, the next message goes in. Click to pause."
-                  : "Auto-send: each time Claude finishes, send the next message — one at a time, in order"
-              }
-              aria-label={auto ? "Pause auto-send" : "Start auto-send"}
-            >
-              {auto ? <Pause className="size-4" /> : <Play className="size-4" />}
-              <span className="hidden sm:inline">Auto</span>
-            </Button>
-          )}
-          {/* Hidden while auto-send is on: the server is sending these, and a click here could race
-              it into sending one twice. Pause to send by hand. */}
-          {messages.length > 0 && !closed && !auto && (
-            <Button
-              size="sm"
-              variant={idle ? "default" : "outline"}
-              onClick={(e) => {
-                e.stopPropagation();
-                sendAll();
-              }}
-              disabled={flushing}
-              className={cn(idle && "bg-emerald-600 text-white hover:bg-emerald-600/90")}
-              title="Send every stashed message into the terminal, in order"
-            >
-              <Send className="size-4" />
-              Send all
-            </Button>
-          )}
-        </div>
-      </div>
 
-      {expanded && (
-        <div className="px-3 pb-2">
+      {open && (
+        <div className="absolute bottom-14 right-5 z-10 w-[min(32rem,calc(100%-2.5rem))] rounded-lg border bg-background p-2 shadow-lg">
+          {/* Wraps: in a narrow split the buttons drop to a line of their own rather than spill out. */}
+          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 px-1">
+            <span className="text-sm font-medium text-muted-foreground">Postponed</span>
+            {idle && (
+              // Not on a phone, where it wraps the header: the green count button says it already.
+              <span className="hidden whitespace-nowrap text-xs font-medium text-emerald-600 sm:inline dark:text-emerald-500">
+                Claude is idle
+              </span>
+            )}
+            {auto && !closed && (
+              <span className="whitespace-nowrap text-xs font-medium text-emerald-600 dark:text-emerald-500">
+                {messages.length > 0 ? "Auto-sending" : "Sending the last one"}
+              </span>
+            )}
+            <div className="ml-auto flex items-center gap-1.5">
+              {/* Not offered at all in a closed session: there is no terminal to send into, and a
+                  greyed button cannot say why — a disabled one takes no pointer events, so the title
+                  that would have explained it never shows. What the pool still does — read, stash,
+                  discard — is all still here, and the panel above says where the terminal went. */}
+              {/* Auto-send. Offered while there is something to queue, and kept while it is on so it
+                  can be paused even after the last message has gone in. Absent in a closed session,
+                  like Send all: a reopen is a new session, with a pool of its own. */}
+              {(messages.length > 0 || auto) && !closed && (
+                <Button
+                  size="sm"
+                  variant={auto ? "default" : "outline"}
+                  onClick={() => void toggleAuto()}
+                  aria-pressed={auto}
+                  className={cn("h-8 px-2.5", auto && "bg-emerald-600 text-white hover:bg-emerald-600/90")}
+                  title={
+                    auto
+                      ? "Auto-send is on: each time Claude finishes, the next message goes in. Click to pause."
+                      : "Auto-send: each time Claude finishes, send the next message — one at a time, in order"
+                  }
+                  aria-label={auto ? "Pause auto-send" : "Start auto-send"}
+                >
+                  {auto ? <Pause className="size-4" /> : <Play className="size-4" />}
+                  Auto
+                </Button>
+              )}
+              {/* Hidden while auto-send is on: the server is sending these, and a click here could
+                  race it into sending one twice. Pause to send by hand. */}
+              {messages.length > 0 && !closed && !auto && (
+                <Button
+                  size="sm"
+                  variant={idle ? "default" : "outline"}
+                  onClick={() => sendAll()}
+                  disabled={flushing}
+                  className={cn("h-8 px-2.5", idle && "bg-emerald-600 text-white hover:bg-emerald-600/90")}
+                  title="Send every stashed message into the terminal, in order"
+                >
+                  <Send className="size-4" />
+                  Send all
+                </Button>
+              )}
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                title="Close"
+                aria-label="Close postponed messages"
+                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          </div>
+
           {/* Stashed items */}
-          {messages.length > 0 && (
-            <div className="mb-2 max-h-[32vh] space-y-1.5 overflow-auto">
+          {messages.length > 0 ? (
+            <div className="mb-2 max-h-[40vh] space-y-1.5 overflow-auto">
               {messages.map((m) => (
                 <div
                   key={m.id}
@@ -526,9 +505,11 @@ export function PostponedPool({
                 </div>
               ))}
             </div>
+          ) : (
+            <p className="mb-2 px-1 text-xs text-muted-foreground">Nothing postponed yet.</p>
           )}
 
-          {/* Composer */}
+          {/* Quick stash */}
           {draftImages.length > 0 && (
             <div className="mb-1.5 flex flex-wrap gap-1.5">
               {draftImages.map((img, i) => (
@@ -569,24 +550,14 @@ export function PostponedPool({
               onPaste={onPaste}
               onKeyDown={onKeyDown}
               rows={1}
-              placeholder="Postpone a message — Enter to stash, Shift+Enter or Ctrl+J for a newline, paste an image"
+              placeholder="Postpone a message — Enter to stash"
+              title="Enter to stash, Shift+Enter or Ctrl+J for a newline; paste an image to attach it"
               // min-w-0 flex-1: the Textarea's own w-full would otherwise set a flex base of 100%
               // and, on a narrow screen, soak up the row by shrinking the buttons next to it.
               className="max-h-20 min-h-10 min-w-0 flex-1 resize-none py-2.5 leading-5"
             />
-            {/* Desktop-only: on a phone these two would eat the width the message needs, and the
-                bar right above already carries both (attach, and Compose for the full-size window).
-                shrink-0 keeps them hittable next to the growing textarea. */}
-            <Button
-              variant="outline"
-              size="icon"
-              className="hidden shrink-0 sm:inline-flex sm:size-9"
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach an image (photo library or camera)"
-              aria-label="Attach an image"
-            >
-              <ImagePlus className="size-4" />
-            </Button>
+            {/* Desktop-only: on a phone it would eat the width the message needs, and Compose sits
+                right below in the corner anyway. */}
             <Button
               variant="outline"
               size="icon"
@@ -609,6 +580,56 @@ export function PostponedPool({
           {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
         </div>
       )}
+
+      <div className="absolute bottom-3 right-5 z-10 flex items-center gap-1.5">
+        {/* The pool's toggle: its count, green when Claude is idle and there is something to send
+            (the nudge the old bar gave), and a dot for a draft left unstashed in the drop-up. */}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className={cn(
+            "relative h-9 gap-1.5 bg-background/90 px-2.5 shadow-md backdrop-blur sm:h-8",
+            idle && "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-600/90 hover:text-white",
+            auto && !closed && "border-emerald-600 text-emerald-600 dark:text-emerald-500"
+          )}
+          title={
+            idle
+              ? "Claude is idle — postponed messages are waiting"
+              : auto && !closed
+                ? "Postponed messages — auto-sending"
+                : "Postponed messages"
+          }
+          aria-label={`Postponed messages (${messages.length})`}
+        >
+          {auto && !closed ? <Play className="size-4" /> : <Inbox className="size-4" />}
+          {messages.length > 0 && <span className="tabular-nums">{messages.length}</span>}
+          {!open && canStash && (
+            <span className="absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
+          )}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="size-9 bg-background/90 px-0 shadow-md backdrop-blur sm:size-8"
+          onClick={() => fileInputRef.current?.click()}
+          title="Attach an image (photo library or camera)"
+          aria-label="Attach an image"
+        >
+          <ImagePlus className="size-4" />
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="size-9 bg-background/90 px-0 shadow-md backdrop-blur sm:size-8"
+          onClick={openComposer}
+          title="Write a message in a full-size window — send it now or postpone it"
+          aria-label="Compose a message"
+        >
+          <PenLine className="size-4" />
+        </Button>
+      </div>
     </div>
     <ComposerDialog
       sessionId={sessionId}
