@@ -221,7 +221,7 @@ export function FolderChips({
   /** The folder currently set, so the chip matching it can show as chosen. */
   value: string;
   onPick: (path: string) => void;
-  /** The heading above the row — a project name and its colour dot, typically. */
+  /** The heading above the row — a project's glyph and name, typically. */
   label: ReactNode;
   /** What to say when the list is empty; nothing renders without it. */
   empty?: ReactNode;

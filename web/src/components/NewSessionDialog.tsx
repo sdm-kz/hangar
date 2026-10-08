@@ -2,10 +2,10 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, ApiError } from "@/lib/api";
 import { folderName } from "@/lib/recentFolders";
 import { cn } from "@/lib/utils";
+import { ProjectGlyph } from "./ProjectGlyph";
 import { sameRecent, type RecentSession } from "@/lib/recentSessions";
 import { buildPrompt, templateFolderChoices, templateSections } from "@/lib/templates";
 import type { Project, SessionInfo, SessionTemplate } from "@/types";
-import { sessionColor } from "@/lib/sessionColors";
 import {
   Dialog,
   DialogContent,
@@ -27,7 +27,6 @@ import {
 } from "./LaunchOptions";
 import { TemplateDialog } from "./TemplateDialog";
 import {
-  Boxes,
   ChevronDown,
   ChevronRight,
   History,
@@ -304,14 +303,7 @@ export function NewSessionDialog({
                         onPick={setDir}
                         label={
                           <>
-                            <Boxes
-                              className="size-3"
-                              style={
-                                sessionColor(project.color)
-                                  ? { color: sessionColor(project.color)! }
-                                  : undefined
-                              }
-                            />
+                            <ProjectGlyph project={project} className="size-3" />
                             {project.name}
                           </>
                         }
@@ -556,11 +548,10 @@ function TemplatesTab({
         ) : (
           <div className="max-h-56 space-y-2 overflow-y-auto overscroll-contain rounded-md border p-1.5">
             {sections.map((sec) => {
-              const accent = sessionColor(sec.project?.color ?? null);
               return (
                 <div key={sec.project?.id ?? "none"} className="space-y-1">
                   <div className="flex items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
-                    <Boxes className="size-3" style={accent ? { color: accent } : undefined} />
+                    <ProjectGlyph project={sec.project} className="size-3" />
                     <span className="truncate">{sec.project?.name ?? "No project"}</span>
                   </div>
                   {sec.templates.map((t) => (
@@ -652,14 +643,7 @@ function TemplatesTab({
                       onPick={onDir}
                       label={
                         <>
-                          <Boxes
-                            className="size-3"
-                            style={
-                              sessionColor(templateProject.color)
-                                ? { color: sessionColor(templateProject.color)! }
-                                : undefined
-                            }
-                          />
+                          <ProjectGlyph project={templateProject} className="size-3" />
                           {templateProject.name}
                         </>
                       }

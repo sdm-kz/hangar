@@ -64,7 +64,8 @@ public sealed class ProjectStore
     public int Revision => Volatile.Read(ref _revision);
 
     /// <summary>Create a project. Returns the updated list, or null when the name is blank or at capacity.</summary>
-    public IReadOnlyList<Project>? Create(string? name, string? color, IEnumerable<string>? folders = null)
+    public IReadOnlyList<Project>? Create(
+        string? name, string? color, IEnumerable<string>? folders = null, string? icon = null)
     {
         var clean = CleanName(name);
         if (clean is null) return null;
@@ -81,17 +82,21 @@ public sealed class ProjectStore
                 .ToList();
             // A folder belongs to exactly one project, so claiming it takes it off whoever had it.
             foreach (var f in links) Unlink(f);
-            _projects.Add(new Project(Guid.NewGuid().ToString("n"), clean, CleanColor(color), links));
+            _projects.Add(new Project(Guid.NewGuid().ToString("n"), clean, CleanColor(color), links)
+            {
+                Icon = CleanIcon(icon),
+            });
             Save();
             return Snapshot();
         }
     }
 
     /// <summary>
-    /// Rename and/or recolour a project. A null field leaves that one as it was; an empty colour
-    /// clears the accent. Returns null when there is no such project (or the new name is blank).
+    /// Rename, recolour and/or re-icon a project. A null field leaves that one as it was; an empty
+    /// colour clears the accent, and an empty icon goes back to the default. Returns null when there is
+    /// no such project (or the new name is blank).
     /// </summary>
-    public IReadOnlyList<Project>? Update(string id, string? name, string? color)
+    public IReadOnlyList<Project>? Update(string id, string? name, string? color, string? icon = null)
     {
         lock (_lock)
         {
@@ -100,7 +105,12 @@ public sealed class ProjectStore
             var p = _projects[i];
             var clean = name is null ? p.Name : CleanName(name);
             if (clean is null) return null; // a rename to blank is a slip, not an intent
-            _projects[i] = p with { Name = clean, Color = color is null ? p.Color : CleanColor(color) };
+            _projects[i] = p with
+            {
+                Name = clean,
+                Color = color is null ? p.Color : CleanColor(color),
+                Icon = icon is null ? p.Icon : CleanIcon(icon),
+            };
             Save();
             return Snapshot();
         }
@@ -584,6 +594,7 @@ public sealed class ProjectStore
                 {
                     Name = CleanName(x.Name)!,
                     Color = CleanColor(x.Color),
+                    Icon = CleanIcon(x.Icon),
                     Folders = (x.Folders ?? Array.Empty<string>())
                         .Select(Normalize)
                         .Where(f => f is not null)

@@ -34,6 +34,7 @@ import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
 import { PostponedDialog } from "./PostponedDialog";
+import { ProjectGlyph } from "./ProjectGlyph";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -54,7 +55,6 @@ import { navRowProps, useTreeKeyNav } from "@/lib/useTreeKeyNav";
 import { writeToClipboard } from "@/lib/clipboard";
 import {
   type LucideIcon,
-  Boxes,
   Check,
   CheckCheck,
   CalendarClock,
@@ -819,10 +819,7 @@ function FolderMenu({
                   onClick={(e) => pick(e, () => onMoveToProject(p.id))}
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
                 >
-                  <Boxes
-                    className="size-3.5 shrink-0"
-                    style={sessionColor(p.color) ? { color: sessionColor(p.color)! } : undefined}
-                  />
+                  <ProjectGlyph project={p} className="size-3.5 shrink-0" />
                   <span className="truncate">{p.name}</span>
                   {projectId === p.id && (
                     <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />
@@ -872,14 +869,7 @@ function FolderMenu({
               <SubmenuRow
                 label="Move to project"
                 icon={
-                  <Boxes
-                    className="size-3.5 shrink-0"
-                    style={
-                      project && sessionColor(project.color)
-                        ? { color: sessionColor(project.color)! }
-                        : undefined
-                    }
-                  />
+                  <ProjectGlyph project={project} className="size-3.5 shrink-0" />
                 }
                 value={project?.name ?? "None"}
                 onOpen={() => setView("project")}
@@ -1047,7 +1037,6 @@ function ProjectHeader({
   activeCount?: number;
   onMarkSeen?: () => void;
 }) {
-  const accent = project ? sessionColor(project.color) : null;
   return (
     <div
       {...navProps}
@@ -1068,7 +1057,7 @@ function ProjectHeader({
           {project ? (
             // The colour rides on the icon rather than the text: a tinted label fights the folder
             // names underneath it for attention, and at this size a solid glyph reads better anyway.
-            <Boxes className="size-3.5" style={accent ? { color: accent } : undefined} />
+            <ProjectGlyph project={project} className="size-3.5" />
           ) : (
             <Minus className="size-3.5" />
           )}
@@ -3296,10 +3285,7 @@ function RowActionsMenu({
                   onClick={(e) => pick(e, () => onMoveToProject(p.id))}
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
                 >
-                  <Boxes
-                    className="size-3.5 shrink-0"
-                    style={sessionColor(p.color) ? { color: sessionColor(p.color)! } : undefined}
-                  />
+                  <ProjectGlyph project={p} className="size-3.5 shrink-0" />
                   <span className="truncate">{p.name}</span>
                   {projectId === p.id && (
                     <Check className="ml-auto size-3.5 shrink-0 text-emerald-500" />
@@ -3418,14 +3404,7 @@ function RowActionsMenu({
               <SubmenuRow
                 label="Move to project"
                 icon={
-                  <Boxes
-                    className="size-3.5 shrink-0"
-                    style={
-                      project && sessionColor(project.color)
-                        ? { color: sessionColor(project.color)! }
-                        : undefined
-                    }
-                  />
+                  <ProjectGlyph project={project} className="size-3.5 shrink-0" />
                 }
                 value={project?.name ?? "None"}
                 onOpen={() => setView("project")}

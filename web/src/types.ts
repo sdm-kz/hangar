@@ -226,6 +226,8 @@ export interface Project {
   // GitHub repos ("owner/name") every session under this project can review, whatever its own
   // folder points at. A project is a piece of work, and the work usually spans more than one repo.
   repos: string[];
+  // A name from lib/groupIcons.ts; null, missing (an older server) or unknown draws the default.
+  icon?: string | null;
 }
 
 /**

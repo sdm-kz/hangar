@@ -366,16 +366,25 @@ export const api = {
   getProjects(): Promise<Project[]> {
     return projects(request("/api/projects"));
   },
-  createProject(name: string, color?: string | null, folders?: string[]): Promise<Project[]> {
+  createProject(
+    name: string,
+    color?: string | null,
+    folders?: string[],
+    icon?: string | null
+  ): Promise<Project[]> {
     return projects(
       request("/api/projects", {
         method: "POST",
-        body: JSON.stringify({ name, color: color ?? null, folders: folders ?? [] }),
+        body: JSON.stringify({ name, color: color ?? null, folders: folders ?? [], icon: icon ?? null }),
       })
     );
   },
-  // Omit a field to leave it as it is; pass "" as the color to clear the accent.
-  updateProject(id: string, patch: { name?: string; color?: string | null }): Promise<Project[]> {
+  // Omit a field to leave it as it is; pass "" as the color to clear the accent, or as the icon to go
+  // back to the default.
+  updateProject(
+    id: string,
+    patch: { name?: string; color?: string | null; icon?: string | null }
+  ): Promise<Project[]> {
     return projects(request(`/api/projects/${id}`, { method: "POST", body: JSON.stringify(patch) }));
   },
   deleteProject(id: string): Promise<Project[]> {

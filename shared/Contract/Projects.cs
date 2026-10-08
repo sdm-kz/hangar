@@ -39,6 +39,13 @@ public sealed record Project(
     /// this existed has no such field, and must go on loading.</para>
     /// </summary>
     public IReadOnlyList<string> Repos { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Icon name from the client's own set (see web/src/lib/groupIcons.ts), or null for the default —
+    /// the glyph every project wore before this existed. Init-only for the same reason as Repos: a
+    /// projects.json written without it must go on loading, and reads as "the default".
+    /// </summary>
+    public string? Icon { get; init; }
 }
 
 /// <summary>

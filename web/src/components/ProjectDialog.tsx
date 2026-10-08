@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import type { Project, ProjectGroup, SessionTemplate } from "@/types";
 import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
-import { groupIcon } from "@/lib/groupIcons";
-import { GroupAppearance } from "./GroupDialog";
+import { DEFAULT_PROJECT_ICON_NAME, GROUP_ICONS, groupIcon, projectIcon } from "@/lib/groupIcons";
+import { GroupAppearance, IconPicker } from "./GroupDialog";
 import { TemplateDialog } from "./TemplateDialog";
 import { folderName } from "@/lib/recentFolders";
 import { groupIdsAfterMove, sameFolder } from "@/lib/projects";
@@ -25,6 +25,8 @@ import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
 import {
   Ban,
+  ChevronDown,
+  ChevronRight,
   FolderPlus,
   GripVertical,
   Library,
@@ -37,7 +39,7 @@ import {
 } from "lucide-react";
 
 /**
- * A project's settings: its name, its accent colour, and the folders and repos it links.
+ * A project's settings: its name, its accent colour and icon, and the folders and repos it links.
  *
  * Two modes. Editing an existing project writes each change straight through — the popup *is* the
  * project, so there is nothing to "apply" — except the name, which commits when the field is left or
@@ -68,6 +70,10 @@ export function ProjectDialog({
   const confirm = useConfirm();
   const [name, setName] = useState(project?.name ?? "");
   const [color, setColor] = useState<string | null>(project?.color ?? null);
+  // Null is "the default" (Boxes), which is also what every project had before icons were a choice.
+  const [icon, setIcon] = useState<string | null>(project?.icon ?? null);
+  // The icon grid is tall and usually left alone, so it stays folded behind the row showing the pick.
+  const [iconsOpen, setIconsOpen] = useState(false);
   // Create mode only: the folders to link once the project exists.
   const [draftFolders, setDraftFolders] = useState<string[]>(initialFolders ?? []);
   const [picker, setPicker] = useState<string>("");
@@ -95,6 +101,11 @@ export function ProjectDialog({
   const folders = project ? project.folders : draftFolders;
   const myTemplates = project ? templates.filter((t) => t.projectId === project.id) : [];
   const accent = sessionColor(color);
+  const ProjectIcon = projectIcon(icon);
+  // What the Icon row calls the pick: the default by that name, and an unknown stored name (a newer
+  // client's, a hand-edited file's) as the default it draws as, rather than as a word nothing matches.
+  const iconLabel =
+    icon && icon !== DEFAULT_PROJECT_ICON_NAME && GROUP_ICONS.some((i) => i.name === icon) ? icon : "Default";
 
   // Every mutation answers with the whole list; a failure keeps the popup open and says why, since
   // the alternative — closing on an error — loses whatever the user had typed.
@@ -125,6 +136,12 @@ export function ProjectDialog({
     setColor(next);
     // "" clears the accent server-side; null there would mean "leave it as it was".
     if (project) void run(() => api.updateProject(project.id, { color: next ?? "" }));
+  };
+
+  const pickIcon = (next: string | null) => {
+    setIcon(next);
+    // "" goes back to the default server-side; null there would mean "leave it as it was".
+    if (project) void run(() => api.updateProject(project.id, { icon: next ?? "" }));
   };
 
   const addFolder = async () => {
@@ -199,7 +216,7 @@ export function ProjectDialog({
 
   const create = async () => {
     if (!name.trim()) return;
-    if (await run(() => api.createProject(name.trim(), color, draftFolders))) onClose();
+    if (await run(() => api.createProject(name.trim(), color, draftFolders, icon))) onClose();
   };
 
   const remove = async () => {
@@ -233,13 +250,12 @@ export function ProjectDialog({
       <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {accent && (
-              <span
-                className="size-3 shrink-0 rounded-full"
-                style={{ backgroundColor: accent }}
-                aria-hidden
-              />
-            )}
+            {/* The project as the sidebar will draw it: its icon, in its colour. */}
+            <ProjectIcon
+              className="size-4 shrink-0"
+              style={accent ? { color: accent } : undefined}
+              aria-hidden
+            />
             {project ? "Project settings" : "New project"}
           </DialogTitle>
           <DialogDescription>
@@ -308,6 +324,29 @@ export function ProjectDialog({
                 <Ban className="size-3.5" />
               </button>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label>Icon</Label>
+            <button
+              type="button"
+              onClick={() => setIconsOpen((v) => !v)}
+              aria-expanded={iconsOpen}
+              className="flex w-fit items-center gap-2 rounded border px-2 py-1 text-sm hover:bg-accent"
+            >
+              <ProjectIcon className="size-4" style={accent ? { color: accent } : undefined} />
+              <span className="text-muted-foreground">{iconLabel}</span>
+              {iconsOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+            </button>
+            {iconsOpen && (
+              <IconPicker
+                icon={icon}
+                defaultName={DEFAULT_PROJECT_ICON_NAME}
+                tint={accent}
+                onIcon={pickIcon}
+                className="rounded border p-1.5"
+              />
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -510,9 +549,7 @@ export function ProjectDialog({
                                 void run(() => api.updateProjectGroup(g.id, { color: next ?? "" }))
                               }
                               onIcon={(next) =>
-                                void run(() =>
-                                  api.updateProjectGroup(g.id, { icon: g.icon === next ? "" : next })
-                                )
+                                void run(() => api.updateProjectGroup(g.id, { icon: next ?? "" }))
                               }
                             />
                           </div>

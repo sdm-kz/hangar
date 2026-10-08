@@ -862,7 +862,7 @@ internal static class Program
         // to know more about the rules than the client should have to.
         app.MapGet("/api/projects", (ProjectStore store) => Results.Ok(store.List()));
         app.MapPost("/api/projects", (ProjectRequest body, ProjectStore store) =>
-            store.Create(body.Name, body.Color, body.Folders) is { } list
+            store.Create(body.Name, body.Color, body.Folders, body.Icon) is { } list
                 ? Results.Ok(list)
                 : Results.BadRequest(new { error = "A project needs a name (and there is a limit on how many)." }));
         // A null name means "leave it alone"; a blank one is a bad request, not a missing project —
@@ -870,7 +870,7 @@ internal static class Program
         app.MapPost("/api/projects/{id}", (string id, ProjectRequest body, ProjectStore store) =>
             body.Name is { } n && string.IsNullOrWhiteSpace(n)
                 ? Results.BadRequest(new { error = "A project needs a name." })
-                : store.Update(id, body.Name, body.Color) is { } list ? Results.Ok(list) : Results.NotFound());
+                : store.Update(id, body.Name, body.Color, body.Icon) is { } list ? Results.Ok(list) : Results.NotFound());
         app.MapDelete("/api/projects/{id}", (string id, ProjectStore store) =>
             store.Delete(id) is { } list ? Results.Ok(list) : Results.NotFound());
         app.MapPost("/api/projects/{id}/folders", (string id, FolderRequest body, ProjectStore store) =>
@@ -1868,7 +1868,7 @@ internal record FileWriteRequest(string Path, string? Content, string? Dir = nul
 internal record FileRenameRequest(string Path, string NewName, string? Dir = null);
 internal record FolderRequest(string? Path, string? Dir = null);
 // Create/update a project. On update a null field means "leave it alone"; an empty colour clears it.
-internal record ProjectRequest(string? Name, string? Color = null, List<string>? Folders = null);
+internal record ProjectRequest(string? Name, string? Color = null, List<string>? Folders = null, string? Icon = null);
 // Create/update a virtual folder. On update a null field means "leave it alone"; an empty colour or
 // icon clears it.
 internal record GroupRequest(string? Name, string? Color = null, string? Icon = null);

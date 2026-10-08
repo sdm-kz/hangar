@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Project } from "@/types";
 import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
-import { GROUP_ICONS, groupIcon } from "@/lib/groupIcons";
+import { DEFAULT_GROUP_ICON_NAME, GROUP_ICONS, groupIcon } from "@/lib/groupIcons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +16,52 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { Ban, Loader2, Plus } from "lucide-react";
+
+/**
+ * The icon grid, for a project or a virtual folder. "No icon" is a real choice — it draws the
+ * default, and follows the default if that ever changes — so it is never a tile of its own: the
+ * default's tile stands for it, lit while nothing is picked, and clicking it (or clicking the picked
+ * tile again) goes back to no icon. `onIcon` is handed the resolved result, null for "the default".
+ */
+export function IconPicker({
+  icon,
+  defaultName,
+  tint,
+  onIcon,
+  className,
+}: {
+  icon: string | null;
+  /** The stored name of the glyph that "no icon" draws. */
+  defaultName: string;
+  /** The colour the icons are drawn in — the owner's accent, so the two are chosen against each other. */
+  tint?: string | null;
+  onIcon: (icon: string | null) => void;
+  className?: string;
+}) {
+  // An unknown stored name draws the default too, so it lights the default's tile.
+  const shown = icon && GROUP_ICONS.some((i) => i.name === icon) ? icon : defaultName;
+  return (
+    <div className={cn("flex flex-wrap gap-1", className)}>
+      {GROUP_ICONS.map(({ name, Icon }) => (
+        <button
+          key={name}
+          type="button"
+          title={name === defaultName ? `${name} (default)` : name}
+          aria-label={name}
+          aria-pressed={shown === name}
+          onClick={() => onIcon(name === defaultName || name === icon ? null : name)}
+          className={cn(
+            "flex size-7 items-center justify-center rounded border transition-colors hover:bg-accent",
+            shown === name ? "border-foreground" : "border-transparent"
+          )}
+          style={tint ? { color: tint } : undefined}
+        >
+          <Icon className="size-4" />
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /**
  * The colour and icon swatches for a virtual folder. Shared by the two places that pick them — this
@@ -33,7 +79,8 @@ export function GroupAppearance({
   color: string | null;
   icon: string | null;
   onColor: (color: string | null) => void;
-  onIcon: (icon: string) => void;
+  /** The picked icon, or null for the default (see IconPicker). */
+  onIcon: (icon: string | null) => void;
   className?: string;
 }) {
   const tint = sessionColor(color);
@@ -71,25 +118,7 @@ export function GroupAppearance({
       </div>
       {/* The icons wear the group's colour, so the two choices are made against each other rather
           than one after the other. */}
-      <div className="flex flex-wrap gap-1">
-        {GROUP_ICONS.map(({ name, Icon }) => (
-          <button
-            key={name}
-            type="button"
-            title={name}
-            aria-label={name}
-            aria-pressed={icon === name}
-            onClick={() => onIcon(name)}
-            className={cn(
-              "flex size-7 items-center justify-center rounded border transition-colors hover:bg-accent",
-              icon === name ? "border-foreground" : "border-transparent"
-            )}
-            style={tint ? { color: tint } : undefined}
-          >
-            <Icon className="size-4" />
-          </button>
-        ))}
-      </div>
+      <IconPicker icon={icon} defaultName={DEFAULT_GROUP_ICON_NAME} tint={tint} onIcon={onIcon} />
     </div>
   );
 }
@@ -189,7 +218,7 @@ export function GroupDialog({
               color={color}
               icon={icon}
               onColor={setColor}
-              onIcon={(next) => setIcon((cur) => (cur === next ? null : next))}
+              onIcon={setIcon}
             />
           </div>
 

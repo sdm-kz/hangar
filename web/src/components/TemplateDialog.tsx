@@ -1,10 +1,10 @@
 import { useState } from "react";
 import type { Project, SessionTemplate } from "@/types";
 import { api } from "@/lib/api";
-import { sessionColor } from "@/lib/sessionColors";
 import { hasInputToken, templateFolderChoices } from "@/lib/templates";
 import { sortedByName } from "@/lib/projects";
 import { FolderPicker, FolderChips } from "./FolderPicker";
+import { ProjectGlyph } from "./ProjectGlyph";
 import { DEFAULT_LAUNCH, LaunchFields, launchFromTemplate, type LaunchOptions } from "./LaunchOptions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/components/ui/confirm";
-import { Boxes, ChevronDown, ChevronRight, Loader2, Save, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Save, Trash2 } from "lucide-react";
 
 /**
  * The editor for a session template — the thing a Templates-tab launch is made from: a project, a
@@ -66,7 +66,6 @@ export function TemplateDialog({
   const [error, setError] = useState<string | null>(null);
 
   const project = projects.find((p) => p.id === projectId) ?? null;
-  const accent = sessionColor(project?.color ?? null);
   const folders = templateFolderChoices({ workingDirectory: dir }, project);
 
   const save = async () => {
@@ -192,7 +191,7 @@ export function TemplateDialog({
                 onPick={setDir}
                 label={
                   <>
-                    <Boxes className="size-3" style={accent ? { color: accent } : undefined} />
+                    <ProjectGlyph project={project} className="size-3" />
                     {project.name}
                   </>
                 }
