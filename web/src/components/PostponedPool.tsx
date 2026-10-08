@@ -224,7 +224,8 @@ export function PostponedPool({
   );
 
   // Composer "Postpone"/"Save": stash a new message, or overwrite the one being edited in place (so it
-  // keeps its position in the pool). Opens the drop-up so the result is visible.
+  // keeps its position in the pool). The drop-up is left as it was: the count on the pool button
+  // already shows the stash landed, and a drop-up springing open over the terminal is in the way.
   const composerPostpone = useCallback(
     (d: ComposerDraft) => {
       if (composer?.target.kind === "message") {
@@ -242,7 +243,6 @@ export function PostponedPool({
         setDraftImages([]);
       }
       setError(null);
-      setOpen(true);
     },
     [composer, messages, commit]
   );
