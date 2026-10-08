@@ -104,8 +104,8 @@ export function AppSidebar({
         >
           <LogOut className="size-4" />
         </Button>
-        {update}
         <div className="ml-auto flex items-center gap-1">
+          {update}
           <NotificationToggle />
           <ThemeToggle />
         </div>

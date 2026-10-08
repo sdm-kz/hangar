@@ -89,6 +89,14 @@ export function PostponedPool({
   messagesRef.current = messages;
   const flushingRef = useRef(flushing);
   flushingRef.current = flushing;
+  // Once the last message has gone into the terminal the drop-up has nothing left to show, so it
+  // closes -- unless a new draft is half-written in it. Not on a discard: that is tidying up, and the
+  // drop-up stays where the tidying is going on.
+  const hasDraftRef = useRef(false);
+  hasDraftRef.current = draft.trim().length > 0 || draftImages.length > 0;
+  const closeIfSentDry = useCallback((remaining: number) => {
+    if (remaining === 0 && !hasDraftRef.current) setOpen(false);
+  }, []);
   // Bumped by every local change, so a re-read that was asked for before one lands as stale and is
   // dropped rather than undoing it.
   const generationRef = useRef(0);
@@ -135,10 +143,15 @@ export function PostponedPool({
     let cancelled = false;
     const generation = generationRef.current;
     loadPostponed(sessionId)
-      .then((m) => { if (!cancelled && generation === generationRef.current) setMessages(m); })
+      .then((m) => {
+        if (cancelled || generation !== generationRef.current) return;
+        // Emptied elsewhere: auto-send took the last one, or another device emptied the pool.
+        if (messagesRef.current.length > 0) closeIfSentDry(m.length);
+        setMessages(m);
+      })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [serverCount, sessionId]);
+  }, [serverCount, sessionId, closeIfSentDry]);
 
   useEffect(() => {
     if (autoAsked !== null && autoAsked === autoSend) setAutoAsked(null);
@@ -212,7 +225,9 @@ export function PostponedPool({
       if (!ok) return false;
       if (composer?.target.kind === "message") {
         const id = composer.target.id;
-        commit(messages.filter((m) => m.id !== id));
+        const rest = messages.filter((m) => m.id !== id);
+        commit(rest);
+        closeIfSentDry(rest.length);
       } else {
         setDraft("");
         setDraftImages([]);
@@ -220,7 +235,7 @@ export function PostponedPool({
       setError(null);
       return true;
     },
-    [composer, messages, commit, terminalRef]
+    [composer, messages, commit, terminalRef, closeIfSentDry]
   );
 
   // Composer "Postpone"/"Save": stash a new message, or overwrite the one being edited in place (so it
@@ -254,13 +269,15 @@ export function PostponedPool({
         imagePaths: msg.images.map((i) => i.fullPath),
       });
       if (ok) {
-        commit(messages.filter((m) => m.id !== msg.id));
+        const rest = messages.filter((m) => m.id !== msg.id);
+        commit(rest);
+        closeIfSentDry(rest.length);
         setError(null);
       } else {
         setError("Terminal not connected — try again in a moment.");
       }
     },
-    [messages, terminalRef, commit]
+    [messages, terminalRef, commit, closeIfSentDry]
   );
 
   const sendAll = useCallback(async () => {
@@ -281,10 +298,12 @@ export function PostponedPool({
       sent.push(msg.id);
       await delay(SEND_GAP_MS);
     }
-    commit(messages.filter((m) => !sent.includes(m.id)));
+    const rest = messages.filter((m) => !sent.includes(m.id));
+    commit(rest);
+    closeIfSentDry(rest.length);
     if (sent.length < messages.length) setError("Terminal disconnected mid-send — remaining messages kept.");
     setFlushing(false);
-  }, [messages, flushing, terminalRef, commit]);
+  }, [messages, flushing, terminalRef, commit, closeIfSentDry]);
 
   const addImageFiles = useCallback(
     async (files: File[]) => {
