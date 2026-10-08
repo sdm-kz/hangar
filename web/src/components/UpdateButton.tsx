@@ -14,10 +14,10 @@ import {
 } from "@/components/ui/dialog";
 
 /**
- * The "Update available" affordance in the sidebar header, plus the full-screen overlay that covers
- * the restart. A build staged by `scripts\stage-update.ps1` reaches the UI on the /hub/events
- * snapshot; clicking through stops this build, installs the staged one and brings the running
- * sessions back. See {@link UpdatingOverlay} for what happens after the click.
+ * The "Update available" affordance in the sidebar footer (or a header, with the sidebar hidden),
+ * plus the full-screen overlay that covers the restart. A build staged by `scripts\stage-update.ps1`
+ * reaches the UI on the /hub/events snapshot; clicking through stops this build, installs the staged
+ * one and brings the running sessions back. See {@link UpdatingOverlay} for what happens after the click.
  */
 export function UpdateButton({
   status,
@@ -51,10 +51,10 @@ export function UpdateButton({
 
   return (
     <>
+      {/* Filled, in a colour no other button wears, so a waiting build gets noticed. */}
       <Button
-        variant="ghost"
         size="sm"
-        className="h-7 shrink-0 gap-1.5 px-2 text-primary hover:bg-primary/10 hover:text-primary"
+        className="h-7 shrink-0 gap-1.5 bg-sky-600 px-2.5 text-white hover:bg-sky-600/90 dark:bg-sky-500 dark:hover:bg-sky-500/90"
         title={`Update available — ${describe(status.staged)}`}
         onClick={() => setOpen(true)}
       >

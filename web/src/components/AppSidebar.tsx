@@ -2,20 +2,23 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { filesUrl } from "@/lib/urlState";
 import { Button } from "@/components/ui/button";
-import { Bot, FolderTree, MessagesSquare, PanelLeftClose, Plus } from "lucide-react";
+import { Bot, FolderTree, LogOut, MessagesSquare, PanelLeftClose, Plus } from "lucide-react";
+import { NotificationToggle } from "./NotificationToggle";
+import { ThemeToggle } from "./ThemeToggle";
 
 export type SidebarTab = "sessions" | "files";
 
 /**
  * Wraps the left sidebar: the "Claude Web" header on top, then a two-tab switcher between the session
- * list and the server-filesystem Files tree. Both panels are supplied by the caller; only the active
- * one is mounted.
+ * list and the server-filesystem Files tree, and a footer under both. Both panels are supplied by the
+ * caller; only the active one is mounted.
  */
 export function AppSidebar({
   tab,
   onTabChange,
   onNew,
   onCollapse,
+  onLogout,
   sessions,
   files,
   update,
@@ -25,6 +28,7 @@ export function AppSidebar({
   onTabChange: (tab: SidebarTab) => void;
   onNew: () => void;
   onCollapse?: () => void; // desktop only: hide the sidebar
+  onLogout: () => void;
   sessions: ReactNode;
   files: ReactNode;
   update?: ReactNode; // "Update available" button; renders nothing unless a build is staged
@@ -44,9 +48,6 @@ export function AppSidebar({
           <Bot className="size-4" />
         </div>
         <span className="min-w-0 truncate font-semibold">Claude Web</span>
-        {/* Directly after the title so a staged build is the first thing you see, and so it pushes
-            the icon buttons rather than hiding behind them when the sidebar is narrow. */}
-        {update}
         {/* New session lives here rather than in the session list: it applies to both tabs, and the
             header has room the list header doesn't. */}
         <div className="ml-auto flex items-center gap-1">
@@ -91,6 +92,24 @@ export function AppSidebar({
         </TabButton>
       </div>
       <div className="min-h-0 flex-1">{tab === "sessions" ? sessions : files}</div>
+      {/* Under both tabs. A staged build's Update sits here rather than in the header, where it
+          squeezed the title down to a letter on a narrow sidebar; its colour does the announcing. */}
+      <div className="flex shrink-0 items-center gap-1 border-t px-2 py-1.5">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground"
+          title="Sign out"
+          onClick={onLogout}
+        >
+          <LogOut className="size-4" />
+        </Button>
+        {update}
+        <div className="ml-auto flex items-center gap-1">
+          <NotificationToggle />
+          <ThemeToggle />
+        </div>
+      </div>
     </div>
   );
 }

@@ -1198,7 +1198,7 @@ export const TerminalPane = forwardRef<
   // parent) and only discounts padding on the .xterm element itself, so any padding here would make
   // it overcount rows and clip the last line. The host stays padding-free and edge-to-edge.
   //
-  // The bottom is kept tight (the last TUI row sits just above the Postponed bar) in two ways: barely
+  // The bottom is kept tight (the last TUI row sits at the pane's bottom edge) in two ways: barely
   // any bottom padding, and `justify-end` on the host. FitAddon can only fit whole rows, so up to one
   // row of height is always left over; xterm renders top-aligned, which parked that slack right under
   // the status line. Bottom-aligning moves it to the top edge, where it reads as breathing room under

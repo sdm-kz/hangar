@@ -54,8 +54,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge, badgeVariants } from "@/components/ui/badge";
-import { ThemeToggle } from "./ThemeToggle";
-import { NotificationToggle } from "./NotificationToggle";
 import { OrphanBar } from "./OrphanBar";
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
@@ -83,7 +81,6 @@ import {
   Search,
   Square,
   X,
-  LogOut,
   Pencil,
   Pin,
   PinOff,
@@ -1453,7 +1450,6 @@ export function SessionSidebar({
   onRestore,
   onRename,
   onRemoveSessions,
-  onLogout,
   recents,
   onReuse,
   onRemoveRecent,
@@ -1486,7 +1482,6 @@ export function SessionSidebar({
   onRestore: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onRemoveSessions: (ids: string[]) => void;
-  onLogout: () => void;
   recents: RecentSession[];
   onReuse: (r: RecentSession) => void;
   onRemoveRecent: (r: RecentSession) => void;
@@ -2929,23 +2924,6 @@ export function SessionSidebar({
       {/* Sessions that outlived the app but nothing points at any more. Renders nothing when there
           are none, which is nearly always. */}
       <OrphanBar />
-
-      {/* Padding and control size match the Postponed bar's header, so the two footers line up. */}
-      <div className="flex items-center gap-1 border-t px-2 py-1.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-8 text-muted-foreground"
-          title="Sign out"
-          onClick={onLogout}
-        >
-          <LogOut className="size-4" />
-        </Button>
-        <div className="ml-auto flex items-center gap-1">
-          <NotificationToggle />
-          <ThemeToggle />
-        </div>
-      </div>
 
       {/* Resolved from the live list on every render; a project deleted from another tab simply
           stops rendering its popup rather than editing something that is no longer there. */}

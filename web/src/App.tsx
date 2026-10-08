@@ -926,6 +926,7 @@ export function App() {
           onTabChange={setSidebarTab}
           onNew={() => openNew()}
           onCollapse={toggleCollapsed}
+          onLogout={onLogout}
           update={<UpdateButton status={update} onApplying={setInstalling} />}
           sessionsProgress={<HeadingProgress done={totalProgress.done} active={totalProgress.active} />}
           sessions={
@@ -945,7 +946,6 @@ export function App() {
               onRestore={onRestore}
               onRename={onRename}
               onRemoveSessions={onRemoveSessions}
-              onLogout={onLogout}
               recents={recents}
               onReuse={reuseRecent}
               onRemoveRecent={removeRecent}
@@ -992,6 +992,7 @@ export function App() {
                 openNew();
                 setSidebarOpen(false);
               }}
+              onLogout={onLogout}
               update={<UpdateButton status={update} onApplying={setInstalling} />}
               sessionsProgress={<HeadingProgress done={totalProgress.done} active={totalProgress.active} />}
               sessions={
@@ -1014,7 +1015,6 @@ export function App() {
                   onRestore={onRestore}
                   onRename={onRename}
                   onRemoveSessions={onRemoveSessions}
-                  onLogout={onLogout}
                   recents={recents}
                   onReuse={reuseRecent}
                   onRemoveRecent={removeRecent}
