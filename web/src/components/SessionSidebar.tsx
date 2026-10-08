@@ -187,10 +187,27 @@ function HeadingActivityMark({ activity }: { activity: Activity | null }) {
  * as past tense at a glance and needs no legend, so it is the one activity with a shape of its own.
  *
  * One element, used both in a row's corner and on a heading's icon, so the two can't drift apart.
+ *
+ * `nested` is a parent row's corner showing what a session under it is doing rather than what it
+ * is doing itself: the same colour and the same pulse, drawn as a ring instead of a dot -- filled is
+ * "this one", hollow is "something in here". Only the dots change. The tick and the cross keep their
+ * shapes: at 8px there is no room for a second style of either, and both are past tense anyway, so
+ * which row they came from matters less than for a live state.
  */
-function ActivityMark({ activity, label: detail }: { activity: Activity; label?: string }) {
-  const { className, label: generic, Icon } = ACTIVITY_MARK[activity];
+function ActivityMark({
+  activity,
+  label: detail,
+  nested = false,
+}: {
+  activity: Activity;
+  label?: string;
+  nested?: boolean;
+}) {
+  const { className, hollowClassName, label: generic, Icon } = ACTIVITY_MARK[activity];
   const label = detail ?? generic;
+  if (nested && hollowClassName && !Icon)
+    // A size up from the dot: a 6px ring has no hole left in it to read as one.
+    return <span className={cn("block size-2 rounded-full border-2", hollowClassName)} aria-label={label} />;
   return Icon ? (
     // 8px with a heavy stroke, not the 14px these icons are usually drawn at. Bigger reads better in
     // isolation and worse here: the badge is opaque, so every pixel it gains is taken out of the
@@ -231,16 +248,34 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
  * header above it can never disagree about what amber means.
  */
 type Activity = "busy" | "compacting" | "waiting" | "failed" | "attention" | "recovering" | "done";
-const ACTIVITY_MARK: Record<Activity, { className: string; label: string; Icon?: LucideIcon }> = {
-  busy: { className: "bg-emerald-500 animate-pulse", label: "Claude is working" },
+const ACTIVITY_MARK: Record<
+  Activity,
+  {
+    className: string;
+    label: string;
+    Icon?: LucideIcon;
+    // The dot as a ring, for a parent's corner showing its branch rather than itself (ActivityMark's
+    // `nested`): the same colour and motion, drawn as a border.
+    hollowClassName?: string;
+  }
+> = {
+  busy: {
+    className: "bg-emerald-500 animate-pulse",
+    hollowClassName: "border-emerald-500 animate-pulse",
+    label: "Claude is working",
+  },
   // A flavour of busy, so it stays in the working family — a slower pulse and a cooler green, because
   // "still here, but not on your task" is the useful thing to read off it from across the room.
   compacting: {
     className: "bg-teal-400 animate-pulse [animation-duration:2s]",
+    hollowClassName: "border-teal-400 animate-pulse [animation-duration:2s]",
     label: "Claude is compacting the conversation",
   },
   waiting: {
     className: "bg-amber-400 animate-pulse ring-2 ring-amber-400/40",
+    // The halo stays on the ring too: it is what tells waiting (the most urgent mark) apart from
+    // the near-identical amber of recovering.
+    hollowClassName: "border-amber-400 animate-pulse ring-2 ring-amber-400/40",
     label: "Claude is waiting for your input",
   },
   // The tick's opposite number, and drawn like it for the same reason: a turn that died is over, not
@@ -251,8 +286,12 @@ const ACTIVITY_MARK: Record<Activity, { className: string; label: string; Icon?:
     label: "Claude’s last turn ended on an error",
     Icon: X,
   },
-  attention: { className: "bg-red-500", label: "Session needs attention" },
-  recovering: { className: "bg-amber-500 animate-pulse", label: "Watchdog is auto-recovering this session" },
+  attention: { className: "bg-red-500", hollowClassName: "border-red-500", label: "Session needs attention" },
+  recovering: {
+    className: "bg-amber-500 animate-pulse",
+    hollowClassName: "border-amber-500 animate-pulse",
+    label: "Watchdog is auto-recovering this session",
+  },
   // The green pulse's own past tense, so the two read as one story: the same green, no longer
   // moving. It is the only activity you can clear by looking at it — see useDoneSessions.
   done: {
@@ -2307,7 +2346,9 @@ export function SessionSidebar({
     // The corner holds one mark, so a parent's is the more urgent of its own and its branch's -- the
     // same rule a folder heading's dot follows. Drawn anywhere else the branch's mark either sat
     // away from every other dot in the list or collided with this one in the corner. The ring still
-    // answers for this session alone; the mark-as-seen button below answers for the corner.
+    // answers for this session alone; the mark-as-seen button below answers for the corner. When the
+    // branch's mark wins it is drawn hollow (ActivityMark's `nested`), so a parent working and a
+    // parent with a fork working underneath it no longer look the same.
     // A closed session has no mark of its own (a restored one can be on screen for a paint before the
     // prune drops it), but a live branch under it still gets one.
     const own = restorable ? null : activity;
@@ -2431,7 +2472,7 @@ export function SessionSidebar({
             room. The offset carries the 2px that padding used to hold, so the mark has not moved. */}
         {cornerActivity && (
           <span className="pointer-events-none absolute left-1 top-1 rounded-full bg-background leading-none">
-            <ActivityMark activity={cornerActivity} label={cornerLabel} />
+            <ActivityMark activity={cornerActivity} label={cornerLabel} nested={!ownRanks} />
           </span>
         )}
         <div className="flex items-center justify-between gap-1">
