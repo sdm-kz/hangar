@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Project, ProjectGroup, SessionTemplate } from "@/types";
 import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
@@ -25,21 +25,32 @@ import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
 import {
   Ban,
-  ChevronDown,
-  ChevronRight,
+  FolderOpen,
   FolderPlus,
+  FolderTree,
   GripVertical,
   Library,
   Loader2,
   Pencil,
   Plus,
+  Settings2,
   Sparkles,
   Trash2,
   X,
+  type LucideIcon,
 } from "lucide-react";
+
+/** The settings popup's tabs, down its left edge. */
+type ProjectTab = "general" | "folders" | "repos" | "groups" | "templates";
+
+/** Tailwind's `sm`: where the tabs become a column. */
+const TABS_VERTICAL_QUERY = "(min-width: 640px)";
 
 /**
  * A project's settings: its name, its accent colour and icon, and the folders and repos it links.
+ * Laid out as tabs down the left — General, Folders, Repositories, Groups, Templates — with the chosen
+ * one's panel on the right, so each list gets the dialog's whole height instead of a slice of one
+ * long scroll.
  *
  * Two modes. Editing an existing project writes each change straight through — the popup *is* the
  * project, so there is nothing to "apply" — except the name, which commits when the field is left or
@@ -72,8 +83,20 @@ export function ProjectDialog({
   const [color, setColor] = useState<string | null>(project?.color ?? null);
   // Null is "the default" (Boxes), which is also what every project had before icons were a choice.
   const [icon, setIcon] = useState<string | null>(project?.icon ?? null);
-  // The icon grid is tall and usually left alone, so it stays folded behind the row showing the pick.
-  const [iconsOpen, setIconsOpen] = useState(false);
+  // Opened on Groups when it was opened for a group (the pencil on a group's sidebar header).
+  const [tab, setTab] = useState<ProjectTab>(initialGroup ? "groups" : "general");
+  // Whether the tabs are a column (sm and up) or run across the top — only what the tablist tells a
+  // screen reader about its axis; the arrow keys take either.
+  const [tabsVertical, setTabsVertical] = useState(() => window.matchMedia(TABS_VERTICAL_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(TABS_VERTICAL_QUERY);
+    const on = () => setTabsVertical(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  // A new project's name field takes focus once, when the dialog opens — not every time General is
+  // shown again, which would pull focus out of the tab list mid-way through arrowing along it.
+  const nameFocusedRef = useRef(false);
   // Create mode only: the folders to link once the project exists.
   const [draftFolders, setDraftFolders] = useState<string[]>(initialFolders ?? []);
   const [picker, setPicker] = useState<string>("");
@@ -232,6 +255,36 @@ export function ProjectDialog({
     if (await run(() => api.deleteProject(project.id))) onClose();
   };
 
+  // The tabs on offer. Only General and Folders in create mode: repos, groups and templates are all
+  // made against the project's id, which doesn't exist until the button at the bottom is pressed.
+  const tabs: { id: ProjectTab; label: string; Icon: LucideIcon; count?: number }[] = [
+    { id: "general", label: "General", Icon: Settings2 },
+    { id: "folders", label: "Folders", Icon: FolderOpen, count: folders.length },
+    ...(project
+      ? [
+          { id: "repos" as const, label: "Repositories", Icon: Library, count: project.repos.length },
+          { id: "groups" as const, label: "Groups", Icon: FolderTree, count: project.groups.length },
+          { id: "templates" as const, label: "Templates", Icon: Sparkles, count: myTemplates.length },
+        ]
+      : []),
+  ];
+
+  // Up/Down (Left/Right on a phone, where the list runs across the top) move between tabs, as a
+  // tablist does; Home/End jump to the ends.
+  const onTabKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const i = tabs.findIndex((t) => t.id === tab);
+    const step =
+      e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 0;
+    let next = i;
+    if (step) next = (i + step + tabs.length) % tabs.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    setTab(tabs[next].id);
+    e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+  };
+
   return (
     <>
     <Dialog
@@ -242,12 +295,11 @@ export function ProjectDialog({
         onClose();
       }}
     >
-      {/* The popup grows with the project: a dozen linked folders and a list of groups is taller
-          than a laptop screen, and the dialog is centred, so without a cap it runs off both ends at
-          once — the title above the top edge, the Delete/Done row below the bottom. Cap it to the
-          viewport and give the middle its own scroll, so the heading stays put and the buttons stay
-          reachable however long the lists get. */}
-      <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] max-w-md">
+      {/* One fixed height, whichever tab is showing: a dialog that resizes as you click down its
+          tabs makes the tab list jump out from under the pointer. Capped to the viewport, so the
+          heading and the Delete/Done row stay on screen however long a list gets -- the panel on the
+          right is what scrolls. */}
+      <DialogContent className="h-[min(38rem,calc(100dvh-2rem))] max-w-3xl grid-rows-[auto_minmax(0,1fr)_auto]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {/* The project as the sidebar will draw it: its icon, in its colour. */}
@@ -256,381 +308,434 @@ export function ProjectDialog({
               style={accent ? { color: accent } : undefined}
               aria-hidden
             />
-            {project ? "Project settings" : "New project"}
+            <span className="truncate">
+              {project ? project.name : "New project"}
+            </span>
           </DialogTitle>
           <DialogDescription>
-            A project groups the folders you work in. Linking a folder also takes in everything under
-            it, so new subfolders and the sessions started there join on their own.
+            {project
+              ? "Project settings — changes save as you make them."
+              : "Name it, link the folders it covers, and create it."}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Only the two lists scroll. Scrolling the whole body meant the name, the colour and
-            both "add" rows slid away with it, so linking a second folder to a project that already
-            has twelve started with a hunt for the field. The lists take what height is left, in
-            proportion to how much each one has to show. */}
-        {/* -mx-1 px-1 is not spacing: a scroller clips on both axes, and a control whose edge
+        {/* Tabs down the left, the chosen one's panel on the right. On a phone there is no room
+            for a column, so the tabs run across the top instead and scroll sideways -- with the
+            scrollbar hidden, since a classic Windows bar under five words is most of the strip. */}
+        <div className="flex min-h-0 flex-col gap-3 sm:flex-row sm:gap-4">
+          <div
+            role="tablist"
+            aria-orientation={tabsVertical ? "vertical" : "horizontal"}
+            aria-label="Project settings"
+            onKeyDown={onTabKey}
+            className="-m-1 flex shrink-0 gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:m-0 sm:w-44 sm:flex-col sm:overflow-visible sm:border-r sm:p-0 sm:pr-3"
+          >
+            {tabs.map((t) => {
+              const active = t.id === tab;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  id={`project-tab-${t.id}`}
+                  aria-selected={active}
+                  aria-controls={`project-panel-${t.id}`}
+                  tabIndex={active ? 0 : -1}
+                  onClick={() => setTab(t.id)}
+                  className={cn(
+                    "flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+                    active
+                      ? "bg-accent font-medium text-foreground"
+                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                  )}
+                >
+                  <t.Icon className="size-4 shrink-0" />
+                  <span className="truncate sm:flex-1">{t.label}</span>
+                  {t.count !== undefined && t.count > 0 && (
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                      {t.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* -mx-1 px-1 is not spacing: a scroller clips on both axes, and a control whose edge
               is flush with this box loses whatever it paints *outside* itself there -- which is
               its focus ring, cut clean off down the left while the rest of it draws. The padding
               buys the ring a gutter and the negative margin gives it back, so nothing moves. */}
-        <div className="-mx-1 flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-1">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="project-name">Name</Label>
-            <Input
-              id="project-name"
-              value={name}
-              autoFocus={!project}
-              placeholder="Homeport"
-              onChange={(e) => setName(e.target.value)}
-              onBlur={commitName}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  if (project) commitName();
-                  else void create();
-                }
-              }}
-            />
-          </div>
+          <div
+            role="tabpanel"
+            id={`project-panel-${tab}`}
+            aria-labelledby={`project-tab-${tab}`}
+            className="-mx-1 flex min-h-0 min-w-0 flex-1 flex-col gap-4 px-1"
+          >
+            {tab === "general" && (
+              <div className="-m-1 flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-1">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="project-name">Name</Label>
+                  <Input
+                    id="project-name"
+                    value={name}
+                    autoFocus={!project && !nameFocusedRef.current}
+                    onFocus={() => {
+                      nameFocusedRef.current = true;
+                    }}
+                    placeholder="Homeport"
+                    onChange={(e) => setName(e.target.value)}
+                    onBlur={commitName}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        if (project) commitName();
+                        else void create();
+                      }
+                    }}
+                  />
+                </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Label>Colour</Label>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {COLOR_CHOICES.map((c) => (
-                <button
-                  key={c.name}
-                  type="button"
-                  title={c.name}
-                  aria-label={c.name}
-                  aria-pressed={color === c.name}
-                  onClick={() => pickColor(c.name)}
-                  className={cn(
-                    "size-6 rounded-full border-2 transition-transform hover:scale-110",
-                    color === c.name ? "border-foreground" : "border-transparent"
-                  )}
-                  style={{ backgroundColor: c.css }}
-                />
-              ))}
-              <button
-                type="button"
-                title="No colour"
-                aria-label="No colour"
-                aria-pressed={color === null}
-                onClick={() => pickColor(null)}
-                className={cn(
-                  "flex size-6 items-center justify-center rounded-full border-2 text-muted-foreground transition-transform hover:scale-110",
-                  color === null ? "border-foreground" : "border-border"
-                )}
-              >
-                <Ban className="size-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label>Icon</Label>
-            <button
-              type="button"
-              onClick={() => setIconsOpen((v) => !v)}
-              aria-expanded={iconsOpen}
-              className="flex w-fit items-center gap-2 rounded border px-2 py-1 text-sm hover:bg-accent"
-            >
-              <ProjectIcon className="size-4" style={accent ? { color: accent } : undefined} />
-              <span className="text-muted-foreground">{iconLabel}</span>
-              {iconsOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-            </button>
-            {iconsOpen && (
-              <IconPicker
-                icon={icon}
-                defaultName={DEFAULT_PROJECT_ICON_NAME}
-                tint={accent}
-                onIcon={pickIcon}
-                className="rounded border p-1.5"
-              />
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label>Linked folders</Label>
-            {folders.length === 0 ? (
-              <p className="rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
-                No folders yet. Add one below, or drag a folder group onto this project in the
-                sessions list.
-              </p>
-            ) : (
-              <ul className="-mx-1 flex max-h-56 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
-                {folders.map((f) => (
-                  <li
-                    key={f}
-                    className="group flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm"
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">{folderName(f)}</span>
-                      <span className="block truncate font-mono text-[10px] text-muted-foreground">
-                        {f}
-                      </span>
-                    </span>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Colour</Label>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {COLOR_CHOICES.map((c) => (
+                      <button
+                        key={c.name}
+                        type="button"
+                        title={c.name}
+                        aria-label={c.name}
+                        aria-pressed={color === c.name}
+                        onClick={() => pickColor(c.name)}
+                        className={cn(
+                          "size-6 rounded-full border-2 transition-transform hover:scale-110",
+                          color === c.name ? "border-foreground" : "border-transparent"
+                        )}
+                        style={{ backgroundColor: c.css }}
+                      />
+                    ))}
                     <button
                       type="button"
-                      onClick={() => removeFolder(f)}
-                      title="Unlink this folder"
-                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                      title="No colour"
+                      aria-label="No colour"
+                      aria-pressed={color === null}
+                      onClick={() => pickColor(null)}
+                      className={cn(
+                        "flex size-6 items-center justify-center rounded-full border-2 text-muted-foreground transition-transform hover:scale-110",
+                        color === null ? "border-foreground" : "border-border"
+                      )}
                     >
-                      <X className="size-4" />
+                      <Ban className="size-3.5" />
                     </button>
-                  </li>
-                ))}
-              </ul>
+                  </div>
+                </div>
+
+                {/* With a panel of its own to sit in, the grid no longer hides behind a fold. */}
+                <div className="flex flex-col gap-1.5">
+                  <Label className="flex items-center gap-2">
+                    Icon
+                    <span className="font-normal text-muted-foreground">{iconLabel}</span>
+                  </Label>
+                  <IconPicker
+                    icon={icon}
+                    defaultName={DEFAULT_PROJECT_ICON_NAME}
+                    tint={accent}
+                    onIcon={pickIcon}
+                    className="rounded-md border p-1.5"
+                  />
+                </div>
+              </div>
             )}
-            <div className="flex shrink-0 items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <FolderPicker value={picker} onChange={setPicker} />
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                title="Link this folder"
-                disabled={!picker.trim() || busy}
-                onClick={() => void addFolder()}
-              >
-                <Plus className="size-4" />
-              </Button>
-            </div>
-          </div>
 
-          {/* The repos this project's sessions can review. Only once the project exists, for the
-              same reason the groups below are: a draft list would be a second way to add one.
-
-              A project is a piece of work rather than a checkout, and the work usually spans more
-              repos than the folders here point at — so a repo named once is in the PR picker of
-              every session under the project, whether or not it is checked out anywhere. */}
-          {project && (
-            <div className="flex flex-col gap-1.5">
-              <Label>Linked repositories</Label>
-              {project.repos.length === 0 ? (
-                <p className="rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
-                  No repositories yet. One linked here can be reviewed from every session in this
-                  project, checked out or not.
+            {tab === "folders" && (
+              <>
+                <p className="shrink-0 text-xs text-muted-foreground">
+                  The folders this project covers. Linking a folder also takes in everything under it,
+                  so new subfolders and the sessions started there join on their own.
                 </p>
-              ) : (
-                <ul className="-mx-1 flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
-                  {project.repos.map((r) => (
-                    <li
-                      key={r}
-                      className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm"
-                    >
-                      <Library className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{r}</span>
-                      <button
-                        type="button"
-                        onClick={() => void removeRepo(r)}
-                        title="Unlink this repository"
-                        className="shrink-0 text-muted-foreground hover:text-destructive"
-                      >
-                        <X className="size-4" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex items-start gap-2">
-                <Input
-                  value={newRepo}
-                  onChange={(e) => {
-                    setNewRepo(e.target.value);
-                    setRepoError(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void addRepo();
-                    }
-                  }}
-                  placeholder="owner/name, or a link to the repository on GitHub"
-                  className="min-w-0 flex-1"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  title="Link this repository"
-                  disabled={!newRepo.trim() || busy}
-                  onClick={() => void addRepo()}
-                >
-                  <Plus className="size-4" />
-                </Button>
-              </div>
-              {repoError && <p className="text-xs text-destructive">{repoError}</p>}
-            </div>
-          )}
-
-          {/* Virtual folders. Only once the project exists: a group is created against its id, and a
-              draft list here would be a second way to make one that behaves subtly differently. */}
-          {project && (
-            <div className="flex flex-col gap-1.5">
-              <Label>Groups</Label>
-              <p className="text-xs text-muted-foreground">
-                Virtual folders inside this project. Drag a session onto one in the sidebar to file it
-                there — the sessions in a box don’t have to share a folder, which is the whole point.
-              </p>
-              {project.groups.length > 0 && (
-                <ul className="-mx-1 flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
-                  {project.groups.map((g, i) => {
-                    const Icon = groupIcon(g.icon);
-                    const tint = sessionColor(g.color);
-                    const open = openGroup === g.id;
-                    return (
+                {folders.length === 0 ? (
+                  <p className="shrink-0 rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+                    No folders yet. Add one below, or drag a folder group onto this project in the
+                    sessions list.
+                  </p>
+                ) : (
+                  <ul className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
+                    {folders.map((f) => (
                       <li
-                        key={g.id}
-                        {...groupDnd.targetProps(i)}
-                        className="relative rounded-md border"
+                        key={f}
+                        className="group flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm"
                       >
-                        {/* Where a dragged group would land: a line at the top of the row it lands
-                            on, as in the sidebar — the order set here is the order the boxes are
-                            drawn in there. On the row's own top edge rather than in the gap above it,
-                            because this list scrolls: a line one pixel outside the first row would be
-                            clipped away by the scroller, and "move it to the top" is the drop that
-                            most needs to show where it is going. */}
-                        {groupDnd.isOver(i) && (
-                          <span className="pointer-events-none absolute inset-x-1 top-0 h-0.5 rounded-full bg-primary" />
-                        )}
-                        <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
-                          <span
-                            {...groupDnd.handleProps(i)}
-                            title="Drag to reorder"
-                            className="-ml-1 shrink-0 cursor-grab text-muted-foreground active:cursor-grabbing hover:text-foreground"
-                          >
-                            <GripVertical className="size-4" />
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setOpenGroup(open ? null : g.id)}
-                            title="Colour and icon"
-                            aria-expanded={open}
-                            className="shrink-0 text-muted-foreground hover:text-foreground"
-                            style={tint ? { color: tint } : undefined}
-                          >
-                            <Icon className="size-4" />
-                          </button>
-                          {/* Committed on blur or Enter, like the project's own name above: a rename
-                              is one decision, not one per keystroke. */}
-                          <Input
-                            defaultValue={g.name}
-                            className="h-7 min-w-0 flex-1 border-transparent px-1 shadow-none hover:border-input focus-visible:border-input"
-                            onBlur={(e) => {
-                              const next = e.target.value.trim();
-                              if (!next) e.target.value = g.name; // a blank name is a slip
-                              else if (next !== g.name)
-                                void run(() => api.updateProjectGroup(g.id, { name: next }));
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") e.currentTarget.blur();
-                              if (e.key === "Escape") {
-                                e.currentTarget.value = g.name;
-                                e.currentTarget.blur();
-                              }
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => void removeGroup(g)}
-                            title="Delete this group"
-                            className="shrink-0 text-muted-foreground hover:text-destructive"
-                          >
-                            <X className="size-4" />
-                          </button>
-                        </div>
-                        {open && (
-                          <div className="border-t px-2 py-2">
-                            <GroupAppearance
-                              color={g.color}
-                              icon={g.icon}
-                              onColor={(next) =>
-                                void run(() => api.updateProjectGroup(g.id, { color: next ?? "" }))
-                              }
-                              onIcon={(next) =>
-                                void run(() => api.updateProjectGroup(g.id, { icon: next ?? "" }))
-                              }
-                            />
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-              <div className="flex shrink-0 items-center gap-2">
-                <Input
-                  value={newGroup}
-                  placeholder="New group — “Release 2.4”, “Bugs”, “Spikes”"
-                  onChange={(e) => setNewGroup(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter") return;
-                    e.preventDefault();
-                    void addGroup();
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  title="Add this group"
-                  disabled={!newGroup.trim() || busy}
-                  onClick={() => void addGroup()}
-                >
-                  <Plus className="size-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Session templates: the ways this project's sessions get started. Like the groups above,
-              only once the project exists — a template names the project it belongs to. */}
-          {project && (
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <Label>Templates</Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => setEditingTemplate({ template: null })}
-                >
-                  <Plus className="mr-1 size-3.5" /> New template
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                A saved way to start a session in this project — a folder and a prompt with a hole in
-                it. Pick one on the New Session dialog’s Templates tab and paste in what that run is
-                about.
-              </p>
-              {myTemplates.length > 0 && (
-                <ul className="-mx-1 flex max-h-40 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
-                  {myTemplates.map((t) => (
-                    <li key={t.id} className="rounded-md border">
-                      <button
-                        type="button"
-                        onClick={() => setEditingTemplate({ template: t })}
-                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent/50"
-                      >
-                        <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate">{t.name}</span>
-                          <span className="block truncate text-[10px] text-muted-foreground">
-                            {t.description ?? t.prompt}
+                          <span className="block truncate font-medium">{folderName(f)}</span>
+                          <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                            {f}
                           </span>
                         </span>
-                        <Pencil className="size-3.5 shrink-0 text-muted-foreground" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
+                        <button
+                          type="button"
+                          onClick={() => removeFolder(f)}
+                          title="Unlink this folder"
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {/* Under the list and outside its scroll, so linking the thirteenth folder does not
+                    start with a hunt for the field. */}
+                <div className="flex shrink-0 items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <FolderPicker value={picker} onChange={setPicker} />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    title="Link this folder"
+                    disabled={!picker.trim() || busy}
+                    onClick={() => void addFolder()}
+                  >
+                    <Plus className="size-4" />
+                  </Button>
+                </div>
+              </>
+            )}
 
-          {error && <p className="text-xs text-destructive">{error}</p>}
+            {/* A project is a piece of work rather than a checkout, and the work usually spans more
+                repos than its folders point at — so a repo named once is in the PR picker of every
+                session under the project, whether or not it is checked out anywhere. */}
+            {tab === "repos" && project && (
+              <>
+                <p className="shrink-0 text-xs text-muted-foreground">
+                  Repositories every session in this project can review pull requests from, checked
+                  out or not.
+                </p>
+                {project.repos.length === 0 ? (
+                  <p className="shrink-0 rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+                    No repositories yet.
+                  </p>
+                ) : (
+                  <ul className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
+                    {project.repos.map((r) => (
+                      <li
+                        key={r}
+                        className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm"
+                      >
+                        <Library className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs">{r}</span>
+                        <button
+                          type="button"
+                          onClick={() => void removeRepo(r)}
+                          title="Unlink this repository"
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="flex shrink-0 flex-col gap-1.5">
+                  <div className="flex items-start gap-2">
+                    <Input
+                      value={newRepo}
+                      onChange={(e) => {
+                        setNewRepo(e.target.value);
+                        setRepoError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void addRepo();
+                        }
+                      }}
+                      placeholder="owner/name, or a link to the repository on GitHub"
+                      className="min-w-0 flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      title="Link this repository"
+                      disabled={!newRepo.trim() || busy}
+                      onClick={() => void addRepo()}
+                    >
+                      <Plus className="size-4" />
+                    </Button>
+                  </div>
+                  {repoError && <p className="text-xs text-destructive">{repoError}</p>}
+                </div>
+              </>
+            )}
+
+            {tab === "groups" && project && (
+              <>
+                <p className="shrink-0 text-xs text-muted-foreground">
+                  Virtual folders inside this project. Drag a session onto one in the sidebar to file it
+                  there — the sessions in a box don’t have to share a folder, which is the whole point.
+                </p>
+                {project.groups.length > 0 && (
+                  <ul className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
+                    {project.groups.map((g, i) => {
+                      const Icon = groupIcon(g.icon);
+                      const tint = sessionColor(g.color);
+                      const open = openGroup === g.id;
+                      return (
+                        <li
+                          key={g.id}
+                          {...groupDnd.targetProps(i)}
+                          className="relative shrink-0 rounded-md border"
+                        >
+                          {/* Where a dragged group would land: a line at the top of the row it lands
+                              on, as in the sidebar — the order set here is the order the boxes are
+                              drawn in there. On the row's own top edge rather than in the gap above
+                              it, because this list scrolls: a line one pixel outside the first row
+                              would be clipped away by the scroller, and "move it to the top" is the
+                              drop that most needs to show where it is going. */}
+                          {groupDnd.isOver(i) && (
+                            <span className="pointer-events-none absolute inset-x-1 top-0 h-0.5 rounded-full bg-primary" />
+                          )}
+                          <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
+                            <span
+                              {...groupDnd.handleProps(i)}
+                              title="Drag to reorder"
+                              className="-ml-1 shrink-0 cursor-grab text-muted-foreground active:cursor-grabbing hover:text-foreground"
+                            >
+                              <GripVertical className="size-4" />
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setOpenGroup(open ? null : g.id)}
+                              title="Colour and icon"
+                              aria-expanded={open}
+                              className="shrink-0 text-muted-foreground hover:text-foreground"
+                              style={tint ? { color: tint } : undefined}
+                            >
+                              <Icon className="size-4" />
+                            </button>
+                            {/* Committed on blur or Enter, like the project's own name: a rename is
+                                one decision, not one per keystroke. */}
+                            <Input
+                              defaultValue={g.name}
+                              className="h-7 min-w-0 flex-1 border-transparent px-1 shadow-none hover:border-input focus-visible:border-input"
+                              onBlur={(e) => {
+                                const next = e.target.value.trim();
+                                if (!next) e.target.value = g.name; // a blank name is a slip
+                                else if (next !== g.name)
+                                  void run(() => api.updateProjectGroup(g.id, { name: next }));
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") e.currentTarget.blur();
+                                if (e.key === "Escape") {
+                                  e.currentTarget.value = g.name;
+                                  e.currentTarget.blur();
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void removeGroup(g)}
+                              title="Delete this group"
+                              className="shrink-0 text-muted-foreground hover:text-destructive"
+                            >
+                              <X className="size-4" />
+                            </button>
+                          </div>
+                          {open && (
+                            <div className="border-t px-2 py-2">
+                              <GroupAppearance
+                                color={g.color}
+                                icon={g.icon}
+                                onColor={(next) =>
+                                  void run(() => api.updateProjectGroup(g.id, { color: next ?? "" }))
+                                }
+                                onIcon={(next) =>
+                                  void run(() => api.updateProjectGroup(g.id, { icon: next ?? "" }))
+                                }
+                              />
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                <div className="flex shrink-0 items-center gap-2">
+                  <Input
+                    value={newGroup}
+                    placeholder="New group — “Release 2.4”, “Bugs”, “Spikes”"
+                    onChange={(e) => setNewGroup(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      void addGroup();
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    title="Add this group"
+                    disabled={!newGroup.trim() || busy}
+                    onClick={() => void addGroup()}
+                  >
+                    <Plus className="size-4" />
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {/* Session templates: the ways this project's sessions get started. */}
+            {tab === "templates" && project && (
+              <>
+                <div className="flex shrink-0 items-start justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    A saved way to start a session in this project — a folder and a prompt with a hole
+                    in it. Pick one on the New Session dialog’s Templates tab and paste in what that run
+                    is about.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 px-2 text-xs"
+                    onClick={() => setEditingTemplate({ template: null })}
+                  >
+                    <Plus className="mr-1 size-3.5" /> New template
+                  </Button>
+                </div>
+                {myTemplates.length === 0 ? (
+                  <p className="shrink-0 rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+                    No templates yet.
+                  </p>
+                ) : (
+                  <ul className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
+                    {myTemplates.map((t) => (
+                      <li key={t.id} className="shrink-0 rounded-md border">
+                        <button
+                          type="button"
+                          onClick={() => setEditingTemplate({ template: t })}
+                          className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent/50"
+                        >
+                          <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">{t.name}</span>
+                            <span className="block truncate text-[10px] text-muted-foreground">
+                              {t.description ?? t.prompt}
+                            </span>
+                          </span>
+                          <Pencil className="size-3.5 shrink-0 text-muted-foreground" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+
+            {error && <p className="shrink-0 text-xs text-destructive">{error}</p>}
+          </div>
         </div>
 
         <DialogFooter className="sm:justify-between">
