@@ -15,6 +15,7 @@ mod capture;
 mod config;
 mod geometry;
 mod imageops;
+mod tray_icon;
 mod windows;
 
 use std::collections::HashMap;
@@ -718,20 +719,15 @@ fn set_autostart(app: &AppHandle, on: bool) {
 }
 
 fn build_tray(app: &AppHandle, hotkeys: &Hotkeys) -> tauri::Result<()> {
-    // A template glyph on macOS, so the menu bar tints it for light and dark; a coloured one elsewhere.
-    let icon = if cfg!(target_os = "macos") {
-        tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?
-    } else {
-        tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?
-    };
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(icon)
+        .icon(tray_icon::image_for(tray_icon::current_look(app))?)
         .icon_as_template(cfg!(target_os = "macos"))
         .tooltip("Homeport Snap")
         .menu(&build_menu(app, hotkeys)?)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .build(app)?;
+    tray_icon::watch(app, TRAY_ID);
     Ok(())
 }
 

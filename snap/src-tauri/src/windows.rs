@@ -135,6 +135,7 @@ pub fn create_editor(app: &AppHandle, id: &str) -> tauri::Result<WebviewWindow> 
         .inner_size(EDITOR_MIN.0, EDITOR_MIN.1)
         .visible(false)
         .build()
+        .inspect(crate::tray_icon::dress_window)
 }
 
 /// Size `window` to show an `image` of physical pixels at its real size where it fits, centred on the
@@ -203,8 +204,9 @@ pub fn show_settings(app: &AppHandle) {
             .min_inner_size(480.0, 520.0)
             .center()
             .build();
-        if let Err(e) = built {
-            log::error!("Could not open settings: {e}");
+        match built {
+            Ok(window) => crate::tray_icon::dress_window(&window),
+            Err(e) => log::error!("Could not open settings: {e}"),
         }
     });
 }

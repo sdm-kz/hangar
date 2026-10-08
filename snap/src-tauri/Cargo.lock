@@ -1915,6 +1915,8 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "url",
+ "windows-registry",
+ "windows-sys 0.61.2",
  "xcap",
 ]
 
