@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Project, ProjectGroup, SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
 import { forkDescendants, forkTree, parentOf, type ForkNode } from "@/lib/sessionTree";
@@ -53,6 +53,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { ToolbarMore, type ToolAction } from "./ToolbarMore";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { OrphanBar } from "./OrphanBar";
 import { cn } from "@/lib/utils";
@@ -2678,112 +2679,135 @@ export function SessionSidebar({
     });
   };
 
+  // The toolbar's actions, in the order they give way to the "more" menu: from the end.
+  const tools: ToolAction[] = [];
+  if (sessions.length > 0 || recents.length > 0)
+    tools.push({
+      id: "search",
+      label: "Search sessions and recents",
+      title: "Search sessions and recents (Ctrl+Shift+F)",
+      icon: <Search className="size-3.5" />,
+      onClick: onSearch,
+    });
+  if (tab === "sessions" && sessions.length > 0) {
+    tools.push({
+      id: "activity",
+      label: "Only sessions with activity",
+      title:
+        filter === "activity"
+          ? `Showing ${activityCount} session${activityCount === 1 ? "" : "s"} with activity — click to show all`
+          : "Show only sessions with activity (working, waiting, finished…)",
+      icon: <ActivityIcon className={cn("size-3.5", filter === "activity" && "text-emerald-500")} />,
+      onClick: () => toggleFilter("activity"),
+      pressed: filter === "activity",
+    });
+    tools.push({
+      id: "running",
+      label: "Only running sessions",
+      title:
+        filter === "active"
+          ? `Showing ${activeCount} running session${activeCount === 1 ? "" : "s"} — click to show all`
+          : "Show running sessions only",
+      icon: <Filter className={cn("size-3.5", filter === "active" && "text-emerald-500")} />,
+      onClick: () => toggleFilter("active"),
+      pressed: filter === "active",
+    });
+  }
+  if ((tab === "sessions" && sessions.length > 0) || (tab === "recent" && recents.length > 0))
+    tools.push({
+      id: "group",
+      label: "Group by folder",
+      title: grouped ? "Show as a flat list" : "Group by folder",
+      icon: grouped ? <List className="size-3.5" /> : <FolderTree className="size-3.5" />,
+      onClick: toggleGrouped,
+      pressed: grouped,
+    });
+  // Projects head both views now, so the button isn't tied to the grouped one.
+  if (tab === "sessions") {
+    tools.push({
+      id: "project",
+      label: "New project",
+      icon: <FolderPlus className="size-3.5" />,
+      onClick: () => setEditing({ id: null }),
+    });
+    tools.push({
+      id: "schedules",
+      label: "Schedules",
+      title: "Schedules — run a template on a clock",
+      icon: <CalendarClock className="size-3.5" />,
+      onClick: () => onSchedules(),
+    });
+  }
+  if (canFoldAll)
+    tools.push({
+      id: "fold",
+      label: `${allCollapsed ? "Expand" : "Collapse"} all ${foldableKeys.length > 0 ? "folders and projects" : "projects"}`,
+      icon: allCollapsed ? <ChevronsUpDown className="size-3.5" /> : <ChevronsDownUp className="size-3.5" />,
+      onClick: toggleAllGroups,
+    });
+
+  // How many fit. The tabs' width depends on their counts, so rather than budget pixels the row is
+  // measured: after each layout, while it overflows, one more action moves into the menu. Anything
+  // that could change the answer (a resize, a different set of actions, a count growing a digit)
+  // starts again from all of them. Layout effects, so the steps never reach the screen.
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarWidth, setToolbarWidth] = useState(0);
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setToolbarWidth(entry.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const [toolsShown, setToolsShown] = useState(Infinity);
+  const fitKey = `${toolbarWidth}|${tools.map((t) => t.id).join()}|${sessions.length}|${recents.length}`;
+  const fitKeyRef = useRef(fitKey);
+  useLayoutEffect(() => {
+    if (fitKeyRef.current !== fitKey) {
+      fitKeyRef.current = fitKey;
+      if (toolsShown !== Infinity) {
+        setToolsShown(Infinity);
+        return;
+      }
+    }
+    const el = toolbarRef.current;
+    const shown = Math.min(toolsShown, tools.length);
+    if (el && el.scrollWidth > el.clientWidth && shown > 0) setToolsShown(shown - 1);
+    // Only what can change the fit: this sidebar re-renders on every session update, and a layout
+    // read on each of those would be a forced reflow for nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitKey, toolsShown]);
+  const inlineTools = tools.slice(0, toolsShown);
+  const overflowTools = tools.slice(inlineTools.length);
+
   return (
     <div className="flex h-full flex-col bg-card">
-      {/* Tab switcher: active sessions vs. reusable recent presets. The row is tight on purpose —
-          at the narrow end of the sidebar the labels have to survive next to four icon buttons. */}
-      <div className="flex items-center gap-0.5 p-2">
+      {/* Tab switcher: active sessions vs. reusable recent presets, then the list's actions. The tab
+          labels keep their width; actions that don't fit beside them move into a "more" menu, the
+          ones at the end of the list first, rather than squeezing the labels down to their counts. */}
+      <div ref={toolbarRef} className="flex items-center gap-0.5 p-2">
         <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")} count={sessions.length}>
           Sessions
         </TabButton>
         <TabButton active={tab === "recent"} onClick={() => setTab("recent")} count={recents.length}>
           Recent
         </TabButton>
-        {(sessions.length > 0 || recents.length > 0) && (
+        {inlineTools.map((a) => (
           <Button
+            key={a.id}
             variant="ghost"
             size="icon"
             className="size-6 shrink-0 text-muted-foreground"
-            title="Search sessions and recents (Ctrl+Shift+F)"
-            onClick={onSearch}
+            title={a.title ?? a.label}
+            aria-label={a.label}
+            aria-pressed={a.pressed}
+            onClick={a.onClick}
           >
-            <Search className="size-3.5" />
+            {a.icon}
           </Button>
-        )}
-        {tab === "sessions" && sessions.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="size-6 shrink-0 px-0 text-muted-foreground"
-            title={
-              filter === "activity"
-                ? `Showing ${activityCount} session${activityCount === 1 ? "" : "s"} with activity — click to show all`
-                : "Show only sessions with activity (working, waiting, finished…)"
-            }
-            aria-pressed={filter === "activity"}
-            onClick={() => toggleFilter("activity")}
-          >
-            <ActivityIcon className={cn("size-3.5", filter === "activity" && "text-emerald-500")} />
-          </Button>
-        )}
-        {tab === "sessions" && sessions.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="size-6 shrink-0 px-0 text-muted-foreground"
-            title={
-              filter === "active"
-                ? `Showing ${activeCount} running session${activeCount === 1 ? "" : "s"} — click to show all`
-                : "Show running sessions only"
-            }
-            aria-pressed={filter === "active"}
-            onClick={() => toggleFilter("active")}
-          >
-            <Filter className={cn("size-3.5", filter === "active" && "text-emerald-500")} />
-          </Button>
-        )}
-        {((tab === "sessions" && sessions.length > 0) ||
-          (tab === "recent" && recents.length > 0)) && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6 shrink-0 text-muted-foreground"
-            title={grouped ? "Show as a flat list" : "Group by folder"}
-            aria-pressed={grouped}
-            onClick={toggleGrouped}
-          >
-            {grouped ? <List className="size-3.5" /> : <FolderTree className="size-3.5" />}
-          </Button>
-        )}
-        {/* Projects head both views now, so the button isn't tied to the grouped one. */}
-        {tab === "sessions" && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6 shrink-0 text-muted-foreground"
-            title="New project"
-            onClick={() => setEditing({ id: null })}
-          >
-            <FolderPlus className="size-3.5" />
-          </Button>
-        )}
-        {tab === "sessions" && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6 shrink-0 text-muted-foreground"
-            title="Schedules — run a template on a clock"
-            onClick={() => onSchedules()}
-          >
-            <CalendarClock className="size-3.5" />
-          </Button>
-        )}
-        {canFoldAll && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6 shrink-0 text-muted-foreground"
-            title={`${allCollapsed ? "Expand" : "Collapse"} all ${
-              foldableKeys.length > 0 ? "folders and projects" : "projects"
-            }`}
-            onClick={toggleAllGroups}
-          >
-            {allCollapsed ? (
-              <ChevronsUpDown className="size-3.5" />
-            ) : (
-              <ChevronsDownUp className="size-3.5" />
-            )}
-          </Button>
+        ))}
+        {overflowTools.length > 0 && (
+          <ToolbarMore actions={overflowTools} buttonClassName="size-6 text-muted-foreground" />
         )}
       </div>
 
@@ -3412,12 +3436,12 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium transition-colors",
+        "flex min-w-max flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium transition-colors",
         active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
       )}
     >
-      {/* Label truncates before the count does: a clipped word still reads, a clipped number lies. */}
-      <span className="truncate">{children}</span>
+      {/* Never squeezed (min-w-max): the toolbar moves its actions into a menu before it would. */}
+      <span>{children}</span>
       {count !== undefined && count > 0 && (
         <span className="shrink-0 text-[10px] tabular-nums opacity-70">{count}</span>
       )}
