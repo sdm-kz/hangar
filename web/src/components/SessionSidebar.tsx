@@ -265,9 +265,14 @@ export function HeadingProgress({ done, active }: { done: number; active: number
 
 const MIDDLE_TRUNCATE_HEAD = 10;
 
+/** Any letter from a right-to-left script: Hebrew, Arabic, Syriac, Thaana, N'Ko and their forms. */
+const RTL_LETTER = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+
 /**
  * A name cut in the middle when it doesn't fit: the first few characters stay, the ellipsis goes
- * after them, and the tail is kept for as much as there is room.
+ * after them, and the tail is kept for as much as there is room. The one rule for every name in the
+ * tree -- session rows at any depth, and the folder, group and project headings -- so a list never
+ * cuts one row at the end and the next in the middle.
  *
  * A fork's name starts with its parent's, so cutting the tail would leave every row in a branch
  * looking identical -- but cutting the head alone, as these rows used to, leaves a line that starts
@@ -279,7 +284,10 @@ const MIDDLE_TRUNCATE_HEAD = 10;
 function MiddleTruncated({ text }: { text: string }) {
   // By code point, so an emoji or other astral character is never split between the halves.
   const chars = Array.from(text);
-  if (chars.length <= MIDDLE_TRUNCATE_HEAD) return <span className="truncate">{text}</span>;
+  // A right-to-left name (Hebrew, Arabic) can't be split this way: each half is laid out on its own,
+  // so the words come out in the wrong order. It gets the plain end ellipsis instead.
+  if (chars.length <= MIDDLE_TRUNCATE_HEAD || RTL_LETTER.test(text))
+    return <span className="truncate">{text}</span>;
   return (
     <>
       {/* whitespace-pre on both: a space on either side of the split would otherwise be dropped at
@@ -570,7 +578,9 @@ function GroupHeader({
           <FolderTree className="size-3.5" />
           <HeadingActivityMark activity={activity ?? null} />
         </span>
-        <span className="truncate font-mono text-xs font-medium">{folderLabel(dir)}</span>
+        <span className="flex min-w-0 overflow-hidden font-mono text-xs font-medium">
+          <MiddleTruncated text={folderLabel(dir)} />
+        </span>
         {/* Session count, right after the name rather than pinned to the row's edge: it reads as
             part of the folder's label, and never drifts away from it on a wide sidebar. */}
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
@@ -853,7 +863,9 @@ function VirtualFolderHeader({
             inside the fold button — an input nested in a button, and two stray folds fired by the
             double-click that opens it — and the name, the colour and the icon are one decision
             anyway. All three are behind the pencil, in the project's settings. */}
-        <span className="truncate text-xs font-medium">{group.name}</span>
+        <span className="flex min-w-0 overflow-hidden text-xs font-medium">
+          <MiddleTruncated text={group.name} />
+        </span>
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
       </button>
       {/* Outside the fold button and before the hover actions, so it sits at the heading's right
@@ -950,11 +962,11 @@ function ProjectHeader({
         </span>
         <span
           className={cn(
-            "truncate text-xs font-semibold",
+            "flex min-w-0 overflow-hidden text-xs font-semibold",
             project ? "text-foreground" : "font-medium italic"
           )}
         >
-          {project ? project.name : "No project"}
+          <MiddleTruncated text={project ? project.name : "No project"} />
         </span>
         <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
         {/* Kept with the count rather than pinned to the row's edge, for the reason the count is:
@@ -2392,17 +2404,14 @@ export function SessionSidebar({
               />
             ) : (
               <span
-                className={cn(
-                  depth > 0 ? "flex min-w-0" : "truncate",
-                  s.state !== "Running" && "text-muted-foreground"
-                )}
+                className={cn("flex min-w-0 overflow-hidden", s.state !== "Running" && "text-muted-foreground")}
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   setEditingId(s.id);
                 }}
-                title={depth > 0 ? `${s.name} — double-click to rename` : "Double-click to rename"}
+                title={`${s.name} — double-click to rename`}
               >
-                {depth > 0 ? <MiddleTruncated text={s.name} /> : s.name}
+                <MiddleTruncated text={s.name} />
               </span>
             )}
             {nested && editingId !== s.id && <HeadingProgress done={nested.done} active={nested.active} />}
