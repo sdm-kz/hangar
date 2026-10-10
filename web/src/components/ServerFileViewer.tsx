@@ -37,6 +37,10 @@ import {
   X,
 } from "lucide-react";
 import { ShowSidebarButton } from "@/components/ShowSidebarButton";
+import { OverflowToolbar, type OverflowItem } from "./OverflowToolbar";
+
+/** How much of the header row the file name keeps before the controls start giving way. */
+const VIEWER_NAME_MIN = 96;
 
 const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB — matches the per-session browser's cap
 
@@ -111,6 +115,7 @@ export function ServerFileViewer({
   const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null); // the name-and-controls row, for the toolbar's room
   const frameRef = useRef<HTMLIFrameElement | null>(null);
 
   // Raw-bytes URL for media previews; carries the reload counter so a refresh actually bypasses
@@ -272,12 +277,150 @@ export function ServerFileViewer({
     rootRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // An open "more" menu takes this Escape for itself: closing it is the smaller step, and
+      // stopping the key here would leave the menu hanging over the header full screen left.
+      if (rootRef.current?.querySelector('[role="menu"]')) return;
       e.stopPropagation();
       setFullscreen(false);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [fullscreen, editing]);
+
+  // The viewer's controls, in the order they give way: the view switch and the edit and copy
+  // actions stay longest; the ways out of this pane (full page, a new tab, download) go first.
+  const viewerTools: OverflowItem[] = [];
+  const editable = kind === "text" && !tooLarge && !editing;
+  if (editable && (isMarkdown || isHtml)) {
+    const toggleLabel = isHtml ? (rendered ? "Source" : "Preview") : rendered ? "Raw" : "Rendered";
+    viewerTools.push({
+      id: "render",
+      inline: (
+        <Button variant="ghost" size="sm" onClick={() => setRendered((r) => !r)}>
+          {toggleLabel}
+        </Button>
+      ),
+      menu: [
+        {
+          id: "render-rendered",
+          label: isHtml ? "Preview" : "Rendered",
+          pressed: rendered,
+          onClick: () => setRendered(true),
+        },
+        { id: "render-raw", label: isHtml ? "Source" : "Raw", pressed: !rendered, onClick: () => setRendered(false) },
+      ],
+    });
+  }
+  if (editable) {
+    viewerTools.push({
+      id: "copy",
+      inline: (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={copyContent}
+          disabled={text === null}
+          title={copied ? "Copied!" : "Copy content"}
+        >
+          {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+        </Button>
+      ),
+      menu: [
+        { id: "copy", label: "Copy content", icon: <Copy className="size-4" />, onClick: copyContent, disabled: text === null },
+      ],
+    });
+    const startEdit = () => {
+      setDraft(text ?? "");
+      setEditing(true);
+    };
+    viewerTools.push({
+      id: "edit",
+      inline: (
+        <Button variant="ghost" size="sm" onClick={startEdit} disabled={text === null}>
+          <Pencil className="size-4" />
+          <span className="ml-1 hidden sm:inline">Edit</span>
+        </Button>
+      ),
+      menu: [{ id: "edit", label: "Edit", icon: <Pencil className="size-4" />, onClick: startEdit, disabled: text === null }],
+    });
+  }
+  if (!editing) {
+    const reload = () => setReloadKey((k) => k + 1);
+    viewerTools.push({
+      id: "reload",
+      inline: (
+        <Button variant="ghost" size="icon" onClick={reload} disabled={loading} title="Refresh">
+          <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+        </Button>
+      ),
+      menu: [{ id: "reload", label: "Refresh", icon: <RefreshCw className="size-4" />, onClick: reload, disabled: loading }],
+    });
+  }
+  if (onReveal)
+    viewerTools.push({
+      id: "reveal",
+      inline: (
+        <Button variant="ghost" size="icon" onClick={onReveal} title="Show in Files">
+          <FolderTree className="size-4" />
+        </Button>
+      ),
+      menu: [{ id: "reveal", label: "Show in Files", icon: <FolderTree className="size-4" />, onClick: onReveal }],
+    });
+  // Embedded in the app: take the whole window, sidebar and all. Pointless in a standalone preview
+  // tab, which is already the whole window -- hence the same gate as the new-tab link below. Leaving
+  // is by this button or Esc; Close stays what it is, so the two are never the same X.
+  // The way back out is not here but beside the toolbar (see below): in full page it must never be
+  // the thing that ends up in the menu, least of all on a phone, where there is no Esc.
+  if (onClose && !editing && !fullscreen) {
+    viewerTools.push({
+      id: "fullpage",
+      inline: (
+        <Button variant="ghost" size="icon" onClick={() => setFullscreen(true)} title="Full page" aria-label="Full page">
+          <Maximize2 className="size-4" />
+        </Button>
+      ),
+      menu: [{ id: "fullpage", label: "Full page", icon: <Maximize2 className="size-4" />, onClick: () => setFullscreen(true) }],
+    });
+  }
+  // Embedded in the app: the same file as a standalone full-page preview in its own browser tab (the
+  // path rides in the query string, so that tab survives a refresh). The current section anchor is
+  // carried along, read at click time because hash changes don't re-render this component.
+  if (onClose) {
+    const tabUrl = () => previewUrl(path) + window.location.hash;
+    viewerTools.push({
+      id: "newtab",
+      inline: (
+        <Button variant="ghost" size="icon" asChild title="Open in new browser tab">
+          <a
+            href={previewUrl(path)}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => {
+              e.currentTarget.href = tabUrl();
+            }}
+          >
+            <ExternalLink className="size-4" />
+          </a>
+        </Button>
+      ),
+      menu: [
+        { id: "newtab", label: "Open in new browser tab", icon: <ExternalLink className="size-4" />, href: tabUrl, newTab: true },
+      ],
+    });
+  }
+  viewerTools.push({
+    id: "download",
+    inline: (
+      <Button variant="ghost" size="icon" asChild title="Download">
+        <a href={serverFileUrl(path, true)} download={name}>
+          <Download className="size-4" />
+        </a>
+      </Button>
+    ),
+    menu: [
+      { id: "download", label: "Download", icon: <Download className="size-4" />, href: serverFileUrl(path, true), download: name },
+    ],
+  });
 
   return (
     <div
@@ -306,33 +449,34 @@ export function ServerFileViewer({
         {collapsed && onToggleCollapsed && (
           <ShowSidebarButton onClick={onToggleCollapsed} />
         )}
-        <div className="group min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1">
-            <div className="truncate text-sm font-medium">
-              {name}
-              {editing && <span className="ml-1 text-amber-500">•</span>}
+        {/* The name and the controls share this row, which takes what the buttons either side leave;
+            the controls give way into a "more" menu before the name does. */}
+        <div ref={rowRef} className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="group min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1">
+              <div className="truncate text-sm font-medium">
+                {name}
+                {editing && <span className="ml-1 text-amber-500">•</span>}
+              </div>
+              <CopyPathButton
+                path={name}
+                title="Copy file name"
+                className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                iconClassName="size-3"
+              />
             </div>
-            <CopyPathButton
-              path={name}
-              title="Copy file name"
-              className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-              iconClassName="size-3"
-            />
-          </div>
-          <div className="flex min-w-0 items-center gap-1">
-            <div className="truncate text-xs text-muted-foreground" title={path}>
-              {path}
+            <div className="flex min-w-0 items-center gap-1">
+              <div className="truncate text-xs text-muted-foreground" title={path}>
+                {path}
+              </div>
+              <CopyPathButton
+                path={path}
+                className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                iconClassName="size-3"
+              />
             </div>
-            <CopyPathButton
-              path={path}
-              className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-              iconClassName="size-3"
-            />
           </div>
-        </div>
-
-        {kind === "text" && !tooLarge && (
-          editing ? (
+          {editing && kind === "text" && !tooLarge && (
             <>
               <Button variant="ghost" size="sm" onClick={() => setEditing(false)} disabled={saving}>
                 Cancel
@@ -342,91 +486,27 @@ export function ServerFileViewer({
                 <span className="ml-1 hidden sm:inline">Save</span>
               </Button>
             </>
-          ) : (
-            <>
-              {(isMarkdown || isHtml) && (
-                <Button variant="ghost" size="sm" onClick={() => setRendered((r) => !r)}>
-                  {isHtml ? (rendered ? "Source" : "Preview") : rendered ? "Raw" : "Rendered"}
-                </Button>
-              )}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={copyContent}
-                disabled={text === null}
-                title={copied ? "Copied!" : "Copy content"}
-              >
-                {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setDraft(text ?? "");
-                  setEditing(true);
-                }}
-                disabled={text === null}
-              >
-                <Pencil className="size-4" />
-                <span className="ml-1 hidden sm:inline">Edit</span>
-              </Button>
-            </>
-          )
-        )}
-        {!editing && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setReloadKey((k) => k + 1)}
-            disabled={loading}
-            title="Refresh"
-          >
-            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
-          </Button>
-        )}
-        {onReveal && (
-          <Button variant="ghost" size="icon" onClick={onReveal} title="Show in Files">
-            <FolderTree className="size-4" />
-          </Button>
-        )}
-        {/* Embedded in the app: take the whole window, sidebar and all. Pointless in a standalone
-            preview tab, which is already the whole window — hence the same gate as the button
-            below. Leaving is by this button or Esc; Close stays what it is, so the two are never
-            the same X. */}
-        {onClose && !editing && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setFullscreen((f) => !f)}
-            title={fullscreen ? "Exit full page (Esc)" : "Full page"}
-            aria-label={fullscreen ? "Exit full page" : "Full page"}
-          >
-            {fullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-          </Button>
-        )}
-        {/* Embedded in the app: offer the same file as a standalone full-page preview in its own
-            browser tab (the path rides in the query string, so that tab survives a refresh). */}
-        {onClose && (
-          <Button variant="ghost" size="icon" asChild title="Open in new browser tab">
-            <a
-              href={previewUrl(path)}
-              target="_blank"
-              rel="noreferrer"
-              // Carry the current section anchor along so the new tab opens at the same place.
-              // Refreshed at click time because hash changes don't re-render this component.
-              onClick={(e) => {
-                e.currentTarget.href = previewUrl(path) + window.location.hash;
-              }}
+          )}
+          <OverflowToolbar
+            items={viewerTools}
+            container={rowRef}
+            reserve={VIEWER_NAME_MIN + 8 + (editing ? 160 : 0) + (fullscreen ? 36 + 8 : 0)}
+            menuButtonClassName="size-9"
+            menuButtonWidth={36}
+          />
+          {fullscreen && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              onClick={() => setFullscreen(false)}
+              title="Exit full page (Esc)"
+              aria-label="Exit full page"
             >
-              <ExternalLink className="size-4" />
-            </a>
-          </Button>
-        )}
-        <Button variant="ghost" size="icon" asChild title="Download">
-          <a href={serverFileUrl(path, true)} download={name}>
-            <Download className="size-4" />
-          </a>
-        </Button>
+              <Minimize2 className="size-4" />
+            </Button>
+          )}
+        </div>
         {onClose && (
           <Button variant="ghost" size="icon" onClick={onClose} title="Close">
             <X className="size-5" />

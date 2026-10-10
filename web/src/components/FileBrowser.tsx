@@ -74,6 +74,7 @@ import {
 import { writeToClipboard } from "@/lib/clipboard";
 import { nativePath } from "@/lib/paths";
 import { CopyPathButton } from "./CopyPathButton";
+import { OverflowToolbar, type OverflowItem } from "./OverflowToolbar";
 import {
   ScrollJumpButtons,
   ZoomControls,
@@ -2142,6 +2143,7 @@ function FilePreview({
   const contentRef = useRef<HTMLDivElement>(null);
   // The preview root; focused when the full-page popup opens so Esc lands on it right away.
   const rootRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
   // The sandboxed HTML preview frame, for the scroll bridge below.
   const frameRef = useRef<HTMLIFrameElement>(null);
   // False until this tab's remembered scroll offset has been put back. Scroll events before that are
@@ -2321,6 +2323,9 @@ function FilePreview({
     rootRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // An open "more" menu takes this Escape for itself: closing it is the smaller step, and
+      // stopping the key here would leave the menu hanging over the header full screen left.
+      if (rootRef.current?.querySelector('[role="menu"]')) return;
       e.stopPropagation();
       setFullscreen(false);
     };
@@ -2525,6 +2530,149 @@ function FilePreview({
     );
   }
 
+  // The preview's controls, in the order they give way: the view switches stay longest, then the
+  // edit and copy actions, and the ways out of this pane (full screen, a new tab, download) go first.
+  const previewTools: OverflowItem[] = [];
+  if (gitStatus)
+    previewTools.push({
+      id: "view",
+      inline: (
+        <div className="flex h-7 overflow-hidden rounded-md border">
+          <TabButton active={view === "preview"} onClick={() => setView("preview")}>
+            Preview
+          </TabButton>
+          <TabButton active={view === "diff"} onClick={() => setView("diff")}>
+            <GitCompare className="size-3.5" /> Diff
+          </TabButton>
+        </div>
+      ),
+      menu: [
+        { id: "view-preview", label: "Preview", pressed: view === "preview", onClick: () => setView("preview") },
+        { id: "view-diff", label: "Diff", pressed: view === "diff", onClick: () => setView("diff") },
+      ],
+    });
+  if ((isMarkdown || isHtml) && view === "preview")
+    previewTools.push({
+      id: "render",
+      inline: (
+        <div className="flex h-7 overflow-hidden rounded-md border">
+          <TabButton active={mdView === "rendered"} onClick={() => setMdView("rendered")}>
+            {isHtml ? "Preview" : "Rendered"}
+          </TabButton>
+          <TabButton active={mdView === "raw"} onClick={() => setMdView("raw")}>
+            {isHtml ? "Source" : "Raw"}
+          </TabButton>
+        </div>
+      ),
+      menu: [
+        {
+          id: "render-rendered",
+          label: isHtml ? "Preview" : "Rendered",
+          pressed: mdView === "rendered",
+          onClick: () => setMdView("rendered"),
+        },
+        { id: "render-raw", label: isHtml ? "Source" : "Raw", pressed: mdView === "raw", onClick: () => setMdView("raw") },
+      ],
+    });
+  if (canEdit && view === "preview") {
+    const startEdit = () => {
+      setDraft(text ?? "");
+      setEditing(true);
+    };
+    previewTools.push({
+      id: "edit",
+      inline: (
+        <Button variant="outline" size="sm" className="h-7 w-7 px-0" title="Edit" onClick={startEdit}>
+          <Pencil className="size-4" />
+        </Button>
+      ),
+      menu: [{ id: "edit", label: "Edit", icon: <Pencil className="size-4" />, onClick: startEdit }],
+    });
+  }
+  if (kind === "image" && view === "preview")
+    previewTools.push({
+      id: "lightbox",
+      inline: (
+        <Button variant="outline" size="sm" className="h-7 w-7 px-0" title="Fullscreen" onClick={() => setLightbox(true)}>
+          <Expand className="size-4" />
+        </Button>
+      ),
+      menu: [{ id: "lightbox", label: "Fullscreen", icon: <Expand className="size-4" />, onClick: () => setLightbox(true) }],
+    });
+  if (kind === "text" && view === "preview" && text !== null)
+    previewTools.push({
+      id: "copy",
+      inline: (
+        <Button variant="outline" size="sm" className="h-7 w-7 px-0" title="Select all & copy" onClick={copyContents}>
+          {copiedText ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+        </Button>
+      ),
+      menu: [{ id: "copy", label: "Select all & copy", icon: <Copy className="size-4" />, onClick: copyContents }],
+    });
+  previewTools.push({
+    id: "reload",
+    inline: (
+      <Button variant="outline" size="sm" className="h-7 w-7 px-0" title="Reload" onClick={refresh}>
+        <RefreshCw className={cn("size-4", kind === "text" && status === "loading" && "animate-spin")} />
+      </Button>
+    ),
+    menu: [{ id: "reload", label: "Reload", icon: <RefreshCw className="size-4" />, onClick: refresh }],
+  });
+  // Non-image previews open in a full-page popup instead of the image lightbox. The way back out is
+  // not here but at the end of the strip -- see the close button there.
+  if (kind !== "image" && !fullscreen)
+    previewTools.push({
+      id: "fullscreen",
+      inline: (
+        <Button variant="outline" size="sm" className="h-7 w-7 px-0" onClick={() => setFullscreen(true)} title="Full screen">
+          <Maximize2 className="size-4" />
+        </Button>
+      ),
+      menu: [{ id: "fullscreen", label: "Full screen", icon: <Maximize2 className="size-4" />, onClick: () => setFullscreen(true) }],
+    });
+  // Standalone full-page preview in its own browser tab; survives a refresh there. The URL is read
+  // at click time: the app's deep-link params ride along, and they move without re-rendering this.
+  previewTools.push({
+    id: "newtab",
+    inline: (
+      <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Open in new browser tab">
+        <a
+          href={previewUrl(absPath)}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => {
+            e.currentTarget.href = previewUrl(absPath);
+          }}
+        >
+          <ExternalLink className="size-4" />
+        </a>
+      </Button>
+    ),
+    menu: [
+      {
+        id: "newtab",
+        label: "Open in new browser tab",
+        icon: <ExternalLink className="size-4" />,
+        href: () => previewUrl(absPath),
+        newTab: true,
+      },
+    ],
+  });
+  previewTools.push({
+    id: "download",
+    inline: (
+      <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Download">
+        <a href={rawUrl(true)} download={file.name}>
+          <Download className="size-4" />
+        </a>
+      </Button>
+    ),
+    menu: [{ id: "download", label: "Download", icon: <Download className="size-4" />, href: rawUrl(true), download: file.name }],
+  });
+  // What the toolbar leaves the rest of the header: the file name keeps at least PREVIEW_NAME_MIN,
+  // plus the gap after it, and in full screen the close button and its own gaps.
+  const toolbarReserve = PREVIEW_NAME_MIN + 8 + (fullscreen ? 28 + 4 + 8 : 0);
+
   return (
     <div
       ref={rootRef}
@@ -2534,7 +2682,7 @@ function FilePreview({
         fullscreen ? "fixed inset-0 z-50 bg-background" : "h-full"
       )}
     >
-      <header className="flex items-center gap-2 border-b px-4 py-2">
+      <header ref={headerRef} className="flex items-center gap-2 border-b px-4 py-2">
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">
             {file.name}
@@ -2570,98 +2718,15 @@ function FilePreview({
           </>
         ) : (
           <>
-            {gitStatus && (
-              <div className="hidden h-7 overflow-hidden rounded-md border sm:flex">
-                <TabButton active={view === "preview"} onClick={() => setView("preview")}>
-                  Preview
-                </TabButton>
-                <TabButton active={view === "diff"} onClick={() => setView("diff")}>
-                  <GitCompare className="size-3.5" /> Diff
-                </TabButton>
-              </div>
-            )}
-
-            {(isMarkdown || isHtml) && view === "preview" && (
-              <div className="hidden h-7 overflow-hidden rounded-md border sm:flex">
-                <TabButton active={mdView === "rendered"} onClick={() => setMdView("rendered")}>
-                  {isHtml ? "Preview" : "Rendered"}
-                </TabButton>
-                <TabButton active={mdView === "raw"} onClick={() => setMdView("raw")}>
-                  {isHtml ? "Source" : "Raw"}
-                </TabButton>
-              </div>
-            )}
-
-            {canEdit && view === "preview" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 px-0"
-                title="Edit"
-                onClick={() => {
-                  setDraft(text ?? "");
-                  setEditing(true);
-                }}
-              >
-                <Pencil className="size-4" />
-              </Button>
-            )}
-
-            {kind === "image" && view === "preview" && (
-              <Button variant="outline" size="sm" className="h-7 w-7 px-0" title="Fullscreen" onClick={() => setLightbox(true)}>
-                <Expand className="size-4" />
-              </Button>
-            )}
-
-            {kind === "text" && view === "preview" && text !== null && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 px-0"
-                title="Select all & copy"
-                onClick={copyContents}
-              >
-                {copiedText ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
-              </Button>
-            )}
-
-            <Button variant="outline" size="sm" className="h-7 w-7 px-0" title="Reload" onClick={refresh}>
-              <RefreshCw className={cn("size-4", kind === "text" && status === "loading" && "animate-spin")} />
-            </Button>
-
-            {/* Non-image previews open in a full-page popup instead of the image lightbox. The way
-                back out is not here but at the end of the strip — see the close button below. */}
-            {kind !== "image" && !fullscreen && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 px-0"
-                onClick={() => setFullscreen(true)}
-                title="Full screen"
-              >
-                <Maximize2 className="size-4" />
-              </Button>
-            )}
-            {/* Standalone full-page preview in its own browser tab; survives a refresh there. */}
-            <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Open in new browser tab">
-              <a
-                href={previewUrl(absPath)}
-                target="_blank"
-                rel="noreferrer"
-                // Refreshed at click time: the app's deep-link params (which ride along, so the
-                // preview tab can link back here) move without re-rendering this component.
-                onClick={(e) => {
-                  e.currentTarget.href = previewUrl(absPath);
-                }}
-              >
-                <ExternalLink className="size-4" />
-              </a>
-            </Button>
-            <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Download">
-              <a href={rawUrl(true)} download={file.name}>
-                <Download className="size-4" />
-              </a>
-            </Button>
+            {/* Everything but the way out of full screen, which must never hide in a menu. What doesn't
+                fit beside the file name moves into a "more" menu, from the end. */}
+            <OverflowToolbar
+              items={previewTools}
+              container={headerRef}
+              reserve={toolbarReserve}
+              menuVariant="outline"
+              menuButtonClassName="h-7 w-7"
+            />
 
             {/* The way out of full screen: a cross, last in the strip and held a little apart from
                 it. In full screen the preview is the whole window, so this is the one control you
@@ -2845,6 +2910,9 @@ function FilePreview({
     </div>
   );
 }
+
+/** How much of the preview header the file name keeps before the toolbar starts giving way. */
+const PREVIEW_NAME_MIN = 96;
 
 function TabButton({
   active,
