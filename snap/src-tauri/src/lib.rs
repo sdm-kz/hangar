@@ -435,10 +435,16 @@ async fn send_capture(app: AppHandle, request: Request<'_>) -> Result<(), ApiErr
     let session_id = header_text(&request, "x-session-id").ok_or(ApiError::Failed("No session chosen".into()))?;
     let claude_session_id = header_text(&request, "x-claude-session-id").filter(|s| !s.is_empty());
     let text = header_text(&request, "x-text").unwrap_or_default();
+    // Into the session's postponed messages rather than its prompt.
+    let postpone = header_text(&request, "x-postpone").is_some_and(|v| v == "1");
 
     let (client, server) = client(&app)?;
     let path = client.upload_image(&session_id, &png).await?;
-    client.message(&session_id, text.trim(), &[path]).await?;
+    if postpone {
+        client.postpone(&session_id, text.trim(), &[path]).await?;
+    } else {
+        client.message(&session_id, text.trim(), &[path]).await?;
+    }
     if let Err(e) = state(&app).store.touch_recent(&server, &session_id, claude_session_id.as_deref(), now_ms()) {
         log::warn!("Could not remember the session: {e}");
     }

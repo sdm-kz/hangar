@@ -206,16 +206,17 @@ export default function Editor({ id }: { id: string }) {
     else close();
   }, [dirty, send.kind, close]);
 
+  // `postpone` puts it in the session's postponed messages instead of its prompt.
   const doSend = useCallback(
-    async (sessionId?: string) => {
+    async (sessionId?: string, postpone = false) => {
       const s = items.find((i) => i.id === (sessionId ?? target));
       if (!s || send.kind === "sending" || send.kind === "sent") return;
-      setSend({ kind: "sending" });
+      setSend({ kind: "sending", postpone });
       try {
         const png = await exportPng();
         if (!png) throw new Error("Nothing to send");
-        await api.sendCapture(png, s, message.trim());
-        setSend({ kind: "sent" });
+        await api.sendCapture(png, s, message.trim(), postpone);
+        setSend({ kind: "sent", postpone });
         setTimeout(close, 650);
       } catch (e) {
         setSend({ kind: "error", message: apiErrorText(e) });
@@ -290,7 +291,7 @@ export default function Editor({ id }: { id: string }) {
       }
       if (mod && e.key === "Enter") {
         e.preventDefault();
-        void doSend();
+        void doSend(undefined, e.shiftKey);
         return;
       }
       if ((inSearch || e.altKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -436,6 +437,7 @@ export default function Editor({ id }: { id: string }) {
             target={targetItem}
             send={send}
             onSend={() => void doSend()}
+            onPostpone={() => void doSend(undefined, true)}
             mod={MOD}
             hint={out ? `${out.width} × ${out.height} PNG · ${isMac ? "⌥" : "Alt+"}↑↓ picks the session` : undefined}
           />

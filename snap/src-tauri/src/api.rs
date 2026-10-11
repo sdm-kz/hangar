@@ -206,6 +206,8 @@ impl Client {
             401 => ApiError::Unauthorized,
             404 => ApiError::NotFound(message),
             413 => ApiError::Failed("The picture is too big for the server to take (25 MB at most). Crop it, or send part of the screen.".into()),
+            // A route the server doesn't have for this method: a Homeport from before the feature.
+            405 => ApiError::Failed("This Homeport can't do that yet. Update it, then try again.".into()),
             _ => ApiError::Failed(message),
         })
     }
@@ -263,6 +265,15 @@ impl Client {
         });
         let res = self.send(self.request_url(reqwest::Method::POST, url)?.json(&body)).await?;
         Ok(res.json::<Uploaded>().await.map_err(|e| ApiError::Failed(e.to_string()))?.path)
+    }
+
+    /// Stash `text` and the uploaded `images` in the session's postponed messages, to be sent later
+    /// from Homeport (or by its auto-send) instead of now.
+    pub async fn postpone(&self, session_id: &str, text: &str, images: &[String]) -> Result<(), ApiError> {
+        let url = self.session_url(session_id, &["postponed", "items"])?;
+        let body = serde_json::json!({ "text": text, "images": images });
+        self.send(self.request_url(reqwest::Method::POST, url)?.json(&body)).await?;
+        Ok(())
     }
 
     /// Type `text` into the session's Claude, with the uploaded `images` pasted after it, and submit.
@@ -479,10 +490,15 @@ mod tests {
             .create_async()
             .await;
         let _c = server.mock("POST", "/api/auth/login").with_status(401).create_async().await;
+        let _d = server.mock("POST", "/api/sessions/x/postponed/items").with_status(405).create_async().await;
         let client = Client::new(Credentials { base: Url::parse(&server.url()).unwrap(), token: None, local: false });
         assert_eq!(client.sessions().await, Err(ApiError::Unauthorized));
         assert_eq!(client.message("x", "t", &[]).await, Err(ApiError::NotFound("No running session with that id.".into())));
         assert_eq!(client.login("nope").await, Err(ApiError::Failed("Wrong password".into())));
+        assert_eq!(
+            client.postpone("x", "t", &[]).await,
+            Err(ApiError::Failed("This Homeport can't do that yet. Update it, then try again.".into()))
+        );
 
         let dead = Client::new(Credentials { base: Url::parse("http://127.0.0.1:9").unwrap(), token: None, local: false });
         assert!(matches!(dead.sessions().await, Err(ApiError::Unreachable(_))));

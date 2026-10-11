@@ -33,6 +33,11 @@ window. macOS and Linux snap to whole windows.
 The **editor** opens with the message box focused. The quickest path is: capture, type, `Ctrl+Enter`
 (`⌘↵` on a Mac).
 
+**Postpone** (`Ctrl+Shift+Enter`, `⌘⇧↵`) puts the picture and the message in the session's postponed
+messages instead of its prompt, for when Claude is busy: they wait in the Postponed bar under the
+session in Homeport, to be sent from there or by its auto-send. Needs a Homeport that has
+`POST /api/sessions/{id}/postponed/items`; an older one says to update it.
+
 - Tools: select `V`, arrow `A`, rectangle `R`, ellipse `E`, line `L`, pen `P`, highlighter `H`,
   text `T`, numbered step `N`, pixelate `B`, crop `C`. These single-letter keys work while focus isn't in
   a text box; `Esc` leaves the message box.
@@ -120,4 +125,6 @@ The log (`…\logs`) records how long each overlay and editor took to come up.
 - The editor (`src/editor`) draws with Konva in the capture's own pixels. It exports the full-resolution
   PNG and hands it back over IPC. `api.rs` uploads it (`POST /api/sessions/{id}/fs/upload-image`) and
   sends the message with the uploaded path (`POST /api/sessions/{id}/message`, `images`), which types
-  both into the session the way the web composer does.
+  both into the session the way the web composer does. Postpone sends the same body to
+  `POST /api/sessions/{id}/postponed/items`, which the server adds to the pool itself, under the lock
+  its other writers take, rather than this app rewriting the whole pool and racing a browser's save.
