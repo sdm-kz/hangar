@@ -15,6 +15,12 @@ export interface WindowBox {
   rect: Rect;
 }
 
+/** A window or a part of one (a button, a paragraph, a panel), in frame pixels. */
+export interface ElementBox {
+  rect: Rect;
+  label: string;
+}
+
 export interface OverlayInit {
   generation: number;
   mode: Mode;
@@ -96,6 +102,8 @@ export function pictureUrl(path: string): string {
 
 export const api = {
   overlayInit: (frame: number) => invoke<OverlayInit>("overlay_init", { frame }),
+  overlayElements: (frame: number, x: number, y: number) =>
+    invoke<ElementBox[]>("overlay_elements", { frame, x, y }),
   overlayReady: () => invoke<void>("overlay_ready"),
   overlayCommit: (frame: number, selection: Selection) => invoke<void>("overlay_commit", { frame, selection }),
   overlayCancel: () => invoke<void>("overlay_cancel"),

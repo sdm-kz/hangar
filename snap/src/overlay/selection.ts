@@ -1,4 +1,4 @@
-import type { Rect, WindowBox } from "@/lib/tauri";
+import type { ElementBox, Rect, WindowBox } from "@/lib/tauri";
 
 export type Point = { x: number; y: number };
 
@@ -36,6 +36,28 @@ export function contains(r: Rect, p: Point): boolean {
 /** The topmost window under a point (both in frame pixels); the list comes topmost first. */
 export function windowAt(windows: WindowBox[], p: Point): WindowBox | undefined {
   return windows.find((w) => contains(w.rect, p));
+}
+
+/** What is under the pointer, innermost first and ending with the window, and which of them is picked. */
+export type Pick = { boxes: ElementBox[]; level: number };
+
+export function sameRect(a: Rect, b: Rect): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+/** A new chain under the pointer. Whatever was picked stays picked while it is still in the chain — a
+ *  card widened to stays the card as the pointer crosses the buttons in it — and otherwise the pick
+ *  starts over at the innermost. */
+export function nextPick(prev: Pick | null, boxes: ElementBox[]): Pick | null {
+  if (boxes.length === 0) return null;
+  const kept = prev?.boxes[prev.level];
+  const i = kept ? boxes.findIndex((b) => sameRect(b.rect, kept.rect)) : -1;
+  return { boxes, level: Math.max(0, i) };
+}
+
+/** One step outwards (`by` 1) or inwards (-1), held to the chain's ends. */
+export function widen(pick: Pick, by: number): Pick {
+  return { ...pick, level: Math.min(pick.boxes.length - 1, Math.max(0, pick.level + by)) };
 }
 
 /** Append `p` to a traced path unless it is within `minDistance` of the last point — a lasso at mouse

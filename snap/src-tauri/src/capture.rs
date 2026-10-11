@@ -8,7 +8,8 @@ use std::sync::{Arc, OnceLock};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{window_on_frame, Rect};
+use crate::elements::{self, Element};
+use crate::geometry::{contains, frame_scale, window_on_frame, Rect};
 use crate::imageops;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +72,21 @@ pub struct WindowBox {
     pub app: String,
     /// In that frame's pixels, clipped to it.
     pub rect: Rect,
+    /// The OS's handle for it (an HWND on Windows), for asking it what is inside.
+    #[serde(skip)]
+    pub id: u32,
+    /// Where it is in the OS's units, whole, for placing what it reports on the frame.
+    #[serde(skip)]
+    pub screen: Rect,
+}
+
+/// A window or a part of one, to snap to: a button, a paragraph, a panel. In frame pixels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElementBox {
+    pub rect: Rect,
+    /// What it is called, or what kind of thing it is when it has no name.
+    pub label: String,
 }
 
 pub struct Snapshot {
@@ -88,6 +104,7 @@ pub struct RawWindow {
     pub rect: Rect,
     pub minimized: bool,
     pub pid: u32,
+    pub id: u32,
 }
 
 /// Smaller than this on either side isn't a window anyone means to capture — status-bar items, the
@@ -106,7 +123,7 @@ pub fn windows_per_frame(frames: &[Frame], windows: &[RawWindow], own_pid: u32) 
                 .filter(|w| w.rect.width >= MIN_WINDOW_SIDE && w.rect.height >= MIN_WINDOW_SIDE)
                 .filter_map(|w| {
                     let rect = window_on_frame(&w.rect, &f.monitor, f.image.width(), f.image.height())?;
-                    Some(WindowBox { title: w.title.clone(), app: w.app.clone(), rect })
+                    Some(WindowBox { title: w.title.clone(), app: w.app.clone(), rect, id: w.id, screen: w.rect })
                 })
                 .collect()
         })
@@ -138,7 +155,9 @@ pub fn take(mode: Mode) -> Result<Snapshot, String> {
 
     let windows = if matches!(mode, Mode::Region | Mode::Window) && !is_wayland() {
         let raw = list_windows();
-        windows_per_frame(&frames, &raw, std::process::id())
+        let placed = windows_per_frame(&frames, &raw, std::process::id());
+        wake(&placed);
+        placed
     } else {
         frames.iter().map(|_| Vec::new()).collect()
     };
@@ -158,6 +177,7 @@ fn list_windows() -> Vec<RawWindow> {
                     // accessor there re-reads the whole window list, which adds up before the overlay.
                     minimized: !cfg!(target_os = "macos") && w.is_minimized().unwrap_or(false),
                     pid: w.pid().unwrap_or(0),
+                    id: w.id().unwrap_or(0),
                 })
             })
             .collect(),
@@ -166,6 +186,62 @@ fn list_windows() -> Vec<RawWindow> {
             Vec::new()
         }
     }
+}
+
+/// Have the windows on screen get ready to say what is in them, while the overlays come up: a browser
+/// takes a second to build the tree of its page the first time it is asked (see `elements::wake`).
+fn wake(placed: &[Vec<WindowBox>]) {
+    if !cfg!(windows) {
+        return;
+    }
+    let mut targets: Vec<isize> = placed.iter().flatten().filter(|w| w.id != 0).map(|w| w.id as isize).collect();
+    targets.sort_unstable();
+    targets.dedup();
+    std::thread::spawn(move || {
+        for hwnd in targets {
+            elements::wake(hwnd);
+        }
+    });
+}
+
+/// What is under frame point (`x`, `y`) of frame `index`, innermost first and ending with the window
+/// it is in. Empty off every window; just the window where it can't say what is inside.
+pub fn elements_at(snapshot: &Snapshot, index: usize, x: f64, y: f64) -> Vec<ElementBox> {
+    let (Some(frame), Some(windows)) = (snapshot.frames.get(index), snapshot.windows.get(index)) else {
+        return Vec::new();
+    };
+    let Some(window) = windows.iter().find(|w| contains(&w.rect, x, y)) else { return Vec::new() };
+    if window.id == 0 {
+        // No handle to ask by (asking the null window would describe the desktop): the window alone.
+        return place_elements(Vec::new(), window, frame);
+    }
+    let (sx, sy) = frame_scale(&frame.monitor, frame.image.width(), frame.image.height());
+    let at = (frame.monitor.x + (x / sx).floor() as i32, frame.monitor.y + (y / sy).floor() as i32);
+    let chain = elements::chain_at(window.id as isize, at.0, at.1);
+    place_elements(chain, window, frame)
+}
+
+/// The elements a window reported, in OS units, as boxes on `frame`: tidied (see `elements::tidy`),
+/// clipped to what of the window is on the frame, and ending with the window itself.
+fn place_elements(chain: Vec<Element>, window: &WindowBox, frame: &Frame) -> Vec<ElementBox> {
+    let (w, h) = (frame.image.width(), frame.image.height());
+    let mut out: Vec<ElementBox> = Vec::new();
+    for e in elements::tidy(chain, &window.screen) {
+        let Some(rect) = window_on_frame(&e.rect, &frame.monitor, w, h).and_then(|r| r.intersect(&window.rect)) else {
+            continue;
+        };
+        if out.last().is_some_and(|last| last.rect == rect) {
+            continue;
+        }
+        out.push(ElementBox { rect, label: if e.name.trim().is_empty() { e.role } else { e.name.trim().to_string() } });
+    }
+    let title = if window.title.is_empty() { window.app.clone() } else { window.title.clone() };
+    match out.last_mut() {
+        // The outermost element is the window's whole client area or more: call it by the window's name.
+        Some(last) if last.rect == window.rect => last.label = title,
+        _ => out.push(ElementBox { rect: window.rect, label: title }),
+    }
+    out
 }
 
 fn capture_monitor(m: &xcap::Monitor, rect: Rect) -> xcap::XCapResult<RgbaImage> {
@@ -247,7 +323,61 @@ mod tests {
     }
 
     fn raw(rect: Rect, pid: u32) -> RawWindow {
-        RawWindow { title: "t".into(), app: "a".into(), rect, minimized: false, pid }
+        RawWindow { title: "t".into(), app: "a".into(), rect, minimized: false, pid, id: 0 }
+    }
+
+    fn element(x: i32, y: i32, w: u32, h: u32, role: &str, name: &str) -> Element {
+        Element { rect: Rect::new(x, y, w, h), role: role.into(), name: name.into() }
+    }
+
+    /// Against the real screen, without an overlay: `HOMEPORT_SNAP_PROBE=X,Y cargo test probe_screen --
+    /// --ignored --nocapture`, with X,Y a point on the primary monitor's frame.
+    #[test]
+    #[ignore]
+    fn probe_screen() {
+        let p: Vec<f64> = std::env::var("HOMEPORT_SNAP_PROBE").unwrap().split(',').map(|v| v.parse().unwrap()).collect();
+        let snapshot = take(Mode::Window).unwrap();
+        let primary = snapshot.frames.iter().position(|f| f.primary).unwrap_or(0);
+        for wait in [0, 1500] {
+            std::thread::sleep(std::time::Duration::from_millis(wait));
+            let t = std::time::Instant::now();
+            let boxes = elements_at(&snapshot, primary, p[0], p[1]);
+            println!("after {wait} ms, {:?}:", t.elapsed());
+            for b in boxes {
+                println!("  {:?} {}", b.rect, b.label);
+            }
+        }
+    }
+
+    #[test]
+    fn elements_land_on_the_frame_and_end_with_the_window() {
+        // A second monitor right of a 1920-wide one; the window hangs off its top.
+        let f = frame(Rect::new(1920, 0, 2560, 1440), 2560, 1440);
+        let window = WindowBox {
+            title: "Docs".into(),
+            app: "chrome".into(),
+            rect: Rect::new(80, 0, 1000, 700),
+            id: 1,
+            screen: Rect::new(2000, -100, 1000, 800),
+        };
+        let chain = vec![
+            element(2100, 200, 120, 40, "button", " Save "),
+            element(2050, -50, 900, 600, "grouping", ""),
+            element(2000, -100, 1000, 800, "client", ""),
+        ];
+        assert_eq!(
+            place_elements(chain, &window, &f),
+            vec![
+                ElementBox { rect: Rect::new(180, 200, 120, 40), label: "Save".into() },
+                ElementBox { rect: Rect::new(130, 0, 900, 550), label: "grouping".into() },
+                ElementBox { rect: Rect::new(80, 0, 1000, 700), label: "Docs".into() },
+            ]
+        );
+        assert_eq!(
+            place_elements(Vec::new(), &window, &f),
+            vec![ElementBox { rect: Rect::new(80, 0, 1000, 700), label: "Docs".into() }],
+            "a window that says nothing is still there to take"
+        );
     }
 
     #[test]

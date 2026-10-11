@@ -13,6 +13,8 @@
 mod api;
 mod capture;
 mod config;
+#[doc(hidden)] // public for examples/element_at.rs
+pub mod elements;
 mod geometry;
 mod imageops;
 mod tray_icon;
@@ -300,6 +302,16 @@ fn overlay_init(app: AppHandle, frame: usize) -> Result<OverlayInit, String> {
         height: f.image.height(),
         windows: snapshot.windows.get(frame).cloned().unwrap_or_default(),
     })
+}
+
+/// What is under a point of an overlay's frame, innermost first, ending with the window. Off the main
+/// thread: it asks the window's app, which may take a moment.
+#[tauri::command]
+async fn overlay_elements(app: AppHandle, frame: usize, x: f64, y: f64) -> Vec<capture::ElementBox> {
+    let Some(snapshot) = state(&app).snapshot.lock().unwrap().clone() else { return Vec::new() };
+    tauri::async_runtime::spawn_blocking(move || capture::elements_at(&snapshot, frame, x, y))
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -810,6 +822,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             overlay_init,
+            overlay_elements,
             overlay_ready,
             overlay_commit,
             overlay_cancel,

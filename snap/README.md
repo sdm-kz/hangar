@@ -11,14 +11,24 @@ the server) and a React page for the overlay, the editor and the settings.
 
 | Hotkey (default) | Capture | How |
 |---|---|---|
-| `Ctrl+Shift+1` | Region | Drag a rectangle. Or click: the window under the pointer, or the whole screen on the desktop. Shift squares it, Space moves it while dragging. |
-| `Ctrl+Shift+2` | Window | Hover to see which window, click to take it. |
+| `Ctrl+Shift+1` | Region | Drag a rectangle. Or click: what is outlined under the pointer (a window, or on Windows a part of one), or the whole screen on the desktop. Shift squares it, Space moves it while dragging. |
+| `Ctrl+Shift+2` | Window | Hover to see which window, or which part of it, click to take it. |
 | `Ctrl+Shift+3` | Full screen | The screen under the pointer, straight into the editor. |
 | `Ctrl+Shift+4` | Freeform | Trace any shape; everything outside it comes out transparent. |
 
 `Esc` cancels; a right-click drops a drag in progress. The screens are frozen the moment the hotkey
 fires, so open menus, hover states and tooltips are captured as they were. A loupe shows the exact pixel
 under the pointer.
+
+On Windows, hovering outlines the innermost part of the window under the pointer: a button, an image, a
+paragraph, a table cell. Scrolling up steps outwards through what holds it (the card, the panel, the
+page) out to the whole window, and scrolling down steps back in. Browsers (Chrome, Edge, Brave and the
+other Chromium ones) answer for every element of the page; they build that tree in the second after the
+hotkey, so a pointer that lands at once may see only the window until then. Electron apps (VS Code,
+Slack, Teams) are not asked to build it, since some take that for a screen reader starting (VS Code
+switches to screen-reader mode), so they show only what they already expose, often just the window.
+Packaged apps that draw their content with WebView2 inside WinUI (the WhatsApp app) only show the whole
+window. macOS and Linux snap to whole windows.
 
 The **editor** opens with the message box focused. The quickest path is: capture, type, `Ctrl+Enter`
 (`⌘↵` on a Mac).
@@ -93,6 +103,12 @@ The log (`…\logs`) records how long each overlay and editor took to come up.
 - `src-tauri/src/capture.rs` freezes every monitor and lists the windows (via `xcap`).
   `geometry.rs` maps a window onto its monitor's frame. The OS reports both in the same units: points
   on macOS, pixels elsewhere.
+- `elements.rs` finds the parts of a window under a point (Windows): MSAA's `accHitTest`, which tests
+  inside a given window. UI Automation can only test a point on screen, and while picking, that point
+  is our own overlay. Chromium builds a page's tree only once a UI Automation client has looked into
+  the page, so the capture asks each browser window for its document (`elements::wake`) while the
+  overlays come up. A hung app is never asked: it would never answer. To try it against an app without the overlay: `cargo run --example element_at --
+  X Y` (screen pixels), or the ignored `probe_screen` test.
 - `windows.rs` puts an overlay over each monitor and opens the editor on the monitor the capture came
   from. The overlays and one spare editor stay loaded and hidden between captures: building a webview
   is the slow part (and with none alive WebView2 shuts its browser process down too), so a warm overlay

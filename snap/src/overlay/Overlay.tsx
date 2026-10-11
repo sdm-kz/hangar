@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api, pictureUrl, type OverlayInit, type Rect, type Selection, type WindowBox } from "@/lib/tauri";
-import { CLICK_SLOP, extendPath, polygonArea, rectBetween, toFrameRect, windowAt, type Point } from "./selection";
+import { api, pictureUrl, type ElementBox, type OverlayInit, type Rect, type Selection } from "@/lib/tauri";
+import {
+  CLICK_SLOP,
+  contains,
+  extendPath,
+  nextPick,
+  polygonArea,
+  rectBetween,
+  toFrameRect,
+  widen,
+  windowAt,
+  type Pick,
+  type Point,
+} from "./selection";
 
 /**
  * The overlay page for one monitor. It stays loaded, hidden, between captures (see windows.rs): each
@@ -44,10 +56,14 @@ export default function Overlay({ frame }: { frame: number }) {
  * One monitor's frozen screen, to pick a capture from. The picture is the frame taken when the hotkey
  * fired; the overlay dims it and lifts out whatever is being picked:
  *
- * - region: drag a rectangle (Shift squares it, Space moves it), or click to take the window under the
- *   cursor — or the whole screen when there is none;
- * - window: hover to see which window, click to take it;
+ * - region: drag a rectangle (Shift squares it, Space moves it), or click to take what is outlined
+ *   under the cursor — or the whole screen when there is nothing;
+ * - window: hover to see which window, or which part of it, click to take it;
  * - freeform: trace a shape; letting go closes it.
+ *
+ * Where the window can say what is in it (Windows), hovering outlines the innermost part under the
+ * cursor — a button, an image, a paragraph — and the wheel steps outwards through what holds it, out to
+ * the window, and back in.
  *
  * Esc cancels from anywhere; a right-click drops a drag in progress, or cancels when there is none.
  */
@@ -61,6 +77,11 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
   const spaceHeld = useRef(false);
   // Set when a right-click dropped a drag: the buttons still held must not finish it when released.
   const dropped = useRef(false);
+  // What is under the pointer, as the window reported it (see `requestElements`).
+  const [pick, setPick] = useState<Pick | null>(null);
+  const asking = useRef(false);
+  const nextAsk = useRef<Point | null>(null);
+  const lastAt = useRef<Point | null>(null);
 
   useEffect(() => {
     // The window was just moved over its monitor, possibly resized with it.
@@ -84,8 +105,49 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
 
   const mode = init?.mode ?? "region";
   const snapsToWindows = (mode === "region" || mode === "window") && (init?.windows.length ?? 0) > 0;
-  const hovered: WindowBox | undefined =
-    init && cursor && snapsToWindows && (!drag || !drag.moved) ? windowAt(init.windows, toFrame(cursor)) : undefined;
+
+  // One question at a time; a pointer that moves on meanwhile is asked about once the answer is in.
+  const requestElements = useCallback(
+    (at: Point) => {
+      nextAsk.current = at;
+      lastAt.current = at;
+      if (asking.current) return;
+      const ask = (p: Point) => {
+        asking.current = true;
+        nextAsk.current = null;
+        // An app that stops answering mid-question mustn't stop the asking: give up on it after a while.
+        const late = new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("late")), 1500));
+        Promise.race([api.overlayElements(frame, p.x, p.y), late])
+          .then((boxes) => setPick((prev) => nextPick(prev, boxes)))
+          .catch(() => {})
+          .finally(() => {
+            asking.current = false;
+            if (nextAsk.current) ask(nextAsk.current);
+          });
+      };
+      ask(at);
+    },
+    [frame],
+  );
+
+  // A browser builds its page's tree in the second after the capture asked it to (see capture::wake):
+  // ask again about where the pointer rests, so a pointer that hasn't moved since gets the parts too.
+  useEffect(() => {
+    if (!snapsToWindows) return;
+    const timers = [800, 1800].map((ms) =>
+      window.setTimeout(() => lastAt.current && requestElements(lastAt.current), ms),
+    );
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [snapsToWindows, requestElements]);
+
+  const at = cursor ? toFrame(cursor) : null;
+  const picked = pick && at && contains(pick.boxes[pick.boxes.length - 1].rect, at) ? pick : null;
+  const underWindow = init && at ? windowAt(init.windows, at) : undefined;
+  const hovered: ElementBox | undefined =
+    snapsToWindows && at && (!drag || !drag.moved)
+      ? (picked?.boxes[picked.level] ??
+        (underWindow ? { rect: underWindow.rect, label: underWindow.title || underWindow.app } : undefined))
+      : undefined;
 
   const commit = useCallback(
     (selection: Selection) => {
@@ -130,6 +192,7 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
   const onPointerMove = (e: React.PointerEvent) => {
     const p = { x: e.clientX, y: e.clientY };
     setCursor(p);
+    if (snapsToWindows && (!drag || !drag.moved)) requestElements(toFrame(p));
     if (!drag) return;
     // A right button pressed mid-drag arrives as a move (pointerdown only fires for the first button
     // down): drop the drag, as a right-click is documented to.
@@ -178,10 +241,15 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
       if (rect.width >= 2 && rect.height >= 2) commit({ kind: "rect", rect });
       return;
     }
-    // A click: the window under it, or in region mode the whole screen when there's no window.
-    const w = snapsToWindows ? windowAt(init.windows, toFrame(d.current)) : undefined;
-    if (w) commit({ kind: "rect", rect: w.rect });
+    // A click: what is outlined under it, or in region mode the whole screen when there's nothing.
+    if (hovered) commit({ kind: "rect", rect: hovered.rect });
     else if (mode === "region" || !snapsToWindows) commit({ kind: "full" });
+  };
+
+  // Up (away from you) steps outwards, to what holds the outlined part; down steps back in.
+  const onWheel = (e: React.WheelEvent) => {
+    if (!picked || drag?.moved || e.deltaY === 0) return;
+    setPick(widen(picked, e.deltaY < 0 ? 1 : -1));
   };
 
   if (error) {
@@ -205,6 +273,7 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onWheel={onWheel}
       onPointerEnter={() => void getCurrentWindow().setFocus()}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -253,12 +322,14 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
         )}
       </svg>
       {selectionRect && frameSize && (
-        <SizeLabel rect={selectionRect} text={`${frameSize.width} × ${frameSize.height}`} sub={hovered && !drag?.moved ? hovered.title || hovered.app : undefined} view={view} />
+        <SizeLabel rect={selectionRect} text={`${frameSize.width} × ${frameSize.height}`} sub={hovered && !drag?.moved ? hovered.label : undefined} view={view} />
       )}
       {cursor && init && mode !== "window" && imgRef.current && (
         <Loupe img={imgRef.current} at={cursor} ratio={ratio} view={view} />
       )}
-      {init && <Hint mode={mode} hasWindows={snapsToWindows} hidden={!!drag?.moved} />}
+      {init && (
+        <Hint mode={mode} hasWindows={snapsToWindows} canWiden={(picked?.boxes.length ?? 0) > 1} hidden={!!drag?.moved} />
+      )}
     </div>
   );
 }
@@ -337,16 +408,27 @@ function Loupe({ img, at, ratio, view }: { img: HTMLImageElement; at: Point; rat
   );
 }
 
-function Hint({ mode, hasWindows, hidden }: { mode: string; hasWindows: boolean; hidden: boolean }) {
+function Hint({
+  mode,
+  hasWindows,
+  canWiden,
+  hidden,
+}: {
+  mode: string;
+  hasWindows: boolean;
+  canWiden: boolean;
+  hidden: boolean;
+}) {
+  const widen = canWiden ? " · scroll to widen" : "";
   const text =
     mode === "window"
       ? hasWindows
-        ? "Click a window"
+        ? `Click a window or a part of it${widen}`
         : "No window list here — click to take the whole screen"
       : mode === "freeform"
         ? "Trace the area to capture"
         : hasWindows
-          ? "Drag to select · click a window or the desktop · Shift squares · Space moves"
+          ? `Drag to select · click to take what's outlined${widen} · Shift squares · Space moves`
           : "Drag to select · click for the whole screen";
   return (
     <div
