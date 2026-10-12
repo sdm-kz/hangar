@@ -1090,6 +1090,7 @@ export function App() {
               onRename={onRename}
               onTerminalRename={onTerminalRename}
               onTerminalColor={onTerminalColor}
+              onOpenServerFile={openServerFile}
             />
           ) : (
             <EmptyState

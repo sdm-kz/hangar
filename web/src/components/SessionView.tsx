@@ -277,6 +277,7 @@ export function SessionView({
   onRename,
   onTerminalRename,
   onTerminalColor,
+  onOpenServerFile,
 }: {
   session: SessionInfo;
   // Whether Claude is currently working in this session (from the live /hub/events busy set).
@@ -310,6 +311,9 @@ export function SessionView({
   onTerminalRename?: (id: string, name: string) => void;
   // Apply a color detected in this session's terminal (Claude's /color confirmation).
   onTerminalColor?: (id: string, color: string) => void;
+  // Open any file on the server in the app's own file viewer -- where a path clicked in the terminal
+  // goes when it is outside this session's folder, which its Files panel can't show.
+  onOpenServerFile?: (absolutePath: string) => void;
 }) {
   const confirm = useConfirm();
   // Closed: the session is a row and a folder, with no process behind either. Everything reading the
@@ -572,14 +576,17 @@ export function SessionView({
     update((l) => revealRef(l, FILES));
   }, [session.id, update]);
 
-  // A full file path clicked in the terminal: resolve it under the working directory, then open it in
-  // this session's Files panel (ignore paths outside the working directory — the browser can't show them).
+  // A full file path clicked in the terminal: under the working directory it opens in this session's
+  // Files panel, as a tab beside the terminal. Anywhere else -- another drive, a OneDrive folder, a
+  // sibling repo -- the panel can't show it, so it opens in the app's own file viewer instead, the one
+  // a file picked in the sidebar's Files tab opens in; closing that comes back here.
   const onTerminalOpenFile = useCallback(
     (absolutePath: string) => {
       const rel = toWorkingDirRelative(session.workingDirectory, absolutePath);
       if (rel) openInFiles(rel);
+      else onOpenServerFile?.(absolutePath);
     },
-    [session.workingDirectory, openInFiles]
+    [session.workingDirectory, openInFiles, onOpenServerFile]
   );
 
   // A bare filename clicked in the terminal: search the working directory. Open the single hit, or
