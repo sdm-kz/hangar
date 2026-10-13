@@ -1129,8 +1129,11 @@ export function SessionView({
               )}
             </div>
 
-            {/* Second line on a phone, same line from md up: where the session lives. */}
-            <div className="flex min-w-0 items-center gap-2 md:flex-1">
+            {/* Second line on a phone, same line from md up: where the session lives. From md up its
+                parts join the row itself, so the badges can hold their width against the name beside
+                them: a line squeezed as a whole gave them no room, and they spilled over the buttons
+                on the right. The folder takes only what is left over, and goes first. */}
+            <div className="flex min-w-0 items-center gap-2 md:contents">
               {session.parentSessionId && <ForkedFrom parent={parent} name={session.parentName} onOpen={onSelectSession} />}
               {git?.isRepo && git.branch && (
                 <button
@@ -1138,12 +1141,12 @@ export function SessionView({
                   onClick={openChanges}
                   className={cn(
                     badgeVariants({ variant: "outline" }),
-                    "min-w-0 shrink gap-1 transition-colors hover:bg-accent"
+                    "gap-1 transition-colors hover:bg-accent"
                   )}
                   title="Show git changes"
                 >
                   <GitBranch className="size-3 shrink-0" />
-                  <span className="max-w-[6rem] truncate sm:max-w-[10rem]">{git.branch}</span>
+                  <span className="max-w-[6rem] truncate @min-[40rem]:max-w-[10rem]">{git.branch}</span>
                   {changeCount > 0 && <span className="shrink-0 text-amber-500">·{changeCount}</span>}
                 </button>
               )}
@@ -1151,7 +1154,7 @@ export function SessionView({
                 type="button"
                 onClick={copyPath}
                 title="Copy working directory"
-                className="group/path flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
+                className="group/path flex min-w-0 flex-1 items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground"
               >
                 <span className="truncate">{session.workingDirectory}</span>
                 {copiedPath ? (
@@ -1426,7 +1429,7 @@ function ForkedFrom({
   if (!parent)
     return (
       <span
-        className={cn(badgeVariants({ variant: "outline" }), "min-w-0 shrink gap-1 text-muted-foreground")}
+        className={cn(badgeVariants({ variant: "outline" }), "gap-1 text-muted-foreground")}
         title={`Forked from “${label}”, which is no longer in the session list`}
       >
         {content}
@@ -1437,7 +1440,7 @@ function ForkedFrom({
     <button
       type="button"
       onClick={() => onOpen(parent.id)}
-      className={cn(badgeVariants({ variant: "outline" }), "min-w-0 shrink gap-1 transition-colors hover:bg-accent")}
+      className={cn(badgeVariants({ variant: "outline" }), "gap-1 transition-colors hover:bg-accent")}
       title={`Forked from “${label}” — click to open it`}
     >
       {content}
