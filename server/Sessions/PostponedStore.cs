@@ -152,6 +152,59 @@ public static class PostponedStore
         }
     }
 
+    /// <summary>The most messages a pool holds — the cap the browser keeps it to as well.</summary>
+    public const int MaxItems = 100;
+
+    public enum AppendResult { Added, Full, Failed }
+
+    /// <summary>
+    /// Add one message at the end of the pool, in the shape the browser writes: a fresh id, the text,
+    /// the images as <c>{ path, fullPath }</c> (working-dir-relative and absolute) and the time. Under
+    /// the same lock as every other write, re-reading the file first, so it can't undo a browser's save
+    /// or auto-send's take that landed a moment before — the race a client's own read-edit-write would
+    /// lose. A full pool is refused rather than trimmed: what would go is someone's oldest note.
+    /// </summary>
+    public static AppendResult Append(string workingDirectory, string sessionId, string text,
+        IReadOnlyList<(string Path, string FullPath)> images)
+    {
+        var rel = RelPathFor(sessionId);
+        var full = SessionFileBrowser.ResolveSafe(workingDirectory, rel);
+        if (full is null) return AppendResult.Failed;
+        lock (_gate)
+        {
+            // A pool that is there but can't be read (held open by another process for a moment) is
+            // not an empty one: writing over it would lose every message in it.
+            string? json;
+            try { json = File.Exists(full) ? File.ReadAllText(full) : null; }
+            catch { return AppendResult.Failed; }
+            List<JsonElement> items;
+            try
+            {
+                if (string.IsNullOrWhiteSpace(json)) items = [];
+                else
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    if (doc.RootElement.ValueKind != JsonValueKind.Array) return AppendResult.Failed;
+                    items = doc.RootElement.EnumerateArray().Select(e => e.Clone()).ToList();
+                }
+            }
+            catch { return AppendResult.Failed; }
+            if (items.Count >= MaxItems) return AppendResult.Full;
+
+            var item = new
+            {
+                id = Guid.NewGuid().ToString(),
+                text,
+                images = images.Select(i => new { path = i.Path, fullPath = i.FullPath }).ToArray(),
+                createdAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            };
+            items.Add(JsonSerializer.SerializeToElement(item));
+            return WriteAtomic(workingDirectory, rel, JsonSerializer.SerializeToUtf8Bytes(items))
+                ? AppendResult.Added
+                : AppendResult.Failed;
+        }
+    }
+
     /// <summary>One stashed message, as much of it as sending needs.</summary>
     public sealed record Item(string Id, string Text, IReadOnlyList<string> ImagePaths);
 

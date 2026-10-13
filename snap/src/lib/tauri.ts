@@ -112,12 +112,14 @@ export const api = {
   capturePng: (id: string) => invoke<ArrayBuffer>("capture_png", { id }),
   editorReady: () => invoke<void>("editor_ready"),
   listSessions: () => invoke<SessionsView>("list_sessions"),
-  sendCapture: (png: Uint8Array, session: SessionItem, text: string) =>
+  /** Send the capture into the session's prompt, or with `postpone` into its postponed messages. */
+  sendCapture: (png: Uint8Array, session: SessionItem, text: string, postpone = false) =>
     invoke<void>("send_capture", png, {
       headers: {
         "x-session-id": encodeURIComponent(session.id),
         "x-claude-session-id": encodeURIComponent(session.claudeSessionId ?? ""),
         "x-text": encodeURIComponent(text),
+        "x-postpone": postpone ? "1" : "0",
       },
     }),
   copyImage: (png: Uint8Array) => invoke<void>("copy_image", png),

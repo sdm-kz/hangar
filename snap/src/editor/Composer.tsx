@@ -1,11 +1,16 @@
 import { forwardRef, useEffect, useRef } from "react";
 import clsx from "clsx";
-import { Check, ExternalLink, Loader2, RefreshCw, Search, Send, Settings } from "lucide-react";
+import { Check, Clock, ExternalLink, Loader2, RefreshCw, Search, Send, Settings } from "lucide-react";
 import type { ApiError, SessionItem } from "@/lib/tauri";
 import { sessionColor } from "@web/lib/sessionColors";
 import { ago } from "./sessions";
+import { MESSAGE_MIN, PICKER_MIN } from "./Splitter";
 
-export type SendState = { kind: "idle" } | { kind: "sending" } | { kind: "sent" } | { kind: "error"; message: string };
+export type SendState =
+  | { kind: "idle" }
+  | { kind: "sending"; postpone: boolean }
+  | { kind: "sent"; postpone: boolean }
+  | { kind: "error"; message: string };
 
 export type SessionsState =
   | { kind: "loading" }
@@ -24,7 +29,7 @@ export const MessageBox = forwardRef<
       placeholder={target ? `Message to ${target.name} — what should Claude look at?` : "Message to Claude…"}
       className="h-full min-h-0 w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-[13.5px] leading-relaxed outline-none placeholder:text-muted-foreground/70 focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
       aria-label="Message"
-      title={`${mod}↵ sends · Esc leaves the box so tool keys work`}
+      title={`${mod}↵ sends · ${mod}⇧↵ postpones · Esc leaves the box so tool keys work`}
     />
   );
 });
@@ -41,6 +46,9 @@ export function SessionPicker(props: {
   onSettings(): void;
   onOpenHomeport(): void;
   searchRef: React.RefObject<HTMLInputElement | null>;
+  /** As dragged (see Splitter); held to what leaves the message its own minimum. */
+  width: number;
+  pickerRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const { state, items, selected } = props;
   const listRef = useRef<HTMLDivElement>(null);
@@ -49,7 +57,11 @@ export function SessionPicker(props: {
   }, [selected]);
 
   return (
-    <div className="flex h-full min-h-0 w-[340px] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background">
+    <div
+      ref={props.pickerRef}
+      style={{ width: props.width, maxWidth: `calc(100% - ${MESSAGE_MIN + 12}px)`, minWidth: PICKER_MIN }}
+      className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background"
+    >
       <div className="flex items-center gap-1.5 border-b border-border px-2.5">
         <Search size={14} className="shrink-0 text-muted-foreground" />
         <input
@@ -171,10 +183,12 @@ export function SendBar(props: {
   target: SessionItem | null;
   send: SendState;
   onSend(): void;
+  onPostpone(): void;
   mod: string;
   hint?: string;
 }) {
   const { target, send } = props;
+  const busy = !target || send.kind === "sending" || send.kind === "sent";
   return (
     <div className="flex items-center gap-3">
       <div className="min-w-0 flex-1 truncate text-[12px]">
@@ -184,25 +198,42 @@ export function SendBar(props: {
           <span className="text-muted-foreground">{props.hint}</span>
         )}
       </div>
+      {/* Into the session's postponed messages, to go when it is free (or by its auto-send). */}
+      <button
+        onClick={props.onPostpone}
+        disabled={busy}
+        title={`Add to the session's postponed messages instead of sending now (${props.mod}⇧↵)`}
+        className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 text-[13px] text-foreground hover:bg-muted disabled:cursor-default disabled:opacity-50"
+      >
+        {send.kind === "sending" && send.postpone ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
+        Postpone
+      </button>
       <button
         onClick={props.onSend}
-        disabled={!target || send.kind === "sending" || send.kind === "sent"}
+        disabled={busy}
         className={clsx(
-          "flex h-9 max-w-[340px] items-center gap-2 rounded-lg px-4 font-medium text-white shadow-sm transition disabled:cursor-default",
+          // min-w-0: on a narrow message column the session name gives way, not the edge of the column.
+          "flex h-9 min-w-0 max-w-[340px] items-center gap-2 rounded-lg px-4 font-medium text-white shadow-sm transition disabled:cursor-default",
           send.kind === "sent" ? "bg-ok" : "bg-accent hover:brightness-105 disabled:opacity-50",
         )}
       >
-        {send.kind === "sending" ? (
-          <Loader2 size={15} className="animate-spin" />
+        {send.kind === "sending" && !send.postpone ? (
+          <Loader2 size={15} className="shrink-0 animate-spin" />
         ) : send.kind === "sent" ? (
-          <Check size={15} />
+          <Check size={15} className="shrink-0" />
         ) : (
-          <Send size={15} />
+          <Send size={15} className="shrink-0" />
         )}
         <span className="truncate">
-          {send.kind === "sent" ? "Sent" : target ? `Send to ${target.name}` : "Choose a session"}
+          {send.kind === "sent"
+            ? send.postpone
+              ? `Postponed for ${target?.name ?? "the session"}`
+              : "Sent"
+            : target
+              ? `Send to ${target.name}`
+              : "Choose a session"}
         </span>
-        {send.kind !== "sent" && target && <kbd className="border-white/30 bg-white/15 text-white">{props.mod}↵</kbd>}
+        {send.kind !== "sent" && target && <kbd className="shrink-0 border-white/30 bg-white/15 text-white">{props.mod}↵</kbd>}
       </button>
     </div>
   );

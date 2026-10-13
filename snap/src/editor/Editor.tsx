@@ -4,6 +4,18 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, apiErrorText, type ApiError, type EditorInit } from "@/lib/tauri";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { MessageBox, SendBar, SessionPicker, type SendState, type SessionsState } from "./Composer";
+import {
+  CANVAS_MIN,
+  COMPOSER_HEIGHT,
+  COMPOSER_MIN,
+  MESSAGE_MIN,
+  PICKER_MIN,
+  PICKER_WIDTH,
+  Splitter,
+  TOOLBAR_HEIGHT,
+  loadLayout,
+  saveLayout,
+} from "./Splitter";
 import { Toolbar } from "./Toolbar";
 import {
   COLORS,
@@ -79,6 +91,15 @@ export default function Editor({ id }: { id: string }) {
   const searchRef = useRef<HTMLInputElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState({ width: 0, height: 0 });
+  // The composer's height and the session list's width, dragged by the two splitters and kept for
+  // the next capture. CSS holds each to what fits the window, so a size kept from a bigger one can't
+  // squeeze the picture or the message box away.
+  const savedLayout = useMemo(loadLayout, []);
+  const [composerHeight, setComposerHeight] = useState(savedLayout.composer);
+  const [pickerWidth, setPickerWidth] = useState(savedLayout.picker);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const messageColRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
   const doc = history.present;
   const captureScale = init?.scale ?? 1;
@@ -143,6 +164,8 @@ export default function Editor({ id }: { id: string }) {
     };
   }, [id]);
 
+  useEffect(() => saveLayout({ composer: composerHeight, picker: pickerWidth }), [composerHeight, pickerWidth]);
+
   useEffect(() => {
     const el = areaRef.current;
     if (!el) return;
@@ -206,16 +229,17 @@ export default function Editor({ id }: { id: string }) {
     else close();
   }, [dirty, send.kind, close]);
 
+  // `postpone` puts it in the session's postponed messages instead of its prompt.
   const doSend = useCallback(
-    async (sessionId?: string) => {
+    async (sessionId?: string, postpone = false) => {
       const s = items.find((i) => i.id === (sessionId ?? target));
       if (!s || send.kind === "sending" || send.kind === "sent") return;
-      setSend({ kind: "sending" });
+      setSend({ kind: "sending", postpone });
       try {
         const png = await exportPng();
         if (!png) throw new Error("Nothing to send");
-        await api.sendCapture(png, s, message.trim());
-        setSend({ kind: "sent" });
+        await api.sendCapture(png, s, message.trim(), postpone);
+        setSend({ kind: "sent", postpone });
         setTimeout(close, 650);
       } catch (e) {
         setSend({ kind: "error", message: apiErrorText(e) });
@@ -290,7 +314,7 @@ export default function Editor({ id }: { id: string }) {
       }
       if (mod && e.key === "Enter") {
         e.preventDefault();
-        void doSend();
+        void doSend(undefined, e.shiftKey);
         return;
       }
       if ((inSearch || e.altKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -429,18 +453,51 @@ export default function Editor({ id }: { id: string }) {
           </div>
         )}
       </div>
-      <div className="flex h-[196px] shrink-0 gap-3 border-t border-border bg-panel p-3">
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
+      <Splitter
+        axis="y"
+        sign={-1}
+        size={composerHeight}
+        current={() => composerRef.current?.offsetHeight ?? composerHeight}
+        min={COMPOSER_MIN}
+        room={() => Math.max(0, (areaRef.current?.clientHeight ?? 0) - CANVAS_MIN)}
+        reset={COMPOSER_HEIGHT}
+        onSize={setComposerHeight}
+        label="Resize the message area"
+        // Over the composer's top border, not a strip of its own: the picture keeps its full height.
+        className="z-10 -my-1 h-2"
+      />
+      <div
+        ref={composerRef}
+        style={{ height: composerHeight, minHeight: COMPOSER_MIN, maxHeight: `calc(100% - ${TOOLBAR_HEIGHT + CANVAS_MIN}px)` }}
+        className="flex shrink-0 border-t border-border bg-panel p-3"
+      >
+        <div ref={messageColRef} className="flex min-w-0 flex-1 flex-col gap-2" style={{ minWidth: MESSAGE_MIN }}>
           <MessageBox ref={messageRef} value={message} onChange={setMessage} target={targetItem} mod={MOD} />
           <SendBar
             target={targetItem}
             send={send}
             onSend={() => void doSend()}
+            onPostpone={() => void doSend(undefined, true)}
             mod={MOD}
             hint={out ? `${out.width} × ${out.height} PNG · ${isMac ? "⌥" : "Alt+"}↑↓ picks the session` : undefined}
           />
         </div>
+        {/* In the gap between the message and the list, which is the handle's own width. */}
+        <Splitter
+          axis="x"
+          sign={-1}
+          size={pickerWidth}
+          current={() => pickerRef.current?.offsetWidth ?? pickerWidth}
+          min={PICKER_MIN}
+          room={() => Math.max(0, (messageColRef.current?.offsetWidth ?? 0) - MESSAGE_MIN)}
+          reset={PICKER_WIDTH}
+          onSize={setPickerWidth}
+          label="Resize the session list"
+          className="w-3 self-stretch"
+        />
         <SessionPicker
+          width={pickerWidth}
+          pickerRef={pickerRef}
           state={sessions}
           items={items}
           query={query}

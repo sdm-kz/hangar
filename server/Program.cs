@@ -1435,6 +1435,39 @@ internal static class Program
                 : Results.BadRequest(new { error = "Could not save the postponed messages." });
         });
 
+        // Stash one message in a session's pool from outside a browser — the screenshot app's
+        // "Postpone". The same body as /message: images are paths upload-image answered with. Added on
+        // the server rather than by a client's read-edit-write of the whole pool, which could drop a
+        // browser's save or auto-send's take landing in between. A closed session's pool takes it too.
+        app.MapPost("/api/sessions/{id}/postponed/items", (string id, MessageRequest body, SessionManager mgr) =>
+        {
+            var dir = mgr.FolderOf(id);
+            if (dir is null) return Results.NotFound(new { error = "No session with that id." });
+            var images = (body.Images ?? []).Distinct().ToArray();
+            if (string.IsNullOrWhiteSpace(body.Text) && images.Length == 0)
+                return Results.BadRequest(new { error = "Nothing to postpone." });
+            if (images.Length > MaxImagesPerMessage)
+                return Results.BadRequest(new { error = $"At most {MaxImagesPerMessage} images per message." });
+            // The whole pool may be no bigger than this through PUT; one message no bigger either.
+            if ((body.Text?.Length ?? 0) > 512 * 1024) return Results.BadRequest(new { error = "too large" });
+            var resolved = new List<(string, string)>(images.Length);
+            foreach (var image in images)
+            {
+                var full = UploadedImagePath(dir, image);
+                if (full is null) return Results.BadRequest(new { error = $"Not an uploaded image: {image}" });
+                resolved.Add((Path.GetRelativePath(dir, full).Replace('\\', '/'), full));
+            }
+            return PostponedStore.Append(dir, id, body.Text ?? "", resolved) switch
+            {
+                PostponedStore.AppendResult.Added => Results.Ok(),
+                PostponedStore.AppendResult.Full => Results.BadRequest(new
+                {
+                    error = $"The session already has {PostponedStore.MaxItems} postponed messages. Send or discard some first.",
+                }),
+                _ => Results.BadRequest(new { error = "Could not save the postponed message." }),
+            };
+        });
+
         // Auto-send on or off for a session's pool (PostponedAutoSender does the sending). On needs a
         // live session — there is nothing to send into otherwise; off is accepted for any.
         app.MapPost("/api/sessions/{id}/postponed/auto", (string id, PostponedAutoRequest body, SessionManager mgr) =>
