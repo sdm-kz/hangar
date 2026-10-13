@@ -4,6 +4,7 @@ import { Check, Clock, ExternalLink, Loader2, RefreshCw, Search, Send, Settings 
 import type { ApiError, SessionItem } from "@/lib/tauri";
 import { sessionColor } from "@web/lib/sessionColors";
 import { ago } from "./sessions";
+import { MESSAGE_MIN, PICKER_MIN } from "./Splitter";
 
 export type SendState =
   | { kind: "idle" }
@@ -45,6 +46,9 @@ export function SessionPicker(props: {
   onSettings(): void;
   onOpenHomeport(): void;
   searchRef: React.RefObject<HTMLInputElement | null>;
+  /** As dragged (see Splitter); held to what leaves the message its own minimum. */
+  width: number;
+  pickerRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const { state, items, selected } = props;
   const listRef = useRef<HTMLDivElement>(null);
@@ -53,7 +57,11 @@ export function SessionPicker(props: {
   }, [selected]);
 
   return (
-    <div className="flex h-full min-h-0 w-[340px] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background">
+    <div
+      ref={props.pickerRef}
+      style={{ width: props.width, maxWidth: `calc(100% - ${MESSAGE_MIN + 12}px)`, minWidth: PICKER_MIN }}
+      className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background"
+    >
       <div className="flex items-center gap-1.5 border-b border-border px-2.5">
         <Search size={14} className="shrink-0 text-muted-foreground" />
         <input
@@ -204,16 +212,17 @@ export function SendBar(props: {
         onClick={props.onSend}
         disabled={busy}
         className={clsx(
-          "flex h-9 max-w-[340px] items-center gap-2 rounded-lg px-4 font-medium text-white shadow-sm transition disabled:cursor-default",
+          // min-w-0: on a narrow message column the session name gives way, not the edge of the column.
+          "flex h-9 min-w-0 max-w-[340px] items-center gap-2 rounded-lg px-4 font-medium text-white shadow-sm transition disabled:cursor-default",
           send.kind === "sent" ? "bg-ok" : "bg-accent hover:brightness-105 disabled:opacity-50",
         )}
       >
         {send.kind === "sending" && !send.postpone ? (
-          <Loader2 size={15} className="animate-spin" />
+          <Loader2 size={15} className="shrink-0 animate-spin" />
         ) : send.kind === "sent" ? (
-          <Check size={15} />
+          <Check size={15} className="shrink-0" />
         ) : (
-          <Send size={15} />
+          <Send size={15} className="shrink-0" />
         )}
         <span className="truncate">
           {send.kind === "sent"
@@ -224,7 +233,7 @@ export function SendBar(props: {
               ? `Send to ${target.name}`
               : "Choose a session"}
         </span>
-        {send.kind !== "sent" && target && <kbd className="border-white/30 bg-white/15 text-white">{props.mod}↵</kbd>}
+        {send.kind !== "sent" && target && <kbd className="shrink-0 border-white/30 bg-white/15 text-white">{props.mod}↵</kbd>}
       </button>
     </div>
   );
