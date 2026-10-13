@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { findFilePaths } from "@/lib/terminalLinks";
 import "@xterm/xterm/css/xterm.css";
 import { getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
@@ -162,19 +163,6 @@ function isRepaint(m: RegExpMatchArray): boolean {
 // never be the thing that swallows a confirmation.
 const RENAME_PHRASE = /Session[ \t]*renamed[ \t]*to:/;
 const COLOR_PHRASE = /Session[ \t]*color[ \t]*set[ \t]*to:/;
-
-// File-link matcher for the terminal. Two forms:
-//  1) a PATH with a separator (optional drive `C:\`, one or more `segment/`, then `name.ext`, any
-//     extension) — resolved against the working dir and opened directly.
-//  2) a BARE filename with a *known* extension (no directory) — searched for under the working dir
-//     (there may be several). The extension whitelist keeps prose like "e.g." or "3.14" from lighting
-//     up; paths in form 1 accept any extension since the separator already implies a real path.
-// The `(?<!:\/\/)` guard avoids swallowing the domain of an http(s):// URL (the URL provider,
-// registered first, keeps precedence there).
-// Names are letters and digits of any script (\p{L}, \p{N}, hence the `u` flag), not just ASCII \w,
-// so a path through "Документы" or to "Отчёт.docx" is a link like any other.
-const FILE_LINK =
-  /(?<!:\/\/)(?:[A-Za-z]:)?[\\/]?(?:[\p{L}\p{N}_.-]+[\\/])+[\p{L}\p{N}_.-]+\.[A-Za-z0-9]{1,12}|(?<![\p{L}\p{N}_./\\-])[\p{L}\p{N}_-]+\.(?:md|markdown|txt|log|csv|tsv|json|jsonc|ya?ml|toml|ini|env|xml|html?|css|scss|less|js|mjs|cjs|jsx|ts|tsx|cs|java|kt|go|rs|rb|php|py|pyi|c|cc|cpp|h|hpp|swift|sql|sh|bash|zsh|ps1|psm1|bat|cmd|dockerfile|gradle|properties|lock|sln|csproj|props|targets)(?![\p{L}\p{N}_])/iu;
 
 // Resolve a path clicked in the terminal to an absolute server path. Absolute paths (POSIX, Windows
 // drive, or UNC-ish leading separator) pass through; relative paths are joined onto the session's
@@ -454,7 +442,7 @@ export const TerminalPane = forwardRef<
     // Detect file paths and open them in the app's file viewer. WebLinksAddon can't be reused here —
     // it validates every match with `new URL()`, so non-URL paths are discarded — so we register a
     // custom link provider. It reconstructs each logical line (joining wrapped rows so a long path
-    // spanning terminal rows stays a single link), matches FILE_PATH, and maps string indices back to
+    // spanning terminal rows stays a single link), finds the paths in it, and maps string indices back to
     // 1-based buffer cells. Same click gating as URLs; relative paths resolve against the working dir.
     const fileLinks = term.registerLinkProvider({
       provideLinks(bufferLine, cb) {
@@ -474,9 +462,8 @@ export const TerminalPane = forwardRef<
         const text = rows.join("");
         const cell = (idx: number) => ({ x: (idx % cols) + 1, y: startRow + Math.floor(idx / cols) + 1 });
 
-        const links = [...text.matchAll(new RegExp(FILE_LINK.source, "giu"))].map((m) => {
-          const matched = m[0];
-          const idx = m.index ?? 0;
+        // What counts as a path (quoted, drive-rooted with spaces, plain) lives in terminalLinks.
+        const links = findFilePaths(text).map(({ index: idx, text: matched }) => {
           return {
             text: matched,
             range: { start: cell(idx), end: cell(idx + matched.length) },
