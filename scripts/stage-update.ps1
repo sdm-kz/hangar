@@ -33,6 +33,11 @@
   Where the running app lives. Only read, and only to find the build the notes are measured from:
   its build.json names the commit the range starts at.
 
+.PARAMETER AllowDroppingCommits
+  Stage even though the installed build's commit is not in the history of the one being staged.
+  Without it the script stops there, since installing would quietly take away what that commit
+  brought: a build made from a branch that was never merged, say.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\stage-update.ps1
 .EXAMPLE
@@ -46,12 +51,48 @@ param(
   [string]$NotesFile,
   [string]$Summary,
   [switch]$NoNotes,
-  [string]$InstallPath = "C:\apps\claude-web"
+  [string]$InstallPath = "C:\apps\claude-web",
+  [switch]$AllowDroppingCommits
 )
 
 $ErrorActionPreference = "Stop"
 $root    = Split-Path -Parent $PSScriptRoot
 $publish = Join-Path $root "publish"
+
+# The commit the installed build came from -- the one being replaced, and so the only place a range
+# of "news" can honestly start.
+function Get-InstalledCommit([string]$installPath) {
+  $stampPath = Join-Path $installPath "build.json"
+  if (-not (Test-Path $stampPath)) { return $null }
+  try { return (Get-Content $stampPath -Raw | ConvertFrom-Json).commit } catch { return $null }
+}
+
+# --- 0) Nothing installed is left behind -------------------------------------------------------
+# A build staged from a history that doesn't contain the installed one's commit takes away whatever
+# that commit brought, and nothing says so: the notes only list what is *added*. That is how a
+# feature built and staged from an unmerged branch vanished when the next build came from main.
+# Asked before building, of what will be built (HEAD) or, with -SkipBuild, of what was.
+function Assert-KeepsInstalled([string]$target) {
+  $installed = Get-InstalledCommit $InstallPath
+  if (-not $installed -or -not $target -or $AllowDroppingCommits) { return }
+  # Windows PowerShell turns a native command's stderr into an error, which "Stop" makes fatal; the
+  # answers here are exit codes, and "fatal: Not a valid object name" is one of them.
+  $ErrorActionPreference = "Continue"
+  git -C $root cat-file -e "$installed^{commit}" 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "The installed build's commit $installed is not in this repository; can't tell what staging would drop."
+    return
+  }
+  git -C $root merge-base --is-ancestor $installed $target 2>$null
+  if ($LASTEXITCODE -eq 0) { return }
+  $dropped = @(git -C $root log --oneline "$target..$installed" 2>$null)
+  throw ("The installed build ($installed) has commits the build being staged ($target) does not:`n" +
+    (($dropped | Select-Object -First 15 | ForEach-Object { "  $_" }) -join "`n") +
+    "`nInstalling it would take them away. Merge them first, or pass -AllowDroppingCommits if that is the intent.")
+}
+if (-not $SkipBuild) {
+  Assert-KeepsInstalled (git -C $root rev-parse --short HEAD 2>$null)
+}
 
 # --- 1) Build + publish (single self-contained exe into ./publish) ---------------------------
 if (-not $SkipBuild) {
@@ -65,6 +106,7 @@ if (-not (Test-Path $stampFile)) {
   throw "No build stamp at '$stampFile'. Rebuild with scripts\build.ps1 (it writes build.json)."
 }
 $stamp = Get-Content $stampFile -Raw | ConvertFrom-Json
+if ($SkipBuild) { Assert-KeepsInstalled $stamp.commit }
 
 # --- 1b) What's new ---------------------------------------------------------------------------
 # The notes ride in the payload's own build.json: the one file the running app already reads out of
@@ -83,14 +125,6 @@ function Read-NotesFile([string]$path) {
     elseif (-not $summary -and $t -notmatch '^#') { $summary = $t }
   }
   return @{ summary = $summary; changes = $changes }
-}
-
-# The commit the installed build came from -- the one being replaced, and so the only place a range
-# of "news" can honestly start.
-function Get-InstalledCommit([string]$installPath) {
-  $stampPath = Join-Path $installPath "build.json"
-  if (-not (Test-Path $stampPath)) { return $null }
-  try { return (Get-Content $stampPath -Raw | ConvertFrom-Json).commit } catch { return $null }
 }
 
 function Get-CommitNotes([string]$since, [string]$root) {
