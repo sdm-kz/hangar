@@ -38,6 +38,7 @@ import {
   type ReviewContext,
   type ReviewTarget,
 } from "@/lib/prReview";
+import { CopyPathButton } from "./CopyPathButton";
 import { Markdown } from "./Markdown";
 import { CommentButton, CommentCard, pickLines, ReviewButton, ReviewDialog, spotFor, type Spot } from "./PullReview";
 import { usePersistentZoom, ZOOM_LEVELS } from "./ZoomControls";
@@ -1474,6 +1475,20 @@ function CommitBanner({
   );
 }
 
+/**
+ * Copying from a file header's path: the folders and the name are flex items of their own (so each
+ * can be cut separately), and the browser puts a line break between flex items in what it copies --
+ * "src/lib/\nfile.ts". A selection wholly inside the path is copied as the one line it reads as. One
+ * that runs on beyond it is left to the browser, line breaks and all, as the rest of the page is.
+ */
+function copyPathSelection(e: React.ClipboardEvent<HTMLElement>) {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) return;
+  if (!e.currentTarget.contains(sel.anchorNode) || !e.currentTarget.contains(sel.focusNode)) return;
+  e.clipboardData.setData("text/plain", sel.toString().replace(/\r?\n/g, ""));
+  e.preventDefault();
+}
+
 /** One file of the review: a header that folds it away, and its diff — or the file itself — below. */
 function FileDiff({
   sessionId,
@@ -1629,37 +1644,69 @@ function FileDiff({
       className="border-b last:border-b-0"
     >
       {/* Sticky so the name of what you are reading stays on screen through a long diff. The row is
-          no longer one big button: the controls at its end are buttons of their own, and a button
-          cannot hold another one. */}
+          not one big button: the controls at its end are buttons of their own, and a button cannot
+          hold another one -- nor can the text in a button be selected, and the path is worth copying. */}
       {/* The border is the one between this header and what it holds, so a folded file leaves it to
           the card's own border rather than stacking two rules with nothing in between. */}
       <div
+        onClick={(e) => {
+          // A click on the row folds or unfolds the file, the way the whole row once did as a button.
+          // Not a click on the controls at its end (they are outside [data-fold]) or on the path (it
+          // stops its own clicks), and not the click that ends a drag selecting text across the row.
+          if (e.target !== e.currentTarget && !(e.target as HTMLElement).closest("[data-fold]")) return;
+          const sel = window.getSelection();
+          if (sel && !sel.isCollapsed && e.currentTarget.contains(sel.anchorNode)) return;
+          onToggle();
+        }}
         className={cn(
-          "sticky top-0 z-10 flex items-center gap-2 bg-muted/60 px-3 py-1.5 text-xs backdrop-blur",
+          "group/fh sticky top-0 z-10 flex cursor-pointer items-center gap-2 bg-muted/60 px-3 py-1.5 text-xs backdrop-blur",
           open && "border-b"
         )}
       >
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-foreground"
-        >
-          {open ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5" />}
+        <div data-fold className="flex min-w-0 flex-1 items-center gap-2 hover:text-foreground">
+          {/* The fold control for the keyboard; a mouse can use the whole row. */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+            aria-expanded={open}
+            aria-label={`${open ? "Fold" : "Unfold"} ${file.path}`}
+            className="shrink-0 rounded"
+          >
+            {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          </button>
           <span className={cn("shrink-0 font-mono", STATUS_COLOR[file.status] ?? "text-muted-foreground")}>
             {file.status}
           </span>
-          {/* Same shrink order as the sidebar: the folders go before the file name does. */}
-          <span className="flex min-w-0 flex-1 items-baseline font-mono">
-            <span className="min-w-0 shrink-[999] truncate text-muted-foreground">{dir}</span>
-            <span className={cn("min-w-0 truncate font-medium", viewed && "font-normal line-through")}>
-              {name}
-            </span>
-            {file.oldPath && (
-              <span className="min-w-0 shrink-[999] truncate text-muted-foreground">
-                &nbsp;← {file.oldPath}
+          {/* Same shrink order as the sidebar: the folders go before the file name does. The path is
+              text to select rather than part of the fold target, so a click on it places the caret
+              and a drag selects; the button after it copies the whole path, however much of it the
+              row has room to show. */}
+          <span className="flex min-w-0 items-baseline font-mono">
+            <span
+              onClick={(e) => e.stopPropagation()}
+              onCopy={copyPathSelection}
+              className="flex min-w-0 cursor-text items-baseline select-text"
+            >
+              <span className="min-w-0 shrink-[999] truncate text-muted-foreground">{dir}</span>
+              <span className={cn("min-w-0 truncate font-medium", viewed && "font-normal line-through")}>
+                {name}
               </span>
-            )}
+              {file.oldPath && (
+                <span className="min-w-0 shrink-[999] truncate text-muted-foreground">
+                  &nbsp;← {file.oldPath}
+                </span>
+              )}
+            </span>
+            <CopyPathButton
+              path={file.path}
+              iconClassName="size-3"
+              className="ml-1.5 inline-flex shrink-0 self-center rounded text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover/fh:opacity-100 [@media(hover:none)]:opacity-100"
+            />
           </span>
+          <span className="min-w-0 flex-1" />
           {/* Said in the row rather than under it. As a line of its own it made this one file's row
               half again as tall as every other folded row, and a list you are scanning for what is
               left to read wants one height, not two. */}
@@ -1675,7 +1722,7 @@ function FileDiff({
             <span className="text-emerald-600 dark:text-emerald-400">+{file.additions}</span>{" "}
             <span className="text-red-600 dark:text-red-400">−{file.deletions}</span>
           </span>
-        </button>
+        </div>
 
         {/* Change or file. Only once the file is open — they are how to read what is on screen, and
             there is nothing on screen to read while it is folded away. */}
