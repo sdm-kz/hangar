@@ -27,12 +27,15 @@ public sealed record Recents(
 /// <summary>
 /// Server-side store for the "recent" launch presets and folders shown in the New Session dialog.
 /// Persisted to %LocalAppData%\ClaudeWeb\recents.json so they follow the user across devices — these
-/// previously lived in each browser's localStorage and so didn't sync. Owns the dedupe/cap logic
+/// previously lived in each browser's localStorage and so didn't sync. Owns the dedupe logic
 /// that used to run client-side.
 /// </summary>
 public sealed class RecentsStore
 {
-    private const int MaxSessions = 100;
+    // Presets are kept however many there are: a session taken out of the list lands here, and keeping
+    // only the newest hundred lost the oldest of them for good. Only the ids held for a preset not yet
+    // saved are bounded, since nothing ever claims a stray one.
+    private const int MaxPendingIds = 100;
     private const int MaxFolders = 8;
 
     private readonly string _file;
@@ -42,7 +45,7 @@ public sealed class RecentsStore
     private List<string> _folders = new();
     // Claude session ids learned (from hooks) for a preset signature that isn't stored yet. The client
     // saves the preset in a second request right after launching, so a fast first hook can beat it here;
-    // AddSession consults this so the id isn't lost to that race. Bounded by the preset cap.
+    // AddSession consults this so the id isn't lost to that race.
     private readonly Dictionary<string, string> _pendingIds = new();
 
     public RecentsStore(ILogger<RecentsStore> log)
@@ -79,7 +82,6 @@ public sealed class RecentsStore
             _pendingIds.Remove(sig);
             _sessions.RemoveAll(x => Sig(x) == sig);
             _sessions.Insert(0, norm);
-            if (_sessions.Count > MaxSessions) _sessions = _sessions.Take(MaxSessions).ToList();
             Save();
             return Snapshot();
         }
@@ -100,7 +102,7 @@ public sealed class RecentsStore
             var i = _sessions.FindIndex(x => Sig(x) == sig);
             if (i < 0)
             {
-                if (_pendingIds.Count >= MaxSessions) _pendingIds.Clear(); // bound it; these are best-effort
+                if (_pendingIds.Count >= MaxPendingIds) _pendingIds.Clear(); // bound it; these are best-effort
                 _pendingIds[sig] = claudeSessionId;
                 return false;
             }
@@ -206,7 +208,6 @@ public sealed class RecentsStore
             _sessions = (p.Sessions ?? new())
                 .Where(s => s is not null && !string.IsNullOrWhiteSpace(s.WorkingDirectory))
                 .Select(Normalize)
-                .Take(MaxSessions)
                 .ToList();
             _folders = (p.Folders ?? new())
                 .Where(f => !string.IsNullOrWhiteSpace(f))
