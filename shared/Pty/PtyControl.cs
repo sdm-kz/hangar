@@ -101,6 +101,11 @@ public sealed record PtyControl
     public long CommandEndedAt { get; init; }
     /// <summary>state: the last command's exit code, when the shell reported one.</summary>
     public int? CommandExitCode { get; init; }
+    /// <summary>
+    /// state: the running command is one you type into (ssh, a REPL) and has been quiet for a while,
+    /// so it is waiting on you rather than working. Its own commands print no marks to say so.
+    /// </summary>
+    public bool CommandWaiting { get; init; }
 
     /// <summary>Serialize to the UTF-8 bytes of a control frame's payload.</summary>
     public byte[] ToPayload() => Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this, PtyJsonContext.Default.PtyControl));

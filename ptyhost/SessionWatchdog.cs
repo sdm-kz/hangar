@@ -82,6 +82,7 @@ public sealed class SessionWatchdog
                 CommandStartedAt = command.StartedAt,
                 CommandEndedAt = command.EndedAt,
                 CommandExitCode = command.ExitCode,
+                CommandWaiting = command.Waiting,
             };
     }
 
@@ -150,7 +151,7 @@ public sealed class SessionWatchdog
     {
         var state = CurrentState();
         var key = $"{state.Busy}|{state.Waiting}|{state.Compacting}|{state.WatchdogStatus}|{state.Enabled}" +
-                  $"|{state.CommandRunning}|{state.CommandStartedAt}|{state.CommandEndedAt}";
+                  $"|{state.CommandRunning}|{state.CommandStartedAt}|{state.CommandEndedAt}|{state.CommandWaiting}";
         // The tick loop and a client's `watchdog` message both land here, on different threads, so the
         // "has it changed since last time" pair is decided under the lock rather than read torn.
         lock (_pushLock)

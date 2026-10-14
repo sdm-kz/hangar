@@ -12,6 +12,13 @@ namespace ClaudeWeb.PtyHost.Pty;
 /// start: Enter typed while the prompt is up counts as one, and the next prompt ends it, with no exit
 /// code to give. That inference stands down for good the moment a real <c>C</c> turns up, so a shell
 /// that does mark its commands is never second-guessed by the keyboard.</para>
+/// <para>A command you type into -- ssh, a REPL, an editor, a nested shell -- is one the marks can't
+/// see inside: the remote prompt prints none, so to the shell it is one long command until you leave
+/// it. Typing into a running command makes it <see cref="Interactive"/>, and from then on it only
+/// counts as working while it prints; after <see cref="QuietMs"/> of silence it is
+/// <see cref="Waiting"/> on you. Output right after a keystroke is its echo, not work, and doesn't
+/// count. Input that starts with ESC is the terminal answering a query (focus, cursor position), not
+/// typing, and doesn't make a command interactive.</para>
 /// <para>Not thread-safe on its own: the output side runs on the read pump under the channel's lock,
 /// and the input side takes the same lock.</para>
 /// </remarks>
@@ -19,6 +26,12 @@ internal sealed class ShellIntegration
 {
     // Long enough for "133;D;-2147483648" and a little more; anything longer is some other OSC.
     private const int MaxPayload = 32;
+
+    /// <summary>Silence after which an interactive command is waiting on you rather than working.</summary>
+    public const long QuietMs = 5000;
+
+    // Output this soon after a keystroke is the keystroke's echo (remote echo over ssh included).
+    private const long EchoMs = 500;
 
     private enum Scan { Text, Esc, Osc, OscEsc, Skip, SkipEsc }
 
@@ -28,6 +41,8 @@ internal sealed class ShellIntegration
 
     private bool _atPrompt;
     private bool _marksCommands; // a C has been seen: never infer a start from input again
+    private long _lastInputAt;
+    private long _lastOutputAt; // the running command's last output that wasn't an echo
 
     /// <summary>Whether the shell has printed any mark at all — i.e. the integration is in place.</summary>
     public bool Seen { get; private set; }
@@ -44,10 +59,27 @@ internal sealed class ShellIntegration
     /// <summary>The last command's exit code, when the shell reported one.</summary>
     public int? ExitCode { get; private set; }
 
+    /// <summary>The running command has been typed into (ssh, a REPL), so its marks can't be seen.</summary>
+    public bool Interactive { get; private set; }
+
+    /// <summary>The running command is interactive and has printed nothing for <see cref="QuietMs"/>.</summary>
+    public bool Waiting(long now) => Running && Interactive && now - _lastOutputAt >= QuietMs;
+
+    internal static long Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
     /// <summary>Feed output bytes. Returns true when the command state changed.</summary>
     public bool Feed(ReadOnlySpan<byte> bytes)
     {
         var changed = false;
+        if (Running)
+        {
+            var now = Now();
+            if (now - _lastInputAt >= EchoMs)
+            {
+                changed = Waiting(now); // an interactive command back at work after a quiet stretch
+                _lastOutputAt = now;
+            }
+        }
         foreach (var b in bytes)
         {
             switch (_scan)
@@ -85,11 +117,23 @@ internal sealed class ShellIntegration
 
     /// <summary>
     /// Note input typed into the shell. Enter at a prompt starts a command for a shell that marks only
-    /// its prompts. Returns true when the command state changed.
+    /// its prompts; typing into a running command makes it interactive. Returns true when the command
+    /// state changed.
     /// </summary>
     public bool Input(ReadOnlySpan<byte> bytes)
     {
-        if (_marksCommands || !_atPrompt || Running || bytes.IndexOf((byte)'\r') < 0) return false;
+        if (bytes.IsEmpty) return false;
+        if (Running)
+        {
+            // Any key's redraw is an echo -- an arrow key in vim too -- but only typing makes the
+            // command interactive: an ESC-led sequence may be the terminal answering a query.
+            var now = Now();
+            _lastInputAt = now;
+            if (Interactive || bytes[0] == 0x1b) return false;
+            Interactive = true;
+            return Waiting(now);
+        }
+        if (_marksCommands || !_atPrompt || bytes.IndexOf((byte)'\r') < 0) return false;
         Start();
         return true;
     }
@@ -126,14 +170,17 @@ internal sealed class ShellIntegration
     private void Start()
     {
         Running = true;
+        Interactive = false;
         _atPrompt = false;
-        StartedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        _lastOutputAt = Now();
+        StartedAt = Now();
     }
 
     private void End(int? code)
     {
         Running = false;
+        Interactive = false;
         ExitCode = code;
-        EndedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        EndedAt = Now();
     }
 }

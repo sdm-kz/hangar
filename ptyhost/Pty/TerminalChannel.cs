@@ -391,9 +391,14 @@ public sealed partial class TerminalChannel : IDisposable
     public event Action? CommandStateChanged;
 
     /// <summary>The shell's command state, as its integration marks report it.</summary>
-    public (bool Seen, bool Running, long StartedAt, long EndedAt, int? ExitCode) Command
+    public (bool Seen, bool Running, long StartedAt, long EndedAt, int? ExitCode, bool Waiting) Command
     {
-        get { lock (_lock) return (_shell.Seen, _shell.Running, _shell.StartedAt, _shell.EndedAt, _shell.ExitCode); }
+        get
+        {
+            lock (_lock)
+                return (_shell.Seen, _shell.Running, _shell.StartedAt, _shell.EndedAt, _shell.ExitCode,
+                    _shell.Waiting(ShellIntegration.Now()));
+        }
     }
 
     private TerminalChannel(PtySession pty, short cols, short rows)

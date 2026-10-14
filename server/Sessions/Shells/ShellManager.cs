@@ -34,9 +34,11 @@ public sealed record ShellInfo(
 
 /// <summary>
 /// What the session hub says about a shell's commands: enough for a tab or a sidebar row to show one
-/// running, or one that has finished and how. Times are Unix ms, 0 for never.
+/// running, or one that has finished and how. Times are Unix ms, 0 for never. <c>Waiting</c>: the
+/// running command is one you type into (ssh, a REPL) and has gone quiet -- running, but not working.
 /// </summary>
-public sealed record ShellActivity(string SessionId, bool Running, long StartedAt, long EndedAt, int? ExitCode);
+public sealed record ShellActivity(
+    string SessionId, bool Running, long StartedAt, long EndedAt, int? ExitCode, bool Waiting);
 
 /// <summary>
 /// Shell tabs: a plain interactive shell (cmd, PowerShell, Git Bash, a WSL distribution) attached to
@@ -154,7 +156,8 @@ public sealed class ShellManager : IDisposable
             .ToDictionary(s => s.Id, s =>
             {
                 var c = s.Client!.Command;
-                return new ShellActivity(s.SessionId!, c.Running && s.Running, c.StartedAt, c.EndedAt, c.ExitCode);
+                var running = c.Running && s.Running;
+                return new ShellActivity(s.SessionId!, running, c.StartedAt, c.EndedAt, c.ExitCode, running && c.Waiting);
             });
 
     public ShellInfo? Get(string id) => _shells.TryGetValue(id, out var s) ? s.ToInfo() : null;

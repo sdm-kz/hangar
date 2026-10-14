@@ -3,7 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 /**
  * What the session hub says about one shell's commands (ShellActivity on the server): whether one is
  * running at its prompt, and when the last one started and ended, with its exit code. Times are Unix
- * ms, 0 for never; the exit code is null where the shell can't report one (cmd).
+ * ms, 0 for never; the exit code is null where the shell can't report one (cmd). `waiting`: the
+ * running command is one you type into -- ssh, a REPL -- and has gone quiet, so it is waiting on you.
  */
 export interface ShellActivity {
   sessionId: string;
@@ -11,6 +12,7 @@ export interface ShellActivity {
   startedAt: number;
   endedAt: number;
   exitCode: number | null;
+  waiting?: boolean;
 }
 
 /** The mark a shell, or a session's shells together, wears: a command running, or one that ended. */
@@ -23,7 +25,9 @@ const MIN_FINISHED_MS = 1000;
 /** The mark for one shell, given when its last finished command was seen (its endedAt). */
 export function shellMark(a: ShellActivity | undefined, seenEndedAt: number | undefined): ShellMark | null {
   if (!a) return null;
-  if (a.running) return "busy";
+  // An ssh session or a REPL sitting at its own prompt is still a running command to the shell, but
+  // nothing is happening in it; what it runs prints no marks, so its own commands can't be told apart.
+  if (a.running) return a.waiting ? null : "busy";
   if (!a.endedAt || a.endedAt <= (seenEndedAt ?? 0) || a.endedAt - a.startedAt < MIN_FINISHED_MS) return null;
   return a.exitCode !== null && a.exitCode !== 0 ? "failed" : "done";
 }

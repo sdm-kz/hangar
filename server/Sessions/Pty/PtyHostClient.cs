@@ -281,7 +281,7 @@ public sealed class PtyHostClient : ITerminal
                     var status = string.IsNullOrEmpty(msg.WatchdogStatus) ? _watchdogStatus : msg.WatchdogStatus!;
                     var command = new ShellCommandState(
                         msg.ShellIntegration, msg.CommandRunning,
-                        msg.CommandStartedAt, msg.CommandEndedAt, msg.CommandExitCode);
+                        msg.CommandStartedAt, msg.CommandEndedAt, msg.CommandExitCode, msg.CommandWaiting);
                     changed = _busy != msg.Busy || _waiting != msg.Waiting
                         || _compacting != msg.Compacting || _watchdogStatus != status
                         || _command != command;
@@ -627,9 +627,11 @@ public sealed class PtyHostClient : ITerminal
 /// <summary>
 /// A shell's command state as its pty host reports it: whether the integration marks are coming
 /// through at all, whether a command is running, and when the last one started and ended (Unix ms,
-/// 0 for never) and with what exit code.
+/// 0 for never) and with what exit code. <c>Waiting</c>: the running command is one you type into
+/// (ssh, a REPL) and has gone quiet, so it is waiting on you rather than working.
 /// </summary>
-public sealed record ShellCommandState(bool Integration, bool Running, long StartedAt, long EndedAt, int? ExitCode)
+public sealed record ShellCommandState(
+    bool Integration, bool Running, long StartedAt, long EndedAt, int? ExitCode, bool Waiting = false)
 {
     public static readonly ShellCommandState None = new(false, false, 0, 0, null);
 }
