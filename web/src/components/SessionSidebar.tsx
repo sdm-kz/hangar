@@ -2460,15 +2460,15 @@ export function SessionSidebar({
                 onMarkSeen={() => onMarkSeen(seenIds)}
               />
             )}
-            {/* Postponed-message counter, so a stashed pool is discoverable from the list. It sits
-                left of the menu button, which holds the right edge of every row. Clicking it opens
-                the pool itself: the number was the only thing a closed session showed of its stash,
-                and reading it back used to mean relaunching the session that left it. */}
             {/* The session's shells, beside its own marks rather than in its corner: the corner says
                 what Claude is doing, and a build running in a shell tab is not that. A terminal glyph
                 in the colours of the activity marks -- green and pulsing while a command runs, green
                 once one has finished, red when it failed -- until the tab has been looked at. */}
             {shellMarks?.get(s.id) && editingId !== s.id && <ShellRowMark mark={shellMarks.get(s.id)!} />}
+            {/* Postponed-message counter, so a stashed pool is discoverable from the list. It sits
+                left of the menu button, which holds the right edge of every row. Clicking it opens
+                the pool itself: the number was the only thing a closed session showed of its stash,
+                and reading it back used to mean relaunching the session that left it. */}
             {s.postponedCount > 0 && (
               <button
                 type="button"
