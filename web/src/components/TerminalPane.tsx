@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { ArrowDown, Check, Copy, RefreshCw, TextSelect, X } from "lucide-react";
+import { ArrowDown, Check, ChevronLeft, ChevronRight, Copy, RefreshCw, TextSelect, X } from "lucide-react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
@@ -21,6 +21,19 @@ import { cn } from "@/lib/utils";
 // the app-wide zoom stops, so a percentage here means what it means in the file viewers.
 const BASE_FONT_SIZE = 13;
 const fontSizeFor = (zoom: number) => Math.max(6, Math.round(BASE_FONT_SIZE * zoom));
+
+const TOOLS_COLLAPSED_KEY = "claudeweb.terminalToolsCollapsed";
+// Tells the other panes on this page that the toolbar was folded or opened; the storage event only
+// reaches the page's other tabs.
+const TOOLS_COLLAPSED_EVENT = "claudeweb:terminalToolsCollapsed";
+
+function readToolsCollapsed(): boolean {
+  try {
+    return localStorage.getItem(TOOLS_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The terminal's text, for the selection overlay: scrollback and screen from the normal buffer, and
@@ -303,6 +316,29 @@ export const TerminalPane = forwardRef<
   // once on open rather than followed live: text that reflows under a finger cannot be selected.
   const [selectionText, setSelectionText] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
+  // The corner toolbar folded away to a chevron, so it stops covering the end of the prompt line --
+  // where a shell's command is typed. Shared by every terminal and remembered, like the zoom.
+  const [toolsCollapsed, setToolsCollapsed] = useState(readToolsCollapsed);
+  const collapseTools = (collapsed: boolean) => {
+    setToolsCollapsed(collapsed);
+    try {
+      if (collapsed) localStorage.setItem(TOOLS_COLLAPSED_KEY, "1");
+      else localStorage.removeItem(TOOLS_COLLAPSED_KEY);
+    } catch {
+      /* storage unavailable — persistence is best-effort */
+    }
+    window.dispatchEvent(new CustomEvent(TOOLS_COLLAPSED_EVENT, { detail: collapsed }));
+  };
+  useEffect(() => {
+    const onLocal = (e: Event) => setToolsCollapsed((e as CustomEvent<boolean>).detail);
+    const onStorage = (e: StorageEvent) => e.key === TOOLS_COLLAPSED_KEY && setToolsCollapsed(readToolsCollapsed());
+    window.addEventListener(TOOLS_COLLAPSED_EVENT, onLocal);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(TOOLS_COLLAPSED_EVENT, onLocal);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   // Move `delta` stops along ZOOM_LEVELS from wherever we are now, clamped at both ends. Reads the
@@ -1198,10 +1234,26 @@ export const TerminalPane = forwardRef<
         ref={hostRef}
         className="flex h-full w-full flex-col justify-end overscroll-contain overflow-hidden"
       />
+      {/* Folded, the controls are one small chevron tucked into the corner, in the pane's padding
+          rather than on its text; it says the zoom when that isn't 100%, which the open toolbar is
+          otherwise pinned to show. It stays folded until clicked: a hover that unfolded it would
+          cover the prompt every time the pointer crossed the pane, which is what folding it is for. */}
+      {toolsCollapsed && (
+        <button
+          type="button"
+          onClick={() => collapseTools(false)}
+          title="Show the terminal's tools — select text, redraw, zoom"
+          aria-label="Show the terminal's tools"
+          className="absolute right-1 top-1 z-10 flex h-5 items-center gap-0.5 rounded border bg-background/90 px-0.5 text-muted-foreground opacity-60 shadow-sm backdrop-blur transition-opacity hover:text-foreground hover:opacity-100 focus-visible:opacity-100"
+        >
+          <ChevronLeft className="size-3.5" />
+          {zoom !== 1 && <span className="pr-0.5 text-[10px] tabular-nums">{Math.round(zoom * 100)}%</span>}
+        </button>
+      )}
       {/* The pane's own controls, in one row so they cannot land on top of each other. Kept out of
           sight until the pointer is over the pane, so nothing is permanently parked on the TUI's
           top-right corner — and always visible on touch, where there is no hover to reveal them. */}
-      <div className="absolute right-4 top-3 z-10 flex items-center gap-1.5">
+      <div className={cn("absolute right-4 top-3 z-10 flex items-center gap-1.5", toolsCollapsed && "hidden")}>
         {/* The grid is drawn into a canvas, so there is nothing for a finger to select: no DOM text
             for the OS to grab, and xterm's own selection runs on mouse events that iOS only
             synthesizes for a tap. Rather than reimplement a selection UI badly, hand the buffer to
@@ -1259,6 +1311,21 @@ export const TerminalPane = forwardRef<
               "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
           )}
         />
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => collapseTools(true)}
+          title="Hide the terminal's tools — fold them into the corner"
+          aria-label="Hide the terminal's tools"
+          className={cn(
+            "h-8 w-5 bg-background/90 text-muted-foreground shadow-sm backdrop-blur transition-opacity hover:text-foreground",
+            "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100",
+            // Pinned with the zoom box: open at a non-default size, the way to fold it must be too.
+            zoom !== 1 && "opacity-100"
+          )}
+        >
+          <ChevronRight className="size-3.5" />
+        </Button>
       </div>
 
       {/* Selection overlay: the buffer as real text, over the pane rather than beside it so the
