@@ -38,7 +38,7 @@ import {
   sessionActivity,
   type Activity,
 } from "./ActivityMark";
-import { recentLabel, type RecentSession } from "@/lib/recentSessions";
+import { recentLabel, recentWhen, type RecentSession } from "@/lib/recentSessions";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
 import { PostponedDialog } from "./PostponedDialog";
@@ -3496,8 +3496,9 @@ function RecentList({
   // `i` is the index in the flat `recents` list so drag-reorder is unaffected by grouping;
   // `showPath` is dropped in grouped mode where the folder is already in the header.
   // One line, like a session row: the name, then only what sets this preset apart from a plain launch
-  // (a model picked, Remote Control, a starting prompt). The rest rides in the tooltip -- a "default"
-  // badge on every row and the prompt's own line doubled the height of a list that is mostly names.
+  // (a model picked, Remote Control, a starting prompt), and at the end when it was last used. The rest
+  // rides in the tooltip -- a "default" badge on every row and the prompt's own line doubled the height
+  // of a list that is mostly names.
   const renderRow = (r: RecentSession, i: number, showPath: boolean) => (
     <div
       key={i}
@@ -3505,6 +3506,7 @@ function RecentList({
       onClick={() => onReuse(r)}
       title={[
         recentLabel(r),
+        r.lastUsedAt ? `Last used: ${new Date(r.lastUsedAt).toLocaleString()}` : null,
         `Model: ${r.model || "default"}`,
         r.command ? `Prompt: ${r.command}` : null,
         showPath ? null : r.workingDirectory,
@@ -3533,6 +3535,9 @@ function RecentList({
           )}
           {r.command && <Terminal className="size-3 shrink-0 text-muted-foreground" aria-label="starting prompt" />}
         </span>
+        {r.lastUsedAt && (
+          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{recentWhen(r.lastUsedAt)}</span>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation();

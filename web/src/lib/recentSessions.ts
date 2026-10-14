@@ -15,6 +15,8 @@ export interface RecentSession {
    * one in the folder is most recent. Absent until the server has seen a hook for the launch.
    */
   claudeSessionId?: string | null;
+  /** When the preset was last saved (ISO). Stamped by the server; absent on presets saved before. */
+  lastUsedAt?: string | null;
 }
 
 /**
@@ -62,4 +64,22 @@ export function presetFromSession(s: SessionInfo): RecentSession {
 /** A short human label for a preset (custom name, else folder name). */
 export function recentLabel(r: RecentSession): string {
   return r.name.trim() || folderName(r.workingDirectory);
+}
+
+/**
+ * When a preset was last used, short enough for the end of a sidebar row: minutes, then hours for a day,
+ * days within the week, then the date -- with the year once it is not this one. Empty when unknown.
+ */
+export function recentWhen(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return "";
+  const t = new Date(iso);
+  const ms = now - t.getTime();
+  if (Number.isNaN(ms)) return "";
+  const min = Math.floor(ms / 60_000);
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)}h`;
+  if (min < 7 * 24 * 60) return `${Math.floor(min / (24 * 60))}d`;
+  const sameYear = t.getFullYear() === new Date(now).getFullYear();
+  return t.toLocaleDateString(undefined, sameYear ? { month: "short", day: "numeric" } : { month: "short", year: "numeric" });
 }

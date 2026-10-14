@@ -17,7 +17,13 @@ public sealed record RecentSession(
     /// in the folder happens to be the most recent. Null until a hook has reported it. Deliberately not
     /// part of the dedupe signature — it's a property of the preset, not part of its identity.
     /// </summary>
-    string? ClaudeSessionId = null);
+    string? ClaudeSessionId = null,
+    /// <summary>
+    /// When this preset was last saved -- launched from the New Session dialog, or taken out of the
+    /// session list. Stamped by the store, never taken from the caller, and not part of the identity.
+    /// Null on presets saved before it was recorded.
+    /// </summary>
+    DateTimeOffset? LastUsedAt = null);
 
 /// <summary>The remembered launch presets and folders, shared across every device/browser.</summary>
 public sealed record Recents(
@@ -62,7 +68,7 @@ public sealed class RecentsStore
         lock (_lock) return Snapshot();
     }
 
-    /// <summary>Save (or move-to-front) a preset. Presets with the same identity collapse to one.</summary>
+    /// <summary>Save a preset, stamping when it was used. Presets with the same identity collapse to one.</summary>
     public Recents AddSession(RecentSession r)
     {
         if (string.IsNullOrWhiteSpace(r.WorkingDirectory)) return Get();
@@ -80,8 +86,13 @@ public sealed class RecentsStore
                         : _sessions.FirstOrDefault(x => Sig(x) == sig)?.ClaudeSessionId,
                 };
             _pendingIds.Remove(sig);
-            _sessions.RemoveAll(x => Sig(x) == sig);
-            _sessions.Insert(0, norm);
+            norm = norm with { LastUsedAt = DateTimeOffset.Now };
+            // A preset already on file keeps its place: the list is the user's to arrange (it can be
+            // dragged into any order), and the date on the row now says when it was last used. Only a
+            // new one goes in at the top.
+            var at = _sessions.FindIndex(x => Sig(x) == sig);
+            if (at >= 0) _sessions[at] = norm;
+            else _sessions.Insert(0, norm);
             Save();
             return Snapshot();
         }
