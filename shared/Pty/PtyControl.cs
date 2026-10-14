@@ -88,6 +88,20 @@ public sealed record PtyControl
     /// <summary>state: "healthy" | "recovering" | "attention".</summary>
     public string? WatchdogStatus { get; init; }
 
+    /// <summary>
+    /// state: the child prints shell-integration marks (OSC 133), so the command fields below mean
+    /// something. False for a Claude session, and for a shell started without the integration.
+    /// </summary>
+    public bool ShellIntegration { get; init; }
+    /// <summary>state: a command is running at the shell prompt.</summary>
+    public bool CommandRunning { get; init; }
+    /// <summary>state: when the running or last command started, Unix ms; 0 before the first.</summary>
+    public long CommandStartedAt { get; init; }
+    /// <summary>state: when the last command ended, Unix ms; 0 until one has.</summary>
+    public long CommandEndedAt { get; init; }
+    /// <summary>state: the last command's exit code, when the shell reported one.</summary>
+    public int? CommandExitCode { get; init; }
+
     /// <summary>Serialize to the UTF-8 bytes of a control frame's payload.</summary>
     public byte[] ToPayload() => Encoding.UTF8.GetBytes(JsonSerializer.Serialize(this, PtyJsonContext.Default.PtyControl));
 

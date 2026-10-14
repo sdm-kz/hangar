@@ -89,6 +89,9 @@ public sealed class SessionHub : BackgroundService
         // A shell opened or closed anywhere (another browser, a session being stopped) changes the
         // revision below, which is what tells a browser its tab strip is stale.
         _shells.Changed += Poke;
+        // ...and a command starting or ending in one of them is what lights its tab and its session's
+        // row, so it goes out at once too.
+        _shells.ActivityChanged += Poke;
     }
 
     /// <summary>Request an immediate recompute + broadcast (coalesced with any pending wake).</summary>
@@ -149,6 +152,10 @@ public sealed class SessionHub : BackgroundService
                 // re-fetches the session's own tabs, and the rest never hear about it. Same trick as
                 // SessionInfo.UiRev.
                 shellsRev = _shells.Revision,
+                // Unlike the shells themselves, what their commands are doing does travel: it is what
+                // a sidebar row shows for a session nobody has open. Only shells with a command to
+                // report are in it, so on a quiet machine it is an empty object.
+                shells = _shells.Activity(),
                 // Same again for the projects: only the revision travels, and a browser that sees it
                 // move re-reads /api/projects. The server changes them on its own now — a child
                 // session joining its host's project — so a browser can no longer assume the list it

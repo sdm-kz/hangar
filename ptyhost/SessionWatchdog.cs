@@ -67,6 +67,7 @@ public sealed class SessionWatchdog
     /// <summary>The current view of the session, for the welcome a newly attached client receives.</summary>
     public PtyControl CurrentState()
     {
+        var command = _terminal.Command;
         lock (_lock)
             return new PtyControl
             {
@@ -76,8 +77,16 @@ public sealed class SessionWatchdog
                 Compacting = _terminal.IsCompacting,
                 WatchdogStatus = _status,
                 Enabled = _enabled,
+                ShellIntegration = command.Seen,
+                CommandRunning = command.Running,
+                CommandStartedAt = command.StartedAt,
+                CommandEndedAt = command.EndedAt,
+                CommandExitCode = command.ExitCode,
             };
     }
+
+    /// <summary>Push the state now — a shell command has just started or ended.</summary>
+    public void PushNow() => PushState(force: true);
 
     /// <summary>
     /// Apply a <c>watchdog</c> control message. The web app owns the per-session opt-in (it is
@@ -140,7 +149,8 @@ public sealed class SessionWatchdog
     private void PushState(bool force)
     {
         var state = CurrentState();
-        var key = $"{state.Busy}|{state.Waiting}|{state.Compacting}|{state.WatchdogStatus}|{state.Enabled}";
+        var key = $"{state.Busy}|{state.Waiting}|{state.Compacting}|{state.WatchdogStatus}|{state.Enabled}" +
+                  $"|{state.CommandRunning}|{state.CommandStartedAt}|{state.CommandEndedAt}";
         // The tick loop and a client's `watchdog` message both land here, on different threads, so the
         // "has it changed since last time" pair is decided under the lock rather than read torn.
         lock (_pushLock)

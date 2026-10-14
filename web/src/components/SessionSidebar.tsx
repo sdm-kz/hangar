@@ -39,6 +39,7 @@ import {
   type Activity,
 } from "./ActivityMark";
 import { recentLabel, recentWhen, type RecentSession } from "@/lib/recentSessions";
+import type { ShellMark } from "@/lib/shellActivity";
 import { sessionUrl } from "@/lib/urlState";
 import { RenameField } from "./RenameField";
 import { PostponedDialog } from "./PostponedDialog";
@@ -86,6 +87,7 @@ import {
   Pin,
   PinOff,
   Terminal,
+  SquareTerminal,
   Trash2,
   FolderTree,
   List,
@@ -476,6 +478,20 @@ const MARK_SEEN_REVEAL = {
   gh: "group-hover/gh:inline-flex",
   row: "group-hover:inline-flex",
 } as const;
+
+/** The glyph a session row wears for its shells — see shellMarks on SessionSidebar. */
+function ShellRowMark({ mark }: { mark: ShellMark }) {
+  const look = {
+    busy: { className: "text-emerald-500 animate-pulse", label: "A command is running in one of this session’s shells" },
+    done: { className: "text-emerald-500", label: "A command finished in one of this session’s shells" },
+    failed: { className: "text-red-500", label: "A command failed in one of this session’s shells" },
+  }[mark];
+  return (
+    <span title={look.label} className="flex shrink-0">
+      <SquareTerminal className={cn("size-3.5", look.className)} aria-label={look.label} />
+    </span>
+  );
+}
 
 function MarkSeenButton({
   count,
@@ -1450,6 +1466,7 @@ function saveCollapsedForks(set: Set<string>) {
 export function SessionSidebar({
   sessions,
   activityIds,
+  shellMarks,
   onMarkSeen,
   activeId,
   onSelect,
@@ -1477,6 +1494,9 @@ export function SessionSidebar({
   sessions: SessionInfo[];
   // Who is busy / waiting on you / compacting / finished-but-unseen, in one bag — see ActivityIds.
   activityIds: ActivityIds;
+  // What each session's shell tabs have to say: a command running in one, or one that finished
+  // there (or failed) since it was last looked at. Only sessions with something to say are in it.
+  shellMarks?: ReadonlyMap<string, ShellMark>;
   // Clear the finished-but-unseen tick on these sessions without opening them (a heading's
   // "mark all seen"). Owned by App with the set itself, so both sidebar mounts agree.
   onMarkSeen: (ids: Iterable<string>) => void;
@@ -2444,6 +2464,11 @@ export function SessionSidebar({
                 left of the menu button, which holds the right edge of every row. Clicking it opens
                 the pool itself: the number was the only thing a closed session showed of its stash,
                 and reading it back used to mean relaunching the session that left it. */}
+            {/* The session's shells, beside its own marks rather than in its corner: the corner says
+                what Claude is doing, and a build running in a shell tab is not that. A terminal glyph
+                in the colours of the activity marks -- green and pulsing while a command runs, green
+                once one has finished, red when it failed -- until the tab has been looked at. */}
+            {shellMarks?.get(s.id) && editingId !== s.id && <ShellRowMark mark={shellMarks.get(s.id)!} />}
             {s.postponedCount > 0 && (
               <button
                 type="button"

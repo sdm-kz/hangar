@@ -383,6 +383,19 @@ public sealed partial class TerminalChannel : IDisposable
     /// <summary>Raised once the claude.ai deep link has been sniffed out of the child's output.</summary>
     public event Action<string>? RemoteUrlDetected;
 
+    // Shell integration: the OSC 133 marks a shell tab's prompt prints, read for whether a command is
+    // running and how the last one ended. A Claude session prints none, and so never reports any.
+    private readonly ShellIntegration _shell = new();
+
+    /// <summary>Raised when a command starts or ends at a shell prompt (see <see cref="Command"/>).</summary>
+    public event Action? CommandStateChanged;
+
+    /// <summary>The shell's command state, as its integration marks report it.</summary>
+    public (bool Seen, bool Running, long StartedAt, long EndedAt, int? ExitCode) Command
+    {
+        get { lock (_lock) return (_shell.Seen, _shell.Running, _shell.StartedAt, _shell.EndedAt, _shell.ExitCode); }
+    }
+
     private TerminalChannel(PtySession pty, short cols, short rows)
     {
         _pty = pty;
@@ -421,8 +434,10 @@ public sealed partial class TerminalChannel : IDisposable
                 string? rename;
                 string? color;
                 string? url;
+                bool command;
                 lock (_lock)
                 {
+                    command = _shell.Feed(chunk);
                     _screen.Write(chunk);
                     _recentRaw.Append(chunk);
                     foreach (var w in _subs.Values) w.TryWrite(chunk);
@@ -436,6 +451,7 @@ public sealed partial class TerminalChannel : IDisposable
                 if (rename is not null) RenameCommandDetected?.Invoke(rename);
                 if (color is not null) ColorCommandDetected?.Invoke(color);
                 if (url is not null) RemoteUrlDetected?.Invoke(url);
+                if (command) CommandStateChanged?.Invoke();
             }
         }
         catch (Exception ex)
@@ -505,6 +521,9 @@ public sealed partial class TerminalChannel : IDisposable
             if (Volatile.Read(ref _lastTypedTick) == 0) Volatile.Write(ref _dropReplayedTail, 1);
             Volatile.Write(ref _lastTypedTick, Environment.TickCount64);
         }
+        bool command;
+        lock (_lock) command = _shell.Input(data.Span);
+        if (command) CommandStateChanged?.Invoke();
         await _writeLock.WaitAsync(ct);
         try
         {

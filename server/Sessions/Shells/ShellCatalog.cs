@@ -120,14 +120,64 @@ public static class ShellCatalog
                 // it in rather than cd-ing to $HOME, which is the whole point of a per-folder tab.
                 env["CHERE_INVOKING"] = "1";
                 env["TERM"] = "xterm-256color";
+                // Shell integration (see PowerShellIntegration): bash takes both hooks from the
+                // environment. PROMPT_COMMAND runs before each prompt with the last command's status
+                // still in $?; PS0 is printed as a command starts. A profile that sets a
+                // PROMPT_COMMAND of its own replaces this one, and the tab then goes without marks.
+                env["PROMPT_COMMAND"] = """printf '\033]133;D;%s\007\033]133;A\007' "$?" """.TrimEnd();
+                env["PS0"] = @"\e]133;C\a";
                 return new ShellLaunch(option.Detail, new[] { "--login", "-i" }, env);
             case "pwsh":
             case "powershell":
-                return new ShellLaunch(option.Detail, new[] { "-NoLogo" }, env);
+                // -NoExit runs the integration once the profile has set its prompt up, and leaves the
+                // shell interactive. Encoded rather than run from a file, so execution policy, which
+                // governs script files, has nothing to say about it.
+                return new ShellLaunch(option.Detail,
+                    new[] { "-NoLogo", "-NoExit", "-EncodedCommand", EncodedPowerShellIntegration }, env);
+            case "cmd":
+                // cmd has no hook before a command runs, only its prompt: that gets the "prompt is up"
+                // mark, and the pty host takes Enter at that prompt as the start of a command.
+                env["PROMPT"] = @"$E]133;A$E\" +
+                    (Environment.GetEnvironmentVariable("PROMPT") is { Length: > 0 } prompt ? prompt : "$P$G");
+                return new ShellLaunch(option.Detail, Array.Empty<string>(), env);
             default:
                 return new ShellLaunch(option.Detail, Array.Empty<string>(), env);
         }
     }
+
+    /// <summary>
+    /// Shell integration for PowerShell, 5.1 and 7: the FinalTerm / VS Code OSC 133 marks the pty
+    /// host follows to tell a running command from an idle prompt. <c>D;&lt;exit&gt;</c> and
+    /// <c>A</c> go out before each prompt, <c>C</c> once a line has been accepted. The profile's own
+    /// prompt is wrapped, not replaced, and gets the last command's <c>$?</c> and
+    /// <c>$LASTEXITCODE</c> back as they were, so a prompt that shows a failure still sees one.
+    /// </summary>
+    internal const string PowerShellIntegration = """
+        if (-not $global:__cwIntegration) {
+            $global:__cwIntegration = $true
+            $global:__cwPrompt = $function:prompt
+            function global:prompt {
+                $ok = $global:?
+                $code = $global:LASTEXITCODE
+                $exit = if ($ok) { 0 } elseif ($code -is [int] -and $code -ne 0) { $code } else { 1 }
+                [Console]::Write("$([char]27)]133;D;$exit$([char]7)$([char]27)]133;A$([char]7)")
+                $global:LASTEXITCODE = $code
+                if (-not $ok) { Write-Error 'failed' -ErrorAction Ignore }
+                & $global:__cwPrompt
+            }
+            if (Get-Command PSConsoleHostReadLine -ErrorAction Ignore) {
+                $global:__cwReadLine = $function:PSConsoleHostReadLine
+                function global:PSConsoleHostReadLine {
+                    $line = & $global:__cwReadLine
+                    [Console]::Write("$([char]27)]133;C$([char]7)")
+                    $line
+                }
+            }
+        }
+        """;
+
+    private static readonly string EncodedPowerShellIntegration =
+        Convert.ToBase64String(Encoding.Unicode.GetBytes(PowerShellIntegration));
 
     /// <summary>
     /// Quote one token of a verbatim command line, the way a person typing it would: only when it

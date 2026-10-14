@@ -51,6 +51,7 @@ public sealed class PtyHostClient : ITerminal
     private bool _waiting;
     private bool _compacting;
     private string _watchdogStatus = "healthy";
+    private ShellCommandState _command = ShellCommandState.None;
 
     /// <summary>The session's id, for log lines that have to be readable months later.</summary>
     public string SessionId { get; }
@@ -86,6 +87,13 @@ public sealed class PtyHostClient : ITerminal
 
     /// <summary>The host watchdog's view of the session: "healthy" | "recovering" | "attention".</summary>
     public string WatchdogStatus { get { lock (_lock) return _watchdogStatus; } }
+
+    /// <summary>
+    /// The command running at a shell prompt, and how the last one ended, from the shell's
+    /// integration marks. <see cref="ShellCommandState.None"/> for a Claude session, and for a host
+    /// built before the marks were read.
+    /// </summary>
+    public ShellCommandState Command { get { lock (_lock) return _command; } }
 
     private PtyHostClient(NamedPipeClientStream pipe, string sessionId, PtyControl welcome, byte[] replay, ILogger log)
     {
@@ -271,12 +279,17 @@ public sealed class PtyHostClient : ITerminal
                 lock (_lock)
                 {
                     var status = string.IsNullOrEmpty(msg.WatchdogStatus) ? _watchdogStatus : msg.WatchdogStatus!;
+                    var command = new ShellCommandState(
+                        msg.ShellIntegration, msg.CommandRunning,
+                        msg.CommandStartedAt, msg.CommandEndedAt, msg.CommandExitCode);
                     changed = _busy != msg.Busy || _waiting != msg.Waiting
-                        || _compacting != msg.Compacting || _watchdogStatus != status;
+                        || _compacting != msg.Compacting || _watchdogStatus != status
+                        || _command != command;
                     _busy = msg.Busy;
                     _waiting = msg.Waiting;
                     _compacting = msg.Compacting;
                     _watchdogStatus = status;
+                    _command = command;
                 }
                 // Only on a real change: the heartbeat exists to keep the cache honest, and waking the
                 // session hub every five seconds per session to re-serialize an identical snapshot
@@ -609,4 +622,14 @@ public sealed class PtyHostClient : ITerminal
         try { _pipe.Dispose(); } catch { }
         _closing.Dispose();
     }
+}
+
+/// <summary>
+/// A shell's command state as its pty host reports it: whether the integration marks are coming
+/// through at all, whether a command is running, and when the last one started and ended (Unix ms,
+/// 0 for never) and with what exit code.
+/// </summary>
+public sealed record ShellCommandState(bool Integration, bool Running, long StartedAt, long EndedAt, int? ExitCode)
+{
+    public static readonly ShellCommandState None = new(false, false, 0, 0, null);
 }

@@ -54,6 +54,7 @@ import { WebLinkView } from "./WebLinkView";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
 import { HeadingActivityMark, type Activity } from "./ActivityMark";
+import { shellMark, shellMarkLabel, type ShellActivity } from "@/lib/shellActivity";
 import { RenameField } from "./RenameField";
 import { PaneGroups, type DropZone, type PaneTab } from "./PaneGroups";
 import { GroupAddMenu } from "./GroupAddMenu";
@@ -102,6 +103,8 @@ import { writeToClipboard } from "@/lib/clipboard";
 // Wide enough for groups side by side — the width the app has always switched to its desktop
 // layout at. Narrower, the groups fold into a single strip and one of them is drawn.
 const WIDE_QUERY = "(min-width: 48rem)";
+// How long a shell tab has to be on screen before its finished command counts as seen.
+const SHELL_SEEN_MS = 2000;
 
 function useWide(): boolean {
   const [wide, setWide] = useState(() => window.matchMedia(WIDE_QUERY).matches);
@@ -266,6 +269,9 @@ export function SessionView({
   onTerminalShown,
   parent,
   shellsRev,
+  shellActivity,
+  shellsSeen,
+  onShellSeen,
   onFork,
   onSelectSession,
   onToggleSidebar,
@@ -295,6 +301,11 @@ export function SessionView({
   // The server's shell-set revision, pushed on the events hub. When it moves, this session re-reads
   // its own shell tabs — that is how a shell opened (or closed) on another device shows up here.
   shellsRev?: number;
+  // What the commands in every session shell are doing (the hub's snapshot), which finished ones this
+  // browser has looked at, and how to say it has looked at another.
+  shellActivity?: Record<string, ShellActivity> | null;
+  shellsSeen?: Record<string, number>;
+  onShellSeen?: (id: string, endedAt: number) => void;
   onFork: (s: SessionInfo) => void;
   onSelectSession: (id: string) => void; // used by the "forked from" link to jump to the parent
   onToggleSidebar: () => void;
@@ -383,6 +394,47 @@ export function SessionView({
     legacyLayout(session.id, present)
   );
   const groups = groupsOf(layout.root);
+
+  // A shell tab on screen is how its finished command gets seen, the way the session's own mark is
+  // cleared by having it on screen: after a beat, so the tick that drew you here is still there when
+  // you arrive, and only while the page is visible.
+  const unseenShown = groups
+    .map((g) => g.active)
+    .filter((ref): ref is PaneRef => !!ref && paneKind(ref) === "shell")
+    .map((ref) => paneArg(ref))
+    .filter((id) => {
+      const m = shellMark(shellActivity?.[id], shellsSeen?.[id]);
+      return m === "done" || m === "failed";
+    })
+    .map((id) => `${id}@${shellActivity?.[id]?.endedAt}`)
+    .join(" ");
+  useEffect(() => {
+    if (!unseenShown || !onShellSeen) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      if (timer || document.visibilityState !== "visible") return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        for (const pair of unseenShown.split(" ")) {
+          const [id, at] = pair.split("@");
+          onShellSeen(id, Number(at));
+        }
+      }, SHELL_SEEN_MS);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") arm();
+      else {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    };
+    arm();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [unseenShown, onShellSeen]);
 
   // Groups in the order they last had focus: a file opened from the tree or the terminal goes to the
   // group most recently used for reading files.
@@ -863,12 +915,19 @@ export function SessionView({
         const s = shells.shells.find((x) => x.id === arg);
         if (!s) return null;
         const Icon = shellIcon(s.kind);
+        const a = shellActivity?.[s.id];
+        const mark = shellMark(a, shellsSeen?.[s.id]);
         return {
-          icon: <Icon className="size-4 shrink-0" />,
+          icon: (
+            <span className="relative inline-flex shrink-0">
+              <Icon className="size-4" />
+              {mark && a && <HeadingActivityMark activity={mark} label={shellMarkLabel(mark, a)} />}
+            </span>
+          ),
           // A shell whose process has ended keeps its tab (the output is still worth reading) but
           // says so, rather than looking like a live prompt that ignores typing.
           label: label(shellTabLabel(s), cn(!s.running && "line-through opacity-60")),
-          title: `${s.label} — ${s.workingDirectory}${s.running ? "" : " (exited)"}`,
+          title: `${s.label} — ${s.workingDirectory}${s.running ? "" : " (exited)"}${mark && a ? ` — ${shellMarkLabel(mark, a)}` : ""}`,
           closable: true,
         };
       }

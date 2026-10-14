@@ -28,7 +28,15 @@ public sealed record ShellInfo(
     int ProcessId,
     DateTimeOffset CreatedAt,
     /// <summary>False once the shell process has ended — the tab stays until it is closed.</summary>
-    bool Running);
+    bool Running,
+    /// <summary>The command at its prompt, from the shell's integration marks.</summary>
+    ShellCommandState Command);
+
+/// <summary>
+/// What the session hub says about a shell's commands: enough for a tab or a sidebar row to show one
+/// running, or one that has finished and how. Times are Unix ms, 0 for never.
+/// </summary>
+public sealed record ShellActivity(string SessionId, bool Running, long StartedAt, long EndedAt, int? ExitCode);
 
 /// <summary>
 /// Shell tabs: a plain interactive shell (cmd, PowerShell, Git Bash, a WSL distribution) attached to
@@ -66,6 +74,9 @@ public sealed class ShellManager : IDisposable
 
     /// <summary>Raised when the shell set changes, so a live view can re-read it.</summary>
     public event Action? Changed;
+
+    /// <summary>Raised when a command starts or ends in some shell — see <see cref="Activity"/>.</summary>
+    public event Action? ActivityChanged;
 
     private int _revision;
 
@@ -131,6 +142,20 @@ public sealed class ShellManager : IDisposable
         }
         return string.Equals(Norm(a), Norm(b), StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// The command state of every session shell whose integration has reported something, by shell
+    /// id — the part of the shell set that the session hub broadcasts, so a sidebar row can show a
+    /// session's shells at work without each browser fetching every session's tabs.
+    /// </summary>
+    public IReadOnlyDictionary<string, ShellActivity> Activity() =>
+        _shells.Values
+            .Where(s => s.SessionId is not null && s.Client?.Command is { Integration: true } c && (c.Running || c.EndedAt > 0))
+            .ToDictionary(s => s.Id, s =>
+            {
+                var c = s.Client!.Command;
+                return new ShellActivity(s.SessionId!, c.Running && s.Running, c.StartedAt, c.EndedAt, c.ExitCode);
+            });
 
     public ShellInfo? Get(string id) => _shells.TryGetValue(id, out var s) ? s.ToInfo() : null;
 
@@ -289,6 +314,16 @@ public sealed class ShellManager : IDisposable
         shell.Client = client;
         shell.ProcessId = client.ProcessId;
         shell.Running = !client.AlreadyExited;
+        // The state push also carries busy and the rest, on a heartbeat; only a command starting or
+        // ending is news here.
+        var lastCommand = client.Command;
+        client.StateChanged += () =>
+        {
+            var now = client.Command;
+            if (now == lastCommand) return;
+            lastCommand = now;
+            ActivityChanged?.Invoke();
+        };
         client.Exited += _ =>
         {
             shell.Running = false;
@@ -390,6 +425,7 @@ public sealed class ShellManager : IDisposable
         public bool Running { get; set; } = true;
 
         public ShellInfo ToInfo() => new(
-            Id, SessionId, WorkingDirectory, ShellId, Label, Kind, ProcessId, CreatedAt, Running);
+            Id, SessionId, WorkingDirectory, ShellId, Label, Kind, ProcessId, CreatedAt, Running,
+            Client?.Command ?? ShellCommandState.None);
     }
 }

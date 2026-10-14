@@ -106,6 +106,9 @@ public static class Host
         // point in that stream where this one turned, not when it asked — so the size it settles on is
         // pushed, not assumed.
         terminal.SizeApplied += (cols, rows) => server.Broadcast(new PtyControl { Type = "size", Cols = cols, Rows = rows });
+        // A shell command starting or ending rides the state message, and goes out at once rather than
+        // on the next tick: the tab's "running" mark should follow the prompt, not trail it.
+        terminal.CommandStateChanged += watchdog.PushNow;
 
         // Two independent reasons to stand down, and the host must wake on EITHER: the child ending
         // by itself, or a client asking us to stop. (Waiting on the child alone deadlocks a Stop from

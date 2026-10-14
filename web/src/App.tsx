@@ -26,6 +26,7 @@ import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
 import { Bot, Loader2, Menu, Plus } from "lucide-react";
 import { ShowSidebarButton, SessionsProgressContext } from "@/components/ShowSidebarButton";
+import { combineShellMarks, shellMark, useShellsSeen, type ShellActivity, type ShellMark } from "@/lib/shellActivity";
 
 type AuthStatus = "loading" | "authed" | "anon";
 
@@ -62,6 +63,9 @@ export function App() {
   // child session into its host's project as it launches — and the list itself is too rarely touched
   // to be worth pushing in full, so the revision is the signal to re-read it.
   const [projectsRev, setProjectsRev] = useState(0);
+  // What the commands in the session shells are doing, from the same snapshot: a running command, or
+  // how the last one ended. Null until the first snapshot, so nothing is pruned on an empty guess.
+  const [shellActivity, setShellActivity] = useState<Record<string, ShellActivity> | null>(null);
   // Latched once an update starts installing, so the overlay survives the server going away — the
   // hub and the polls both fail while it's down, and this is what says "that's expected, wait".
   const [installing, setInstalling] = useState<string | null>(null); // build id being installed
@@ -278,6 +282,21 @@ export function App() {
     [busyIds, waitingIds, compactingIds, failedIds, doneIds, activityDetail]
   );
 
+  // The shells' marks: which finished commands this browser has looked at, and from that what each
+  // session's shells together have to say on its sidebar row.
+  const { seen: shellsSeen, markSeen: markShellSeen } = useShellsSeen(shellActivity);
+  const shellMarks = useMemo(() => {
+    const bySession = new Map<string, (ShellMark | null)[]>();
+    for (const [id, a] of Object.entries(shellActivity ?? {}))
+      bySession.set(a.sessionId, [...(bySession.get(a.sessionId) ?? []), shellMark(a, shellsSeen[id])]);
+    const out = new Map<string, ShellMark>();
+    for (const [sid, marks] of bySession) {
+      const m = combineShellMarks(marks);
+      if (m) out.set(sid, m);
+    }
+    return out;
+  }, [shellActivity, shellsSeen]);
+
   // How much of everything running has finished — the count the headings carry, taken over the whole
   // list. It rides the Sessions tab, which is where it stays readable with the list scrolled away
   // from the work, or the sidebar showing Files.
@@ -325,6 +344,7 @@ export function App() {
             update?: UpdateStatus;
             shellsRev?: number;
             projectsRev?: number;
+            shells?: Record<string, ShellActivity>;
           };
           applySessions(msg.sessions);
           setBusyIds(new Set(msg.busy));
@@ -336,6 +356,10 @@ export function App() {
           // SessionView). A server that predates shells sends none, which reads as "never changed".
           setShellsRev(msg.shellsRev ?? 0);
           setProjectsRev(msg.projectsRev ?? 0);
+          // Kept as the same object while nothing in it changes: every snapshot is a fresh parse, and
+          // the marks it feeds sit on every sidebar row.
+          const shells = msg.shells ?? {};
+          setShellActivity((cur) => (cur && JSON.stringify(cur) === JSON.stringify(shells) ? cur : shells));
           if (msg.update) {
             setUpdate(msg.update);
             // Another tab (or the tray) started the install: show the overlay here too rather than
@@ -933,6 +957,7 @@ export function App() {
             <SessionSidebar
               sessions={sessions}
               activityIds={activityIds}
+              shellMarks={shellMarks}
               onMarkSeen={markSeen}
               activeId={activeId}
               onSelect={selectSession}
@@ -999,6 +1024,7 @@ export function App() {
                 <SessionSidebar
                   sessions={sessions}
                   activityIds={activityIds}
+                  shellMarks={shellMarks}
                   onMarkSeen={markSeen}
                   activeId={activeId}
                   onSelect={(id) => {
@@ -1079,6 +1105,9 @@ export function App() {
               onTerminalShown={onTerminalShown}
               parent={activeParent}
               shellsRev={shellsRev}
+              shellActivity={shellActivity}
+              shellsSeen={shellsSeen}
+              onShellSeen={markShellSeen}
               onFork={forkSession}
               onSelectSession={selectSession}
               onToggleSidebar={() => setSidebarOpen(true)}
