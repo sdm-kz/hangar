@@ -38,6 +38,13 @@ messages instead of its prompt, for when Claude is busy: they wait in the Postpo
 session in Homeport, to be sent from there or by its auto-send. Needs a Homeport that has
 `POST /api/sessions/{id}/postponed/items`; an older one says to update it.
 
+**New session** (the `+` over the session list) starts a session for the capture instead of sending
+it to a running one. Pick a project (optional), the folder (its project's folders and the recent ones
+are one click away; with a local server, Browse opens a folder picker) and a group of that project
+(optional); the message becomes the session's first prompt, with the picture. A folder no project has
+yet is linked into the chosen project; one that is already another project's is refused. The form
+remembers what it was last set to.
+
 - Tools: select `V`, arrow `A`, rectangle `R`, ellipse `E`, line `L`, pen `P`, highlighter `H`,
   text `T`, numbered step `N`, pixelate `B`, crop `C`. These single-letter keys work while focus isn't in
   a text box; `Esc` leaves the message box.
@@ -128,3 +135,8 @@ The log (`…\logs`) records how long each overlay and editor took to come up.
   both into the session the way the web composer does. Postpone sends the same body to
   `POST /api/sessions/{id}/postponed/items`, which the server adds to the pool itself, under the lock
   its other writers take, rather than this app rewriting the whole pool and racing a browser's save.
+- A new session can't be handed a picture through `upload-image`, which needs a session, so the PNG
+  goes into `<folder>/.claudeweb/uploads` through the plain file API (`/api/fs/mkdir`,
+  `/api/fs/upload`) and its path into the first prompt (`POST /api/sessions`, `initialPrompt`), which
+  Claude reads as the image it names. `projectId` and `groupId` on that request are the server's to
+  settle: it links the folder and files the session, or refuses before launching anything.

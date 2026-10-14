@@ -962,6 +962,38 @@ public sealed class SessionManager : IDisposable
     private static readonly TimeSpan ImageSettle = TimeSpan.FromMilliseconds(600);
 
     /// <summary>
+    /// The project a launch should link its folder into (null when none, or when the folder is already
+    /// there) and the group to file it in, from <see cref="CreateSessionRequest.ProjectId"/> and
+    /// <see cref="CreateSessionRequest.GroupId"/>. Throws, with a message for the person, when they
+    /// can't both be honoured: an unknown project, a folder another project already has, or a group
+    /// that isn't in the project the session would end up in.
+    /// </summary>
+    private (Project? LinkTo, string? GroupId) Placement(CreateSessionRequest req, string fullDir)
+    {
+        var wantProject = string.IsNullOrWhiteSpace(req.ProjectId) ? null : req.ProjectId.Trim();
+        var wantGroup = string.IsNullOrWhiteSpace(req.GroupId) ? null : req.GroupId.Trim();
+        if (wantProject is null && wantGroup is null) return (null, null);
+
+        var projects = _projects.List();
+        var owner = ProjectMembership.ForDirectory(projects, fullDir);
+        var target = owner;
+        Project? linkTo = null;
+        if (wantProject is not null)
+        {
+            var chosen = projects.FirstOrDefault(p => p.Id == wantProject)
+                ?? throw new ArgumentException("That project no longer exists.");
+            if (owner is not null && owner.Id != chosen.Id)
+                throw new ArgumentException(
+                    $"That folder belongs to the project \"{owner.Name}\". Choose that project, or another folder.");
+            if (owner is null) linkTo = chosen;
+            target = chosen;
+        }
+        if (wantGroup is not null && (target is null || !target.Groups.Any(g => g.Id == wantGroup)))
+            throw new ArgumentException("That group isn't in the session's project.");
+        return (linkTo, wantGroup);
+    }
+
+    /// <summary>
     /// Launch a new session: spawn its pty host, then attach to it over the host's pipe. Genuinely
     /// asynchronous — there is a process start and a handshake to wait for — so every caller awaits
     /// rather than blocking a thread on it.
@@ -995,6 +1027,10 @@ public sealed class SessionManager : IDisposable
         if (ClaudeSession.NormalizeMode(req.PermissionMode) == "bypassPermissions")
             ClaudeBypassStore.EnsurePromptSuppressed(_log);
 
+        // Where it was asked to be filed, settled before anything is launched: a request that can't be
+        // honoured is refused whole rather than leaving a session running somewhere it wasn't wanted.
+        var (linkTo, groupId) = Placement(req, fullDir);
+
         var session = new ClaudeSession(
             req with { WorkingDirectory = fullDir },
             _exe,
@@ -1022,6 +1058,10 @@ public sealed class SessionManager : IDisposable
         RaiseChanged();
 
         var info = session.ToInfo(ConversationId(session));
+        if (linkTo is not null && _projects.AddFolder(linkTo.Id, fullDir) is not null)
+            RaiseChanged(); // the projects don't ride the session list; see the same move below
+        if (groupId is not null && SetGroup(new[] { session.Id }, groupId) is not null)
+            info = info with { GroupId = groupId };
         // A session launched under another — new-claude-child-session.ps1 posts NestedUnderId — is
         // drawn under it, and a row is only ever drawn under something in its own list: placed
         // anywhere its host is not, it comes out at the top level of that other list and the nesting

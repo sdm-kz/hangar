@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api, apiErrorText, type ApiError, type EditorInit } from "@/lib/tauri";
+import { api, apiErrorText, type ApiError, type EditorInit, type NewSessionTarget } from "@/lib/tauri";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { MessageBox, SendBar, SessionPicker, type SendState, type SessionsState } from "./Composer";
+import { NewSessionPanel, type OptionsState } from "./NewSession";
 import {
   CANVAS_MIN,
   COMPOSER_HEIGHT,
@@ -34,6 +35,25 @@ import {
   type Weight,
 } from "./model";
 import { filterSessions, keepSelection, stepSelection } from "./sessions";
+
+// The new-session form starts where it was left: the next capture tends to belong to the same work.
+const NEW_TARGET_KEY = "snap.newSession";
+function loadNewTarget(): NewSessionTarget {
+  try {
+    const t = JSON.parse(localStorage.getItem(NEW_TARGET_KEY) ?? "null") as Partial<NewSessionTarget> | null;
+    if (t) return { folder: t.folder ?? "", projectId: t.projectId ?? null, groupId: t.groupId ?? null };
+  } catch {
+    /* storage unavailable or garbled: start empty */
+  }
+  return { folder: "", projectId: null, groupId: null };
+}
+function saveNewTarget(t: NewSessionTarget) {
+  try {
+    localStorage.setItem(NEW_TARGET_KEY, JSON.stringify(t));
+  } catch {
+    /* not remembered; nothing else depends on it */
+  }
+}
 
 const isMac = navigator.userAgent.includes("Mac");
 const MOD = isMac ? "⌘" : "Ctrl+";
@@ -83,6 +103,11 @@ export default function Editor({ id }: { id: string }) {
   const [sessions, setSessions] = useState<SessionsState>({ kind: "loading" });
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<string | null>(null);
+  // Starting a new session for this capture, in place of sending to a running one.
+  const [creating, setCreating] = useState(false);
+  const [newTarget, setNewTarget] = useState<NewSessionTarget>(loadNewTarget);
+  const [options, setOptions] = useState<OptionsState>({ kind: "loading" });
+  const folderRef = useRef<HTMLInputElement>(null);
   const [send, setSend] = useState<SendState>({ kind: "idle" });
   const [confirmClose, setConfirmClose] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -202,6 +227,32 @@ export default function Editor({ id }: { id: string }) {
     };
   }, [init, loadSessions]);
 
+  const loadOptions = useCallback(() => {
+    setOptions({ kind: "loading" });
+    api.newSessionOptions().then(
+      (o) => {
+        setOptions({ kind: "ready", options: o });
+        // Drop a remembered project or group that no longer exists.
+        setNewTarget((t) => {
+          const p = o.projects.find((x) => x.id === t.projectId);
+          return {
+            ...t,
+            projectId: p ? p.id : null,
+            groupId: p && p.groups.some((g) => g.id === t.groupId) ? t.groupId : null,
+          };
+        });
+      },
+      (e: ApiError | string) => setOptions({ kind: "error", error: e }),
+    );
+  }, []);
+  const startCreating = useCallback(() => {
+    setCreating(true);
+    loadOptions();
+    // Straight into the folder when there is none yet; otherwise the prompt is what is left to write.
+    setTimeout(() => (newTarget.folder ? messageRef.current : folderRef.current)?.focus(), 0);
+  }, [loadOptions, newTarget.folder]);
+  useEffect(() => saveNewTarget(newTarget), [newTarget]);
+
   const allItems = useMemo(() => (sessions.kind === "ready" ? sessions.items : []), [sessions]);
   const items = useMemo(() => filterSessions(allItems, query), [allItems, query]);
   useEffect(() => setTarget((t) => keepSelection(items, t)), [items]);
@@ -250,6 +301,21 @@ export default function Editor({ id }: { id: string }) {
     [items, target, send.kind, exportPng, message, close, loadSessions],
   );
 
+  const doStart = useCallback(async () => {
+    if (!newTarget.folder.trim() || send.kind === "sending" || send.kind === "sent") return;
+    setSend({ kind: "sending", postpone: false });
+    try {
+      const png = await exportPng();
+      if (!png) throw new Error("Nothing to send");
+      const started = await api.startSession(png, newTarget, message.trim());
+      setSend({ kind: "sent", postpone: false, started: started.name });
+      if (started.note) flash(started.note);
+      setTimeout(close, started.note ? 2500 : 900);
+    } catch (e) {
+      setSend({ kind: "error", message: apiErrorText(e) });
+    }
+  }, [newTarget, send.kind, exportPng, message, close]);
+
   const copy = useCallback(async () => {
     try {
       const png = await exportPng();
@@ -285,7 +351,7 @@ export default function Editor({ id }: { id: string }) {
   useEffect(() => {
     if (send.kind === "error") setSend({ kind: "idle" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target, message]);
+  }, [target, message, creating, newTarget]);
 
   // ---- Closing ----
   useEffect(() => {
@@ -314,7 +380,8 @@ export default function Editor({ id }: { id: string }) {
       }
       if (mod && e.key === "Enter") {
         e.preventDefault();
-        void doSend(undefined, e.shiftKey);
+        if (creating) void doStart();
+        else void doSend(undefined, e.shiftKey);
         return;
       }
       if ((inSearch || e.altKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -472,11 +539,12 @@ export default function Editor({ id }: { id: string }) {
         className="flex shrink-0 border-t border-border bg-panel p-3"
       >
         <div ref={messageColRef} className="flex min-w-0 flex-1 flex-col gap-2" style={{ minWidth: MESSAGE_MIN }}>
-          <MessageBox ref={messageRef} value={message} onChange={setMessage} target={targetItem} mod={MOD} />
+          <MessageBox ref={messageRef} value={message} onChange={setMessage} target={targetItem} creating={creating} mod={MOD} />
           <SendBar
             target={targetItem}
+            creating={creating ? { folder: newTarget.folder } : null}
             send={send}
-            onSend={() => void doSend()}
+            onSend={() => void (creating ? doStart() : doSend())}
             onPostpone={() => void doSend(undefined, true)}
             mod={MOD}
             hint={out ? `${out.width} × ${out.height} PNG · ${isMac ? "⌥" : "Alt+"}↑↓ picks the session` : undefined}
@@ -495,6 +563,21 @@ export default function Editor({ id }: { id: string }) {
           label="Resize the session list"
           className="w-3 self-stretch"
         />
+        {creating ? (
+          <NewSessionPanel
+            width={pickerWidth}
+            pickerRef={pickerRef}
+            state={options}
+            value={newTarget}
+            onChange={setNewTarget}
+            onBack={() => setCreating(false)}
+            onRetry={loadOptions}
+            onBrowse={() =>
+              void api.pickFolder(newTarget.folder).then((f) => f && setNewTarget((t) => ({ ...t, folder: f })))
+            }
+            folderRef={folderRef}
+          />
+        ) : (
         <SessionPicker
           width={pickerWidth}
           pickerRef={pickerRef}
@@ -511,8 +594,10 @@ export default function Editor({ id }: { id: string }) {
           onRetry={loadSessions}
           onSettings={() => void api.openSettings()}
           onOpenHomeport={() => void api.openHomeport()}
+          onNew={startCreating}
           searchRef={searchRef}
         />
+        )}
       </div>
     </div>
   );

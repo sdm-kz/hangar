@@ -116,13 +116,47 @@ pub struct ServerSession {
     pub project_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerProject {
     pub id: String,
     pub name: String,
     #[serde(default)]
     pub color: Option<String>,
+    /// The folders linked to it; a session belongs to the project whose folder it runs in.
+    #[serde(default)]
+    pub folders: Vec<String>,
+    /// Its virtual folders, to file a session in.
+    #[serde(default)]
+    pub groups: Vec<ServerGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerGroup {
+    pub id: String,
+    pub name: String,
+}
+
+/// A session just launched, as `POST /api/sessions` answers.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatedSession {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub claude_session_id: Option<String>,
+    /// The group it was filed in. Missing from a Homeport that predates filing on launch.
+    #[serde(default)]
+    pub group_id: Option<String>,
+}
+
+/// Where a new session is to run and be filed, and what it is told first.
+pub struct NewSession<'a> {
+    pub folder: &'a str,
+    pub project_id: Option<&'a str>,
+    pub group_id: Option<&'a str>,
+    pub prompt: &'a str,
 }
 
 /// A row of the session picker.
@@ -249,6 +283,77 @@ impl Client {
 
     pub async fn projects(&self) -> Result<Vec<ServerProject>, ApiError> {
         let res = self.send(self.request(reqwest::Method::GET, "/api/projects")?).await?;
+        res.json().await.map_err(|e| ApiError::Failed(e.to_string()))
+    }
+
+    /// The folders sessions were started in lately, newest first.
+    pub async fn recent_folders(&self) -> Result<Vec<String>, ApiError> {
+        #[derive(Deserialize)]
+        struct Recents {
+            #[serde(default)]
+            folders: Vec<String>,
+        }
+        let res = self.send(self.request(reqwest::Method::GET, "/api/recents")?).await?;
+        Ok(res.json::<Recents>().await.map_err(|e| ApiError::Failed(e.to_string()))?.folders)
+    }
+
+    /// Remember a folder among the recent ones, as the browser does after a launch.
+    pub async fn add_recent_folder(&self, path: &str) -> Result<(), ApiError> {
+        let body = serde_json::json!({ "path": path });
+        self.send(self.request(reqwest::Method::POST, "/api/recents/folders")?.json(&body)).await?;
+        Ok(())
+    }
+
+    /// The folder `path` names on the server, written out in full (quotes, `~` and a relative path
+    /// resolved the way the server's own folder field does) — or why it isn't one.
+    pub async fn resolve_folder(&self, path: &str) -> Result<String, ApiError> {
+        #[derive(Deserialize)]
+        struct Resolved {
+            found: bool,
+            dir: Option<String>,
+            file: Option<String>,
+            error: Option<String>,
+        }
+        let mut url = self.url("/api/fs/resolve")?;
+        url.query_pairs_mut().append_pair("path", path);
+        let res = self.send(self.request_url(reqwest::Method::GET, url)?).await?;
+        let r = res.json::<Resolved>().await.map_err(|e| ApiError::Failed(e.to_string()))?;
+        match r {
+            Resolved { found: true, dir: Some(dir), file: None, .. } => Ok(dir),
+            Resolved { file: Some(_), .. } => Err(ApiError::Failed(format!("{path} is a file, not a folder."))),
+            Resolved { error, .. } => Err(ApiError::Failed(error.unwrap_or_else(|| format!("There is no folder {path} on the server.")))),
+        }
+    }
+
+    /// Put `bytes` into `folder` on the server's disk as `name` (creating the folder first), for a
+    /// session that doesn't exist yet to be pointed at. Answers the file's full path.
+    pub async fn upload_to_folder(&self, folder: &str, name: &str, bytes: &[u8]) -> Result<String, ApiError> {
+        #[derive(Deserialize)]
+        struct Uploaded {
+            paths: Vec<String>,
+        }
+        let mkdir = serde_json::json!({ "path": folder });
+        self.send(self.request(reqwest::Method::POST, "/api/fs/mkdir")?.json(&mkdir)).await?;
+        let part = reqwest::multipart::Part::bytes(bytes.to_vec())
+            .file_name(name.to_string())
+            .mime_str("image/png")
+            .map_err(|e| ApiError::Failed(e.to_string()))?;
+        let form = reqwest::multipart::Form::new().text("path", folder.to_string()).part("file", part);
+        let res = self.send(self.request(reqwest::Method::POST, "/api/fs/upload")?.multipart(form)).await?;
+        let uploaded = res.json::<Uploaded>().await.map_err(|e| ApiError::Failed(e.to_string()))?;
+        uploaded.paths.into_iter().next().ok_or_else(|| ApiError::Failed("The server kept no file".into()))
+    }
+
+    /// Launch a session. A request the server can't honour (no such folder, a folder in another
+    /// project) comes back as `Failed` with its reason.
+    pub async fn create_session(&self, s: &NewSession<'_>) -> Result<CreatedSession, ApiError> {
+        let body = serde_json::json!({
+            "workingDirectory": s.folder,
+            "initialPrompt": s.prompt,
+            "projectId": s.project_id,
+            "groupId": s.group_id,
+        });
+        let res = self.send(self.request(reqwest::Method::POST, "/api/sessions")?.json(&body)).await?;
         res.json().await.map_err(|e| ApiError::Failed(e.to_string()))
     }
 
@@ -402,8 +507,8 @@ mod tests {
     #[test]
     fn picker_fills_in_project_folder_and_busy() {
         let projects = vec![
-            ServerProject { id: "p-git".into(), name: "Git".into(), color: Some("blue".into()) },
-            ServerProject { id: "p-home".into(), name: "Home".into(), color: None },
+            ServerProject { id: "p-git".into(), name: "Git".into(), color: Some("blue".into()), folders: vec![], groups: vec![] },
+            ServerProject { id: "p-home".into(), name: "Home".into(), color: None, folders: vec![], groups: vec![] },
         ];
         let mut a = session("a", "C:\\Git\\.home\\claude-web\\", "Running", "1");
         a.project_id = Some("p-home".into());
@@ -477,6 +582,76 @@ mod tests {
         client.message("s 1", "look", &[path]).await.unwrap();
         upload.assert_async().await;
         message.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn starts_a_session_with_its_picture_uploaded_first() {
+        let mut server = mockito::Server::new_async().await;
+        let mkdir = server
+            .mock("POST", "/api/fs/mkdir")
+            .match_body(mockito::Matcher::Json(serde_json::json!({ "path": "C:/work/.claudeweb/uploads" })))
+            .with_body(r#"{"path":"C:/work/.claudeweb/uploads"}"#)
+            .create_async()
+            .await;
+        let upload = server
+            .mock("POST", "/api/fs/upload")
+            .match_body(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::Regex("name=\"path\"".into()),
+                mockito::Matcher::Regex("filename=\"pasted.png\"".into()),
+            ]))
+            .with_body(r#"{"paths":["C:/work/.claudeweb/uploads/pasted.png"]}"#)
+            .create_async()
+            .await;
+        let create = server
+            .mock("POST", "/api/sessions")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "workingDirectory": "C:/work",
+                "initialPrompt": "look",
+                "projectId": "p1",
+                "groupId": null,
+            })))
+            .with_status(201)
+            .with_body(r#"{"id":"s1","name":"work","state":"Running","groupId":null}"#)
+            .create_async()
+            .await;
+        let client = Client::new(Credentials { base: Url::parse(&server.url()).unwrap(), token: None, local: false });
+        let path = client.upload_to_folder("C:/work/.claudeweb/uploads", "pasted.png", b"png").await.unwrap();
+        assert_eq!(path, "C:/work/.claudeweb/uploads/pasted.png");
+        let created = client
+            .create_session(&NewSession { folder: "C:/work", project_id: Some("p1"), group_id: None, prompt: "look" })
+            .await
+            .unwrap();
+        assert_eq!((created.id.as_str(), created.name.as_str(), created.group_id), ("s1", "work", None));
+        mkdir.assert_async().await;
+        upload.assert_async().await;
+        create.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn a_folder_must_be_there_to_start_in() {
+        let mut server = mockito::Server::new_async().await;
+        let _ok = server
+            .mock("GET", "/api/fs/resolve")
+            .match_query(mockito::Matcher::UrlEncoded("path".into(), "~/work".into()))
+            .with_body(r#"{"found":true,"dir":"/home/me/work","file":null}"#)
+            .create_async()
+            .await;
+        let _missing = server
+            .mock("GET", "/api/fs/resolve")
+            .match_query(mockito::Matcher::UrlEncoded("path".into(), "/nope".into()))
+            .with_body(r#"{"found":false,"dir":null,"file":null,"error":"No such folder"}"#)
+            .create_async()
+            .await;
+        let _file = server
+            .mock("GET", "/api/fs/resolve")
+            .match_query(mockito::Matcher::UrlEncoded("path".into(), "/a.txt".into()))
+            .with_body(r#"{"found":true,"dir":"/","file":"/a.txt"}"#)
+            .create_async()
+            .await;
+        let client = Client::new(Credentials { base: Url::parse(&server.url()).unwrap(), token: None, local: false });
+        assert_eq!(client.resolve_folder("~/work").await, Ok("/home/me/work".to_string()));
+        assert_eq!(client.resolve_folder("/nope").await, Err(ApiError::Failed("No such folder".into())));
+        assert_eq!(client.resolve_folder("/a.txt").await, Err(ApiError::Failed("/a.txt is a file, not a folder.".into())));
     }
 
     #[tokio::test]

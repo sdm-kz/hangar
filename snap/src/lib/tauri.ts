@@ -52,6 +52,35 @@ export interface SessionItem {
   lastSent: number | null;
 }
 
+/** A project, as the new-session form offers it. */
+export interface ProjectChoice {
+  id: string;
+  name: string;
+  color: string | null;
+  folders: string[];
+  groups: { id: string; name: string }[];
+}
+
+export interface NewSessionOptions {
+  projects: ProjectChoice[];
+  recentFolders: string[];
+  /** The server is on this machine, so a folder can be browsed for here. */
+  local: boolean;
+}
+
+/** Where a new session runs and is filed. */
+export interface NewSessionTarget {
+  folder: string;
+  projectId: string | null;
+  groupId: string | null;
+}
+
+export interface StartedSession {
+  id: string;
+  name: string;
+  note: string | null;
+}
+
 export interface SessionsView {
   items: SessionItem[];
   server: string;
@@ -120,6 +149,18 @@ export const api = {
         "x-claude-session-id": encodeURIComponent(session.claudeSessionId ?? ""),
         "x-text": encodeURIComponent(text),
         "x-postpone": postpone ? "1" : "0",
+      },
+    }),
+  newSessionOptions: () => invoke<NewSessionOptions>("new_session_options"),
+  pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
+  /** Start a session in `target.folder`, its first prompt the message with the capture. */
+  startSession: (png: Uint8Array, target: NewSessionTarget, text: string) =>
+    invoke<StartedSession>("start_session", png, {
+      headers: {
+        "x-folder": encodeURIComponent(target.folder.trim()),
+        "x-project-id": encodeURIComponent(target.projectId ?? ""),
+        "x-group-id": encodeURIComponent(target.groupId ?? ""),
+        "x-text": encodeURIComponent(text),
       },
     }),
   copyImage: (png: Uint8Array) => invoke<void>("copy_image", png),

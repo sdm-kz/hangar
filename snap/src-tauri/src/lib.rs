@@ -451,6 +451,99 @@ async fn send_capture(app: AppHandle, request: Request<'_>) -> Result<(), ApiErr
     Ok(())
 }
 
+/// What the new-session form offers: the projects with their folders and groups, the folders used
+/// lately, and whether the server is on this machine (so a folder can be browsed for here).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewSessionOptions {
+    projects: Vec<api::ServerProject>,
+    recent_folders: Vec<String>,
+    local: bool,
+}
+
+#[tauri::command]
+async fn new_session_options(app: AppHandle) -> Result<NewSessionOptions, ApiError> {
+    let (client, _) = client(&app)?;
+    let projects = client.projects().await?;
+    // Recents are a convenience: the form works without them.
+    let recent_folders = client.recent_folders().await.unwrap_or_default();
+    Ok(NewSessionOptions { projects, recent_folders, local: client.credentials().local })
+}
+
+/// A folder from this machine's own picker — meaningful only when the server is on this machine.
+#[tauri::command]
+async fn pick_folder(app: AppHandle, start: Option<String>) -> Result<Option<String>, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().file().set_title("Folder for the new session");
+    if let Some(dir) = start.filter(|d| std::path::Path::new(d).is_dir()) {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.pick_folder(move |path| {
+        let _ = tx.send(path);
+    });
+    let Some(path) = rx.await.map_err(|e| e.to_string())? else { return Ok(None) };
+    Ok(Some(path.into_path().map_err(|e| e.to_string())?.display().to_string()))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartedSession {
+    id: String,
+    name: String,
+    /// Something the person should know although it started: a Homeport too old to file it.
+    note: Option<String>,
+}
+
+/// Start a new session in `x-folder` (optionally `x-project-id`, `x-group-id`), told the message
+/// (`x-text`) and shown the PNG in the request body. The picture goes into the folder's uploads
+/// first and its path into the first prompt, which is how a session that isn't running yet can be
+/// handed one: Claude reads an image it is given the path of.
+#[tauri::command]
+async fn start_session(app: AppHandle, request: Request<'_>) -> Result<StartedSession, ApiError> {
+    let png = raw_body(&request).map_err(ApiError::Failed)?;
+    let folder = header_text(&request, "x-folder").map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
+    let folder = folder.ok_or(ApiError::Failed("Choose a folder for the session".into()))?;
+    let project = header_text(&request, "x-project-id").filter(|s| !s.is_empty());
+    let group = header_text(&request, "x-group-id").filter(|s| !s.is_empty());
+    let text = header_text(&request, "x-text").unwrap_or_default();
+
+    let (client, server) = client(&app)?;
+    // Before anything is written there: the upload creates the folders it needs, and a mistyped path
+    // would otherwise come into being and have the session start in it.
+    let folder = client.resolve_folder(&folder).await?;
+    let uploads = format!("{}/.claudeweb/uploads", folder.trim_end_matches(['/', '\\']));
+    let name = format!("pasted-{}.png", chrono::Local::now().format("%Y%m%d-%H%M%S-%3f"));
+    let image = client.upload_to_folder(&uploads, &name, &png).await?;
+    let created = client
+        .create_session(&api::NewSession {
+            folder: &folder,
+            project_id: project.as_deref(),
+            group_id: group.as_deref(),
+            prompt: &initial_prompt(&text, &image),
+        })
+        .await?;
+    if let Err(e) = client.add_recent_folder(&folder).await {
+        log::warn!("Could not remember the folder: {e}");
+    }
+    if let Err(e) = state(&app).store.touch_recent(&server, &created.id, created.claude_session_id.as_deref(), now_ms()) {
+        log::warn!("Could not remember the session: {e}");
+    }
+    let note = (group.is_some() && created.group_id != group)
+        .then(|| "Started, but this Homeport can't file it in a group yet. Update it.".to_string());
+    Ok(StartedSession { id: created.id, name: created.name, note })
+}
+
+/// The first prompt of a session started from a capture: the message, then the picture's path on a
+/// line of its own, which Claude reads as the image it names.
+fn initial_prompt(text: &str, image_path: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        image_path.to_string()
+    } else {
+        format!("{text}\n\n{image_path}")
+    }
+}
+
 // Async, so its decoding and retries run off the main thread instead of freezing every window.
 #[tauri::command]
 async fn copy_image(app: AppHandle, request: Request<'_>) -> Result<(), String> {
@@ -837,6 +930,9 @@ pub fn run() {
             editor_ready,
             list_sessions,
             send_capture,
+            new_session_options,
+            pick_folder,
+            start_session,
             copy_image,
             save_image,
             open_homeport,
@@ -942,6 +1038,12 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_prompt_is_the_message_then_the_picture() {
+        assert_eq!(initial_prompt("  what is wrong here?\n", r"C:\w\a.png"), "what is wrong here?\n\nC:\\w\\a.png");
+        assert_eq!(initial_prompt("   ", "/w/a.png"), "/w/a.png", "no message: the picture alone");
+    }
 
     #[test]
     fn capture_argument_parses_mode() {

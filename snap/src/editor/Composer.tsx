@@ -1,15 +1,16 @@
 import { forwardRef, useEffect, useRef } from "react";
 import clsx from "clsx";
-import { Check, Clock, ExternalLink, Loader2, RefreshCw, Search, Send, Settings } from "lucide-react";
+import { Check, Clock, ExternalLink, Loader2, Plus, RefreshCw, Search, Send, Settings } from "lucide-react";
 import type { ApiError, SessionItem } from "@/lib/tauri";
 import { sessionColor } from "@web/lib/sessionColors";
 import { ago } from "./sessions";
+import { folderName } from "./NewSession";
 import { MESSAGE_MIN, PICKER_MIN } from "./Splitter";
 
 export type SendState =
   | { kind: "idle" }
   | { kind: "sending"; postpone: boolean }
-  | { kind: "sent"; postpone: boolean }
+  | { kind: "sent"; postpone: boolean; started?: string }
   | { kind: "error"; message: string };
 
 export type SessionsState =
@@ -19,17 +20,27 @@ export type SessionsState =
 
 export const MessageBox = forwardRef<
   HTMLTextAreaElement,
-  { value: string; onChange(v: string): void; target: SessionItem | null; mod: string }
->(function MessageBox({ value, onChange, target, mod }, ref) {
+  { value: string; onChange(v: string): void; target: SessionItem | null; creating: boolean; mod: string }
+>(function MessageBox({ value, onChange, target, creating, mod }, ref) {
   return (
     <textarea
       ref={ref}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      placeholder={target ? `Message to ${target.name} — what should Claude look at?` : "Message to Claude…"}
+      placeholder={
+        creating
+          ? "First prompt for the new session — what should Claude do with this?"
+          : target
+            ? `Message to ${target.name} — what should Claude look at?`
+            : "Message to Claude…"
+      }
       className="h-full min-h-0 w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-[13.5px] leading-relaxed outline-none placeholder:text-muted-foreground/70 focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
       aria-label="Message"
-      title={`${mod}↵ sends · ${mod}⇧↵ postpones · Esc leaves the box so tool keys work`}
+      title={
+        creating
+          ? `${mod}↵ starts the session · Esc leaves the box so tool keys work`
+          : `${mod}↵ sends · ${mod}⇧↵ postpones · Esc leaves the box so tool keys work`
+      }
     />
   );
 });
@@ -45,6 +56,8 @@ export function SessionPicker(props: {
   onRetry(): void;
   onSettings(): void;
   onOpenHomeport(): void;
+  /** Start a new session for this capture instead. */
+  onNew(): void;
   searchRef: React.RefObject<HTMLInputElement | null>;
   /** As dragged (see Splitter); held to what leaves the message its own minimum. */
   width: number;
@@ -72,6 +85,9 @@ export function SessionPicker(props: {
           className="h-8 min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground/70"
           aria-label="Find a session"
         />
+        <button className="text-muted-foreground hover:text-foreground" title="Start a new session with this" onClick={props.onNew}>
+          <Plus size={14} />
+        </button>
         <button className="text-muted-foreground hover:text-foreground" title="Refresh" onClick={props.onRetry}>
           <RefreshCw size={13} className={clsx(state.kind === "loading" && "animate-spin")} />
         </button>
@@ -83,9 +99,14 @@ export function SessionPicker(props: {
           <Empty>
             {props.query ? "No session matches." : "No running sessions."}
             {!props.query && (
-              <button className="mt-1 flex items-center gap-1 text-accent hover:underline" onClick={props.onOpenHomeport}>
-                Open Homeport <ExternalLink size={12} />
-              </button>
+              <>
+                <button className="mt-1 flex items-center gap-1 text-accent hover:underline" onClick={props.onNew}>
+                  <Plus size={12} /> Start a new session with this
+                </button>
+                <button className="mt-1 flex items-center gap-1 text-accent hover:underline" onClick={props.onOpenHomeport}>
+                  Open Homeport <ExternalLink size={12} />
+                </button>
+              </>
             )}
           </Empty>
         )}
@@ -181,14 +202,18 @@ function SessionsError({ error, onRetry, onSettings }: { error: ApiError | strin
 
 export function SendBar(props: {
   target: SessionItem | null;
+  /** Starting a new session instead, in this folder ("" until one is chosen). */
+  creating: { folder: string } | null;
   send: SendState;
   onSend(): void;
   onPostpone(): void;
   mod: string;
   hint?: string;
 }) {
-  const { target, send } = props;
-  const busy = !target || send.kind === "sending" || send.kind === "sent";
+  const { target, send, creating } = props;
+  const working = send.kind === "sending" || send.kind === "sent";
+  const busy = (creating ? !creating.folder.trim() : !target) || working;
+  const folder = creating && creating.folder.trim() ? folderName(creating.folder.trim()) : "";
   return (
     <div className="flex items-center gap-3">
       <div className="min-w-0 flex-1 truncate text-[12px]">
@@ -201,7 +226,7 @@ export function SendBar(props: {
       {/* Into the session's postponed messages, to go when it is free (or by its auto-send). */}
       <button
         onClick={props.onPostpone}
-        disabled={busy}
+        disabled={busy || !!creating}
         title={`Add to the session's postponed messages instead of sending now (${props.mod}⇧↵)`}
         className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 text-[13px] text-foreground hover:bg-muted disabled:cursor-default disabled:opacity-50"
       >
@@ -226,14 +251,20 @@ export function SendBar(props: {
         )}
         <span className="truncate">
           {send.kind === "sent"
-            ? send.postpone
-              ? `Postponed for ${target?.name ?? "the session"}`
-              : "Sent"
-            : target
-              ? `Send to ${target.name}`
-              : "Choose a session"}
+            ? send.started
+              ? `Started ${send.started}`
+              : send.postpone
+                ? `Postponed for ${target?.name ?? "the session"}`
+                : "Sent"
+            : creating
+              ? folder
+                ? `Start a session in ${folder}`
+                : "Choose a folder"
+              : target
+                ? `Send to ${target.name}`
+                : "Choose a session"}
         </span>
-        {send.kind !== "sent" && target && <kbd className="shrink-0 border-white/30 bg-white/15 text-white">{props.mod}↵</kbd>}
+        {send.kind !== "sent" && (creating ? !!folder : !!target) && <kbd className="shrink-0 border-white/30 bg-white/15 text-white">{props.mod}↵</kbd>}
       </button>
     </div>
   );

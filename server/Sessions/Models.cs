@@ -43,7 +43,16 @@ public sealed record CreateSessionRequest(
     /// The session this one was put under by hand, which is where the list draws it instead of under
     /// the fork parent above. See <see cref="SessionInfo.NestedUnderId"/>.
     /// </summary>
-    string? NestedUnderId = null);
+    string? NestedUnderId = null,
+    /// <summary>
+    /// The project to start in. Which project a session is in follows its folder, so this links a
+    /// folder no project claims into it; a folder another project already has is refused rather than
+    /// taken, since a link is a statement about every session that runs there. Null = wherever the
+    /// folder already is.
+    /// </summary>
+    string? ProjectId = null,
+    /// <summary>The virtual folder to file the session in: one of the groups of the project it ends up in.</summary>
+    string? GroupId = null);
 
 /// <summary>
 /// On-disk record of a launched session, used to re-attach to still-running Remote Control
