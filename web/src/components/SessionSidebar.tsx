@@ -3495,51 +3495,57 @@ function RecentList({
 
   // `i` is the index in the flat `recents` list so drag-reorder is unaffected by grouping;
   // `showPath` is dropped in grouped mode where the folder is already in the header.
+  // One line, like a session row: the name, then only what sets this preset apart from a plain launch
+  // (a model picked, Remote Control, a starting prompt). The rest rides in the tooltip -- a "default"
+  // badge on every row and the prompt's own line doubled the height of a list that is mostly names.
   const renderRow = (r: RecentSession, i: number, showPath: boolean) => (
     <div
       key={i}
       {...dnd.rowProps(i)}
       onClick={() => onReuse(r)}
-      title="Click to adjust and create"
-      className="group relative flex cursor-pointer flex-col gap-1 rounded-md border border-transparent px-2.5 py-2 text-sm hover:bg-accent"
+      title={[
+        recentLabel(r),
+        `Model: ${r.model || "default"}`,
+        r.command ? `Prompt: ${r.command}` : null,
+        showPath ? null : r.workingDirectory,
+        "Click to adjust and create",
+      ]
+        .filter(Boolean)
+        .join("\n")}
+      className="group relative flex cursor-pointer flex-col gap-1 rounded-md border border-transparent py-1 pl-1.5 pr-2 text-sm hover:bg-accent"
     >
       {/* Drop indicator; see the session row's for why it isn't the top border. */}
       {dnd.isOver(i) && (
         <span className="pointer-events-none absolute inset-x-2 -top-px h-0.5 rounded-full bg-primary" />
       )}
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1">
-          <span className="truncate">{recentLabel(r)}</span>
+      <div className="flex items-center justify-between gap-1">
+        <span className="flex min-w-0 flex-1 items-center gap-1">
+          <span className="flex min-w-0 overflow-hidden">
+            <MiddleTruncated text={recentLabel(r)} />
+          </span>
+          {r.model && (
+            <Badge variant="secondary" className="shrink-0 px-1 py-0 text-[10px] capitalize">
+              {r.model}
+            </Badge>
+          )}
+          {r.remoteControl && (
+            <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
+          )}
+          {r.command && <Terminal className="size-3 shrink-0 text-muted-foreground" aria-label="starting prompt" />}
         </span>
         <button
           onClick={(e) => {
             e.stopPropagation();
             onRemove(r);
           }}
-          className="opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+          className="shrink-0 opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
           title="Remove from recent"
         >
           <X className="size-3.5" />
         </button>
       </div>
-      <div className="flex items-center gap-1.5">
-        {r.model ? (
-          <Badge variant="secondary" className="capitalize">{r.model}</Badge>
-        ) : (
-          <Badge variant="secondary">default</Badge>
-        )}
-        {r.remoteControl && (
-          <Radio className="size-3 text-muted-foreground" aria-label="remote control" />
-        )}
-      </div>
-      {r.command && (
-        <span className="flex items-start gap-1 truncate text-[10px] text-muted-foreground">
-          <Terminal className="mt-0.5 size-2.5 shrink-0" />
-          <span className="truncate">{r.command}</span>
-        </span>
-      )}
       {showPath && (
-        <span className="truncate font-mono text-[10px] text-muted-foreground">{r.workingDirectory}</span>
+        <span className="truncate font-mono text-xs text-muted-foreground">{r.workingDirectory}</span>
       )}
     </div>
   );
@@ -3547,7 +3553,7 @@ function RecentList({
   // The presets of one folder, drawn under the folder's header or — where the project heading has
   // already named the folder — straight under that. Same indent either way.
   const renderGroupRows = (g: ReturnType<typeof groupByFolder<RecentSession>>[number]) => (
-    <div className="mt-1 space-y-1 pl-[18px]">
+    <div className="mt-0.5 pl-[18px]">
       {g.items.map(({ item, index }) => renderRow(item, index, false))}
     </div>
   );
@@ -3598,7 +3604,7 @@ function RecentList({
           <div className="space-y-2">{groupByFolder(recents).map(renderFolderGroup)}</div>
         )
       ) : (
-        <div className="space-y-1">{recents.map((r, i) => renderRow(r, i, true))}</div>
+        <div>{recents.map((r, i) => renderRow(r, i, true))}</div>
       )}
     </div>
   );
