@@ -162,6 +162,32 @@ The web UI is a **session manager with a full terminal**:
   names the page and opens it in a browser tab in one click. You can force either behaviour with the
   *Show the page in the tab* checkbox. A page that does frame but needs you signed in may still ask
   again — a frame is a separate context as far as the browser's cookie rules go.
+- **Remote files over SSH** — another machine's files as a tab of the session, from **Remote files
+  (SSH)…** under the **+** at the end of the tab bar. The tab is laid out like the session's own
+  Files panel: a lazy tree on the left, and the file previewed on the right in the same viewer
+  (text, Markdown, images, video, PDF, Office), editable and saved straight back over SFTP. New file,
+  new folder, rename, delete, upload (button or drop), download, dotfiles on or off, and a path bar to
+  jump anywhere.
+
+  The connect dialog takes a host (an alias from the server user's `~/.ssh/config` works, and its
+  aliases are offered as quick picks), port, user, a start folder, and one of three ways in: a
+  **password**, a **key file** on the server machine (its passphrase asked for when it has one), or
+  the **SSH agent** (Windows' OpenSSH agent, or Pageant). A connection can be **saved in the
+  project** — never with its password or passphrase — and the project's settings get a
+  **Connections** tab to add, edit and forget them. Host keys are trusted on first use: the first
+  connection shows the fingerprint to accept, the app remembers it (in its own
+  `ssh-known-hosts.json`, not your `~/.ssh/known_hosts`), and a changed key later is refused with a
+  warning unless you trust the new one deliberately.
+
+  The tab lives in the session's UI bag like a pinned page, so it is on every device and survives a
+  reload. The connection itself is held by the server, in memory, with the secret that opened it —
+  a dropped link reopens by itself on the next click; after a restart of the app the tab asks again
+  (or just reconnects, for an agent or an unencrypted key). Closing the tab ends the connection.
+
+  **Copy, cut and paste work across panels**: copy on the remote host and paste into the session's
+  Files panel, or the other way round, or between two SSH tabs, or within one host (where a copy is
+  a native `cp -a`). The selection bar and Ctrl+C / Ctrl+X / Ctrl+V in either tree do the same. A
+  paste never overwrites — a name already taken gets " (1)", as an upload does.
 - **GitHub pull requests** — a session whose folder is a GitHub repo gets a **PRs** button right
   after *Files*, and the repo's pull requests one click behind it: **Open** ones by default, with
   **Closed** (which includes merged) and **All** on the tabs beside it, and a box that filters the

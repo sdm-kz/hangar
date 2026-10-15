@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useDismissable } from "@/lib/useDismissable";
-import { FolderTree, GitPullRequest, Globe, Loader2, Plus, TerminalSquare } from "lucide-react";
+import { FolderTree, GitPullRequest, Globe, Loader2, Plus, Server, TerminalSquare } from "lucide-react";
 import { shellIcon, useShellOptions } from "./ShellTabStrip";
 
 /**
@@ -16,6 +16,7 @@ export function GroupAddMenu({
   onOpenShell,
   onAddLink,
   onOpenPull,
+  onAddRemote,
 }: {
   /** A shell is being launched. */
   busy: boolean;
@@ -27,6 +28,8 @@ export function GroupAddMenu({
   onAddLink: () => void;
   /** Open the pull-request picker beside this menu; absent when the folder is not on GitHub. */
   onOpenPull?: () => void;
+  /** Open a remote files tab over SSH; absent when the session already has as many as it may. */
+  onAddRemote?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -112,6 +115,12 @@ export function GroupAddMenu({
             <Globe className="size-4 shrink-0 text-muted-foreground" />
             <span className="flex-1">Link a web page…</span>
           </button>
+          {onAddRemote && (
+            <button role="menuitem" className={item} onClick={() => (close(), onAddRemote())}>
+              <Server className="size-4 shrink-0 text-muted-foreground" />
+              <span className="flex-1">Remote files (SSH)…</span>
+            </button>
+          )}
         </div>
       )}
     </div>

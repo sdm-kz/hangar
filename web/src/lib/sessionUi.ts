@@ -10,7 +10,7 @@
 // the merged bag, which is what the mirror then holds. Other browsers learn about the change from
 // SessionInfo.uiRev on the session list and re-fetch (see noteSessionUiRev).
 import { api } from "./api";
-import type { PullFolds, SessionLink, SessionPull } from "@/types";
+import type { PullFolds, SessionLink, SessionPull, SessionRemote } from "@/types";
 import type { TabName } from "./urlState";
 
 const KEY = "claudeweb.sessionUi";
@@ -28,6 +28,7 @@ const QUIET_FIELDS = new Set<keyof SessionUi>([
   "changesScroll",
   "fileScroll",
   "pullScroll",
+  "remoteWhere",
   "layout",
 ]);
 
@@ -46,6 +47,12 @@ export interface SessionUi {
   // lives in the bag, which is what carries them to the user's other devices.
   links?: SessionLink[];
   link?: string; // id of the link tab filling the pane in the "link" view
+  // Remote files tabs (SSH): which connection each one is. The live connection is the server's,
+  // held in memory; nothing secret is ever in here.
+  remotes?: SessionRemote[];
+  // Where each remote tab was left — the folder selected and the file shown — keyed by tab id. Quiet:
+  // it moves on every click in the tree.
+  remoteWhere?: Record<string, { cwd?: string; file?: string }>;
   // Pull requests opened as tabs — of this session's own repo, and of the repos linked to it. Like
   // the links these ARE the state — the review itself is re-fetched from GitHub — so the list rides
   // the bag to the user's other devices.

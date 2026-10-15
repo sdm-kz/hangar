@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { Project, ProjectGroup, SessionTemplate } from "@/types";
+import type { Project, ProjectGroup, RemoteConnection, SessionTemplate } from "@/types";
 import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
 import { DEFAULT_PROJECT_ICON_NAME, GROUP_ICONS, groupIcon, projectIcon } from "@/lib/groupIcons";
 import { GroupAppearance, IconPicker } from "./GroupDialog";
 import { TemplateDialog } from "./TemplateDialog";
+import { RemoteConnectionDialog } from "./RemoteConnect";
+import { connectionTarget } from "@/lib/sessionRemotes";
 import { folderName } from "@/lib/recentFolders";
 import { groupIdsAfterMove, sameFolder } from "@/lib/projects";
 import { cleanRepoName, invalidateSessionRepos } from "@/lib/sessionRepos";
@@ -33,6 +35,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Server,
   Settings2,
   Sparkles,
   Trash2,
@@ -41,7 +44,7 @@ import {
 } from "lucide-react";
 
 /** The settings popup's tabs, down its left edge. */
-type ProjectTab = "general" | "folders" | "repos" | "groups" | "templates";
+type ProjectTab = "general" | "folders" | "repos" | "groups" | "templates" | "connections";
 
 /** Tailwind's `sm`: where the tabs become a column. */
 const TABS_VERTICAL_QUERY = "(min-width: 640px)";
@@ -200,6 +203,20 @@ export function ProjectDialog({
     }
   };
 
+  // SSH connections saved with the project: edited in a dialog stacked over this one.
+  const [editingConnection, setEditingConnection] = useState<{ connection: RemoteConnection | null } | null>(null);
+  const saveConnection = (c: RemoteConnection) =>
+    project ? run(() => api.saveProjectConnection(project.id, c)) : Promise.resolve(false);
+  const removeConnection = async (c: RemoteConnection) => {
+    if (!project) return;
+    const ok = await confirm({
+      title: `Forget ${c.name || connectionTarget(c)}?`,
+      description: "The saved parameters go; tabs already open with it stay open.",
+      confirmLabel: "Forget",
+    });
+    if (ok) await run(() => api.deleteProjectConnection(project.id, c.id));
+  };
+
   const removeRepo = async (repo: string) => {
     if (!project) return;
     if (await run(() => api.removeProjectRepo(project.id, repo))) invalidateSessionRepos();
@@ -265,6 +282,7 @@ export function ProjectDialog({
           { id: "repos" as const, label: "Repositories", Icon: Library, count: project.repos.length },
           { id: "groups" as const, label: "Groups", Icon: FolderTree, count: project.groups.length },
           { id: "templates" as const, label: "Templates", Icon: Sparkles, count: myTemplates.length },
+          { id: "connections" as const, label: "Connections", Icon: Server, count: project.connections?.length ?? 0 },
         ]
       : []),
   ];
@@ -734,6 +752,62 @@ export function ProjectDialog({
               </>
             )}
 
+            {/* SSH connections, offered by the "+" of a session's tab bar under Remote files. */}
+            {tab === "connections" && project && (
+              <>
+                <div className="flex shrink-0 items-start justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    SSH hosts this project’s sessions open as remote files tabs — from the “+” at the end
+                    of a session’s tab bar. Saved without passwords or passphrases.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 px-2 text-xs"
+                    onClick={() => setEditingConnection({ connection: null })}
+                  >
+                    <Plus className="mr-1 size-3.5" /> New connection
+                  </Button>
+                </div>
+                {(project.connections?.length ?? 0) === 0 ? (
+                  <p className="shrink-0 rounded-md border border-dashed px-3 py-3 text-center text-xs text-muted-foreground">
+                    No connections yet.
+                  </p>
+                ) : (
+                  <ul className="-mx-1 flex min-h-0 flex-col gap-1 overflow-y-auto overscroll-contain px-1">
+                    {project.connections!.map((c) => (
+                      <li key={c.id} className="flex shrink-0 items-center gap-1 rounded-md border pr-1">
+                        <button
+                          type="button"
+                          onClick={() => setEditingConnection({ connection: c })}
+                          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent/50"
+                        >
+                          <Server className="size-3.5 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">{c.name || connectionTarget(c)}</span>
+                            <span className="block truncate font-mono text-[10px] text-muted-foreground">
+                              {connectionTarget(c)} · {c.auth === "key" ? "key file" : c.auth === "agent" ? "ssh agent" : "password"}
+                              {c.startPath ? ` · ${c.startPath}` : ""}
+                            </span>
+                          </span>
+                          <Pencil className="size-3.5 shrink-0 text-muted-foreground" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void removeConnection(c)}
+                          title="Forget this connection"
+                          className="shrink-0 p-1 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="size-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            )}
+
             {error && <p className="shrink-0 text-xs text-destructive">{error}</p>}
           </div>
         </div>
@@ -765,6 +839,14 @@ export function ProjectDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {editingConnection && project && (
+      <RemoteConnectionDialog
+        connection={editingConnection.connection}
+        onSave={saveConnection}
+        onClose={() => setEditingConnection(null)}
+      />
+    )}
 
     {/* Stacked over this popup, the way the confirm dialog is. New templates land in this project. */}
     {editingTemplate && project && (

@@ -19,6 +19,7 @@ public sealed class ProjectStore
     private const int MaxFoldersPerProject = 100;
     private const int MaxGroupsPerProject = 50;
     private const int MaxReposPerProject = 20;
+    private const int MaxConnectionsPerProject = 30;
     // A virtual folder is something you file sessions into by hand, so this is a backstop against a
     // runaway writer rather than a limit anyone reaches. Membership keys are never cleaned up (a
     // conversation that is gone looks exactly like one that just isn't loaded), so the list is capped.
@@ -499,6 +500,80 @@ public sealed class ProjectStore
         }
     }
 
+    /// <summary>
+    /// Save an SSH connection with a project: a new one when <paramref name="connection"/> has no id
+    /// (or one the project doesn't have), otherwise a replacement of the one it names. Returns null
+    /// when the project is missing, the connection is unusable, or the project is at capacity.
+    /// </summary>
+    public IReadOnlyList<Project>? SaveConnection(string projectId, RemoteConnection? connection)
+    {
+        if (connection is null) return null;
+        lock (_lock)
+        {
+            var i = IndexOf(projectId);
+            if (i < 0) return null;
+            var p = _projects[i];
+            var existing = string.IsNullOrWhiteSpace(connection.Id)
+                ? -1
+                : p.Connections.ToList().FindIndex(c => c.Id == connection.Id);
+            var clean = CleanConnection(existing < 0 ? connection with { Id = Guid.NewGuid().ToString("n") } : connection);
+            if (clean is null) return null;
+            var list = p.Connections.ToList();
+            if (existing < 0)
+            {
+                if (list.Count >= MaxConnectionsPerProject) return null;
+                list.Add(clean);
+            }
+            else list[existing] = clean;
+            _projects[i] = p with { Connections = list };
+            Save();
+            return Snapshot();
+        }
+    }
+
+    /// <summary>Forget one of a project's saved connections. Null when the project is missing.</summary>
+    public IReadOnlyList<Project>? DeleteConnection(string projectId, string connectionId)
+    {
+        lock (_lock)
+        {
+            var i = IndexOf(projectId);
+            if (i < 0) return null;
+            var p = _projects[i];
+            var kept = p.Connections.Where(c => c.Id != connectionId).ToList();
+            if (kept.Count != p.Connections.Count)
+            {
+                _projects[i] = p with { Connections = kept };
+                Save();
+            }
+            return Snapshot();
+        }
+    }
+
+    /// <summary>
+    /// A connection as it may be stored: trimmed and bounded, with an auth method the server knows.
+    /// Null when there is no host to connect to.
+    /// </summary>
+    private static RemoteConnection? CleanConnection(RemoteConnection c)
+    {
+        static string? Field(string? s, int max)
+        {
+            var t = s?.Trim();
+            return string.IsNullOrEmpty(t) ? null : t.Length > max ? t[..max] : t;
+        }
+        var host = Field(c.Host, 255);
+        if (host is null || host.Any(char.IsWhiteSpace)) return null;
+        var auth = c.Auth?.Trim().ToLowerInvariant() is "key" or "agent" ? c.Auth.Trim().ToLowerInvariant() : "password";
+        return new RemoteConnection(
+            c.Id,
+            Field(c.Name, MaxNameLength) ?? host,
+            host,
+            c.Port is > 0 and <= 65535 ? c.Port : 0,
+            Field(c.User, 128),
+            auth,
+            auth == "key" ? Field(c.KeyPath, 1024) : null,
+            Field(c.StartPath, 1024));
+    }
+
     private static string? CleanName(string? name)
     {
         var trimmed = name?.Trim();
@@ -614,6 +689,14 @@ public sealed class ProjectStore
                         .Select(r => r!)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .Take(MaxReposPerProject)
+                        .ToList(),
+                    Connections = (x.Connections ?? Array.Empty<RemoteConnection>())
+                        .Where(c => c is not null && !string.IsNullOrWhiteSpace(c.Id))
+                        .Select(CleanConnection)
+                        .Where(c => c is not null)
+                        .Select(c => c!)
+                        .DistinctBy(c => c.Id)
+                        .Take(MaxConnectionsPerProject)
                         .ToList(),
                 })
                 .ToList();

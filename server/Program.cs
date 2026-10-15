@@ -338,6 +338,10 @@ internal static class Program
         // Short-lived, folder-scoped tickets that let a previewed HTML page load the images and
         // stylesheets sitting next to it, without handing the page anything else (see the store).
         builder.Services.AddSingleton<Web.PreviewTicketStore>();
+        // Remote files tabs: the live SSH/SFTP connections behind them (in memory, secrets and all —
+        // nothing secret is written down) and the host keys the user has accepted (trust on first use).
+        builder.Services.AddSingleton<Remote.KnownHostStore>();
+        builder.Services.AddSingleton<Remote.RemoteManager>();
         // Web Push: the VAPID keypair, the subscription store, and the notifier that fires a push on
         // the same attention/waiting transitions the UI shows — so alerts arrive with every tab closed.
         builder.Services.AddSingleton<VapidKeyStore>();
@@ -888,6 +892,16 @@ internal static class Program
                 : store.AddRepo(id, body.Repo) is { } list ? Results.Ok(list) : Results.NotFound());
         app.MapPost("/api/projects/{id}/repos/remove", (string id, RepoRequest body, ProjectStore store) =>
             store.RemoveRepo(id, body.Repo) is { } list ? Results.Ok(list) : Results.NotFound());
+
+        // SSH connections saved with a project, offered when one of its sessions opens a remote files
+        // tab. Saved without any secret — see RemoteConnection. A body without a known id adds one.
+        app.MapPost("/api/projects/{id}/connections", (string id, RemoteConnection body, ProjectStore store) =>
+            store.SaveConnection(id, body) is { } list ? Results.Ok(list) : Results.BadRequest(new { error = "could not save the connection" }));
+        app.MapDelete("/api/projects/{id}/connections/{connectionId}", (string id, string connectionId, ProjectStore store) =>
+            store.DeleteConnection(id, connectionId) is { } list ? Results.Ok(list) : Results.NotFound());
+
+        // Remote files tabs (SSH/SFTP) and pasting between panels — see Remote/RemoteEndpoints.cs.
+        Remote.RemoteEndpoints.Map(app);
 
         // ---- Session templates (named launch presets: project, folder, prompt template) ------------
         // Same shape as the projects above — every mutation answers with the whole list, so a client
@@ -1792,7 +1806,7 @@ internal static class Program
         : s.Mode == ScheduleMode.ReuseSession && s.TargetConversationId is null ? "It has no session to continue."
         : null;
 
-    private static string? BrowseRoot(SessionInfo info, string? dir, LinkedFolderStore links) =>
+    internal static string? BrowseRoot(SessionInfo info, string? dir, LinkedFolderStore links) =>
         GitService.ResolveWorktree(info.WorkingDirectory, dir) ?? links.Resolve(info.WorkingDirectory, dir);
 
     /// <summary>
@@ -1800,7 +1814,7 @@ internal static class Program
     /// or a folder the user has deliberately linked to it. Other worktrees stay read-only, so a stray
     /// <c>dir</c> can never turn a browse into an edit of the repo's other checkouts.
     /// </summary>
-    private static string? WriteRoot(SessionInfo info, string? dir, LinkedFolderStore links) =>
+    internal static string? WriteRoot(SessionInfo info, string? dir, LinkedFolderStore links) =>
         string.IsNullOrWhiteSpace(dir) ? info.WorkingDirectory : links.Resolve(info.WorkingDirectory, dir);
 
     // A git object name is hex (full or abbreviated SHA). Reject anything else before handing it to git.

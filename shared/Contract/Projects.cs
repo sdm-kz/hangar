@@ -46,7 +46,37 @@ public sealed record Project(
     /// projects.json written without it must go on loading, and reads as "the default".
     /// </summary>
     public string? Icon { get; init; }
+
+    /// <summary>
+    /// SSH connections saved with this project, offered first when a session in it opens a remote
+    /// files tab. Never a secret: a password or a key's passphrase is typed at connect time and kept
+    /// only in the server's memory for as long as the tab is open. Init-only like Repos, so a
+    /// projects.json written before this existed goes on loading.
+    /// </summary>
+    public IReadOnlyList<RemoteConnection> Connections { get; init; } = Array.Empty<RemoteConnection>();
 }
+
+/// <summary>
+/// The parameters of an SSH connection — everything needed to reach a host except the secret.
+///
+/// <para><see cref="Host"/> may be an alias from the server user's <c>~/.ssh/config</c>: it is
+/// resolved at connect time, so a <c>HostName</c>, <c>User</c>, <c>Port</c> or <c>IdentityFile</c>
+/// written there fills in whatever is left blank here.</para>
+/// </summary>
+public sealed record RemoteConnection(
+    string Id,
+    string Name,
+    string Host,
+    /// <summary>0 = the default (the config's Port, or 22).</summary>
+    int Port,
+    /// <summary>Null = the config's User, or the server account's name.</summary>
+    string? User,
+    /// <summary>"password", "key" (a private key file on the server machine) or "agent".</summary>
+    string Auth,
+    /// <summary>The private key file for "key" auth; null = the config's IdentityFile, or ~/.ssh/id_*.</summary>
+    string? KeyPath,
+    /// <summary>The folder the panel opens in; null = the remote account's home.</summary>
+    string? StartPath);
 
 /// <summary>
 /// A <em>virtual folder</em>: a named box inside a project that holds sessions the user put there by

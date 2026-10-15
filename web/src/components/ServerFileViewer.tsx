@@ -55,6 +55,33 @@ function baseName(p: string): string {
 }
 
 /**
+ * Where the viewer reads and writes the file it shows. The server's own disk by default; a remote
+ * files tab hands in its host instead, and the whole viewer — previews, the editor, downloads — works
+ * the same over SFTP.
+ */
+export interface FileSource {
+  /** The file's raw bytes, for media previews and downloads. Carries the token, like serverFileUrl. */
+  url: (path: string, download?: boolean) => string;
+  text: (path: string) => Promise<string>;
+  write: (path: string, content: string) => Promise<void>;
+  /**
+   * A ticket for the HTML preview frame. Absent, the page is rendered from its own bytes — it shows,
+   * but its relative stylesheets and images have nothing to resolve against.
+   */
+  previewTicket?: (path: string) => Promise<{ ticket: string; name: string }>;
+  /** Whether the standalone preview tab (which reads the server's disk) can show this file. */
+  newTab: boolean;
+}
+
+export const serverFileSource: FileSource = {
+  url: serverFileUrl,
+  text: (path) => api.fetchServerFileText(path),
+  write: (path, content) => api.fsWrite(path, content),
+  previewTicket: (path) => api.previewTicket(path),
+  newTab: true,
+};
+
+/**
  * Main-area preview/editor for a file on the server machine (absolute path), opened from the sidebar
  * Files tab. Text files preview with syntax highlighting and can be edited/saved; Markdown has a
  * Rendered/Raw toggle; images, video, PDFs and Office documents (.docx/.xlsx) preview inline;
@@ -72,6 +99,7 @@ export function ServerFileViewer({
   onToggleSidebar,
   collapsed = false,
   onToggleCollapsed,
+  source = serverFileSource,
 }: {
   path: string;
   /** Standalone preview tab only: link back into the app (see previewReturnUrl). */
@@ -84,6 +112,7 @@ export function ServerFileViewer({
   onToggleSidebar?: () => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  source?: FileSource;
 }) {
   const name = baseName(path);
   const kind = fileKind(name);
@@ -120,7 +149,8 @@ export function ServerFileViewer({
 
   // Raw-bytes URL for media previews; carries the reload counter so a refresh actually bypasses
   // the browser cache instead of re-serving the stale image/video/document.
-  const rawUrl = reloadKey ? `${serverFileUrl(path)}&v=${reloadKey}` : serverFileUrl(path);
+  const rawUrl = reloadKey ? `${source.url(path)}&v=${reloadKey}` : source.url(path);
+  const downloadUrl = source.url(path, true);
 
   // --- The HTML frame's source --------------------------------------------------------------------
   // Loaded from a ticketed URL rather than handed its bytes, so the page's own relative images and
@@ -142,14 +172,18 @@ export function ServerFileViewer({
   useEffect(() => {
     if (!isHtml || !rendered || !path) return;
     let cancelled = false;
-    api
+    if (!source.previewTicket) {
+      setPreview({ forPath: path, failed: true });
+      return;
+    }
+    source
       .previewTicket(path)
       .then((p) => !cancelled && setPreview({ forPath: path, ...p }))
       .catch(() => !cancelled && setPreview({ forPath: path, failed: true }));
     return () => {
       cancelled = true;
     };
-  }, [isHtml, rendered, path, contentRev, reloadKey]);
+  }, [isHtml, rendered, path, contentRev, reloadKey, source]);
 
   const previewSrc = preview?.forPath === path ? preview : null;
   const frameSrc =
@@ -177,8 +211,8 @@ export function ServerFileViewer({
 
     let alive = true;
     setLoading(true);
-    api
-      .fetchServerFileText(path)
+    source
+      .text(path)
       .then((t) => {
         if (!alive) return;
         if (t.length > MAX_TEXT_PREVIEW) setTooLarge(true);
@@ -189,7 +223,7 @@ export function ServerFileViewer({
     return () => {
       alive = false;
     };
-  }, [path, kind, reloadKey]);
+  }, [path, kind, reloadKey, source]);
 
   // Restore the saved scroll position once real content is in the DOM (text arrives async, so this
   // must run after the loader goes away; it also re-runs when leaving edit mode or toggling
@@ -258,7 +292,7 @@ export function ServerFileViewer({
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      await api.fsWrite(path, draft);
+      await source.write(path, draft);
       setText(draft);
       setEditing(false);
     } catch {
@@ -266,7 +300,7 @@ export function ServerFileViewer({
     } finally {
       setSaving(false);
     }
-  }, [path, draft]);
+  }, [path, draft, source]);
 
   // Esc leaves the full-page view — but not while editing, where it could drop unsaved text. Capture
   // phase, and the root takes focus on the way in, so the key still lands here after a click inside
@@ -385,7 +419,7 @@ export function ServerFileViewer({
   // Embedded in the app: the same file as a standalone full-page preview in its own browser tab (the
   // path rides in the query string, so that tab survives a refresh). The current section anchor is
   // carried along, read at click time because hash changes don't re-render this component.
-  if (onClose) {
+  if (onClose && source.newTab) {
     const tabUrl = () => previewUrl(path) + window.location.hash;
     viewerTools.push({
       id: "newtab",
@@ -412,13 +446,13 @@ export function ServerFileViewer({
     id: "download",
     inline: (
       <Button variant="ghost" size="icon" asChild title="Download">
-        <a href={serverFileUrl(path, true)} download={name}>
+        <a href={downloadUrl} download={name}>
           <Download className="size-4" />
         </a>
       </Button>
     ),
     menu: [
-      { id: "download", label: "Download", icon: <Download className="size-4" />, href: serverFileUrl(path, true), download: name },
+      { id: "download", label: "Download", icon: <Download className="size-4" />, href: downloadUrl, download: name },
     ],
   });
 
@@ -564,13 +598,13 @@ export function ServerFileViewer({
         ) : kind === "office" ? (
           <OfficeViewer url={rawUrl} name={name} />
         ) : kind === "pdf" ? (
-          <PdfViewer url={rawUrl} downloadUrl={serverFileUrl(path, true)} name={name} />
+          <PdfViewer url={rawUrl} downloadUrl={downloadUrl} name={name} />
         ) : kind !== "text" ? (
-          <DownloadPrompt path={path} name={name} />
+          <DownloadPrompt href={downloadUrl} name={name} />
         ) : tooLarge ? (
           <div className="p-6 text-sm text-muted-foreground">
             This file is too large to preview inline.{" "}
-            <a className="text-primary underline" href={serverFileUrl(path, true)} download={name}>
+            <a className="text-primary underline" href={downloadUrl} download={name}>
               Download it
             </a>{" "}
             instead.
@@ -589,7 +623,7 @@ export function ServerFileViewer({
             style={{ zoom, maxWidth: readingWidth ?? undefined }}
             className="prose prose-sm dark:prose-invert mx-auto max-w-none p-4"
           >
-            <Markdown text={text ?? ""} docPath={path} />
+            <Markdown text={text ?? ""} docPath={path} assetUrl={source === serverFileSource ? undefined : source.url} />
           </div>
         ) : isHtml && rendered ? (
           // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an opaque origin,
@@ -620,12 +654,12 @@ export function ServerFileViewer({
   );
 }
 
-function DownloadPrompt({ path, name }: { path: string; name: string }) {
+function DownloadPrompt({ href, name }: { href: string; name: string }) {
   return (
     <div className={cn("flex h-full flex-col items-center justify-center gap-3 p-6 text-center")}>
       <p className="text-sm text-muted-foreground">This file type can't be previewed.</p>
       <Button asChild>
-        <a href={serverFileUrl(path, true)} download={name}>
+        <a href={href} download={name}>
           <Download className="mr-1 size-4" />
           Download
         </a>

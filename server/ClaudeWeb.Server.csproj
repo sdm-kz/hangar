@@ -21,6 +21,8 @@
     <!-- Logoff/shutdown notification for a daemon started at logon (see Program.Main). Part of the
          Windows desktop framework before; a package now that the daemon targets plain net10.0. -->
     <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.0" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <PackageReference Include="SshNet.Agent" Version="2026.0.0" />
     <!-- Web Push (VAPID) so the server can notify a subscribed browser/PWA even when its tab is closed. -->
     <PackageReference Include="WebPush" Version="1.0.13" />
   </ItemGroup>

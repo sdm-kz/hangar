@@ -7,6 +7,7 @@ import { migratePinnedSessions, move } from "@/lib/sessionOrder";
 import { failureLine, useDoneSessions, type ActivityDetail } from "@/lib/sessionActivity";
 import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
+import { projectForDir } from "@/lib/projects";
 import type { Project, SessionInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar, type SessionListTab, folderProgress, HeadingProgress } from "@/components/SessionSidebar";
@@ -1120,6 +1121,8 @@ export function App() {
               onTerminalRename={onTerminalRename}
               onTerminalColor={onTerminalColor}
               onOpenServerFile={openServerFile}
+              project={projectForDir(active.workingDirectory, projects)}
+              onProjectsChange={setProjects}
             />
           ) : (
             <EmptyState

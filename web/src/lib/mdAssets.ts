@@ -41,7 +41,11 @@ function joinPath(dir: string, rel: string): string {
  * path on the server), or null when the src already points somewhere the browser can fetch and
  * should be left alone.
  */
-export function mdAssetUrl(src: string, docPath: string): string | null {
+export function mdAssetUrl(
+  src: string,
+  docPath: string,
+  toUrl: (path: string) => string = serverFileUrl
+): string | null {
   if (!src || src.startsWith("#") || isFetchable(src)) return null;
   let path = src;
   try {
@@ -50,5 +54,5 @@ export function mdAssetUrl(src: string, docPath: string): string | null {
     /* malformed escape — take the src as written */
   }
   const isAbsolute = /^[a-zA-Z]:[\\/]/.test(path) || /^[/\\]/.test(path);
-  return serverFileUrl(isAbsolute ? path : joinPath(dirOf(docPath), path));
+  return toUrl(isAbsolute ? path : joinPath(dirOf(docPath), path));
 }

@@ -11,6 +11,17 @@ import { EXPLORER_GUARD, fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type Pr
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
+import {
+  announceRemoteChange,
+  clearFileClip,
+  describeClip,
+  getFileClip,
+  hasTextSelection,
+  sameSide,
+  setFileClip,
+  useFileClip,
+} from "@/lib/fileClipboard";
+import { folderName } from "@/lib/recentFolders";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
@@ -43,6 +54,7 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  ClipboardPaste,
   Copy,
   Download,
   Expand,
@@ -63,6 +75,7 @@ import {
   Pencil,
   RefreshCw,
   Save,
+  Scissors,
   Search,
   Square,
   SquareCheck,
@@ -767,6 +780,54 @@ export const FileBrowser = forwardRef<
     onRefresh?.();
   }, [mark, sessionId, writeDir, closeTabsUnder, confirm, onRefresh, effectiveGitFiles]);
 
+  // ---- The app's file clipboard: copy or cut here, paste into any file panel — a remote tab
+  //      over SSH, another session's files, or back into this one. See lib/fileClipboard.
+  const clip = useFileClip();
+  const [pasting, setPasting] = useState(false);
+  const clipSide = useMemo(
+    () => ({ kind: "session" as const, sessionId, dir: rootDir || undefined }),
+    [sessionId, rootDir]
+  );
+  /** Marked rows, else the file on show — what Copy and Cut take. */
+  const clipSubject = useCallback((): { path: string; isDir: boolean }[] => {
+    if (mark.count > 0) return withoutDescendants([...mark.marked.keys()]).map((p) => ({ path: p, isDir: !!mark.marked.get(p) }));
+    return selected?.path ? [{ path: selected.path, isDir: false }] : [];
+  }, [mark, selected]);
+  const toClipboard = useCallback(
+    (mode: "copy" | "cut") => {
+      const items = clipSubject();
+      if (items.length === 0 || (mode === "cut" && readOnly)) return;
+      setFileClip({
+        mode,
+        source: clipSide,
+        label: folderName(rootDir || workingDirectory),
+        items: items.map((i) => ({ path: i.path, name: i.path.split("/").pop() || i.path, isDir: i.isDir })),
+      });
+      mark.clear();
+    },
+    [clipSubject, readOnly, clipSide, rootDir, workingDirectory, mark]
+  );
+  const paste = useCallback(async () => {
+    const c = getFileClip();
+    if (!c || readOnly) return;
+    const move = c.mode === "cut";
+    setPasting(true);
+    setDeleteError(null);
+    try {
+      const r = await api.transfer(c.source, c.items.map((i) => i.path), clipSide, uploadDir, move);
+      if (move && r.errors.length === 0) clearFileClip();
+      if (move && sameSide(c.source, clipSide)) closeTabsUnder(c.items.map((i) => i.path));
+      if (move && c.source.kind === "remote")
+        announceRemoteChange(c.source.tab, c.items.map((i) => i.path).filter((p) => !r.errors.some((x) => x.path === p)));
+      if (r.errors.length) setDeleteError(r.errors.map((x) => `${x.path.split("/").pop()}: ${x.error}`).join(" · "));
+    } catch (e) {
+      setDeleteError(`Paste failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPasting(false);
+      onRefresh?.();
+    }
+  }, [readOnly, clipSide, uploadDir, closeTabsUnder, onRefresh]);
+
   // Open the new-folder creator targeting a specific directory ("" = repo root).
   const newFolderIn = useCallback((dir: string) => {
     setUploadDir(dir);
@@ -1094,6 +1155,16 @@ export const FileBrowser = forwardRef<
                 )}
               </button>
             )}
+            {clip && !readOnly && !commitsView && (
+              <button
+                title={`${describeClip(clip)} into ${uploadDir || "root"}`}
+                onClick={() => void paste()}
+                disabled={pasting}
+                className="hover:text-foreground disabled:opacity-50"
+              >
+                {pasting ? <Loader2 className="size-3.5 animate-spin" /> : <ClipboardPaste className="size-3.5" />}
+              </button>
+            )}
             <button
               title="Link another folder to this session"
               onClick={() => {
@@ -1217,6 +1288,28 @@ export const FileBrowser = forwardRef<
               {mark.count > 0 ? `${mark.count} selected` : "Select files and folders"}
             </span>
             <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-xs"
+              disabled={mark.count === 0}
+              title="Copy — paste into any file panel, here or in a remote tab"
+              onClick={() => toClipboard("copy")}
+            >
+              <Copy className="size-3" />
+              Copy
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-xs"
+              disabled={mark.count === 0}
+              title="Cut — moved when pasted"
+              onClick={() => toClipboard("cut")}
+            >
+              <Scissors className="size-3" />
+              Cut
+            </Button>
+            <Button
               variant="destructive"
               size="sm"
               className="h-6 gap-1 px-2 text-xs"
@@ -1260,6 +1353,23 @@ export const FileBrowser = forwardRef<
               e.preventDefault();
               mark.clear();
               return;
+            }
+            // The file clipboard, from the keyboard: Ctrl+C / Ctrl+X take the marked rows (or the
+            // open file), Ctrl+V pastes into the upload target.
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+              const k = e.key.toLowerCase();
+              // Only with something to take: otherwise (or with text selected) the key is the
+              // browser's, and a stray Ctrl+C must not replace a cut waiting in another panel.
+              if ((k === "c" || k === "x") && !hasTextSelection() && clipSubject().length > 0) {
+                e.preventDefault();
+                toClipboard(k === "c" ? "copy" : "cut");
+                return;
+              }
+              if (k === "v" && getFileClip()) {
+                e.preventDefault();
+                void paste();
+                return;
+              }
             }
             treeKeys.onKeyDown?.(e);
           }}

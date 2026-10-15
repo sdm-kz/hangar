@@ -237,6 +237,93 @@ export interface Project {
   repos: string[];
   // A name from lib/groupIcons.ts; null, missing (an older server) or unknown draws the default.
   icon?: string | null;
+  // SSH connections saved with the project — never a password or passphrase, which are typed at
+  // connect time. Missing on an older server.
+  connections?: RemoteConnection[];
+}
+
+/** How a remote files tab authenticates: a typed password, a key file on the server, or the agent. */
+export type RemoteAuth = "password" | "key" | "agent";
+
+/**
+ * The parameters of an SSH connection, everything but the secret. `host` may be an alias from the
+ * server user's ~/.ssh/config, whose HostName/User/Port/IdentityFile fill in what is left blank.
+ */
+export interface RemoteConnection {
+  id: string;
+  name: string;
+  host: string;
+  port: number; // 0 = the config's, or 22
+  user: string | null;
+  auth: RemoteAuth;
+  keyPath: string | null; // "key" auth only; null = the config's IdentityFile or ~/.ssh/id_*
+  startPath: string | null; // null = the remote home
+}
+
+/** A remote files tab: which connection it is, and where it was left. Lives in the session's UI bag. */
+export interface SessionRemote {
+  /** Also the id the server keys the live connection by. */
+  id: string;
+  connection: RemoteConnection;
+}
+
+export interface RemoteConnectResult {
+  status: "connected" | "hostKey" | "secret" | "error";
+  error?: string | null;
+  home?: string | null;
+  target?: string | null;
+  fingerprint?: string | null;
+  keyType?: string | null;
+  changed?: boolean;
+  /** An unknown key from a host that already has a trusted key of another type. */
+  otherTypeKnown?: boolean;
+  secret?: "password" | "passphrase" | null;
+}
+
+export interface RemoteStatus {
+  connected: boolean;
+  home?: string | null;
+  target?: string | null;
+  error?: string | null;
+}
+
+export interface RemoteEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  modified?: string | null;
+  isLink: boolean;
+}
+
+export interface RemoteListing {
+  path: string;
+  parent: string | null;
+  entries: RemoteEntry[];
+}
+
+export interface SshHostConfig {
+  alias: string;
+  hostName: string | null;
+  user: string | null;
+  port: number | null;
+  identityFile: string | null;
+}
+
+export interface SshConfigInfo {
+  hosts: SshHostConfig[];
+  keys: string[];
+  sshDir: string;
+}
+
+/** One end of a paste: a remote tab, or one of a session's roots (`dir` as the Files panel uses it). */
+export type TransferSide =
+  | { kind: "remote"; tab: string }
+  | { kind: "session"; sessionId: string; dir?: string };
+
+export interface TransferResult {
+  paths: string[];
+  errors: { path: string; error: string }[];
 }
 
 /**

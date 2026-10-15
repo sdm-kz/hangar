@@ -19,6 +19,13 @@ import type {
   LinkProbe,
   Project,
   PtyOrphan,
+  RemoteConnection,
+  RemoteConnectResult,
+  RemoteListing,
+  RemoteStatus,
+  SshConfigInfo,
+  TransferResult,
+  TransferSide,
   ScheduleEntry,
   SessionInfo,
   SessionRepo,
@@ -102,7 +109,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
  * throwing on the first paint.
  */
 async function projects(answer: Promise<Project[]>): Promise<Project[]> {
-  return (await answer).map((p) => ({ ...p, groups: p.groups ?? [], repos: p.repos ?? [] }));
+  return (await answer).map((p) => ({
+    ...p,
+    groups: p.groups ?? [],
+    repos: p.repos ?? [],
+    connections: p.connections ?? [],
+  }));
 }
 
 /**
@@ -773,6 +785,69 @@ export const api = {
     const r = await request<{ version: number }>(`/api/sessions/${id}/fs/version`);
     return r.version;
   },
+
+  // ---- SSH connections saved with a project (never with a secret) ----
+  saveProjectConnection(projectId: string, connection: Partial<RemoteConnection>): Promise<Project[]> {
+    return projects(
+      request(`/api/projects/${projectId}/connections`, { method: "POST", body: JSON.stringify(connection) })
+    );
+  },
+  deleteProjectConnection(projectId: string, connectionId: string): Promise<Project[]> {
+    return projects(
+      request(`/api/projects/${projectId}/connections/${encodeURIComponent(connectionId)}`, { method: "DELETE" })
+    );
+  },
+
+  // ---- Remote files tabs (SSH/SFTP), keyed by the tab's own id ----
+  sshConfig(): Promise<SshConfigInfo> {
+    return request("/api/remote/ssh-config");
+  },
+  remoteConnect(
+    tab: string,
+    body: { connection: RemoteConnection; password?: string; passphrase?: string; trustFingerprint?: string }
+  ): Promise<RemoteConnectResult> {
+    return request(`/api/remote/${tab}/connect`, { method: "POST", body: JSON.stringify(body) });
+  },
+  remoteStatus(tab: string): Promise<RemoteStatus> {
+    return request(`/api/remote/${tab}`);
+  },
+  remoteDisconnect(tab: string): Promise<void> {
+    return request(`/api/remote/${tab}`, { method: "DELETE" });
+  },
+  remoteList(tab: string, path?: string): Promise<RemoteListing> {
+    const q = path ? `?path=${encodeURIComponent(path)}` : "";
+    return request(`/api/remote/${tab}/list${q}`);
+  },
+  async remoteFileText(tab: string, path: string): Promise<string> {
+    const res = await fetch(remoteFileUrl(tab, path));
+    if (!res.ok) throw new ApiError(res.status, res.statusText);
+    return res.text();
+  },
+  remoteWrite(tab: string, path: string, content: string): Promise<void> {
+    return request(`/api/remote/${tab}/write`, { method: "POST", body: JSON.stringify({ path, content }) });
+  },
+  remoteMkdir(tab: string, path: string): Promise<{ path: string }> {
+    return request(`/api/remote/${tab}/mkdir`, { method: "POST", body: JSON.stringify({ path }) });
+  },
+  remoteNewFile(tab: string, path: string): Promise<{ path: string }> {
+    return request(`/api/remote/${tab}/new-file`, { method: "POST", body: JSON.stringify({ path }) });
+  },
+  remoteRename(tab: string, path: string, newName: string): Promise<{ path: string }> {
+    return request(`/api/remote/${tab}/rename`, { method: "POST", body: JSON.stringify({ path, newName }) });
+  },
+  remoteDelete(tab: string, path: string): Promise<void> {
+    return request(`/api/remote/${tab}/delete`, { method: "POST", body: JSON.stringify({ path }) });
+  },
+  async remoteUpload(tab: string, folder: string, files: File[]): Promise<{ paths: string[] }> {
+    const form = new FormData();
+    form.append("path", folder);
+    for (const f of files) form.append("files", f);
+    return multipart(`/api/remote/${tab}/upload`, form);
+  },
+  /** Copy or move between any two panels — see the server's FileTransfer. */
+  transfer(from: TransferSide, paths: string[], to: TransferSide, folder: string, move: boolean): Promise<TransferResult> {
+    return request("/api/transfer", { method: "POST", body: JSON.stringify({ from, paths, to, folder, move }) });
+  },
 };
 
 /**
@@ -821,6 +896,33 @@ export function sessionFileUrl(id: string, path: string, download = false, dir?:
   if (dir) params.set("dir", dir);
   if (token) params.set("access_token", token);
   return `/api/sessions/${id}/fs/raw?${params.toString()}`;
+}
+
+/** URL for a remote tab's file bytes; token in the query so it works in <img>/<a>, like serverFileUrl. */
+export function remoteFileUrl(tab: string, path: string, download = false): string {
+  const token = getToken() ?? "";
+  const params = new URLSearchParams({ path });
+  if (download) params.set("download", "true");
+  if (token) params.set("access_token", token);
+  return `/api/remote/${tab}/file?${params.toString()}`;
+}
+
+/** POST a multipart form with the token, the way the upload calls do. */
+async function multipart<T>(path: string, form: FormData): Promise<T> {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(path, { method: "POST", body: form, headers });
+  if (res.status === 401) {
+    setToken(null);
+    throw new ApiError(401, "unauthorized");
+  }
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).error ?? msg; } catch { /* ignore */ }
+    throw new ApiError(res.status, msg);
+  }
+  return res.json();
 }
 
 export { ApiError };

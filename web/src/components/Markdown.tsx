@@ -44,7 +44,16 @@ const sanitizeSchema = {
   },
 };
 
-export function Markdown({ text, docPath }: { text: string; docPath?: string }) {
+export function Markdown({
+  text,
+  docPath,
+  assetUrl,
+}: {
+  text: string;
+  docPath?: string;
+  /** Where a file the document references is fetched from; the server's file API by default. */
+  assetUrl?: (path: string) => string;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
 
   // Restore the section named by the URL hash once the content is in the DOM. The layout keeps
@@ -119,11 +128,11 @@ export function Markdown({ text, docPath }: { text: string; docPath?: string }) 
     () =>
       [
         rehypeRaw,
-        [rehypeAssetUrls, { docPath }],
+        [rehypeAssetUrls, { docPath, assetUrl }],
         [rehypeSanitize, sanitizeSchema],
         rehypeHeadingIds,
       ] as PluggableList,
-    [docPath]
+    [docPath, assetUrl]
   );
 
   return (
@@ -210,7 +219,7 @@ function slugify(text: string): string {
  * unknown URL protocol to the sanitizer, which would strip it before we ever got to see it. What
  * this produces is a same-origin relative URL, which sanitize is happy with.
  */
-function rehypeAssetUrls({ docPath }: { docPath?: string }) {
+function rehypeAssetUrls({ docPath, assetUrl }: { docPath?: string; assetUrl?: (path: string) => string }) {
   return (tree: Root) => {
     if (!docPath) return;
     const visit = (node: Root | RootContent) => {
@@ -218,7 +227,7 @@ function rehypeAssetUrls({ docPath }: { docPath?: string }) {
       if (node.type === "element" && node.tagName === "img") {
         const src = node.properties?.src;
         if (typeof src === "string") {
-          const url = mdAssetUrl(src, docPath);
+          const url = mdAssetUrl(src, docPath, assetUrl);
           if (url) node.properties = { ...node.properties, src: url };
         }
       }

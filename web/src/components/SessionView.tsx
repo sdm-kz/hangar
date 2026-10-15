@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { FileEntry, GitStatus, SessionInfo, SessionLink, SessionPull } from "@/types";
+import type { FileEntry, GitStatus, Project, SessionInfo, SessionLink, SessionPull } from "@/types";
 import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
 import { patchUrlState, readUrlState, type TabName } from "@/lib/urlState";
@@ -14,6 +14,8 @@ import {
 import { EXPLORER_GUARD, fileEntryFromPath, useFileTabs, type FileTabs } from "@/lib/useFileTabs";
 import { linkTabLabel, MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
 import { parsePullKey, pullKey, useSessionPulls } from "@/lib/sessionPulls";
+import { connectionTarget, MAX_REMOTES, remoteTabLabel, useSessionRemotes } from "@/lib/sessionRemotes";
+import { clearFileClip, getFileClip } from "@/lib/fileClipboard";
 import { useShells } from "@/lib/useShells";
 import {
   activateRef,
@@ -31,6 +33,7 @@ import {
   placeRef,
   pullRef,
   reconcile,
+  remoteRef,
   revealRef,
   shellRef,
   singleLayout,
@@ -51,6 +54,8 @@ import { PullRequestView } from "./PullRequestView";
 import { PullPicker } from "./PullTabStrip";
 import { shellIcon, shellTabLabel } from "./ShellTabStrip";
 import { WebLinkView } from "./WebLinkView";
+import { RemoteFilesView } from "./RemoteFilesView";
+import { RemoteConnectDialog } from "./RemoteConnect";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
 import { HeadingActivityMark, type Activity } from "./ActivityMark";
@@ -90,6 +95,7 @@ import {
   Play,
   Radio,
   RotateCcw,
+  Server,
   ShieldCheck,
   ShieldOff,
   Square,
@@ -284,6 +290,8 @@ export function SessionView({
   onTerminalRename,
   onTerminalColor,
   onOpenServerFile,
+  project = null,
+  onProjectsChange,
 }: {
   session: SessionInfo;
   // Whether Claude is currently working in this session (from the live /hub/events busy set).
@@ -325,6 +333,10 @@ export function SessionView({
   // Open any file on the server in the app's own file viewer -- where a path clicked in the terminal
   // goes when it is outside this session's folder, which its Files panel can't show.
   onOpenServerFile?: (absolutePath: string) => void;
+  // The project this session's folder belongs to: its saved SSH connections are offered when a remote
+  // files tab is opened, and a new one can be saved there.
+  project?: Project | null;
+  onProjectsChange?: (projects: Project[]) => void;
 }) {
   const confirm = useConfirm();
   // Closed: the session is a row and a folder, with no process behind either. Everything reading the
@@ -375,6 +387,12 @@ export function SessionView({
   // is fetched from GitHub each time it is opened.
   const pulls = useSessionPulls(session.id);
 
+  // Remote files tabs (SSH). Like the links, the list lives in the session's UI bag; the connection
+  // behind each one is held by the server, in memory, under the tab's id.
+  const remotes = useSessionRemotes(session.id);
+  const [remoteDialog, setRemoteDialog] = useState(false);
+  const remoteTarget = useRef<string | null>(null);
+
   // ---- The pane's layout ------------------------------------------------------------------------
   // Every tab the session has, in the order a single group lists them: the two that always exist,
   // then the reviews, the files, the shells and the pages.
@@ -386,8 +404,9 @@ export function SessionView({
       ...fileTabs.tabs.map((t) => fileRef(t.path)),
       ...shells.shells.map((s) => shellRef(s.id)),
       ...links.links.map((l) => linkRef(l.id)),
+      ...remotes.remotes.map((r) => remoteRef(r.id)),
     ],
-    [pulls.pulls, fileTabs.tabs, shells.shells, links.links]
+    [pulls.pulls, fileTabs.tabs, shells.shells, links.links, remotes.remotes]
   );
 
   const { layout, update, current, seedTick, seeded } = useSessionLayout(session.id, () =>
@@ -720,9 +739,17 @@ export function SessionView({
       else if (kind === "shell") void shells.close(arg);
       else if (kind === "link") links.remove(arg);
       else if (kind === "pull") pulls.close(arg);
+      else if (kind === "remote") {
+        // Closing the tab ends the connection: the server forgets it, password and all — and
+        // anything copied in it, which nothing could paste any more.
+        remotes.remove(arg);
+        const clip = getFileClip();
+        if (clip?.source.kind === "remote" && clip.source.tab === arg) clearFileClip();
+        void api.remoteDisconnect(arg).catch(() => {});
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [fileTabs.close, shells.close, links.remove, pulls.close]
+    [fileTabs.close, shells.close, links.remove, pulls.close, remotes.remove]
   );
 
   /** A tab dropped on a group: its middle to move there, an edge to split it off beside it. */
@@ -773,6 +800,16 @@ export function SessionView({
       if (had) update((x) => revealRef(x, linkRef(stored.id)));
     },
     [links, expect, current, update]
+  );
+
+  // A remote tab appears only once its connection is up (the dialog connects before it closes), and
+  // shows straight away in the group whose "+" asked for it.
+  const addRemote = useCallback(
+    (tabId: string, connection: Parameters<typeof remotes.add>[0]) => {
+      expect("remote", remoteTarget.current ?? current().active);
+      remotes.add(connection, tabId);
+    },
+    [remotes, expect, current]
   );
 
   // Opening a review from a group's picker: the same, for a PR.
@@ -947,6 +984,16 @@ export function SessionView({
           onDoubleClick: () => setLinkDialog({ edit: l }),
         };
       }
+      case "remote": {
+        const r = remotes.remotes.find((x) => x.id === arg);
+        if (!r) return null;
+        return {
+          icon: <Server className="size-4 shrink-0" />,
+          label: label(remoteTabLabel(r)),
+          title: `${remoteTabLabel(r)} — ${connectionTarget(r.connection)} (SSH)`,
+          closable: true,
+        };
+      }
       case "pull": {
         const p = pulls.pulls.find((x) => pullKey(x) === arg);
         if (!p) return null;
@@ -1082,6 +1129,17 @@ export function SessionView({
         return (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <WebLinkView link={l} onEdit={() => setLinkDialog({ edit: l })} />
+          </div>
+        );
+      }
+      case "remote": {
+        // Mounted once opened and kept: the tree, its expanded folders and the preview survive a
+        // switch to another tab, the way a pinned page does.
+        const r = remotes.remotes.find((x) => x.id === arg);
+        if (!r || !kept(ref)) return null;
+        return (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <RemoteFilesView sessionId={session.id} remote={r} />
           </div>
         );
       }
@@ -1387,6 +1445,14 @@ export function SessionView({
                   linkTarget.current = groupId;
                   setLinkDialog({});
                 }}
+                onAddRemote={
+                  remotes.remotes.length < MAX_REMOTES
+                    ? () => {
+                        remoteTarget.current = groupId;
+                        setRemoteDialog(true);
+                      }
+                    : undefined
+                }
               />
             </>
           );
@@ -1403,6 +1469,16 @@ export function SessionView({
             else addLink(l);
           }}
           onClose={() => setLinkDialog(null)}
+        />
+      )}
+
+      {/* Open a remote files tab over SSH. */}
+      {remoteDialog && (
+        <RemoteConnectDialog
+          project={project}
+          onProjectsChange={onProjectsChange}
+          onConnected={addRemote}
+          onClose={() => setRemoteDialog(false)}
         />
       )}
 
