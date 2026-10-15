@@ -101,6 +101,28 @@ function join(dir: string, name: string): string {
   return `${dir.replace(/\/+$/, "")}/${name}`;
 }
 
+/** Whether a host speaks Windows paths, judged by one it gave us: "C:\Users" arrives as "/C:/Users". */
+function isWindowsPath(p: string): boolean {
+  return /^\/[A-Za-z]:(\/|$)/.test(p);
+}
+
+/**
+ * A path as typed (a start folder, the path bar) made absolute: "~" is home, a relative path is
+ * taken against `base`, and on a Windows host "c:\logs" becomes the server's "/C:/logs" instead of
+ * a folder called "c:\logs" under home. The server folds it the same way (RemoteManager.Normalize).
+ */
+function resolvePath(input: string, home: string, base: string): string {
+  let p = input.trim();
+  if (isWindowsPath(home)) {
+    p = p.replace(/\\/g, "/");
+    if (/^[A-Za-z]:(\/|$)/.test(p)) p = `/${p[0].toUpperCase()}${p.slice(1)}`;
+  }
+  if (p === "~") return home;
+  if (p.startsWith("~/")) return join(home, p.slice(2));
+  if (!p.startsWith("/")) p = join(base, p);
+  return p.replace(/(.)\/+$/, "$1");
+}
+
 /** Whether `p` is `dir` or under it. */
 function isUnder(p: string, dir: string): boolean {
   return p === dir || p.startsWith(dir === "/" ? "/" : `${dir}/`);
@@ -215,7 +237,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
   useEffect(() => {
     if (!connected || root) return;
     const start = remote.connection.startPath?.trim();
-    const r = start ? (start.startsWith("/") ? start : join(home, start.replace(/^~\/?/, ""))) : home;
+    const r = start ? resolvePath(start, home, home) : home;
     setRoot(r);
     setSelectedDir((d) => d ?? r);
   }, [connected, root, home, remote.connection.startPath]);
@@ -319,8 +341,8 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     (path: string) => {
       const p = path.trim();
       if (!p) return;
-      const abs = p === "~" ? home : p.startsWith("~/") ? join(home, p.slice(2)) : p.startsWith("/") ? p : join(root ?? home, p);
-      setRoot(abs.replace(/(.)\/+$/, "$1"));
+      const abs = resolvePath(p, home, root ?? home);
+      setRoot(abs);
       setSelectedDir(abs);
       setAddressOpen(false);
       mark.clear();

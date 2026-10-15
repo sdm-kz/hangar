@@ -590,12 +590,29 @@ public sealed class RemoteManager : IDisposable
     // ---- Paths ---------------------------------------------------------------------------------------
 
     /// <summary>
+    /// Whether a host speaks Windows paths, judged by a path it gave us: Windows' OpenSSH server
+    /// spells "C:\Users\x" as "/C:/Users/x".
+    /// </summary>
+    public static bool IsWindowsPath(string path) => Regex.IsMatch(path, "^/[A-Za-z]:(/|$)");
+
+    /// <summary>
     /// An absolute POSIX path with "." and ".." folded away. A relative one is taken against the
     /// remote home, and "~" is the home itself — both what someone typing a path expects.
+    ///
+    /// <para>On a Windows host (see <see cref="IsWindowsPath"/>) a path is often typed the Windows
+    /// way — "c:\logs" — and is turned into the server's own spelling, "/C:/logs", rather than taken
+    /// as a relative name. A bare drive keeps its slash: "/C:/" is the drive's root, "/C:" is not a
+    /// folder the server will list.</para>
     /// </summary>
     public static string Normalize(string? path, string home)
     {
         var p = string.IsNullOrWhiteSpace(path) ? home : path.Trim();
+        var windows = IsWindowsPath(home);
+        if (windows)
+        {
+            p = p.Replace('\\', '/');
+            if (Regex.IsMatch(p, "^[A-Za-z]:(/|$)")) p = "/" + char.ToUpperInvariant(p[0]) + p[1..];
+        }
         if (p == "~") p = home;
         else if (p.StartsWith("~/")) p = home.TrimEnd('/') + p[1..];
         if (!p.StartsWith('/')) p = home.TrimEnd('/') + "/" + p;
@@ -610,14 +627,17 @@ public sealed class RemoteManager : IDisposable
             }
             parts.Add(seg);
         }
-        return "/" + string.Join('/', parts);
+        return DriveRoot("/" + string.Join('/', parts));
     }
 
     public static string Parent(string path)
     {
         var i = path.TrimEnd('/').LastIndexOf('/');
-        return i <= 0 ? "/" : path[..i];
+        return i <= 0 ? "/" : DriveRoot(path[..i]);
     }
+
+    /// <summary>"/C:" → "/C:/": the form of a Windows drive's root its SFTP server lists.</summary>
+    private static string DriveRoot(string path) => Regex.IsMatch(path, "^/[A-Za-z]:$") ? path + "/" : path;
 
     public static string NameOf(string path)
     {

@@ -144,8 +144,10 @@ internal sealed class RemoteSide(string tabId, string target, SftpClient sftp, s
     public bool TryCopy(string from, string to)
     {
         var (src, dst) = (Full(from), Full(to));
-        // Single quotes are only inert in a POSIX shell; fish reads \' inside them. A name with a
-        // backslash or a control character takes the slow, shell-free path instead.
+        // Single quotes are only inert in a POSIX shell; fish reads \' inside them, and a Windows
+        // host's shell is cmd.exe, where they quote nothing at all — "&" in a file name would start a
+        // second command. Those take the slow, shell-free path instead.
+        if (RemoteManager.IsWindowsPath(home)) return false;
         if ((src + dst).Any(c => c == '\\' || char.IsControl(c))) return false;
         var ssh = shell();
         if (ssh is null) return false;
