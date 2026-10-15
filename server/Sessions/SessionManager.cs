@@ -424,6 +424,25 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
+    /// The UI-bag field naming the worktree whose branch a session's header shows: the folder of
+    /// another worktree of its repo, or "" for its own working directory. A session that starts a
+    /// task in a fresh worktree is still running in the main folder, so without it the header would
+    /// go on naming the folder's branch rather than the one the work is on.
+    /// </summary>
+    public const string GitWorktreeField = "gitWorktree";
+
+    /// <summary>
+    /// Point a session's header at a worktree of its repo (see <see cref="GitWorktreeField"/>); ""
+    /// goes back to its own folder. Kept in the UI bag, so it survives a reopen and reaches every
+    /// browser on the next list push. Null when there is no such session.
+    /// </summary>
+    public SessionUiStore.Snapshot? SetGitWorktree(string id, string folder) =>
+        MergeUi(id, new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+        {
+            [GitWorktreeField] = JsonSerializer.SerializeToElement(folder),
+        });
+
+    /// <summary>
     /// How many file tabs a session may hold. The panel itself has no limit — a person closes tabs —
     /// but this endpoint can be called in a loop, and a bag that grows past
     /// <see cref="SessionUiStore"/>'s per-entry cap stops being persisted at all. Past the limit the

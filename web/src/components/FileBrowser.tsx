@@ -198,7 +198,9 @@ const rootListeners = new Set<(sessionId: string, dir: string) => void>();
 
 export interface FileBrowserHandle {
   revealFile: (path: string) => void;
-  showChanges: () => void; // switch this browser into the git-changes view
+  // Switch this browser into the git-changes view; `dir` also moves it to that root ("" = the
+  // session's own), for the header's badge, which can name another worktree's branch.
+  showChanges: (dir?: string) => void;
 }
 
 /** Two-pane file explorer: searchable, auto-refreshing directory tree + preview/edit pane. */
@@ -556,12 +558,16 @@ export const FileBrowser = forwardRef<
 
   // Switch into the changes view (used by the header's branch badge). Idempotent if already there.
   // The changes are the session repo's, so a linked folder is left behind first.
-  const openChanges = useCallback(() => {
-    setShowChanges(true);
-    setShowCommits(false);
-    saveSessionUi(sessionId, { changes: true, commits: false });
-    if (isLinkedRoot) pickRoot("");
-  }, [sessionId, isLinkedRoot, pickRoot]);
+  const openChanges = useCallback(
+    (dir?: string) => {
+      setShowChanges(true);
+      setShowCommits(false);
+      saveSessionUi(sessionId, { changes: true, commits: false });
+      const target = dir ?? (isLinkedRoot ? "" : rootDir);
+      if (target !== rootDir && !samePath(target, rootDir)) pickRoot(target);
+    },
+    [sessionId, isLinkedRoot, rootDir, pickRoot]
+  );
 
   // ---- Linked folders: extra folders attached to this session, browsable in place of its own tree.
   // The list lives on the server (keyed by the session's working folder) so it survives a restart.

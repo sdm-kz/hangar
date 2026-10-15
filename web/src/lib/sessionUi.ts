@@ -76,6 +76,10 @@ export interface SessionUi {
   // or one of its linked folders ("" = the session's own working dir). Named `worktree` because
   // worktrees were the only alternate root when it was introduced.
   worktree?: string;
+  // Folder of the worktree whose branch the header's badge names ("" or absent = the session's own).
+  // Not the Files panel's root above: that is where one browser is looking, this is where the
+  // session's work is -- set from the badge, or by the session itself through /api/self/worktree.
+  gitWorktree?: string;
   changesTree?: boolean; // in the changes view, group files by folder (tree) instead of a flat list
   filesExpanded?: string[]; // Files tree: folder paths the user has expanded (all collapsed by default)
   changesExpanded?: string[]; // changes tree (grouped mode): folder paths expanded (all collapsed by default)

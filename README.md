@@ -766,6 +766,35 @@ active: a browser with the session open shows it, in the group already showing a
 is one. Re-opening one that is already in the bar does not move anyone's view. Eight reviews is the
 ceiling, as in the picker; past it the oldest gives way, along with its folds and scroll position.
 
+## Showing a worktree's branch in a session's header from inside it (API)
+
+A session that starts a task in a fresh worktree is still running in its main folder, so its
+header's branch badge goes on naming the folder's branch rather than the one the work is on.
+`POST /api/self/worktree` points the badge at another worktree of the same repo, named by its
+`branch` or its `path` (absolute, or relative to the working directory) — the same three environment
+variables again:
+
+```bash
+curl -s -X POST "$CLAUDEWEB_URL/api/self/worktree" \
+  -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
+  -H "X-Hook-Token: $CLAUDEWEB_HOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"branch":"AB-6692-repoint-e2e-tests-to-uat"}'
+# {"id":"664d6618…","worktree":"C:/Git/myproject-worktrees/myproject/AB-6692-…","branch":"AB-6692-…"}
+```
+
+Send `{}` to go back to the session's own folder; a worktree that *is* its own folder counts as that
+too, and answers `"worktree": null`. The badge then shows that worktree's branch and change count
+(its icon turns to a blue folder), and clicking it opens that worktree's changes in the Files panel.
+The chevron beside the badge picks the same thing by hand, and `POST /api/sessions/{id}/git/worktree`
+takes the same body from the browser's side.
+
+Responses are `200` with the worktree and its branch, `400` with an `error` when both are given or the
+one given doesn't resolve (a folder that is not a worktree of the session's repo, a branch no
+worktree has checked out, a session folder that isn't a repo), `401` on missing/stale headers, and `404` when the id names
+no session. The pick lives in the session's shared UI bag (`gitWorktree`), so every device shows it
+and it survives a reopen; a worktree removed later quietly falls back to the session's own branch.
+
 ## Security notes
 
 - Auth is a single shared password that mints an in-memory bearer token. The password is stored

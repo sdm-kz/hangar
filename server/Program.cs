@@ -743,6 +743,41 @@ internal static class Program
                 : Results.Ok(new { id, repo = repo ?? own.NameWithOwner, number, title = found.Title, key });
         });
 
+        // Self-select a worktree: a session that has just started a task in a worktree of its own
+        // repo says so, and its header follows the branch the work is on instead of the folder's.
+        app.MapPost("/api/self/worktree", (HttpContext ctx, SelectWorktreeRequest body, TokenStore tokens,
+            SessionManager mgr, ILoggerFactory lf) =>
+        {
+            if (SelfCaller(ctx, tokens, lf, "worktree") is not { } id)
+                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            return SelectWorktree(mgr, id, body);
+        });
+
+        // Resolve and store a session's worktree pick. A worktree that is the session's own folder is
+        // stored as "" -- the same as asking for none -- so its header doesn't hold on to a path that
+        // means "here".
+        static IResult SelectWorktree(SessionManager mgr, string id, SelectWorktreeRequest body)
+        {
+            if (mgr.GetAny(id) is not { } info) return Results.NotFound();
+            var byPath = !string.IsNullOrWhiteSpace(body.Path);
+            var byBranch = !string.IsNullOrWhiteSpace(body.Branch);
+            if (byPath && byBranch) return Results.BadRequest(new { error = "give a path or a branch, not both" });
+
+            string folder = "", branch;
+            if (byPath || byBranch)
+            {
+                var (tree, error) = GitService.FindWorktree(info.WorkingDirectory, body.Path, body.Branch);
+                if (tree is null) return Results.BadRequest(new { error });
+                if (!tree.IsCurrent) folder = tree.Path;
+                branch = tree.Branch ?? "";
+            }
+            else branch = GitService.Status(info.WorkingDirectory).Branch ?? "";
+
+            return mgr.SetGitWorktree(id, folder) is null
+                ? Results.NotFound()
+                : Results.Ok(new { id, worktree = folder.Length == 0 ? null : folder, branch });
+        }
+
         // Which session is calling an /api/self endpoint: the id it was launched with, once the hook
         // token it was launched with checks out. Null — and a logged line, because from inside a
         // session this otherwise reads as a bare 401 with nothing to chase — when either is missing or
@@ -1535,6 +1570,12 @@ internal static class Program
                 : Results.Ok(GitService.Log(info.WorkingDirectory, Math.Max(0, skip ?? 0), Math.Clamp(count ?? 50, 1, 200), @ref, all == true));
         });
 
+        // Which worktree's branch the session's header shows: another worktree of its repo, named
+        // by folder or by the branch checked out in it, or neither to go back to the session's own
+        // folder. The browser's picker uses this; /api/self/worktree below is the same from inside.
+        app.MapPost("/api/sessions/{id}/git/worktree", (string id, SelectWorktreeRequest body, SessionManager mgr) =>
+            SelectWorktree(mgr, id, body));
+
         // Local branches (with any other-worktree locations) for the history branch picker.
         app.MapGet("/api/sessions/{id}/git/branches", (string id, SessionManager mgr) =>
         {
@@ -1911,6 +1952,11 @@ internal record SelfOpenRequest(string? Path, string[]? Paths = null, bool Pin =
 /// session's tab bar — <c>Repo</c> ("owner/name"; absent for the session folder's own) and
 /// <c>Number</c>, or the PR's web address as <c>Url</c>, which names both.</summary>
 internal record SelfOpenPullRequest(string? Repo = null, int? Number = null, string? Url = null);
+/// <summary>Body for <c>POST /api/sessions/{id}/git/worktree</c> and <c>POST /api/self/worktree</c>:
+/// the worktree whose branch the session's header shows, named by its folder (<c>Path</c>, absolute
+/// or relative to the working directory) or by the branch checked out in it (<c>Branch</c>). Neither
+/// goes back to the session's own folder.</summary>
+internal record SelectWorktreeRequest(string? Path = null, string? Branch = null);
 // Name for a forked session; blank/absent falls back to a "<parent> (fork)" default server-side.
 internal record ForkRequest(string? Name);
 // `Dir` on the session file-mutation payloads names the write root: empty (the default) is the

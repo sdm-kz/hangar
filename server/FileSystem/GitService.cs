@@ -345,6 +345,31 @@ public static class GitService
         return Worktrees(workingDir).FirstOrDefault(w => SamePath(w.Path, dir))?.Path;
     }
 
+    /// <summary>
+    /// Find a worktree of the session's repo by its folder (absolute, or relative to the working dir)
+    /// or by the branch checked out in it -- one or the other. Returns the worktree, or an error that
+    /// says why there is none: not a repo, no such worktree, or a branch no worktree has checked out.
+    /// </summary>
+    public static (GitWorktree? Worktree, string? Error) FindWorktree(string workingDir, string? path, string? branch)
+    {
+        var trees = Worktrees(workingDir);
+        if (trees.Count == 0) return (null, "the session's folder is not a git repository");
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            string full;
+            try { full = Path.GetFullPath(Path.Combine(workingDir, path.Trim())); }
+            catch { return (null, "invalid path"); }
+            return trees.FirstOrDefault(w => SamePath(w.Path, full)) is { } byPath
+                ? (byPath, null)
+                : (null, $"{path.Trim()} is not a worktree of this repository");
+        }
+        var name = (branch ?? "").Trim();
+        if (name.StartsWith("refs/heads/", StringComparison.Ordinal)) name = name["refs/heads/".Length..];
+        return trees.FirstOrDefault(w => string.Equals(w.Branch, name, StringComparison.Ordinal)) is { } byBranch
+            ? (byBranch, null)
+            : (null, $"branch {name} is not checked out in any worktree of this repository");
+    }
+
     // A branch/ref token safe to hand to git as a revision: rules out option-injection ("-x") and
     // anything outside ordinary ref characters. Invalid input falls back to HEAD upstream.
     private static bool IsSafeRef(string? r) =>

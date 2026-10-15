@@ -631,6 +631,14 @@ export const api = {
   gitWorktrees(id: string): Promise<GitWorktree[]> {
     return request(`/api/sessions/${id}/git/worktrees`);
   },
+  // Which worktree's branch the session's header shows, by folder or by the branch checked out in
+  // it; neither goes back to the session's own folder. Stored in the session's UI bag.
+  selectGitWorktree(
+    id: string,
+    pick: { path?: string; branch?: string }
+  ): Promise<{ id: string; worktree: string | null; branch: string }> {
+    return request(`/api/sessions/${id}/git/worktree`, { method: "POST", body: JSON.stringify(pick) });
+  },
   // Commit history. scope: undefined/"HEAD" = the folder's current branch, "*" = all branches
   // (--all), or a branch name to view that specific branch (possibly living in another worktree).
   gitLog(id: string, skip = 0, count = 50, scope?: string): Promise<GitLog> {

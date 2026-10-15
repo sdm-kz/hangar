@@ -47,6 +47,7 @@ import {
 import { useSessionLayout, visibleRefs } from "@/lib/useSessionLayout";
 import { fileKind } from "@/lib/fileKind";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
+import { BranchBadge } from "./BranchBadge";
 import { FileBrowser, type FileBrowserHandle } from "./FileBrowser";
 import { LinkDialog } from "./LinkDialog";
 import { LinkIcon } from "./LinkIcon";
@@ -83,7 +84,6 @@ import {
   File as FileIcon,
   FileText,
   FolderTree,
-  GitBranch,
   GitFork,
   GitPullRequest,
   Image as ImageIcon,
@@ -640,13 +640,6 @@ export function SessionView({
     [session.id, openFile]
   );
 
-  // Open this session's git-changes view (from the header branch badge): the explorer, showing it.
-  const openChanges = useCallback(() => {
-    saveSessionUi(session.id, { changes: true });
-    fileBrowserRef.current?.showChanges();
-    update((l) => revealRef(l, FILES));
-  }, [session.id, update]);
-
   // A full file path clicked in the terminal: under the working directory it opens in this session's
   // Files panel, as a tab beside the terminal. Anywhere else -- another drive, a OneDrive folder, a
   // sibling repo -- the panel can't show it, so it opens in the app's own file viewer instead, the one
@@ -869,7 +862,57 @@ export function SessionView({
     };
   }, [session.id, closed, loadGit, bump]);
 
-  const changeCount = git?.isRepo ? Object.keys(git.files).length : 0;
+  // The worktree whose branch the header's badge names (see BranchBadge); "" = the session's own
+  // folder. It is the session's, not this browser's, so it follows a pick made anywhere -- another
+  // browser, or the session itself through /api/self/worktree.
+  const [gitRoot, setGitRoot] = useState(() => loadSessionUi(session.id).gitWorktree ?? "");
+  useEffect(() => {
+    const read = () => setGitRoot(loadSessionUi(session.id).gitWorktree ?? "");
+    read();
+    return subscribeSessionUi(session.id, read);
+  }, [session.id]);
+
+  // That worktree's status. Its folder isn't the one the session's watcher follows, so on top of the
+  // refreshes the session's own folder triggers it is polled, slowly, while the session runs.
+  const [rootGit, setRootGit] = useState<GitStatus | null>(null);
+  useEffect(() => {
+    setRootGit(null);
+    if (!gitRoot) return;
+    let stopped = false;
+    const load = () =>
+      api.gitStatus(session.id, gitRoot)
+        .then((st) => !stopped && setRootGit(st))
+        .catch(() => !stopped && setRootGit(null));
+    load();
+    const t = closed ? undefined : setInterval(load, 10_000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [session.id, gitRoot, closed, refreshToken]);
+
+  // What the badge shows: the picked worktree, or the session's own folder when nothing is picked or
+  // the pick no longer answers (a worktree removed since).
+  const badgeRoot = gitRoot && rootGit?.isRepo ? gitRoot : "";
+  const badgeGit = badgeRoot ? rootGit : git;
+  const changeCount = badgeGit?.isRepo ? Object.keys(badgeGit.files).length : 0;
+
+  // Open this session's git-changes view (from the header branch badge): the explorer, showing the
+  // changes of the root the badge names. A Files panel on screen moves there itself (it guards
+  // unsaved edits and leaves a linked folder's tabs behind on the way); one that isn't mounted yet is
+  // asked to as soon as it is, so the move goes through that same path rather than around it.
+  const [pendingChanges, setPendingChanges] = useState<string | null>(null);
+  const openChanges = useCallback(() => {
+    saveSessionUi(session.id, { changes: true });
+    if (fileBrowserRef.current) fileBrowserRef.current.showChanges(badgeRoot);
+    else setPendingChanges(badgeRoot);
+    update((l) => revealRef(l, FILES));
+  }, [session.id, update, badgeRoot]);
+  useEffect(() => {
+    if (pendingChanges === null || !fileBrowserRef.current) return;
+    fileBrowserRef.current.showChanges(pendingChanges);
+    setPendingChanges(null);
+  });
 
   /**
    * Close the session. It stays in the list, in its project and folder, and can be reopened — this
@@ -1252,20 +1295,14 @@ export function SessionView({
                 on the right. The folder takes only what is left over, and goes first. */}
             <div className="flex min-w-0 items-center gap-2 md:contents">
               {session.parentSessionId && <ForkedFrom parent={parent} name={session.parentName} onOpen={onSelectSession} />}
-              {git?.isRepo && git.branch && (
-                <button
-                  type="button"
-                  onClick={openChanges}
-                  className={cn(
-                    badgeVariants({ variant: "outline" }),
-                    "gap-1 transition-colors hover:bg-accent"
-                  )}
-                  title="Show git changes"
-                >
-                  <GitBranch className="size-3 shrink-0" />
-                  <span className="max-w-[6rem] truncate @min-[40rem]:max-w-[10rem]">{git.branch}</span>
-                  {changeCount > 0 && <span className="shrink-0 text-amber-500">·{changeCount}</span>}
-                </button>
+              {badgeGit?.isRepo && badgeGit.branch && (
+                <BranchBadge
+                  sessionId={session.id}
+                  branch={badgeGit.branch}
+                  changeCount={changeCount}
+                  worktree={badgeRoot}
+                  onOpenChanges={openChanges}
+                />
               )}
               <button
                 type="button"
