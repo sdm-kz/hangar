@@ -10,7 +10,7 @@ import { setFaviconStatus } from "@/lib/favicon";
 import { projectForDir } from "@/lib/projects";
 import type { Project, RemoteConnection, SessionInfo, ShellInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
-import { SessionSidebar, type SessionListTab, folderProgress, HeadingProgress } from "@/components/SessionSidebar";
+import { SessionSidebar, type SessionListTab, folderProgress } from "@/components/SessionSidebar";
 import { ACTIVITY_MARK, activityDetail as activityDetailOf, sessionActivity } from "@/components/ActivityMark";
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
@@ -28,7 +28,8 @@ import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
 import { Bot, Loader2, Menu, Plus } from "lucide-react";
-import { ShowSidebarButton, SessionsProgressContext } from "@/components/ShowSidebarButton";
+import { ShowSidebarButton } from "@/components/ShowSidebarButton";
+import { SessionsProgressContext, SessionsProgressMenu } from "@/components/SessionsProgressMenu";
 import { combineShellMarks, shellMark, useShellsSeen, type ShellActivity, type ShellMark } from "@/lib/shellActivity";
 
 type AuthStatus = "loading" | "authed" | "anon";
@@ -782,10 +783,21 @@ export function App() {
     clearMainArea();
   }, [clearMainArea]);
 
-  // The fraction on each view's "Show sidebar" button, and the sessions behind it for its dropdown.
+  // The running-sessions fraction and the sessions behind it, for its dropdown wherever it is worn.
   const sessionsProgress = useMemo(
-    () => ({ ...totalProgress, sessions, activityIds, activeId, onSelect: selectSession }),
-    [totalProgress, sessions, activityIds, activeId, selectSession]
+    () => ({
+      ...totalProgress,
+      sessions,
+      activityIds,
+      activeId,
+      // From the phone's drawer too, where picking a session puts the drawer away as a row does.
+      onSelect: (id: string) => {
+        selectSession(id);
+        setSidebarOpen(false);
+      },
+      onMarkSeen: markSeen,
+    }),
+    [totalProgress, sessions, activityIds, activeId, selectSession, markSeen]
   );
 
   // A shell picked in the Shells tab, brought forward wherever it lives: its session's tab bar, its
@@ -1010,271 +1022,271 @@ export function App() {
   );
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Covers the app while the server is replaced and restarted; reloads once the new build answers. */}
-      {installing && <UpdatingOverlay targetBuildId={installing} />}
-      {/* Sidebar: static column on desktop (collapsible + resizable), slide-over drawer on mobile. */}
-      <aside
-        className={cn("relative hidden shrink-0 border-r md:block", collapsed && "md:hidden")}
-        style={{ width: sidebarWidth }}
-      >
-        <AppSidebar
-          tab={sidebarTab}
-          onTabChange={setSidebarTab}
-          onNew={() => openNew()}
-          onCollapse={toggleCollapsed}
-          onLogout={onLogout}
-          update={<UpdateButton status={update} onApplying={setInstalling} />}
-          sessionsProgress={<HeadingProgress done={totalProgress.done} active={totalProgress.active} />}
-          sessions={
-            <SessionSidebar
-              sessions={sessions}
-              activityIds={activityIds}
-              shellMarks={shellMarks}
-              onMarkSeen={markSeen}
-              activeId={activeId}
-              onSelect={selectSession}
-              onNewInFolder={newSessionInFolder}
-              onRevealFolder={revealFolderInFiles}
-              onNewInProject={newSessionInProject}
-              onStop={onStop}
-              onRemove={onRemove}
-              onClone={cloneSession}
-              onFork={forkSession}
-              onRestore={onRestore}
-              onRename={onRename}
-              onRemoveSessions={onRemoveSessions}
-              recents={recents}
-              onReuse={reuseRecent}
-              onRemoveRecent={removeRecent}
-              onReorderRecent={reorderRecents}
-              onSearch={() => setSearching(true)}
-              onSchedules={(target) => setScheduling({ target: target ?? null })}
-              tab={listTab}
-              onTabChange={setListTab}
-              projects={projects}
-              onProjectsChange={setProjects}
-            />
-          }
-          files={
-            <FilesSidebar
-              openPath={openFile}
-              revealDir={revealDir}
-              revealToken={revealDirToken}
-              onOpenFile={openServerFile}
-              onNewSession={newSessionInFolder}
-              onOpenShell={openFolderShell}
-            />
-          }
-          shells={shellsPanel}
-          shellsCount={allShells?.length}
-        />
-        {/* Drag handle straddling the right border. */}
-        <div
-          onPointerDown={startResize}
-          onDoubleClick={() => {
-            setSidebarWidth(SIDEBAR_DEFAULT);
-            localStorage.setItem("claudeweb.sidebarWidth", String(SIDEBAR_DEFAULT));
+    // Feeds the Sessions tab's fraction and, with the sidebar collapsed, each view's "Show sidebar".
+    <SessionsProgressContext.Provider value={sessionsProgress}>
+      <div className="flex h-full overflow-hidden">
+        {/* Covers the app while the server is replaced and restarted; reloads once the new build answers. */}
+        {installing && <UpdatingOverlay targetBuildId={installing} />}
+        {/* Sidebar: static column on desktop (collapsible + resizable), slide-over drawer on mobile. */}
+        <aside
+          className={cn("relative hidden shrink-0 border-r md:block", collapsed && "md:hidden")}
+          style={{ width: sidebarWidth }}
+        >
+          <AppSidebar
+            tab={sidebarTab}
+            onTabChange={setSidebarTab}
+            onNew={() => openNew()}
+            onCollapse={toggleCollapsed}
+            onLogout={onLogout}
+            update={<UpdateButton status={update} onApplying={setInstalling} />}
+            sessionsProgress={<SessionsProgressMenu triggerClassName="px-1 py-0.5" />}
+            sessions={
+              <SessionSidebar
+                sessions={sessions}
+                activityIds={activityIds}
+                shellMarks={shellMarks}
+                onMarkSeen={markSeen}
+                activeId={activeId}
+                onSelect={selectSession}
+                onNewInFolder={newSessionInFolder}
+                onRevealFolder={revealFolderInFiles}
+                onNewInProject={newSessionInProject}
+                onStop={onStop}
+                onRemove={onRemove}
+                onClone={cloneSession}
+                onFork={forkSession}
+                onRestore={onRestore}
+                onRename={onRename}
+                onRemoveSessions={onRemoveSessions}
+                recents={recents}
+                onReuse={reuseRecent}
+                onRemoveRecent={removeRecent}
+                onReorderRecent={reorderRecents}
+                onSearch={() => setSearching(true)}
+                onSchedules={(target) => setScheduling({ target: target ?? null })}
+                tab={listTab}
+                onTabChange={setListTab}
+                projects={projects}
+                onProjectsChange={setProjects}
+              />
+            }
+            files={
+              <FilesSidebar
+                openPath={openFile}
+                revealDir={revealDir}
+                revealToken={revealDirToken}
+                onOpenFile={openServerFile}
+                onNewSession={newSessionInFolder}
+                onOpenShell={openFolderShell}
+              />
+            }
+            shells={shellsPanel}
+            shellsCount={allShells?.length}
+          />
+          {/* Drag handle straddling the right border. */}
+          <div
+            onPointerDown={startResize}
+            onDoubleClick={() => {
+              setSidebarWidth(SIDEBAR_DEFAULT);
+              localStorage.setItem("claudeweb.sidebarWidth", String(SIDEBAR_DEFAULT));
+            }}
+            title="Drag to resize · double-click to reset"
+            className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-primary/20 active:bg-primary/30"
+          />
+        </aside>
+
+        {sidebarOpen && (
+          <div className="fixed inset-0 z-40 md:hidden">
+            <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
+            <aside className="absolute left-0 top-0 h-full w-72 border-r border-popover-border shadow-xl">
+              <AppSidebar
+                tab={sidebarTab}
+                onTabChange={setSidebarTab}
+                onNew={() => {
+                  openNew();
+                  setSidebarOpen(false);
+                }}
+                onLogout={onLogout}
+                update={<UpdateButton status={update} onApplying={setInstalling} />}
+                sessionsProgress={<SessionsProgressMenu triggerClassName="px-1 py-0.5" />}
+                sessions={
+                  <SessionSidebar
+                    sessions={sessions}
+                    activityIds={activityIds}
+                    shellMarks={shellMarks}
+                    onMarkSeen={markSeen}
+                    activeId={activeId}
+                    onSelect={(id) => {
+                      selectSession(id);
+                      setSidebarOpen(false);
+                    }}
+                    onNewInFolder={newSessionInFolder}
+                    onRevealFolder={revealFolderInFiles}
+                    onNewInProject={newSessionInProject}
+                    onStop={onStop}
+                    onRemove={onRemove}
+                    onClone={cloneSession}
+                    onFork={forkSession}
+                    onRestore={onRestore}
+                    onRename={onRename}
+                    onRemoveSessions={onRemoveSessions}
+                    recents={recents}
+                    onReuse={reuseRecent}
+                    onRemoveRecent={removeRecent}
+                    onReorderRecent={reorderRecents}
+                    onSearch={() => setSearching(true)}
+                    onSchedules={(target) => setScheduling({ target: target ?? null })}
+                    tab={listTab}
+                    onTabChange={setListTab}
+                    projects={projects}
+                    onProjectsChange={setProjects}
+                  />
+                }
+                files={
+                  <FilesSidebar
+                    openPath={openFile}
+                    revealDir={revealDir}
+                    revealToken={revealDirToken}
+                    onOpenFile={openServerFile}
+                    onNewSession={newSessionInFolder}
+                    onOpenShell={openFolderShell}
+                  />
+                }
+                shells={shellsPanel}
+                shellsCount={allShells?.length}
+              />
+            </aside>
+          </div>
+        )}
+
+        <main className="min-w-0 flex-1">
+            {openFile ? (
+              <ServerFileViewer
+                path={openFile}
+                onClose={() => setOpenFile(null)}
+                onReveal={revealInFiles}
+                onToggleSidebar={() => setSidebarOpen(true)}
+                collapsed={collapsed}
+                onToggleCollapsed={toggleCollapsed}
+              />
+            ) : shellView ? (
+              <ShellView
+                target={shellView.target}
+                focus={shellView.focus}
+                onAddSsh={() => setSshDialog(true)}
+                shellsRev={shellsRev}
+                shellActivity={shellActivity}
+                shellsSeen={shellsSeen}
+                onShellSeen={markShellSeen}
+                onClose={closeShellView}
+                onReveal={revealFolderInFiles}
+                onToggleSidebar={() => setSidebarOpen(true)}
+                collapsed={collapsed}
+                onToggleCollapsed={toggleCollapsed}
+              />
+            ) : active ? (
+              <SessionView
+                // One instance per session: its tabs, its layout and its terminal all belong to the
+                // session, and a fresh view restores them from its saved state rather than chasing a
+                // switch through every hook.
+                key={active.id}
+                session={active}
+                // Compaction is work too: the postponed pool must not flush a stashed message into the
+                // terminal mid-compact, and a manual /compact leaves the hook-derived busy set empty.
+                busy={busyIds.has(active.id) || compactingIds.has(active.id)}
+                activity={activeActivity}
+                activityLabel={activeActivityLabel}
+                onTerminalShown={onTerminalShown}
+                parent={activeParent}
+                shellsRev={shellsRev}
+                revealShell={revealShell?.sessionId === active.id ? revealShell.focus : null}
+                onShellRevealed={clearRevealShell}
+                shellActivity={shellActivity}
+                shellsSeen={shellsSeen}
+                onShellSeen={markShellSeen}
+                onFork={forkSession}
+                onSelectSession={selectSession}
+                onToggleSidebar={() => setSidebarOpen(true)}
+                collapsed={collapsed}
+                onToggleCollapsed={toggleCollapsed}
+                onStopped={(info) => setSessions((prev) => prev.map((s) => (s.id === info.id ? info : s)))}
+                onReopen={() => void onRestore(active.id)}
+                onReopenWithOptions={() => reopenAsNew(active, presetFromSession(active))}
+                onRename={onRename}
+                onTerminalRename={onTerminalRename}
+                onTerminalColor={onTerminalColor}
+                onOpenServerFile={openServerFile}
+                project={projectForDir(active.workingDirectory, projects)}
+                onProjectsChange={setProjects}
+              />
+            ) : (
+              <EmptyState
+                onNew={() => openNew()}
+                onOpenSidebar={() => setSidebarOpen(true)}
+                collapsed={collapsed}
+                onToggleCollapsed={toggleCollapsed}
+                update={<UpdateButton status={update} onApplying={setInstalling} />}
+              />
+            )}
+        </main>
+
+        {sshDialog && (
+          <SshShellDialog projects={projects} onConnect={connectSsh} onClose={() => setSshDialog(false)} />
+        )}
+
+        {scheduling && (
+          <ScheduleDialog
+            sessions={sessions}
+            initialTarget={scheduling.target}
+            onClose={() => setScheduling(null)}
+          />
+        )}
+
+        {searching && (
+          <SessionSearchDialog
+            sessions={sessions}
+            recents={recents}
+            activeId={activeId}
+            // Opening a session from search also pulls the list back to the Sessions tab (so the row
+            // just picked is the one shown selected) and closes the mobile drawer.
+            onSelect={(id) => {
+              setListTab("sessions");
+              selectSession(id);
+              setSidebarOpen(false);
+            }}
+            onReuse={reuseRecent}
+            onClose={() => setSearching(false)}
+          />
+        )}
+
+        {forkFrom && (
+          <ForkSessionDialog
+            parent={forkFrom}
+            sessions={sessions}
+            onForked={onCreated}
+            onClose={() => setForkFromId(null)}
+          />
+        )}
+
+        <NewSessionDialog
+          open={newOpen}
+          onOpenChange={(o) => {
+            setNewOpen(o);
+            if (!o) {
+              setNewPreset(null); // clear preset so the next plain "New session" starts fresh
+              setNewProjectId(null);
+              setNewDefaultContinue(undefined);
+              setNewFromId(null); // dismissed without launching — keep the Restorable entry as it is
+            }
           }}
-          title="Drag to resize · double-click to reset"
-          className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-primary/20 active:bg-primary/30"
+          onCreated={onCreated}
+          preset={newPreset}
+          project={projects.find((p) => p.id === newProjectId) ?? null}
+          projects={projects}
+          defaultContinue={newDefaultContinue}
         />
-      </aside>
-
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
-          <aside className="absolute left-0 top-0 h-full w-72 border-r border-popover-border shadow-xl">
-            <AppSidebar
-              tab={sidebarTab}
-              onTabChange={setSidebarTab}
-              onNew={() => {
-                openNew();
-                setSidebarOpen(false);
-              }}
-              onLogout={onLogout}
-              update={<UpdateButton status={update} onApplying={setInstalling} />}
-              sessionsProgress={<HeadingProgress done={totalProgress.done} active={totalProgress.active} />}
-              sessions={
-                <SessionSidebar
-                  sessions={sessions}
-                  activityIds={activityIds}
-                  shellMarks={shellMarks}
-                  onMarkSeen={markSeen}
-                  activeId={activeId}
-                  onSelect={(id) => {
-                    selectSession(id);
-                    setSidebarOpen(false);
-                  }}
-                  onNewInFolder={newSessionInFolder}
-                  onRevealFolder={revealFolderInFiles}
-                  onNewInProject={newSessionInProject}
-                  onStop={onStop}
-                  onRemove={onRemove}
-                  onClone={cloneSession}
-                  onFork={forkSession}
-                  onRestore={onRestore}
-                  onRename={onRename}
-                  onRemoveSessions={onRemoveSessions}
-                  recents={recents}
-                  onReuse={reuseRecent}
-                  onRemoveRecent={removeRecent}
-                  onReorderRecent={reorderRecents}
-                  onSearch={() => setSearching(true)}
-                  onSchedules={(target) => setScheduling({ target: target ?? null })}
-                  tab={listTab}
-                  onTabChange={setListTab}
-                  projects={projects}
-                  onProjectsChange={setProjects}
-                />
-              }
-              files={
-                <FilesSidebar
-                  openPath={openFile}
-                  revealDir={revealDir}
-                  revealToken={revealDirToken}
-                  onOpenFile={openServerFile}
-                  onNewSession={newSessionInFolder}
-                  onOpenShell={openFolderShell}
-                />
-              }
-              shells={shellsPanel}
-              shellsCount={allShells?.length}
-            />
-          </aside>
-        </div>
-      )}
-
-      <main className="min-w-0 flex-1">
-        {/* Feeds the fraction on each view's "Show sidebar" button, since the tab showing it is hidden. */}
-        <SessionsProgressContext.Provider value={sessionsProgress}>
-          {openFile ? (
-            <ServerFileViewer
-              path={openFile}
-              onClose={() => setOpenFile(null)}
-              onReveal={revealInFiles}
-              onToggleSidebar={() => setSidebarOpen(true)}
-              collapsed={collapsed}
-              onToggleCollapsed={toggleCollapsed}
-            />
-          ) : shellView ? (
-            <ShellView
-              target={shellView.target}
-              focus={shellView.focus}
-              onAddSsh={() => setSshDialog(true)}
-              shellsRev={shellsRev}
-              shellActivity={shellActivity}
-              shellsSeen={shellsSeen}
-              onShellSeen={markShellSeen}
-              onClose={closeShellView}
-              onReveal={revealFolderInFiles}
-              onToggleSidebar={() => setSidebarOpen(true)}
-              collapsed={collapsed}
-              onToggleCollapsed={toggleCollapsed}
-            />
-          ) : active ? (
-            <SessionView
-              // One instance per session: its tabs, its layout and its terminal all belong to the
-              // session, and a fresh view restores them from its saved state rather than chasing a
-              // switch through every hook.
-              key={active.id}
-              session={active}
-              // Compaction is work too: the postponed pool must not flush a stashed message into the
-              // terminal mid-compact, and a manual /compact leaves the hook-derived busy set empty.
-              busy={busyIds.has(active.id) || compactingIds.has(active.id)}
-              activity={activeActivity}
-              activityLabel={activeActivityLabel}
-              onTerminalShown={onTerminalShown}
-              parent={activeParent}
-              shellsRev={shellsRev}
-              revealShell={revealShell?.sessionId === active.id ? revealShell.focus : null}
-              onShellRevealed={clearRevealShell}
-              shellActivity={shellActivity}
-              shellsSeen={shellsSeen}
-              onShellSeen={markShellSeen}
-              onFork={forkSession}
-              onSelectSession={selectSession}
-              onToggleSidebar={() => setSidebarOpen(true)}
-              collapsed={collapsed}
-              onToggleCollapsed={toggleCollapsed}
-              onStopped={(info) => setSessions((prev) => prev.map((s) => (s.id === info.id ? info : s)))}
-              onReopen={() => void onRestore(active.id)}
-              onReopenWithOptions={() => reopenAsNew(active, presetFromSession(active))}
-              onRename={onRename}
-              onTerminalRename={onTerminalRename}
-              onTerminalColor={onTerminalColor}
-              onOpenServerFile={openServerFile}
-              project={projectForDir(active.workingDirectory, projects)}
-              onProjectsChange={setProjects}
-            />
-          ) : (
-            <EmptyState
-              onNew={() => openNew()}
-              onOpenSidebar={() => setSidebarOpen(true)}
-              collapsed={collapsed}
-              onToggleCollapsed={toggleCollapsed}
-              update={<UpdateButton status={update} onApplying={setInstalling} />}
-            />
-          )}
-        </SessionsProgressContext.Provider>
-      </main>
-
-      {sshDialog && (
-        <SshShellDialog projects={projects} onConnect={connectSsh} onClose={() => setSshDialog(false)} />
-      )}
-
-      {scheduling && (
-        <ScheduleDialog
-          sessions={sessions}
-          initialTarget={scheduling.target}
-          onClose={() => setScheduling(null)}
-        />
-      )}
-
-      {searching && (
-        <SessionSearchDialog
-          sessions={sessions}
-          recents={recents}
-          activeId={activeId}
-          // Opening a session from search also pulls the list back to the Sessions tab (so the row
-          // just picked is the one shown selected) and closes the mobile drawer.
-          onSelect={(id) => {
-            setListTab("sessions");
-            selectSession(id);
-            setSidebarOpen(false);
-          }}
-          onReuse={reuseRecent}
-          onClose={() => setSearching(false)}
-        />
-      )}
-
-      {forkFrom && (
-        <ForkSessionDialog
-          parent={forkFrom}
-          sessions={sessions}
-          onForked={onCreated}
-          onClose={() => setForkFromId(null)}
-        />
-      )}
-
-      <NewSessionDialog
-        open={newOpen}
-        onOpenChange={(o) => {
-          setNewOpen(o);
-          if (!o) {
-            setNewPreset(null); // clear preset so the next plain "New session" starts fresh
-            setNewProjectId(null);
-            setNewDefaultContinue(undefined);
-            setNewFromId(null); // dismissed without launching — keep the Restorable entry as it is
-          }
-        }}
-        onCreated={onCreated}
-        preset={newPreset}
-        project={projects.find((p) => p.id === newProjectId) ?? null}
-        projects={projects}
-        defaultContinue={newDefaultContinue}
-      />
-    </div>
+      </div>
+    </SessionsProgressContext.Provider>
   );
 }
 

@@ -41,7 +41,7 @@ export function AppSidebar({
    * How much of everything running has finished, shown on the Sessions tab. The headings inside
    * answer that question a project or a folder at a time; this is the same answer for the lot, and
    * it is the one still readable with the list scrolled somewhere else entirely -- or sitting on the
-   * Files tab.
+   * Files tab. Its own button (see SessionsProgressMenu), so it sits beside the tab's, not inside.
    */
   sessionsProgress?: ReactNode;
 }) {
@@ -78,11 +78,11 @@ export function AppSidebar({
           )}
         </div>
       </div>
-      <div className="flex h-10 shrink-0 border-b">
-        <TabButton active={tab === "sessions"} onClick={() => onTabChange("sessions")}>
+      {/* Positioned so the Sessions fraction's list hangs from the row's left edge, inside the sidebar. */}
+      <div className="relative flex h-10 shrink-0 border-b">
+        <TabButton active={tab === "sessions"} onClick={() => onTabChange("sessions")} extra={sessionsProgress}>
           <MessagesSquare className="size-4" />
           Sessions
-          {sessionsProgress}
         </TabButton>
         <TabButton
           active={tab === "files"}
@@ -130,23 +130,31 @@ function TabButton({
   active,
   onClick,
   children,
+  extra,
   ...rest
 }: {
   active: boolean;
   onClick: () => void;
   children: ReactNode;
+  /** A control of its own beside the label. A button can't hold another, so the tab becomes a cell. */
+  extra?: ReactNode;
 } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  const look = cn(
+    "flex h-full min-w-0 flex-1 items-center justify-center gap-1.5 border-b-2 text-sm font-medium transition-colors",
+    active ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
+  );
+  if (extra)
+    return (
+      // The whole cell still switches tab; the label's button is what keyboard focus lands on.
+      <div onClick={onClick} className={cn(look, "cursor-pointer")}>
+        <button type="button" {...rest} className="flex min-w-0 items-center gap-1.5 rounded-sm">
+          {children}
+        </button>
+        {extra}
+      </div>
+    );
   return (
-    <button
-      onClick={onClick}
-      {...rest}
-      className={cn(
-        "flex h-full min-w-0 flex-1 items-center justify-center gap-1.5 border-b-2 text-sm font-medium transition-colors",
-        active
-          ? "border-primary text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground"
-      )}
-    >
+    <button onClick={onClick} {...rest} className={look}>
       {children}
     </button>
   );
