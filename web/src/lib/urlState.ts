@@ -11,8 +11,14 @@
 // is a pull request of the session's repo, reviewed in the pane (which one is the saved `pull`).
 export type TabName = "terminal" | "files" | "split" | "file" | "shell" | "link" | "pull";
 
-// Which sidebar tab is showing: the session list (default) or the server Files tree.
-export type PanelName = "sessions" | "files";
+// Which sidebar tab is showing: the session list (default), the server Files tree, or every shell.
+export type PanelName = "sessions" | "files" | "shells";
+
+/**
+ * The `shell` param's value when the main area shows the SSH connections opened outside a session
+ * rather than a folder's shells. Not a path anything could be: those are absolute.
+ */
+export const SSH_SHELLS = "@ssh";
 
 export interface UrlState {
   session?: string;
@@ -22,7 +28,8 @@ export interface UrlState {
   /** Absolute server path opened from the Files tree into the main area (distinct from `file`,
    *  which is a session-relative path in that session's own file browser). */
   open?: string;
-  /** Absolute server path of a folder whose shells fill the main area (from the Files tree). */
+  /** Absolute server path of a folder whose shells fill the main area (from the Files tree), or
+   *  SSH_SHELLS for the SSH connections. */
   shell?: string;
 }
 
@@ -105,7 +112,7 @@ export function readUrlState(): UrlState {
         ? tab
         : undefined,
     file: p.get("file") || undefined,
-    panel: panel === "files" || panel === "sessions" ? panel : undefined,
+    panel: panel === "files" || panel === "sessions" || panel === "shells" ? panel : undefined,
     open: p.get("open") || undefined,
     shell: p.get("shell") || undefined,
   };

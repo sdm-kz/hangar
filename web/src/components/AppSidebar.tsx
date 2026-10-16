@@ -2,16 +2,16 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { filesUrl } from "@/lib/urlState";
 import { Button } from "@/components/ui/button";
-import { Bot, FolderTree, LogOut, MessagesSquare, PanelLeftClose, Plus } from "lucide-react";
+import { Bot, FolderTree, LogOut, MessagesSquare, PanelLeftClose, Plus, SquareTerminal } from "lucide-react";
 import { NotificationToggle } from "./NotificationToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
-export type SidebarTab = "sessions" | "files";
+export type SidebarTab = "sessions" | "files" | "shells";
 
 /**
- * Wraps the left sidebar: the "Claude Web" header on top, then a two-tab switcher between the session
- * list and the server-filesystem Files tree, and a footer under both. Both panels are supplied by the
- * caller; only the active one is mounted.
+ * Wraps the left sidebar: the "Claude Web" header on top, then a three-tab switcher between the
+ * session list, the server-filesystem Files tree and every open shell, and a footer under all of
+ * them. The panels are supplied by the caller; only the active one is mounted.
  */
 export function AppSidebar({
   tab,
@@ -21,6 +21,8 @@ export function AppSidebar({
   onLogout,
   sessions,
   files,
+  shells,
+  shellsCount,
   update,
   sessionsProgress,
 }: {
@@ -31,6 +33,9 @@ export function AppSidebar({
   onLogout: () => void;
   sessions: ReactNode;
   files: ReactNode;
+  shells: ReactNode;
+  /** How many shells are open, on the Shells tab — they keep running whichever tab is showing. */
+  shellsCount?: number;
   update?: ReactNode; // "Update available" button; renders nothing unless a build is staged
   /**
    * How much of everything running has finished, shown on the Sessions tab. The headings inside
@@ -90,8 +95,15 @@ export function AppSidebar({
           <FolderTree className="size-4" />
           Files
         </TabButton>
+        <TabButton active={tab === "shells"} onClick={() => onTabChange("shells")}>
+          <SquareTerminal className="size-4" />
+          Shells
+          {!!shellsCount && (
+            <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{shellsCount}</span>
+          )}
+        </TabButton>
       </div>
-      <div className="min-h-0 flex-1">{tab === "sessions" ? sessions : files}</div>
+      <div className="min-h-0 flex-1">{tab === "sessions" ? sessions : tab === "files" ? files : shells}</div>
       {/* Under both tabs. A staged build's Update sits here rather than in the header, where it
           squeezed the title down to a letter on a narrow sidebar; its colour does the announcing. */}
       <div className="flex shrink-0 items-center gap-1 border-t px-2 py-1.5">
@@ -129,7 +141,7 @@ function TabButton({
       onClick={onClick}
       {...rest}
       className={cn(
-        "flex h-full flex-1 items-center justify-center gap-1.5 border-b-2 text-sm font-medium transition-colors",
+        "flex h-full min-w-0 flex-1 items-center justify-center gap-1.5 border-b-2 text-sm font-medium transition-colors",
         active
           ? "border-primary text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground"

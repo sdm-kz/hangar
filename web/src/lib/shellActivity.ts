@@ -7,7 +7,8 @@ import { useCallback, useEffect, useState } from "react";
  * running command is one you type into -- ssh, a REPL -- and has gone quiet, so it is waiting on you.
  */
 export interface ShellActivity {
-  sessionId: string;
+  /** Null for a shell that belongs to no session: a folder's, or an SSH connection. */
+  sessionId: string | null;
   running: boolean;
   startedAt: number;
   endedAt: number;
@@ -48,6 +49,56 @@ export function combineShellMarks(marks: Iterable<ShellMark | null>): ShellMark 
   const rank = { failed: 3, busy: 2, done: 1 } as const;
   for (const m of marks) if (m && (!best || rank[m] > rank[best])) best = m;
   return best;
+}
+
+// How long a finished command's shell has to be on screen before its mark counts as seen.
+const SHELL_SEEN_MS = 2000;
+
+/**
+ * A shell on screen is how its finished command gets seen, the way a session's own mark is cleared by
+ * having it on screen: after a beat, so the tick that drew you here is still there when you arrive,
+ * and only while the page is visible. `shownIds` are the shells on screen right now.
+ */
+export function useShownShellsSeen(
+  shownIds: readonly string[],
+  activity: Record<string, ShellActivity> | null | undefined,
+  seen: Record<string, number> | undefined,
+  onSeen: ((id: string, endedAt: number) => void) | undefined
+) {
+  const unseenShown = shownIds
+    .filter((id) => {
+      const m = shellMark(activity?.[id], seen?.[id]);
+      return m === "done" || m === "failed";
+    })
+    .map((id) => `${id}@${activity?.[id]?.endedAt}`)
+    .join(" ");
+  useEffect(() => {
+    if (!unseenShown || !onSeen) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      if (timer || document.visibilityState !== "visible") return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        for (const pair of unseenShown.split(" ")) {
+          const [id, at] = pair.split("@");
+          onSeen(id, Number(at));
+        }
+      }, SHELL_SEEN_MS);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") arm();
+      else {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    };
+    arm();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [unseenShown, onSeen]);
 }
 
 const SEEN_KEY = "claudeweb.shellsSeen";

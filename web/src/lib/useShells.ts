@@ -10,7 +10,7 @@
 // that predates a shell you just opened must not unmount its pane, a failed refetch must not close
 // every socket, and a reconciliation must not be mistaken for a preference worth saving.
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ShellInfo } from "@/types";
+import type { RemoteConnection, ShellInfo } from "@/types";
 import { api } from "./api";
 
 export interface ShellsHandle {
@@ -31,15 +31,17 @@ export interface ShellsHandle {
   activate: (id: string) => void;
   /** Show a tab that was remembered elsewhere — not reported, because nobody chose it just now. */
   restore: (id: string) => void;
-  /** Open another shell (a ShellOption id; "" lets the server pick its default). */
-  open: (shell: string) => Promise<ShellInfo | null>;
+  /** Open another shell (a ShellOption id; "" lets the server pick its default), or with `ssh`, a
+   *  connection to that host. */
+  open: (shell: string, ssh?: RemoteConnection) => Promise<ShellInfo | null>;
   /** Close a tab and kill what is running in it. */
   close: (id: string) => Promise<void>;
 }
 
 /**
  * @param owner Which shells these are: a session's (with the folder it runs in, which is where a new
- *              one opens) or a folder's. Changing it swaps the whole set.
+ *              one opens), a folder's, or the SSH connections opened outside any session. Changing
+ *              it swaps the whole set.
  * @param shellsRev The server's shell-set revision (from the events hub); any move re-reads.
  * @param initialActive The tab to show first, when one was remembered.
  * @param onActivate Called when the USER picks a tab, so a caller can persist that choice.
@@ -53,7 +55,7 @@ export function useShells({
   onActivate,
   onError,
 }: {
-  owner: { sessionId: string; workingDirectory: string } | { folder: string };
+  owner: { sessionId: string; workingDirectory: string } | { folder: string } | { ssh: true };
   shellsRev?: number;
   initialActive?: () => string | null;
   onActivate?: (id: string) => void;
@@ -62,11 +64,12 @@ export function useShells({
   const sessionId = "sessionId" in owner ? owner.sessionId : undefined;
   const folder = "folder" in owner ? owner.folder : undefined;
   // Where a new shell opens. For a folder that is the folder itself; for a session, the folder it
-  // works in — the same place its Claude terminal is running.
-  const cwd = "folder" in owner ? owner.folder : owner.workingDirectory;
+  // works in — the same place its Claude terminal is running. An SSH connection has none here: the
+  // server starts ssh in the home folder.
+  const cwd = "folder" in owner ? owner.folder : "workingDirectory" in owner ? owner.workingDirectory : "";
   // One string identifying the owner, so the effects below key on a value rather than an object
   // literal that is new on every render.
-  const ownerKey = sessionId ? `s:${sessionId}` : `f:${folder}`;
+  const ownerKey = sessionId ? `s:${sessionId}` : folder !== undefined ? `f:${folder}` : "ssh";
 
   const [shells, setShells] = useState<ShellInfo[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -106,7 +109,7 @@ export function useShells({
   useEffect(() => {
     let cancelled = false;
     api
-      .listShells(sessionId ? { sessionId } : { folder: folder! })
+      .listShells(sessionId ? { sessionId } : folder !== undefined ? { folder } : { ssh: true })
       .then((list) => {
         if (cancelled) return;
         pendingRef.current = pendingRef.current.filter((p) => !list.some((s) => s.id === p.id));
@@ -151,13 +154,14 @@ export function useShells({
   const restore = useCallback((id: string) => setActiveId(id), []);
 
   const open = useCallback(
-    async (shell: string) => {
+    async (shell: string, ssh?: RemoteConnection) => {
       setOpening(true);
       try {
         const created = await api.createShell({
           sessionId,
           workingDirectory: cwd,
           shell: shell || undefined,
+          ssh,
         });
         pendingRef.current = [...pendingRef.current.filter((p) => p.id !== created.id), created];
         setShells((prev) => [...prev.filter((s) => s.id !== created.id), created]);

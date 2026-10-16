@@ -3,7 +3,7 @@ import type { ShellInfo, ShellOption } from "@/types";
 import { api } from "@/lib/api";
 import { useDismissable } from "@/lib/useDismissable";
 import { cn } from "@/lib/utils";
-import { ChevronDown, Loader2, Plus, SquareTerminal, Terminal, X } from "lucide-react";
+import { ChevronDown, Loader2, Plus, Server, SquareTerminal, Terminal, X } from "lucide-react";
 
 // Which shell a new tab opens with, remembered per browser. The server has a sensible default
 // (newest PowerShell present), but someone who works in WSL should get WSL on the next click
@@ -31,7 +31,7 @@ function rememberShell(id: string) {
  * shell nobody anticipated (a future entry in the catalog) still gets the generic terminal.
  */
 export function shellIcon(kind: string) {
-  return kind === "cmd" ? SquareTerminal : Terminal;
+  return kind === "cmd" ? SquareTerminal : kind === "ssh" ? Server : Terminal;
 }
 
 /**
@@ -95,6 +95,8 @@ export function ShellTabStrip({
   onActivate,
   onOpen,
   onClose,
+  onAdd,
+  addTitle,
   className,
 }: {
   shells: ShellInfo[];
@@ -106,6 +108,10 @@ export function ShellTabStrip({
   onActivate: (id: string) => void;
   onOpen: (shell: string) => void;
   onClose: (id: string) => void;
+  // Replaces what the "+" does (and drops the chevron's shell menu): the SSH view adds a connection,
+  // not a local shell.
+  onAdd?: () => void;
+  addTitle?: string;
   // Overrides the default right-alignment — the folder view has nothing else in the row.
   className?: string;
 }) {
@@ -189,7 +195,7 @@ export function ShellTabStrip({
               role="tab"
               aria-selected={active}
               data-current={current}
-              title={`${s.label} — ${s.workingDirectory}${s.running ? "" : " (exited)"}`}
+              title={`${s.label} — ${s.remote ?? s.workingDirectory}${s.running ? "" : " (exited)"}`}
               onClick={() => onActivate(s.id)}
               onMouseDown={(e) => {
                 if (e.button === 1) {
@@ -234,23 +240,28 @@ export function ShellTabStrip({
       <div ref={menuRef} className="relative flex shrink-0 items-stretch">
         <button
           type="button"
-          onClick={() => open()}
+          onClick={() => (onAdd ? onAdd() : open())}
           disabled={busy}
-          title="Open a shell in this session's folder"
-          className="flex items-center pl-2 pr-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
+          title={addTitle ?? "Open a shell in this session's folder"}
+          className={cn(
+            "flex items-center pl-2 text-muted-foreground hover:text-foreground disabled:opacity-50",
+            onAdd ? "pr-2" : "pr-1"
+          )}
         >
           {busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
         </button>
-        <button
-          type="button"
-          onClick={() => setMenuOpen((o) => !o)}
-          title="Choose a shell"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          className="flex items-center pr-2 text-muted-foreground hover:text-foreground"
-        >
-          <ChevronDown className="size-3.5" />
-        </button>
+        {!onAdd && (
+          <button
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            title="Choose a shell"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="flex items-center pr-2 text-muted-foreground hover:text-foreground"
+          >
+            <ChevronDown className="size-3.5" />
+          </button>
+        )}
         {menuOpen && (
           <div
             role="menu"

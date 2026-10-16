@@ -591,10 +591,11 @@ internal static class Program
         }));
 
         // The open shells, narrowed to one session's — or, with ?folder=, to the folder shells opened
-        // from the Files tree there. Server-side, so every browser looking at the same thing sees the
-        // same tabs.
-        app.MapGet("/api/shells", (string? sessionId, string? folder, Sessions.Shells.ShellManager shells) =>
-            Results.Ok(shells.List(sessionId, folder)));
+        // from the Files tree there, or with ?ssh=true to the SSH connections opened outside a session.
+        // With none of them, every shell (the sidebar's Shells tab). Server-side, so every browser
+        // looking at the same thing sees the same tabs.
+        app.MapGet("/api/shells", (string? sessionId, string? folder, bool? ssh, Sessions.Shells.ShellManager shells) =>
+            Results.Ok(shells.List(sessionId, folder, ssh == true)));
 
         app.MapPost("/api/shells", async (Sessions.Shells.CreateShellRequest req, Sessions.Shells.ShellManager shells) =>
         {

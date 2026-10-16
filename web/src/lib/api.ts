@@ -196,14 +196,25 @@ export const api = {
   },
   // The shells open for a session, or the folder shells opened from the Files tree in a folder.
   // Server-side, so every browser looking at the same thing sees the same tabs.
-  listShells(owner: { sessionId: string } | { folder: string }): Promise<ShellInfo[]> {
-    const q =
-      "sessionId" in owner
-        ? `sessionId=${encodeURIComponent(owner.sessionId)}`
-        : `folder=${encodeURIComponent(owner.folder)}`;
-    return request(`/api/shells?${q}`);
+  // With no owner, every shell there is: the sessions', the folders' and the SSH connections.
+  listShells(owner?: { sessionId: string } | { folder: string } | { ssh: true }): Promise<ShellInfo[]> {
+    const q = !owner
+      ? ""
+      : "sessionId" in owner
+        ? `?sessionId=${encodeURIComponent(owner.sessionId)}`
+        : "folder" in owner
+          ? `?folder=${encodeURIComponent(owner.folder)}`
+          : "?ssh=true";
+    return request(`/api/shells${q}`);
   },
-  createShell(req: { sessionId?: string; workingDirectory: string; shell?: string }): Promise<ShellInfo> {
+  // With `ssh`, the tab runs ssh to that connection rather than a local shell: `shell` is ignored,
+  // and a blank working directory means the server account's home.
+  createShell(req: {
+    sessionId?: string;
+    workingDirectory: string;
+    shell?: string;
+    ssh?: RemoteConnection;
+  }): Promise<ShellInfo> {
     return request("/api/shells", { method: "POST", body: JSON.stringify(req) });
   },
   // Closes the tab and kills what is running in it — there is no detach for a shell.

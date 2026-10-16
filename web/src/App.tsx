@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { api, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
 import { presetFromSession, type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
-import { readUrlState, patchUrlState } from "@/lib/urlState";
+import { readUrlState, patchUrlState, SSH_SHELLS } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
 import { failureLine, useDoneSessions, type ActivityDetail } from "@/lib/sessionActivity";
 import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
 import { projectForDir } from "@/lib/projects";
-import type { Project, SessionInfo, UpdateStatus } from "@/types";
+import type { Project, RemoteConnection, SessionInfo, ShellInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
 import { SessionSidebar, type SessionListTab, folderProgress, HeadingProgress } from "@/components/SessionSidebar";
 import { ACTIVITY_MARK, activityDetail as activityDetailOf, sessionActivity } from "@/components/ActivityMark";
@@ -16,7 +16,9 @@ import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
 import { FilesSidebar } from "@/components/FilesSidebar";
 import { ServerFileViewer } from "@/components/ServerFileViewer";
-import { ShellView } from "@/components/ShellView";
+import { ShellView, type ShellFocus, type ShellTarget } from "@/components/ShellView";
+import { ShellsPanel, useAllShells } from "@/components/ShellsPanel";
+import { SshShellDialog } from "@/components/SshShellDialog";
 import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
 import { ForkSessionDialog } from "@/components/ForkSessionDialog";
@@ -70,15 +72,21 @@ export function App() {
   // Latched once an update starts installing, so the overlay survives the server going away — the
   // hub and the polls both fail while it's down, and this is what says "that's expected, wait".
   const [installing, setInstalling] = useState<string | null>(null); // build id being installed
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() =>
-    readUrlState().panel === "files" ? "files" : "sessions"
-  );
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => readUrlState().panel ?? "sessions");
   const [listTab, setListTab] = useState<SessionListTab>("sessions"); // Sessions vs Recent list
   // Server file open in the main area, restored from the URL so a refresh comes back to it.
   const [openFile, setOpenFile] = useState<string | null>(() => readUrlState().open ?? null);
-  // Folder whose shells fill the main area, opened from the Files tree. Restored from the URL like
-  // openFile is, and mutually exclusive with it — each takes the main area from the other.
-  const [shellFolder, setShellFolder] = useState<string | null>(() => readUrlState().shell ?? null);
+  // Shells filling the main area: a folder's (opened from the Files tree or the Shells tab), or the
+  // SSH connections. Restored from the URL like openFile is, and mutually exclusive with it — each
+  // takes the main area from the other. `focus` is a tab to bring forward, picked in the Shells tab.
+  const [shellView, setShellView] = useState<{ target: ShellTarget; focus: ShellFocus | null } | null>(() => {
+    const v = readUrlState().shell;
+    return v ? { target: v === SSH_SHELLS ? { ssh: true } : { folder: v }, focus: null } : null;
+  });
+  // A session's shell picked in the Shells tab, to be brought forward in that session's tab bar.
+  const [revealShell, setRevealShell] = useState<{ sessionId: string; focus: ShellFocus } | null>(null);
+  const focusSeq = useRef(0);
+  const [sshDialog, setSshDialog] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
@@ -229,7 +237,7 @@ export function App() {
 
   // Mirror the sidebar tab so a refresh (or a new-tab deep link) restores the Files view.
   useEffect(() => {
-    patchUrlState({ panel: sidebarTab === "files" ? "files" : undefined });
+    patchUrlState({ panel: sidebarTab === "sessions" ? undefined : sidebarTab });
   }, [sidebarTab]);
 
   // Mirror the server file open in the main area, so a refresh reopens it (and keeps it highlighted
@@ -238,10 +246,11 @@ export function App() {
     patchUrlState({ open: openFile ?? undefined });
   }, [openFile]);
 
-  // Same for a folder's shells, so a refresh comes back to the shell that was open.
+  // Same for a folder's shells (or the SSH ones), so a refresh comes back to the shell that was open.
+  const shellParam = shellView ? ("folder" in shellView.target ? shellView.target.folder : SSH_SHELLS) : undefined;
   useEffect(() => {
-    patchUrlState({ shell: shellFolder ?? undefined });
-  }, [shellFolder]);
+    patchUrlState({ shell: shellParam });
+  }, [shellParam]);
 
   // Reflect the active session in the page title so browser tabs are tellable apart.
   useEffect(() => {
@@ -267,7 +276,7 @@ export function App() {
     failedIds,
     // A file or a folder's shells take the main area from the session pane without touching the
     // selection, so `activeId` alone would clear the mark of a session you never actually saw.
-    shownSessionId: openFile || shellFolder || terminalShownId !== activeId ? null : activeId,
+    shownSessionId: openFile || shellView || terminalShownId !== activeId ? null : activeId,
     streamUp,
   });
   // One bag for the sets, so the sidebar takes a single prop instead of five parallel ones.
@@ -289,7 +298,7 @@ export function App() {
   const shellMarks = useMemo(() => {
     const bySession = new Map<string, (ShellMark | null)[]>();
     for (const [id, a] of Object.entries(shellActivity ?? {}))
-      bySession.set(a.sessionId, [...(bySession.get(a.sessionId) ?? []), shellMark(a, shellsSeen[id])]);
+      if (a.sessionId) bySession.set(a.sessionId, [...(bySession.get(a.sessionId) ?? []), shellMark(a, shellsSeen[id])]);
     const out = new Map<string, ShellMark>();
     for (const [sid, marks] of bySession) {
       const m = combineShellMarks(marks);
@@ -297,6 +306,8 @@ export function App() {
     }
     return out;
   }, [shellActivity, shellsSeen]);
+  // Every shell there is, for the Shells tab and the count on it.
+  const allShells = useAllShells(shellsRev, auth === "authed");
 
   // How much of everything running has finished — the count the headings carry, taken over the whole
   // list. It rides the Sessions tab, which is where it stays readable with the list scrolled away
@@ -668,7 +679,7 @@ export function App() {
   // opened from the Files tree and neither survives the other, or a session being selected.
   const clearMainArea = useCallback(() => {
     setOpenFile(null);
-    setShellFolder(null);
+    setShellView(null);
   }, []);
 
   // Where a notification's click lands: the session it was about, with whatever had the main area
@@ -683,7 +694,7 @@ export function App() {
 
   // Open a server file (from the Files tab) in the main content area; close the mobile drawer.
   const openServerFile = useCallback((path: string) => {
-    setShellFolder(null);
+    setShellView(null);
     setOpenFile(path);
     setSidebarOpen(false);
   }, []);
@@ -691,7 +702,7 @@ export function App() {
   // Open a folder's shells (the terminal action on a Files-tree folder) in the main content area.
   const openFolderShell = useCallback((path: string) => {
     setOpenFile(null);
-    setShellFolder(path);
+    setShellView({ target: { folder: path }, focus: null });
     setSidebarOpen(false);
   }, []);
 
@@ -770,6 +781,40 @@ export function App() {
     setActiveId(id);
     clearMainArea();
   }, [clearMainArea]);
+
+  // A shell picked in the Shells tab, brought forward wherever it lives: its session's tab bar, its
+  // folder's shell view, or the SSH view.
+  const openShell = useCallback(
+    (s: ShellInfo) => {
+      const focus = { id: s.id, n: ++focusSeq.current };
+      if (s.sessionId) {
+        setActiveId(s.sessionId);
+        clearMainArea();
+        setRevealShell({ sessionId: s.sessionId, focus });
+      } else {
+        setOpenFile(null);
+        setShellView({ target: s.kind === "ssh" ? { ssh: true } : { folder: s.workingDirectory }, focus });
+      }
+      setSidebarOpen(false);
+    },
+    [clearMainArea]
+  );
+
+  const closeShellView = useCallback(() => setShellView(null), []);
+  // Done with once the session has shown it: SessionView remounts on every return to the session,
+  // and a request still standing would drag it back to that shell each time.
+  const clearRevealShell = useCallback(() => setRevealShell(null), []);
+
+  // Open an SSH connection as a terminal (the Shells tab, or the SSH view's "+") and show it. A
+  // failure is thrown back to the dialog, which says why and stays open.
+  const connectSsh = useCallback(
+    async (connection: RemoteConnection) => {
+      const created = await api.createShell({ workingDirectory: "", ssh: connection });
+      setSshDialog(false);
+      openShell(created);
+    },
+    [openShell]
+  );
 
   async function removeRecent(r: RecentSession) {
     const next = await api.removeRecentSession(r).catch(() => null);
@@ -937,6 +982,27 @@ export function App() {
     return <Login onSuccess={() => setAuth("authed")} />;
   }
 
+  // The Shells tab, for both the desktop column and the mobile drawer.
+  const shellsPanel = (
+    <ShellsPanel
+      shells={allShells}
+      sessions={sessions}
+      shellActivity={shellActivity}
+      shellsSeen={shellsSeen}
+      shown={shellView ? shellView.target : active && !openFile ? { sessionId: active.id } : null}
+      defaultFolder={
+        shellView && "folder" in shellView.target ? shellView.target.folder : active && !openFile ? active.workingDirectory : undefined
+      }
+      onOpen={openShell}
+      onOpenFolder={openFolderShell}
+      onSelectSession={(id) => {
+        selectSession(id);
+        setSidebarOpen(false);
+      }}
+      onNewSsh={() => setSshDialog(true)}
+    />
+  );
+
   return (
     <div className="flex h-full overflow-hidden">
       {/* Covers the app while the server is replaced and restarted; reloads once the new build answers. */}
@@ -994,6 +1060,8 @@ export function App() {
               onOpenShell={openFolderShell}
             />
           }
+          shells={shellsPanel}
+          shellsCount={allShells?.length}
         />
         {/* Drag handle straddling the right border. */}
         <div
@@ -1064,6 +1132,8 @@ export function App() {
                   onOpenShell={openFolderShell}
                 />
               }
+              shells={shellsPanel}
+              shellsCount={allShells?.length}
             />
           </aside>
         </div>
@@ -1081,11 +1151,16 @@ export function App() {
               collapsed={collapsed}
               onToggleCollapsed={toggleCollapsed}
             />
-          ) : shellFolder ? (
+          ) : shellView ? (
             <ShellView
-              folder={shellFolder}
+              target={shellView.target}
+              focus={shellView.focus}
+              onAddSsh={() => setSshDialog(true)}
               shellsRev={shellsRev}
-              onClose={() => setShellFolder(null)}
+              shellActivity={shellActivity}
+              shellsSeen={shellsSeen}
+              onShellSeen={markShellSeen}
+              onClose={closeShellView}
               onReveal={revealFolderInFiles}
               onToggleSidebar={() => setSidebarOpen(true)}
               collapsed={collapsed}
@@ -1106,6 +1181,8 @@ export function App() {
               onTerminalShown={onTerminalShown}
               parent={activeParent}
               shellsRev={shellsRev}
+              revealShell={revealShell?.sessionId === active.id ? revealShell.focus : null}
+              onShellRevealed={clearRevealShell}
               shellActivity={shellActivity}
               shellsSeen={shellsSeen}
               onShellSeen={markShellSeen}
@@ -1135,6 +1212,10 @@ export function App() {
           )}
         </SessionsProgressContext.Provider>
       </main>
+
+      {sshDialog && (
+        <SshShellDialog projects={projects} onConnect={connectSsh} onClose={() => setSshDialog(false)} />
+      )}
 
       {scheduling && (
         <ScheduleDialog

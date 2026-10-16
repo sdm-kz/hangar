@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using ClaudeWeb.Contract;
 
 namespace ClaudeWeb.Server.Sessions.Shells;
 
@@ -143,6 +144,87 @@ public static class ShellCatalog
             default:
                 return new ShellLaunch(option.Detail, Array.Empty<string>(), env);
         }
+    }
+
+    // ---- SSH ------------------------------------------------------------------------------------
+
+    /// <summary>The <see cref="ShellOption.Id"/> an SSH shell carries; it is never in <see cref="Available"/>.</summary>
+    public const string SshId = "ssh";
+
+    /// <summary>
+    /// The ssh client to run: whatever is on PATH, else Windows' own OpenSSH, else the one Git ships.
+    /// Null when the machine has none.
+    /// </summary>
+    public static string? SshPath => FirstExisting(
+        Which("ssh.exe"),
+        Path.Combine(System32, "OpenSSH", "ssh.exe"),
+        Which("git.exe") is { } git && Path.GetDirectoryName(Path.GetDirectoryName(git)) is { } root
+            ? Path.Combine(root, "usr", "bin", "ssh.exe")
+            : null,
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "usr", "bin", "ssh.exe"));
+
+    /// <summary>
+    /// A connection's host, user and port as typed, with the shorthands anyone who uses ssh will type
+    /// ("user@host" in the host field, "host:2222") pulled apart the way the remote files tab does.
+    /// </summary>
+    private static (string Host, string? User, int Port) SplitTarget(RemoteConnection c)
+    {
+        var host = c.Host.Trim();
+        var user = string.IsNullOrWhiteSpace(c.User) ? null : c.User.Trim();
+        var at = host.LastIndexOf('@');
+        if (at > 0)
+        {
+            user ??= host[..at];
+            host = host[(at + 1)..];
+        }
+        var port = c.Port;
+        // Not a bare IPv6 literal, which is full of colons — only one in brackets can carry a port.
+        var m = System.Text.RegularExpressions.Regex.Match(host, @"^(?:\[([^\]]+)\]|([^:\[\]]+)):(\d{1,5})$");
+        if (m.Success)
+        {
+            host = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
+            if (port <= 0) port = int.Parse(m.Groups[3].Value);
+        }
+        return (host.Trim('[', ']'), user, port);
+    }
+
+    /// <summary>Where a connection goes, for a tab's tooltip: "user@host:port", each part only when given.</summary>
+    public static string SshTarget(RemoteConnection c)
+    {
+        var (host, user, port) = SplitTarget(c);
+        // An IPv6 literal goes back in brackets, or its port reads as one more group of it.
+        if (host.Contains(':')) host = $"[{host}]";
+        return $"{(user is null ? "" : user + "@")}{host}{(port > 0 ? ":" + port : "")}";
+    }
+
+    /// <summary>
+    /// The ssh command line for a connection. What is left blank is left to ssh, so the server
+    /// user's <c>~/.ssh/config</c> fills it in exactly as it would in a terminal of their own.
+    /// </summary>
+    public static ShellLaunch LaunchSsh(string exe, RemoteConnection c)
+    {
+        var (host, user, port) = SplitTarget(c);
+        var keyPath = c.Auth == "key" && !string.IsNullOrWhiteSpace(c.KeyPath) ? c.KeyPath.Trim() : null;
+        // Whatever reaches ssh as an option is a way to run a command on this machine
+        // (`-oProxyCommand=…`), so nothing typed here may become one. A leading dash is the obvious
+        // way; the less obvious ones belong to Git's MSYS ssh, which splits its command line on
+        // newlines too, takes ' as a quote and expands wildcards — so none of that is let through.
+        if (host.Length == 0 || host.StartsWith('-') || host.Any(ch => char.IsWhiteSpace(ch) || char.IsControl(ch) || "'\"*?[]".Contains(ch)))
+            throw new ArgumentException($"Not a host name: {c.Host}");
+        if (user is not null && (user.StartsWith('-') || user.Any(ch => char.IsWhiteSpace(ch) || char.IsControl(ch) || "'\"*?[]".Contains(ch))))
+            throw new ArgumentException($"Not a user name: {user}");
+        if (keyPath is not null && keyPath.Any(char.IsControl))
+            throw new ArgumentException($"Not a key file path: {keyPath}");
+        if (port > 65535) throw new ArgumentException($"Port {port} is out of range.");
+
+        var args = new List<string>();
+        if (port > 0) args.AddRange(["-p", port.ToString()]);
+        if (user is not null) args.AddRange(["-l", Quote(user)]);
+        if (keyPath is not null) args.AddRange(["-i", Quote(keyPath)]);
+        // The end of the options, so nothing from the host on can be read as one.
+        args.Add("--");
+        args.Add(Quote(host));
+        return new ShellLaunch(exe, args, new Dictionary<string, string> { ["TERM"] = "xterm-256color" });
     }
 
     /// <summary>

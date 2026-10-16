@@ -469,6 +469,8 @@ export interface ShellInfo {
   createdAt: string;
   /** False once the shell process has ended; the tab stays until it is closed. */
   running: boolean;
+  /** For an SSH shell (kind "ssh"), where it is connected to: "user@host:port". */
+  remote?: string | null;
 }
 
 /**

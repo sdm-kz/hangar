@@ -54,13 +54,14 @@ import { LinkIcon } from "./LinkIcon";
 import { PullRequestView } from "./PullRequestView";
 import { PullPicker } from "./PullTabStrip";
 import { shellIcon, shellTabLabel } from "./ShellTabStrip";
+import type { ShellFocus } from "./ShellView";
 import { WebLinkView } from "./WebLinkView";
 import { RemoteFilesView } from "./RemoteFilesView";
 import { RemoteConnectDialog } from "./RemoteConnect";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { PostponedPool } from "./PostponedPool";
 import { HeadingActivityMark, type Activity } from "./ActivityMark";
-import { shellMark, shellMarkLabel, type ShellActivity } from "@/lib/shellActivity";
+import { shellMark, shellMarkLabel, useShownShellsSeen, type ShellActivity } from "@/lib/shellActivity";
 import { RenameField } from "./RenameField";
 import { PaneGroups, type DropZone, type PaneTab } from "./PaneGroups";
 import { GroupAddMenu } from "./GroupAddMenu";
@@ -109,8 +110,6 @@ import { writeToClipboard } from "@/lib/clipboard";
 // Wide enough for groups side by side — the width the app has always switched to its desktop
 // layout at. Narrower, the groups fold into a single strip and one of them is drawn.
 const WIDE_QUERY = "(min-width: 48rem)";
-// How long a shell tab has to be on screen before its finished command counts as seen.
-const SHELL_SEEN_MS = 2000;
 
 function useWide(): boolean {
   const [wide, setWide] = useState(() => window.matchMedia(WIDE_QUERY).matches);
@@ -275,6 +274,8 @@ export function SessionView({
   onTerminalShown,
   parent,
   shellsRev,
+  revealShell,
+  onShellRevealed,
   shellActivity,
   shellsSeen,
   onShellSeen,
@@ -309,6 +310,9 @@ export function SessionView({
   // The server's shell-set revision, pushed on the events hub. When it moves, this session re-reads
   // its own shell tabs — that is how a shell opened (or closed) on another device shows up here.
   shellsRev?: number;
+  // One of this session's shells to bring forward once its tab exists (picked in the Shells tab).
+  revealShell?: ShellFocus | null;
+  onShellRevealed?: () => void;
   // What the commands in every session shell are doing (the hub's snapshot), which finished ones this
   // browser has looked at, and how to say it has looked at another.
   shellActivity?: Record<string, ShellActivity> | null;
@@ -414,46 +418,16 @@ export function SessionView({
   );
   const groups = groupsOf(layout.root);
 
-  // A shell tab on screen is how its finished command gets seen, the way the session's own mark is
-  // cleared by having it on screen: after a beat, so the tick that drew you here is still there when
-  // you arrive, and only while the page is visible.
-  const unseenShown = groups
-    .map((g) => g.active)
-    .filter((ref): ref is PaneRef => !!ref && paneKind(ref) === "shell")
-    .map((ref) => paneArg(ref))
-    .filter((id) => {
-      const m = shellMark(shellActivity?.[id], shellsSeen?.[id]);
-      return m === "done" || m === "failed";
-    })
-    .map((id) => `${id}@${shellActivity?.[id]?.endedAt}`)
-    .join(" ");
-  useEffect(() => {
-    if (!unseenShown || !onShellSeen) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const arm = () => {
-      if (timer || document.visibilityState !== "visible") return;
-      timer = setTimeout(() => {
-        timer = undefined;
-        for (const pair of unseenShown.split(" ")) {
-          const [id, at] = pair.split("@");
-          onShellSeen(id, Number(at));
-        }
-      }, SHELL_SEEN_MS);
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") arm();
-      else {
-        clearTimeout(timer);
-        timer = undefined;
-      }
-    };
-    arm();
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [unseenShown, onShellSeen]);
+  // A shell tab on screen is how its finished command gets seen (see useShownShellsSeen).
+  useShownShellsSeen(
+    groups
+      .map((g) => g.active)
+      .filter((ref): ref is PaneRef => !!ref && paneKind(ref) === "shell")
+      .map((ref) => paneArg(ref)),
+    shellActivity,
+    shellsSeen,
+    onShellSeen
+  );
 
   // Groups in the order they last had focus: a file opened from the tree or the terminal goes to the
   // group most recently used for reading files.
@@ -723,6 +697,21 @@ export function SessionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [update, fileTabs.activate, shells.activate, links.activate, pulls.activate]
   );
+
+  // A shell picked in the Shells tab: shown, as a click on its tab would, once the layout has placed
+  // it — on a fresh view that is a beat after the shell list arrives. Once per request, so a later
+  // click elsewhere is not dragged back to it.
+  const revealed = useRef<ShellFocus | null>(null);
+  const onShellRevealedRef = useRef(onShellRevealed);
+  onShellRevealedRef.current = onShellRevealed;
+  useEffect(() => {
+    if (!revealShell || revealed.current === revealShell) return;
+    const ref = shellRef(revealShell.id);
+    if (!groupOf(layout, ref)) return;
+    revealed.current = revealShell;
+    void activateTab(ref);
+    onShellRevealedRef.current?.();
+  }, [revealShell, layout, activateTab]);
 
   const closeTab = useCallback(
     (ref: PaneRef) => {

@@ -47,6 +47,13 @@ const AUTHS: { id: RemoteAuth; label: string; hint: string }[] = [
   { id: "agent", label: "SSH agent", hint: "Keys held by the OpenSSH agent (or Pageant) on the server machine." },
 ];
 
+// What each choice means when ssh runs in a terminal: it does its own asking there.
+const TERMINAL_HINTS: Record<RemoteAuth, string> = {
+  password: "ssh asks for it in the terminal.",
+  key: "A private key on the server machine. ssh asks for its passphrase in the terminal if it has one.",
+  agent: "Keys held by the OpenSSH agent, and the ones in ~/.ssh — ssh falls back to a password if none fits.",
+};
+
 /**
  * The parameters of a connection — everything but the secret. Shared by the connect dialog and the
  * project's Connections tab, so a saved connection is edited with exactly the fields it is made with.
@@ -55,17 +62,23 @@ export function RemoteConnectionFields({
   value,
   onChange,
   idPrefix,
+  terminal = false,
 }: {
   value: RemoteConnection;
   onChange: (next: RemoteConnection) => void;
   idPrefix: string;
+  /** For an SSH terminal rather than a files tab: there is no start folder, and ssh itself asks for
+   *  a password or a passphrase, in the terminal. */
+  terminal?: boolean;
 }) {
   const cfg = useSshConfig();
   const set = (patch: Partial<RemoteConnection>) => onChange({ ...value, ...patch });
   // What the config says about the host as typed — shown as the placeholders, since it is what a
   // blank field will turn into.
   const alias = cfg?.hosts.find((h) => h.alias.toLowerCase() === value.host.trim().toLowerCase());
-  const hint = AUTHS.find((a) => a.id === value.auth)?.hint;
+  const hint = terminal
+    ? TERMINAL_HINTS[value.auth]
+    : AUTHS.find((a) => a.id === value.auth)?.hint;
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
@@ -175,16 +188,18 @@ export function RemoteConnectionFields({
         </div>
       )}
 
-      <div className="space-y-1.5">
-        <Label htmlFor={`${idPrefix}-start`}>Start folder</Label>
-        <Input
-          id={`${idPrefix}-start`}
-          value={value.startPath ?? ""}
-          spellCheck={false}
-          onChange={(e) => set({ startPath: e.target.value || null })}
-          placeholder="The remote home"
-        />
-      </div>
+      {!terminal && (
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-start`}>Start folder</Label>
+          <Input
+            id={`${idPrefix}-start`}
+            value={value.startPath ?? ""}
+            spellCheck={false}
+            onChange={(e) => set({ startPath: e.target.value || null })}
+            placeholder="The remote home"
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using ClaudeWeb.Contract;
 using ClaudeWeb.Pty;
 using ClaudeWeb.Server.Sessions.Pty;
 
@@ -12,7 +13,13 @@ public sealed record CreateShellRequest(
     /// <summary>Folder the shell starts in. Must exist.</summary>
     string WorkingDirectory,
     /// <summary>Which shell (see <see cref="ShellOption.Id"/>); null takes <see cref="ShellCatalog.DefaultId"/>.</summary>
-    string? Shell = null);
+    string? Shell = null,
+    /// <summary>
+    /// An SSH connection to open instead of a local shell: <c>ssh</c> itself runs in the pty, so a
+    /// password or a host key is asked for in the terminal, the way it would be in any other.
+    /// <see cref="Shell"/> is ignored, and a blank <see cref="WorkingDirectory"/> means the home folder.
+    /// </summary>
+    RemoteConnection? Ssh = null);
 
 /// <summary>A shell tab as the browser sees it.</summary>
 public sealed record ShellInfo(
@@ -30,15 +37,18 @@ public sealed record ShellInfo(
     /// <summary>False once the shell process has ended — the tab stays until it is closed.</summary>
     bool Running,
     /// <summary>The command at its prompt, from the shell's integration marks.</summary>
-    ShellCommandState Command);
+    ShellCommandState Command,
+    /// <summary>For an SSH shell, where it is connected to ("user@host:port"); null for a local one.</summary>
+    string? Remote = null);
 
 /// <summary>
 /// What the session hub says about a shell's commands: enough for a tab or a sidebar row to show one
 /// running, or one that has finished and how. Times are Unix ms, 0 for never. <c>Waiting</c>: the
 /// running command is one you type into (ssh, a REPL) and has gone quiet -- running, but not working.
+/// <c>SessionId</c> is null for a shell that belongs to no session (a folder's, an SSH connection).
 /// </summary>
 public sealed record ShellActivity(
-    string SessionId, bool Running, long StartedAt, long EndedAt, int? ExitCode, bool Waiting);
+    string? SessionId, bool Running, long StartedAt, long EndedAt, int? ExitCode, bool Waiting);
 
 /// <summary>
 /// Shell tabs: a plain interactive shell (cmd, PowerShell, Git Bash, a WSL distribution) attached to
@@ -120,16 +130,20 @@ public sealed class ShellManager : IDisposable
     /// <summary>
     /// Live shells, newest last. With <paramref name="sessionId"/>, the ones belonging to that
     /// session; with <paramref name="folder"/>, the <em>folder</em> shells opened there — the ones
-    /// belonging to no session, from the Files tree. With neither, everything.
+    /// belonging to no session, from the Files tree. With <paramref name="ssh"/>, the SSH connections
+    /// opened outside any session. With none of them, everything.
     /// </summary>
     /// <remarks>
     /// A folder shell is deliberately not matched by path alone: a session's own shells run in the
     /// session's folder too, and they belong to that session's tab bar, not to the Files tree's.
     /// </remarks>
-    public IReadOnlyList<ShellInfo> List(string? sessionId = null, string? folder = null) =>
+    public IReadOnlyList<ShellInfo> List(string? sessionId = null, string? folder = null, bool ssh = false) =>
         _shells.Values
             .Where(s => sessionId is null || s.SessionId == sessionId)
-            .Where(s => folder is null || (s.SessionId is null && SamePath(s.WorkingDirectory, folder)))
+            // An SSH shell starts in a local folder too (it needs one), but it is not that folder's
+            // shell: what runs in it is somewhere else entirely.
+            .Where(s => folder is null || (s.SessionId is null && !s.IsSsh && SamePath(s.WorkingDirectory, folder)))
+            .Where(s => !ssh || (s.SessionId is null && s.IsSsh))
             .OrderBy(s => s.CreatedAt)
             .Select(s => s.ToInfo())
             .ToArray();
@@ -146,18 +160,18 @@ public sealed class ShellManager : IDisposable
     }
 
     /// <summary>
-    /// The command state of every session shell whose integration has reported something, by shell
-    /// id — the part of the shell set that the session hub broadcasts, so a sidebar row can show a
-    /// session's shells at work without each browser fetching every session's tabs.
+    /// The command state of every shell whose integration has reported something, by shell id — the
+    /// part of the shell set that the session hub broadcasts, so a sidebar row (a session's, or one in
+    /// the Shells tab) can show shells at work without each browser fetching every shell list.
     /// </summary>
     public IReadOnlyDictionary<string, ShellActivity> Activity() =>
         _shells.Values
-            .Where(s => s.SessionId is not null && s.Client?.Command is { Integration: true } c && (c.Running || c.EndedAt > 0))
+            .Where(s => s.Client?.Command is { Integration: true } c && (c.Running || c.EndedAt > 0))
             .ToDictionary(s => s.Id, s =>
             {
                 var c = s.Client!.Command;
                 var running = c.Running && s.Running;
-                return new ShellActivity(s.SessionId!, running, c.StartedAt, c.EndedAt, c.ExitCode, running && c.Waiting);
+                return new ShellActivity(s.SessionId, running, c.StartedAt, c.EndedAt, c.ExitCode, running && c.Waiting);
             });
 
     public ShellInfo? Get(string id) => _shells.TryGetValue(id, out var s) ? s.ToInfo() : null;
@@ -172,13 +186,31 @@ public sealed class ShellManager : IDisposable
     public async Task<ShellInfo> CreateAsync(CreateShellRequest req, CancellationToken ct = default)
     {
         var dir = (req.WorkingDirectory ?? "").Trim();
+        // An SSH connection has no folder of its own on this side; ssh still wants a current
+        // directory to start in, and the home folder is where a terminal would open it.
+        if (req.Ssh is not null && !Directory.Exists(dir))
+            dir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
             throw new DirectoryNotFoundException($"Working directory does not exist: {dir}");
         var fullDir = Path.GetFullPath(dir);
 
-        var wanted = req.Shell is { Length: > 0 } ? req.Shell : ShellCatalog.DefaultId;
-        var option = ShellCatalog.Find(wanted)
-            ?? throw new InvalidOperationException($"No shell named '{wanted}' is available on this machine.");
+        ShellOption option;
+        string? remote = null;
+        if (req.Ssh is { } conn)
+        {
+            if (string.IsNullOrWhiteSpace(conn.Host)) throw new ArgumentException("An SSH connection needs a host.");
+            var exe = ShellCatalog.SshPath
+                ?? throw new InvalidOperationException("No ssh client was found on this machine (OpenSSH or Git's).");
+            remote = ShellCatalog.SshTarget(conn);
+            option = new ShellOption(
+                ShellCatalog.SshId, string.IsNullOrWhiteSpace(conn.Name) ? remote : conn.Name.Trim(), "ssh", exe);
+        }
+        else
+        {
+            var wanted = req.Shell is { Length: > 0 } ? req.Shell : ShellCatalog.DefaultId;
+            option = ShellCatalog.Find(wanted)
+                ?? throw new InvalidOperationException($"No shell named '{wanted}' is available on this machine.");
+        }
 
         // Only live shells count: a tab left open on a shell someone exited by typing `exit` is a
         // scrollback to read, not a process, and it must not push anyone into this ceiling.
@@ -190,7 +222,9 @@ public sealed class ShellManager : IDisposable
 
         try
         {
-            var launch = ShellCatalog.LaunchFor(option, fullDir);
+            var launch = req.Ssh is { } ssh
+                ? ShellCatalog.LaunchSsh(option.Detail, ssh)
+                : ShellCatalog.LaunchFor(option, fullDir);
             var id = "sh-" + Guid.NewGuid().ToString("n")[..12];
 
             _log.LogInformation("Opening {Shell} shell {Id} in {Cwd}: {Exe} {Args}",
@@ -203,7 +237,7 @@ public sealed class ShellManager : IDisposable
                 new WatchdogOptions { Enabled = false }, watchdogEnabled: false,
                 verbatimArguments: true, ct: ct);
 
-            var shell = new Shell(id, req.SessionId, fullDir, option.Id, option.Label, option.Kind, DateTimeOffset.Now);
+            var shell = new Shell(id, req.SessionId, fullDir, option.Id, option.Label, option.Kind, DateTimeOffset.Now, remote);
             Bind(shell, client);
             _shells[id] = shell;
             Save();
@@ -295,7 +329,7 @@ public sealed class ShellManager : IDisposable
             var shell = new Shell(
                 state.SessionId, meta?.SessionId, meta?.WorkingDirectory ?? state.WorkingDirectory,
                 meta?.Shell ?? "cmd", meta?.Label ?? "Shell", meta?.Kind ?? "cmd",
-                meta?.CreatedAt ?? state.CreatedAt);
+                meta?.CreatedAt ?? state.CreatedAt, meta?.Remote);
             Bind(shell, client);
             _shells[shell.Id] = shell;
             _log.LogInformation("Re-attached to shell {Id} ({Label}) in {Cwd}: host pid {HostPid}, child pid {Pid}.",
@@ -355,7 +389,7 @@ public sealed class ShellManager : IDisposable
     /// <summary>What a shell needs to be named again after a restart; the pty state file has the rest.</summary>
     private sealed record PersistedShell(
         string Id, string? SessionId, string WorkingDirectory, string Shell, string Label, string Kind,
-        DateTimeOffset CreatedAt);
+        DateTimeOffset CreatedAt, string? Remote = null);
 
     private static readonly JsonSerializerOptions JsonOpts =
         new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -383,7 +417,7 @@ public sealed class ShellManager : IDisposable
                 var entries = _shells.Values
                     .OrderBy(s => s.CreatedAt)
                     .Select(s => new PersistedShell(
-                        s.Id, s.SessionId, s.WorkingDirectory, s.ShellId, s.Label, s.Kind, s.CreatedAt))
+                        s.Id, s.SessionId, s.WorkingDirectory, s.ShellId, s.Label, s.Kind, s.CreatedAt, s.Remote))
                     // Plus the ones whose live host we could not reach — see _unadopted.
                     .Concat(_unadopted.Where(u => !_shells.ContainsKey(u.Id)))
                     .ToList();
@@ -412,7 +446,7 @@ public sealed class ShellManager : IDisposable
     /// <summary>One open shell tab and the host client behind it.</summary>
     private sealed class Shell(
         string id, string? sessionId, string workingDirectory, string shell, string label, string kind,
-        DateTimeOffset createdAt)
+        DateTimeOffset createdAt, string? remote = null)
     {
         public string Id { get; } = id;
         public string? SessionId { get; } = sessionId;
@@ -422,6 +456,9 @@ public sealed class ShellManager : IDisposable
         public string Label { get; } = label;
         public string Kind { get; } = kind;
         public DateTimeOffset CreatedAt { get; } = createdAt;
+        /// <summary>Where an SSH shell is connected to; null for a local shell.</summary>
+        public string? Remote { get; } = remote;
+        public bool IsSsh => Kind == "ssh";
         public PtyHostClient? Client { get; set; }
         public ITerminal? Terminal => Client;
         public int ProcessId { get; set; }
@@ -429,6 +466,6 @@ public sealed class ShellManager : IDisposable
 
         public ShellInfo ToInfo() => new(
             Id, SessionId, WorkingDirectory, ShellId, Label, Kind, ProcessId, CreatedAt, Running,
-            Client?.Command ?? ShellCommandState.None);
+            Client?.Command ?? ShellCommandState.None, Remote);
     }
 }
