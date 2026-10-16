@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Check, ChevronDown, FolderGit2, GitBranch } from "lucide-react";
+import { Check, ChevronDown, FolderGit2, GitBranch, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { syncSessionUi } from "@/lib/sessionUi";
 import { useDismissable } from "@/lib/useDismissable";
@@ -42,6 +42,7 @@ export function BranchBadge({
   const [open, setOpen] = useState(false);
   const [trees, setTrees] = useState<GitWorktree[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const close = useCallback(() => setOpen(false), []);
   const ref = useDismissable<HTMLDivElement>(open, close);
 
@@ -49,6 +50,7 @@ export function BranchBadge({
     if (open) return close();
     setOpen(true);
     setError(null);
+    setQuery("");
     setTrees(null);
     api.gitWorktrees(sessionId)
       .then(setTrees)
@@ -69,6 +71,18 @@ export function BranchBadge({
 
   // The tick goes on the worktree being shown: the session's own folder when nothing is picked.
   const isShown = (t: GitWorktree) => (worktree ? samePath(t.path, worktree) : t.isCurrent);
+
+  // A repo can carry dozens of worktrees: the search matches the branch or the folder's name -- not
+  // its whole path, which every worktree of the repo shares the start of.
+  const needle = query.trim().toLowerCase();
+  const shown =
+    trees && needle
+      ? trees.filter(
+          (t) =>
+            (t.branch ?? "").toLowerCase().includes(needle) ||
+            baseName(t.path).toLowerCase().includes(needle)
+        )
+      : trees;
 
   return (
     <div ref={ref} className="relative flex shrink-0 items-center">
@@ -111,37 +125,56 @@ export function BranchBadge({
       {open && (
         <div
           role="menu"
-          className="absolute left-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md popover-edge bg-popover p-1 text-popover-foreground shadow-md"
+          className="absolute left-0 top-full z-50 mt-2 flex max-h-[min(32rem,calc(100dvh-8rem))] w-80 max-w-[calc(100vw-2rem)] flex-col rounded-md popover-edge bg-popover p-1 text-popover-foreground shadow-md"
         >
           <div className="px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground">Show the branch of</div>
-          {trees === null ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</div>
-          ) : trees.length === 0 ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">No worktrees found.</div>
-          ) : (
-            trees.map((t) => (
-              <button
-                key={t.path}
-                type="button"
-                role="menuitemradio"
-                aria-checked={isShown(t)}
-                onClick={() => void pick(t)}
-                title={t.path}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
-              >
-                <Check className={cn("size-3.5 shrink-0", !isShown(t) && "invisible")} />
-                {t.isCurrent ? (
-                  <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <FolderGit2 className="size-3.5 shrink-0 text-sky-500" />
-                )}
-                <span className="min-w-0 flex-1 truncate">{t.branch ?? "(detached)"}</span>
-                <span className="max-w-[45%] shrink-0 truncate font-mono text-[11px] text-muted-foreground">
-                  {t.isCurrent ? "this folder" : baseName(t.path)}
-                </span>
-              </button>
-            ))
-          )}
+          <div className="relative px-1 pb-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter takes the only match, so typing a ticket number and Enter is enough.
+                if (e.key === "Enter" && shown?.length === 1) void pick(shown[0]);
+              }}
+              placeholder="Search branches or folders"
+              aria-label="Search worktrees"
+              className="h-7 w-full rounded border bg-transparent pl-7 pr-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {shown === null ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</div>
+            ) : shown.length === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                {needle ? "No worktree matches." : "No worktrees found."}
+              </div>
+            ) : (
+              shown.map((t) => (
+                <button
+                  key={t.path}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={isShown(t)}
+                  onClick={() => void pick(t)}
+                  title={t.path}
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                >
+                  <Check className={cn("size-3.5 shrink-0", !isShown(t) && "invisible")} />
+                  {t.isCurrent ? (
+                    <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <FolderGit2 className="size-3.5 shrink-0 text-sky-500" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{t.branch ?? "(detached)"}</span>
+                  <span className="max-w-[45%] shrink-0 truncate font-mono text-[11px] text-muted-foreground">
+                    {t.isCurrent ? "this folder" : baseName(t.path)}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
           {error && <div className="px-2 py-1.5 text-xs text-destructive">{error}</div>}
           <div className="mt-1 border-t px-2 pb-1 pt-2 text-[11px] leading-relaxed text-muted-foreground">
             A session can pick this itself: <span className="font-mono">POST /api/self/worktree</span> with a
