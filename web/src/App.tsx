@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
 import { Bot, Loader2, Menu, Plus } from "lucide-react";
-import { ShowSidebarButton } from "@/components/ShowSidebarButton";
+import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { SessionsProgressContext, SessionsProgressMenu } from "@/components/SessionsProgressMenu";
 import { combineShellMarks, shellMark, useShellsSeen, type ShellActivity, type ShellMark } from "@/lib/shellActivity";
 
@@ -1309,6 +1309,7 @@ function EmptyState({
         <Button variant="ghost" size="icon" className="md:hidden" onClick={onOpenSidebar}>
           <Menu className="size-5" />
         </Button>
+        <MobileSessionsProgress />
         {collapsed && (
           <ShowSidebarButton onClick={onToggleCollapsed} />
         )}

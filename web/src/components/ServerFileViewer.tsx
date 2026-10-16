@@ -36,7 +36,7 @@ import {
   Save,
   X,
 } from "lucide-react";
-import { ShowSidebarButton } from "@/components/ShowSidebarButton";
+import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { OverflowToolbar, type OverflowItem } from "./OverflowToolbar";
 
 /** How much of the header row the file name keeps before the controls start giving way. */
@@ -480,6 +480,7 @@ export function ServerFileViewer({
             <Menu className="size-5" />
           </Button>
         )}
+        {onToggleSidebar && <MobileSessionsProgress />}
         {collapsed && onToggleCollapsed && (
           <ShowSidebarButton onClick={onToggleCollapsed} />
         )}

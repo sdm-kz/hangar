@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Menu, Server, TerminalSquare, X } from "lucide-react";
-import { ShowSidebarButton } from "@/components/ShowSidebarButton";
+import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { useShells } from "@/lib/useShells";
@@ -143,6 +143,7 @@ export function ShellView({
             <Menu className="size-5" />
           </Button>
         )}
+        {onToggleSidebar && <MobileSessionsProgress />}
         {collapsed && onToggleCollapsed && (
           <ShowSidebarButton onClick={onToggleCollapsed} />
         )}

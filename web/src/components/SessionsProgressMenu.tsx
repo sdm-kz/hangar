@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CheckCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HeadingProgress } from "@/components/SessionSidebar";
@@ -68,6 +68,19 @@ export function SessionsProgressMenu({ triggerClassName }: { triggerClassName?: 
     if (active <= 0) setOpen(false);
   }, [active]);
 
+  // The list hangs from the left of whatever it is anchored to, and on a phone that is a menu button
+  // already a way in: slid back by however much would run off the right edge, never past the left.
+  const popupRef = useRef<HTMLDivElement>(null);
+  const [shift, setShift] = useState(0);
+  // Measured once per opening, before paint, while the shift is still the 0 that closing left it at.
+  useLayoutEffect(() => {
+    if (!open) return setShift(0);
+    const r = popupRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const margin = 8;
+    setShift(Math.max(margin - r.left, Math.min(0, window.innerWidth - margin - r.right)));
+  }, [open]);
+
   const rows =
     open && activityIds
       ? sessions
@@ -97,7 +110,9 @@ export function SessionsProgressMenu({ triggerClassName }: { triggerClassName?: 
       )}
       {open && active > 0 && activityIds && (
         <div
+          ref={popupRef}
           role="menu"
+          style={shift ? { transform: `translateX(${shift}px)` } : undefined}
           className="absolute left-0 top-full z-50 mt-1 flex max-h-[min(32rem,calc(100dvh-8rem))] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-y-auto rounded-md popover-edge bg-popover p-1 text-left font-normal text-popover-foreground shadow-md"
         >
           {GROUPS.map(({ title, activities }) => {

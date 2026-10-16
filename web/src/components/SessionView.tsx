@@ -104,7 +104,7 @@ import {
   TerminalSquare,
   Video,
 } from "lucide-react";
-import { ShowSidebarButton } from "@/components/ShowSidebarButton";
+import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { writeToClipboard } from "@/lib/clipboard";
 
 // Wide enough for groups side by side — the width the app has always switched to its desktop
@@ -1230,6 +1230,7 @@ export function SessionView({
           >
             <Menu />
           </Button>
+          <MobileSessionsProgress />
           {collapsed && (
             <ShowSidebarButton className="-ml-2.5" onClick={onToggleCollapsed} />
           )}
