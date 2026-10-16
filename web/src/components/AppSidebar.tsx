@@ -1,9 +1,10 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { useContext, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { filesUrl } from "@/lib/urlState";
 import { Button } from "@/components/ui/button";
 import { Bot, FolderTree, LogOut, MessagesSquare, PanelLeftClose, Plus, SquareTerminal } from "lucide-react";
 import { NotificationToggle } from "./NotificationToggle";
+import { SessionsProgressContext } from "./SessionsProgressMenu";
 import { ThemeToggle } from "./ThemeToggle";
 
 export type SidebarTab = "sessions" | "files" | "shells";
@@ -45,6 +46,8 @@ export function AppSidebar({
    */
   sessionsProgress?: ReactNode;
 }) {
+  // The Sessions count, while it shows, is what crowds the row -- see TabLabel.
+  const crowded = useContext(SessionsProgressContext).active > 0;
   return (
     <div className="flex h-full flex-col bg-card">
       {/* App header sits above the tabs so the branding is always on top. */}
@@ -78,11 +81,17 @@ export function AppSidebar({
           )}
         </div>
       </div>
-      {/* Positioned so the Sessions fraction's list hangs from the row's left edge, inside the sidebar. */}
-      <div className="relative flex h-10 shrink-0 border-b">
-        <TabButton active={tab === "sessions"} onClick={() => onTabChange("sessions")} extra={sessionsProgress}>
-          <MessagesSquare className="size-4" />
-          Sessions
+      {/* Positioned so the Sessions fraction's list hangs from the row's left edge, inside the sidebar.
+          A container, so the tabs drop their words by the sidebar's own width, not the window's. */}
+      <div className="@container relative flex h-10 shrink-0 border-b">
+        <TabButton
+          active={tab === "sessions"}
+          onClick={() => onTabChange("sessions")}
+          extra={sessionsProgress}
+          title="Sessions"
+        >
+          <MessagesSquare className="size-4 shrink-0" />
+          <TabLabel crowded={crowded}>Sessions</TabLabel>
         </TabButton>
         <TabButton
           active={tab === "files"}
@@ -90,14 +99,14 @@ export function AppSidebar({
           // Middle-click opens the Files tab in a new browser tab (like a session row).
           onMouseDown={(e) => e.button === 1 && e.preventDefault()}
           onAuxClick={(e) => e.button === 1 && window.open(filesUrl(), "_blank", "noopener")}
-          title="Middle-click to open in a new tab"
+          title="Files — middle-click to open in a new tab"
         >
-          <FolderTree className="size-4" />
-          Files
+          <FolderTree className="size-4 shrink-0" />
+          <TabLabel crowded={crowded}>Files</TabLabel>
         </TabButton>
-        <TabButton active={tab === "shells"} onClick={() => onTabChange("shells")}>
-          <SquareTerminal className="size-4" />
-          Shells
+        <TabButton active={tab === "shells"} onClick={() => onTabChange("shells")} title="Shells">
+          <SquareTerminal className="size-4 shrink-0" />
+          <TabLabel crowded={crowded}>Shells</TabLabel>
           {!!shellsCount && (
             <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{shellsCount}</span>
           )}
@@ -124,6 +133,20 @@ export function AppSidebar({
       </div>
     </div>
   );
+}
+
+/**
+ * A tab's word, shown only while the row has room for every tab's. Below that the tabs go to icons
+ * alone -- the word was what got squeezed anyway, cut through mid-letter with the Sessions count
+ * printed over it -- and the tab's tooltip still names it.
+ *
+ * How much room that takes depends on the count. Without it the words fit in 17.5rem -- just under
+ * the default 288px sidebar, which the row is a border's width short of. With it, the Sessions third
+ * needs 26rem's worth: a two-digit "10/12" beside the word, and a little to spare. Both classes are
+ * spelled out because Tailwind only generates what it finds in the source.
+ */
+function TabLabel({ crowded, children }: { crowded: boolean; children: ReactNode }) {
+  return <span className={crowded ? "hidden @min-[26rem]:inline" : "hidden @min-[17.5rem]:inline"}>{children}</span>;
 }
 
 function TabButton({
