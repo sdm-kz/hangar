@@ -782,6 +782,12 @@ export function App() {
     clearMainArea();
   }, [clearMainArea]);
 
+  // The fraction on each view's "Show sidebar" button, and the sessions behind it for its dropdown.
+  const sessionsProgress = useMemo(
+    () => ({ ...totalProgress, sessions, activityIds, activeId, onSelect: selectSession }),
+    [totalProgress, sessions, activityIds, activeId, selectSession]
+  );
+
   // A shell picked in the Shells tab, brought forward wherever it lives: its session's tab bar, its
   // folder's shell view, or the SSH view.
   const openShell = useCallback(
@@ -1141,7 +1147,7 @@ export function App() {
 
       <main className="min-w-0 flex-1">
         {/* Feeds the fraction on each view's "Show sidebar" button, since the tab showing it is hidden. */}
-        <SessionsProgressContext.Provider value={totalProgress}>
+        <SessionsProgressContext.Provider value={sessionsProgress}>
           {openFile ? (
             <ServerFileViewer
               path={openFile}
