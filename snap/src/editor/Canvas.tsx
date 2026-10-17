@@ -34,6 +34,10 @@ interface Props {
   image: HTMLImageElement;
   /** CSS pixels per capture pixel, as the window shows it. */
   viewScale: number;
+  /** The part of the scaled picture in view: its size, and how far into the picture it starts. */
+  viewport: { width: number; height: number; panX: number; panY: number };
+  /** Device pixels per CSS pixel; past one capture pixel per device pixel the picture is drawn sharp. */
+  dpr: number;
   /** Capture pixels per logical pixel — what a stroke weight is multiplied by. */
   captureScale: number;
   doc: Doc;
@@ -56,7 +60,7 @@ const ACCENT = "#ff7a59";
 // Memoised: the editor re-renders on every keystroke in the message box, and a canvas re-render means
 // a redraw of the full-resolution picture. Every prop is stable between those keystrokes.
 export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props, ref) {
-  const { image, viewScale, captureScale, doc, tool, color, strokeWidth, selectedId, onSelect, onCommit } = props;
+  const { image, viewScale, viewport, dpr, captureScale, doc, tool, color, strokeWidth, selectedId, onSelect, onCommit } = props;
   const stageRef = useRef<Konva.Stage>(null);
   const contentRef = useRef<Konva.Layer>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
@@ -80,7 +84,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
 
   const pointer = (): { x: number; y: number } => {
     const p = stageRef.current?.getPointerPosition() ?? { x: 0, y: 0 };
-    return { x: p.x / viewScale, y: p.y / viewScale };
+    return { x: (p.x + viewport.panX) / viewScale, y: (p.y + viewport.panY) / viewScale };
   };
 
   // Keep the transformer on whatever is selected and resizable.
@@ -110,13 +114,15 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
       const layer = contentRef.current;
       if (!stage || !layer) return null;
       const area = doc.crop ?? { x: 0, y: 0, width, height };
-      // Draw at 1:1 so the export has exactly the capture's pixels, then put the view back before the
-      // next frame paints — nothing on screen changes. toCanvas draws into a canvas of its own size, so
-      // the stage itself needn't grow to the picture's.
-      const saved = stage.scaleX();
+      // Draw at 1:1 and unpanned so the export has exactly the capture's pixels, then put the view back
+      // before the next frame paints — nothing on screen changes. toCanvas draws into a canvas of its
+      // own size, so the stage itself needn't grow to the picture's.
+      const saved = { scale: stage.scaleX(), position: stage.position() };
       stage.scale({ x: 1, y: 1 });
+      stage.position({ x: 0, y: 0 });
       const canvas = layer.toCanvas({ x: area.x, y: area.y, width: area.width, height: area.height, pixelRatio: 1 });
-      stage.scale({ x: saved, y: saved });
+      stage.scale({ x: saved.scale, y: saved.scale });
+      stage.position(saved.position);
       return canvas;
     },
     finishEditing() {
@@ -299,18 +305,23 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
   const lineEnds = selected && (selected.kind === "arrow" || selected.kind === "line") && interactive ? selected : null;
 
   return (
-    <div className="relative" style={{ width: width * viewScale, height: height * viewScale }}>
+    // Only the part in view is a canvas: zoomed in, the whole picture at that size would be far past
+    // what a canvas can hold.
+    <div className="relative overflow-hidden" style={{ width: viewport.width, height: viewport.height }}>
       <Stage
         ref={stageRef}
-        width={width * viewScale}
-        height={height * viewScale}
+        width={viewport.width}
+        height={viewport.height}
         scaleX={viewScale}
         scaleY={viewScale}
+        x={-viewport.panX}
+        y={-viewport.panY}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
-        <Layer ref={contentRef}>
+        {/* Smoothed only while shrinking: zoomed in, each capture pixel shows as a crisp square. */}
+        <Layer ref={contentRef} imageSmoothingEnabled={viewScale * dpr < 1}>
           <KImage image={image} name="background" width={width} height={height} />
           {doc.shapes.map((s) =>
             textEdit?.shape.id === s.id ? null : (
@@ -361,6 +372,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
         <TextEditor
           edit={textEdit}
           viewScale={viewScale}
+          pan={viewport}
           onChange={(text) => setTextEdit({ ...textEdit, shape: { ...textEdit.shape, text } })}
           onDone={(text) => commitText(textEdit, text)}
         />
@@ -671,7 +683,19 @@ function LineEndHandles({
 }
 
 /** Typing into a text annotation: a textarea laid exactly over where the text will be drawn. */
-function TextEditor({ edit, viewScale, onChange, onDone }: { edit: TextEdit; viewScale: number; onChange(t: string): void; onDone(t: string): void }) {
+function TextEditor({
+  edit,
+  viewScale,
+  pan,
+  onChange,
+  onDone,
+}: {
+  edit: TextEdit;
+  viewScale: number;
+  pan: { panX: number; panY: number };
+  onChange(t: string): void;
+  onDone(t: string): void;
+}) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const { shape } = edit;
   useEffect(() => {
@@ -708,8 +732,8 @@ function TextEditor({ edit, viewScale, onChange, onDone }: { edit: TextEdit; vie
       }}
       className="absolute resize-none overflow-hidden border border-dashed border-accent bg-transparent p-0 outline-none"
       style={{
-        left: shape.x * viewScale,
-        top: shape.y * viewScale,
+        left: shape.x * viewScale - pan.panX,
+        top: shape.y * viewScale - pan.panY,
         fontSize: shape.fontSize * viewScale,
         lineHeight: 1.2,
         fontWeight: 700,

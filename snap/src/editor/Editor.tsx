@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, apiErrorText, type ApiError, type EditorInit, type NewSessionTarget } from "@/lib/tauri";
@@ -35,6 +36,7 @@ import {
   type Weight,
 } from "./model";
 import { filterSessions, keepSelection, stepSelection } from "./sessions";
+import { FIT, panBy, percent, place, scaleOf, stepZoom, zoomTo, type Size, type View } from "./view";
 
 // The new-session form starts where it was left: the next capture tends to belong to the same work.
 const NEW_TARGET_KEY = "snap.newSession";
@@ -56,6 +58,19 @@ function saveNewTarget(t: NewSessionTarget) {
 }
 
 const isMac = navigator.userAgent.includes("Mac");
+
+/** Device pixels per CSS pixel, followed as the window moves to a screen of another scaling — which
+ *  needn't change its size. */
+function useDevicePixelRatio(): number {
+  const [dpr, setDpr] = useState(() => window.devicePixelRatio || 1);
+  useEffect(() => {
+    const mq = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    const changed = () => setDpr(window.devicePixelRatio || 1);
+    mq.addEventListener("change", changed);
+    return () => mq.removeEventListener("change", changed);
+  }, [dpr]);
+  return dpr;
+}
 const MOD = isMac ? "⌘" : "Ctrl+";
 
 /** The last tool, colour and weight, so the next capture starts the way the last one was left. */
@@ -116,6 +131,9 @@ export default function Editor({ id }: { id: string }) {
   const searchRef = useRef<HTMLInputElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
   const [area, setArea] = useState({ width: 0, height: 0 });
+  const [view, setView] = useState<View>(FIT);
+  // Held Space: a drag moves the picture instead of drawing on it.
+  const [spaceHeld, setSpaceHeld] = useState(false);
   // The composer's height and the session list's width, dragged by the two splitters and kept for
   // the next capture. CSS holds each to what fits the window, so a size kept from a bigger one can't
   // squeeze the picture or the message box away.
@@ -199,13 +217,117 @@ export default function Editor({ id }: { id: string }) {
     return () => ro.disconnect();
   }, []);
 
-  // Fit the picture to the window, never past its real size (one capture pixel per device pixel).
-  const viewScale = useMemo(() => {
-    if (!image || area.width === 0) return 1;
-    const pad = 32;
-    const fit = Math.min((area.width - pad) / image.naturalWidth, (area.height - pad) / image.naturalHeight);
-    return Math.max(0.05, Math.min(fit, 1 / (window.devicePixelRatio || 1)));
-  }, [image, area]);
+  // Fitted to the window until zoomed (see view.ts). The handlers below read the sizes through a ref,
+  // so they needn't be re-attached each time the window or the zoom changes.
+  const imageSize = useMemo<Size>(
+    () => ({ width: image?.naturalWidth ?? 0, height: image?.naturalHeight ?? 0 }),
+    [image],
+  );
+  const dpr = useDevicePixelRatio();
+  const placement = useMemo(() => place(view, imageSize, area, dpr), [view, imageSize, area, dpr]);
+  const viewScale = placement.scale;
+  const viewport = useMemo(
+    () => ({ width: placement.width, height: placement.height, panX: placement.panX, panY: placement.panY }),
+    [placement],
+  );
+  const geometry = useRef({ imageSize, area, dpr });
+  geometry.current = { imageSize, area, dpr };
+  // Until the picture is in, there is nothing to zoom: it opens fitted.
+  const zoomStep = useCallback((dir: 1 | -1) => {
+    const g = geometry.current;
+    if (g.imageSize.width === 0) return;
+    setView((v) => stepZoom(v, dir, g.imageSize, g.area, g.dpr));
+  }, []);
+  const actualSize = useCallback(() => {
+    const g = geometry.current;
+    if (g.imageSize.width === 0) return;
+    setView((v) => zoomTo(v, 1 / g.dpr, { x: g.area.width / 2, y: g.area.height / 2 }, g.imageSize, g.area, g.dpr));
+  }, []);
+
+  // Ctrl+wheel (a touchpad pinch arrives as one) zooms about the pointer; the wheel alone pans.
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const g = geometry.current;
+      if (g.imageSize.width === 0) return;
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? g.area.height : 1;
+      if (e.ctrlKey || e.metaKey) {
+        const box = el.getBoundingClientRect();
+        const at = { x: e.clientX - box.left, y: e.clientY - box.top };
+        const factor = Math.exp(-e.deltaY * unit * 0.002);
+        setView((v) => zoomTo(v, scaleOf(v, g.imageSize, g.area, g.dpr) * factor, at, g.imageSize, g.area, g.dpr));
+        return;
+      }
+      // Shift turns a plain wheel sideways, where the browser hasn't already.
+      const sideways = e.shiftKey && e.deltaX === 0;
+      const dx = (sideways ? e.deltaY : e.deltaX) * unit;
+      const dy = (sideways ? 0 : e.deltaY) * unit;
+      setView((v) => panBy(v, dx, dy, g.imageSize, g.area, g.dpr));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Dragging with the middle button, or with Space held, moves the picture. Caught on the way down,
+  // before the canvas takes the press for the start of a stroke.
+  const spaceRef = useRef(false);
+  spaceRef.current = spaceHeld;
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el) return;
+    let drag: { id: number; x: number; y: number } | null = null;
+    const down = (e: PointerEvent) => {
+      if (e.button !== 1 && !(e.button === 0 && spaceRef.current)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      el.setPointerCapture(e.pointerId);
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      el.dataset.panning = "";
+    };
+    const move = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = drag.x - e.clientX;
+      const dy = drag.y - e.clientY;
+      drag = { ...drag, x: e.clientX, y: e.clientY };
+      const g = geometry.current;
+      setView((v) => panBy(v, dx, dy, g.imageSize, g.area, g.dpr));
+    };
+    const up = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      drag = null;
+      delete el.dataset.panning;
+    };
+    // The middle button would otherwise start the browser's own autoscroll.
+    const noAutoscroll = (e: MouseEvent) => {
+      if (e.button === 1) e.preventDefault();
+    };
+    el.addEventListener("pointerdown", down, true);
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    el.addEventListener("mousedown", noAutoscroll, true);
+    return () => {
+      el.removeEventListener("pointerdown", down, true);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      el.removeEventListener("mousedown", noAutoscroll, true);
+    };
+  }, []);
+  useEffect(() => {
+    const release = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpaceHeld(false);
+    };
+    const lost = () => setSpaceHeld(false);
+    window.addEventListener("keyup", release);
+    window.addEventListener("blur", lost);
+    return () => {
+      window.removeEventListener("keyup", release);
+      window.removeEventListener("blur", lost);
+    };
+  }, []);
 
   // ---- Sessions ----
   const loadSessions = useCallback(() => {
@@ -384,6 +506,25 @@ export default function Editor({ id }: { id: string }) {
         else void doSend(undefined, e.shiftKey);
         return;
       }
+      // The zoom keys work from anywhere, the message box included: they mean nothing to a text field.
+      if (mod && !e.altKey) {
+        const k = e.code;
+        if (k === "Equal" || k === "NumpadAdd" || k === "Minus" || k === "NumpadSubtract") {
+          e.preventDefault();
+          zoomStep(k === "Equal" || k === "NumpadAdd" ? 1 : -1);
+          return;
+        }
+        if (k === "Digit0" || k === "Numpad0") {
+          e.preventDefault();
+          setView(FIT);
+          return;
+        }
+        if (k === "Digit1" || k === "Numpad1") {
+          e.preventDefault();
+          actualSize();
+          return;
+        }
+      }
       if ((inSearch || e.altKey) && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
         e.preventDefault();
         setTarget((t) => stepSelection(items, t, e.key === "ArrowDown" ? 1 : -1));
@@ -435,6 +576,11 @@ export default function Editor({ id }: { id: string }) {
         messageRef.current?.focus();
         return;
       }
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (!e.repeat) setSpaceHeld(true);
+        return;
+      }
       if (e.key === "/" || e.code === "Slash") {
         e.preventDefault();
         searchRef.current?.focus();
@@ -447,7 +593,7 @@ export default function Editor({ id }: { id: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirmClose, close, doSend, items, query, copy, save, selectedId, doc, onCommit, requestClose]);
+  }, [confirmClose, close, doSend, items, query, copy, save, selectedId, doc, onCommit, requestClose, zoomStep, actualSize]);
 
   if (loadError) {
     return <div className="flex h-full items-center justify-center text-muted-foreground">{loadError}</div>;
@@ -472,11 +618,20 @@ export default function Editor({ id }: { id: string }) {
         onClearCrop={() => onCommit({ ...doc, crop: null })}
         onCopy={() => void copy()}
         onSave={() => void save()}
+        zoom={image ? percent(viewScale, dpr) : null}
+        fitted={view.zoom === null}
+        onZoom={zoomStep}
+        onZoomToggle={() => (view.zoom === null ? actualSize() : setView(FIT))}
         mod={MOD}
       />
       <div
         ref={areaRef}
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-canvas"
+        className={clsx(
+          "relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-canvas",
+          // Important, over the cursor Konva sets on its canvas inline.
+          spaceHeld && "cursor-grab [&_*]:cursor-grab!",
+          "data-panning:cursor-grabbing! data-panning:[&_*]:cursor-grabbing!",
+        )}
         onPointerDown={(e) => {
           // A press beside the picture still means "I'm drawing now, not typing".
           if (e.target === e.currentTarget) (document.activeElement as HTMLElement | null)?.blur();
@@ -492,6 +647,8 @@ export default function Editor({ id }: { id: string }) {
               ref={canvasRef}
               image={image}
               viewScale={viewScale}
+              viewport={viewport}
+              dpr={dpr}
               captureScale={captureScale}
               doc={doc}
               tool={tool}

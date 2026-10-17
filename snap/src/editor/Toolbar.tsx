@@ -16,6 +16,8 @@ import {
   Type,
   Undo2,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { COLORS, TOOLS, WEIGHTS, type Tool, type Weight } from "./model";
 
@@ -56,6 +58,11 @@ export function Toolbar(props: {
   onClearCrop(): void;
   onCopy(): void;
   onSave(): void;
+  /** The zoom in percent of the capture's real size; null until there is a picture. */
+  zoom: number | null;
+  fitted: boolean;
+  onZoom(dir: 1 | -1): void;
+  onZoomToggle(): void;
   mod: string;
 }) {
   const { tool, onTool, color, onColor, weight, onWeight, mod } = props;
@@ -115,6 +122,30 @@ export function Toolbar(props: {
         <Redo2 size={17} />
       </IconButton>
       <div className="flex-1" />
+      {props.zoom !== null && (
+        <>
+          <div className="flex items-center" role="group" aria-label="Zoom">
+            <IconButton title={`Zoom out (${mod}−)`} onClick={() => props.onZoom(-1)}>
+              <ZoomOut size={17} />
+            </IconButton>
+            <button
+              className="h-8 min-w-[52px] rounded-md px-1.5 text-[12px] tabular-nums text-foreground/80 hover:bg-muted hover:text-foreground"
+              onClick={props.onZoomToggle}
+              title={
+                props.fitted
+                  ? `Fitted to the window · click for actual size (${mod}1)`
+                  : `Click to fit the window (${mod}0) · ${mod}wheel zooms, Space-drag or the wheel moves`
+              }
+            >
+              {props.zoom}%
+            </button>
+            <IconButton title={`Zoom in (${mod}+)`} onClick={() => props.onZoom(1)}>
+              <ZoomIn size={17} />
+            </IconButton>
+          </div>
+          <Divider />
+        </>
+      )}
       <IconButton title={`Copy image (${mod}C)`} onClick={props.onCopy}>
         <Copy size={17} />
       </IconButton>

@@ -52,6 +52,11 @@ remembers what it was last set to.
 - Any shape can be dragged, and clicking it selects it: then `Delete` removes it, and colour and weight
   apply to it. Double-click text to edit it.
 - `Ctrl+Z` undoes, `Ctrl+Shift+Z` redoes; `Ctrl+C` copies the image and `Ctrl+S` saves it.
+- Zoom: `Ctrl`+wheel (or a touchpad pinch) zooms about the pointer, `Ctrl+=`/`Ctrl+-` step it, `Ctrl+0`
+  fits the window and `Ctrl+1` shows the real size; the percentage in the toolbar switches between those
+  two. Zoomed in, the wheel scrolls (`Shift`+wheel sideways), and dragging with the middle button or with
+  `Space` held moves the picture. Past the real size each pixel shows as a sharp square. Zoom changes only
+  the view: what is sent is the capture at its own resolution.
 - The tool, colour and weight you used last are kept for the next capture.
 
 The **session picker** lists the server's running sessions, the ones you sent to most recently first.
