@@ -984,8 +984,37 @@ public sealed class SessionManager : IDisposable
     /// <summary>The browser's <c>IMAGE_SETTLE_MS</c>: how long a pasted image takes to be taken in.</summary>
     private static readonly TimeSpan ImageSettle = TimeSpan.FromMilliseconds(600);
 
-    /// <summary>How long a launch prompt waits for claude's input before going to the postponed pool.</summary>
-    private static readonly TimeSpan PromptReadyTimeout = TimeSpan.FromMinutes(2);
+    /// <summary>
+    /// How long a launch prompt waits for claude's input before going to the postponed pool. Long,
+    /// because what it is usually waiting on is a person: a first-run dialog has to be answered, and
+    /// the prompt should go in the moment it is, not be filed away while they read it.
+    /// </summary>
+    private static readonly TimeSpan PromptReadyTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// The input box, as Claude Code draws it with nothing in front of it: its prompt character at the
+    /// very start of a line (<c>❯</c>, or <c>&gt;</c> in older versions, optionally inside a <c>│</c>
+    /// border), and not a numbered choice. The gap after it is a no-break space in current versions.
+    /// </summary>
+    private static readonly Regex InputBoxLine = new(@"(?m)^(?:│ ?)?[❯>][  ](?!\d+[.)])", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Something in front of the input box that a paste and its Enter would answer instead: a numbered
+    /// choice with its cursor (the trust, theme or upsell dialogs — drawn indented, unlike the input
+    /// line), or the footer those dialogs carry.
+    /// </summary>
+    private static readonly Regex DialogOnScreen = new(
+        @"(?m)^\s*❯\s*\d+[.)]\s|Enter to confirm|Enter to select|Esc to cancel", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Whether claude's screen shows its input box and nothing in front of it. Read off the screen on
+    /// purpose, beside the hooks: the first-run dialogs claude puts up before the input box (a new
+    /// renderer, the Chrome extension) are not permission prompts, and no hook says they are there.
+    /// Unknown screens read as not ready — a prompt that waits and is stashed is recoverable, one typed
+    /// into a dialog is not.
+    /// </summary>
+    internal static bool InputBoxReady(string screen) =>
+        InputBoxLine.IsMatch(screen) && !DialogOnScreen.IsMatch(screen);
 
     /// <summary>How quiet claude's opening paint must have gone before the prompt is typed in.</summary>
     private const long PromptQuietMs = 1000;
@@ -1002,9 +1031,11 @@ public sealed class SessionManager : IDisposable
     /// </summary>
     /// <remarks>
     /// <para><b>Ready</b> means: claude's TUI has switched bracketed paste on, which it does as it mounts
-    /// (<see cref="Pty.ITerminal.AcceptsPaste"/>); nothing is asking a question — a paste into a dialog
-    /// would answer it; and the opening paint has gone quiet for <see cref="PromptQuietMs"/>, or the
-    /// input has been up for <see cref="PromptMaxSettle"/>. Then it goes in the way any message does,
+    /// (<see cref="Pty.ITerminal.AcceptsPaste"/>); the screen shows the input box with nothing in front
+    /// of it (<see cref="InputBoxReady"/>) and no permission prompt is waiting — a paste into a dialog
+    /// would answer it, which is how a first-run "try the new renderer?" once took the Enter meant for
+    /// the prompt; and the opening paint has gone quiet for <see cref="PromptQuietMs"/>, or the input
+    /// box has been up for <see cref="PromptMaxSettle"/>. Then it goes in the way any message does,
     /// through <see cref="SendMessageAsync(string, string, CancellationToken)"/>.</para>
     /// <para>A prompt that can't be delivered — claude never got there inside
     /// <see cref="PromptReadyTimeout"/>, or this app began shutting down first — is put in the
@@ -1028,8 +1059,8 @@ public sealed class SessionManager : IDisposable
                     return;
                 }
                 if (!term.AcceptsPaste) continue;
+                if (IsAwaitingInput(s) || !InputBoxReady(term.ScreenText())) { inputUpAt = null; continue; }
                 inputUpAt ??= waited.Elapsed;
-                if (IsAwaitingInput(s)) continue;
                 if (term.MillisSinceOutput < PromptQuietMs && waited.Elapsed - inputUpAt < PromptMaxSettle) continue;
 
                 if (await SendMessageAsync(s.Id, prompt, _stopping.Token)) return;

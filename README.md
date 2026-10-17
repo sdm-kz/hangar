@@ -521,7 +521,7 @@ What is different from Windows:
 | Updater | `apply-update.ps1`, robocopy | `apply-update.sh`: each top-level entry replaced by a rename (wwwroot whole), extra files kept; restarts the systemd unit / launchd job / process |
 | Staging folder default | `C:\apps\claude-web-updates` | `<data>/ClaudeWeb/updates` (`scripts/stage-update.sh` builds into it) |
 | `claude` lookup | PATH, unwrapping npm `.cmd` shims | PATH, then `~/.local/bin`, `~/.claude/local`, Homebrew, `/usr/local/bin` |
-| Launch prompt | on `claude`'s command line | typed in once its input is up (bracketed paste switched on, no dialog, paint settled); a headless schedule passes it on stdin. Any user can read a command line with `ps` here. Not delivered within 2 minutes (or the server stopped first) → the session's postponed messages |
+| Launch prompt | on `claude`'s command line | typed in once its input box is up (bracketed paste on, the box on screen with no dialog in front of it, paint settled), so it waits behind a first-run dialog until someone answers it; a headless schedule passes it on stdin. Any user can read a command line with `ps` here. Not delivered within 10 minutes (or the server stopped first) → the session's postponed messages |
 
 Shell integration (the "running" mark on a shell tab) comes from bash's `PROMPT_COMMAND`/`PS0` and
 PowerShell's prompt hook, as on Windows; zsh, fish and sh tabs open without it.

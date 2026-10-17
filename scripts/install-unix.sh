@@ -63,8 +63,10 @@ nl='
 case "$target" in *"$nl"*) echo "The install path may not contain a newline." >&2; exit 2 ;; esac
 mkdir -p "$target"
 target=$(cd "$target" && pwd) # the unit needs it absolute
-[ -x "$publish/ClaudeWeb" ] || { echo "No ClaudeWeb build in $publish -- run scripts/build.sh first." >&2; exit 1; }
-[ -x "$publish/ClaudeWeb.PtyHost" ] || { echo "No ClaudeWeb.PtyHost in $publish." >&2; exit 1; }
+# -f, not -x: a build made on Windows and copied over arrives without the executable bit, which the
+# copy below sets anyway.
+[ -f "$publish/ClaudeWeb" ] || { echo "No ClaudeWeb build in $publish -- run scripts/build.sh first." >&2; exit 1; }
+[ -f "$publish/ClaudeWeb.PtyHost" ] || { echo "No ClaudeWeb.PtyHost in $publish." >&2; exit 1; }
 
 # --- Files ---------------------------------------------------------------------------------------
 # Stop first: a running daemon would be replaced underneath itself. Its sessions are not touched.

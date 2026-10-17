@@ -89,6 +89,8 @@ public sealed class PtyHostClient : ITerminal
 
     public long MillisSinceOutput => Environment.TickCount64 - Volatile.Read(ref _lastOutputTick);
 
+    public string ScreenText() { lock (_lock) return _screen.ScreenText(); }
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     public bool IsCompacting { get { lock (_lock) return _compacting; } }
 

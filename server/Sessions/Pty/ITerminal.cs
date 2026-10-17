@@ -74,6 +74,9 @@ public interface ITerminal : IDisposable
     /// <summary>Milliseconds since the child last wrote anything to its terminal.</summary>
     long MillisSinceOutput { get; }
 
+    /// <summary>The visible screen as plain text, one line per row, as this app's screen model has it.</summary>
+    string ScreenText();
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     bool IsCompacting { get; }
 
