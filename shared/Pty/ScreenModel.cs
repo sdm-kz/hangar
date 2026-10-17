@@ -100,6 +100,12 @@ public sealed class ScreenModel
     /// <summary>The visible screen as plain text, one line per row.</summary>
     public string ScreenText() => Screen.PlainText();
 
+    /// <summary>
+    /// Whether the child has a DEC private mode switched on — one of those kept for the snapshot
+    /// (<see cref="RestorableDecModes"/>); any other reads as off.
+    /// </summary>
+    public bool IsDecModeSet(int mode) => _decModes.TryGetValue(mode, out var on) && on;
+
     /// <summary>Move both buffers to a new grid (the pseudoconsole has been resized).</summary>
     public void Resize(int cols, int rows)
     {

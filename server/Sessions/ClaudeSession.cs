@@ -318,6 +318,7 @@ public sealed class ClaudeSession : IDisposable
                 _watchdog, WatchdogEnabled, ct: ct);
             Bind(client);
             State = SessionState.Running;
+            PromptToType = FiresInitialPrompt && !PromptOnCommandLine ? InitialPrompt : null;
             StartWatcher();
         }
         catch (Exception ex)
@@ -451,11 +452,32 @@ public sealed class ClaudeSession : IDisposable
         }
         // The initial prompt is a positional argument and MUST come last, after all flags.
         // Claude submits it on startup and stays interactive (works alongside --remote-control).
-        // Skipped when resuming (--continue/--resume) so we don't re-fire the original launch prompt.
-        if (InitialPrompt is not null && !Continue && ResumeSessionId is null)
-            args.Add(InitialPrompt);
+        // Windows only: see PromptToType for the rest.
+        if (FiresInitialPrompt && PromptOnCommandLine)
+            args.Add(InitialPrompt!);
         return args;
     }
+
+    /// <summary>
+    /// Whether this launch sends <see cref="InitialPrompt"/> at all. Not when resuming
+    /// (--continue/--resume), so we don't re-fire the original launch prompt.
+    /// </summary>
+    private bool FiresInitialPrompt => InitialPrompt is not null && !Continue && ResumeSessionId is null;
+
+    /// <summary>
+    /// Whether the prompt can ride claude's command line. On Windows it can: another user can't read
+    /// a process's command line there. On Linux and macOS anyone on the machine can, with <c>ps</c> or
+    /// <c>/proc/&lt;pid&gt;/cmdline</c> — and a prompt is where people paste the error log, the
+    /// customer's ticket, the key that wasn't meant to be in it.
+    /// </summary>
+    private static bool PromptOnCommandLine => OperatingSystem.IsWindows();
+
+    /// <summary>
+    /// The prompt this launch left off the command line, to be typed in once claude's input is up
+    /// (<c>SessionManager.TypeInitialPromptAsync</c>); null when there is none, or it went on the
+    /// command line. Set by <see cref="StartAsync"/>.
+    /// </summary>
+    public string? PromptToType { get; private set; }
 
     /// <summary>
     /// The session's process ended. Reaches us as an <c>exited</c> push from the pty host — or, if the

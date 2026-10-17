@@ -23,6 +23,10 @@ namespace ClaudeWeb.PtyHost.Pty;
 /// a launcher (node for a classic npm shim, or cmd.exe when a shim could not be resolved), the
 /// <c>claude.exe</c> underneath is in the same job. One job close covers the entire tree — no
 /// separate process-tree kill is needed.</para>
+/// <para>On Linux and macOS the same library forkpty()s instead, and the tree is ended through the
+/// child's process group (see <see cref="EndProcessGroup"/>). A host killed outright never gets that
+/// far: the pty's master side closing hangs up claude's terminal, which ends claude itself, and the web
+/// app's <c>KillHost</c> ends the rest of its tree.</para>
 /// </remarks>
 public sealed class PtySession : IDisposable
 {
@@ -72,9 +76,18 @@ public sealed class PtySession : IDisposable
             Rows = Math.Max(1, (int)rows),
             Environment = new Dictionary<string, string>(environment),
         };
+        // ConPTY answers as a terminal of its own, whatever TERM says; on Unix TERM is the only word
+        // the child gets about what it is drawing on, and the web app's own (unset under systemd or
+        // launchd, "dumb" under some IDEs) is the wrong one to pass on. xterm.js is what renders it.
+        if (!OperatingSystem.IsWindows())
+        {
+            options.Environment["TERM"] = "xterm-256color";
+            options.Environment.TryAdd("COLORTERM", "truecolor");
+        }
 
         // The spawn is async in Porta.Pty; this is a one-shot launch so blocking is fine.
-        var conn = PtyProvider.SpawnAsync(options, CancellationToken.None).GetAwaiter().GetResult();
+        IPtyConnection Spawn() => PtyProvider.SpawnAsync(options, CancellationToken.None).GetAwaiter().GetResult();
+        var conn = OperatingSystem.IsWindows() ? Spawn() : Unix.WithDefaultSignals(Spawn);
         return new PtySession(conn);
     }
 
@@ -120,7 +133,29 @@ public sealed class PtySession : IDisposable
         // Kill first so the child gets the terminate rather than racing the console teardown, then
         // dispose: that closes the HPCON, both pipes and the job handle. (The web-app version of this
         // class only ever called Kill(), leaking all of them for the app's lifetime.)
+        if (!OperatingSystem.IsWindows()) EndProcessGroup();
         try { _conn.Kill(); } catch { }
         try { _conn.Dispose(); } catch { }
+    }
+
+    /// <summary>
+    /// Unix has no job object, so the tree is ended through its process group instead: forkpty makes
+    /// the child a session leader, so its pid is the group's id, and what claude starts (its tool
+    /// shells, MCP servers) stays in it. A hang-up first — what a closing terminal sends, and what lets
+    /// node and the shells clean up — then, once the leader has had its moment, a kill for whatever in
+    /// the group ignored it. The kill goes out even when the leader is already gone: that is the usual
+    /// case (the child exited and the host is winding down), and members it left behind are exactly
+    /// what the kill is for. A group id can't be handed out again while any member is alive.
+    /// </summary>
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    private void EndProcessGroup()
+    {
+        try
+        {
+            Unix.SignalGroup(ProcessId, Unix.SIGHUP);
+            _conn.WaitForExit(1500);
+            Unix.SignalGroup(ProcessId, Unix.SIGKILL);
+        }
+        catch { /* the group is already gone */ }
     }
 }

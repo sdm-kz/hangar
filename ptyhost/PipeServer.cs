@@ -58,18 +58,27 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
     public async Task RunAsync(CancellationToken ct)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _stopping.Token);
-        var security = BuildSecurity();
+        var security = OperatingSystem.IsWindows() ? BuildSecurity() : null;
+        if (!OperatingSystem.IsWindows()) PrepareSocketPath();
         while (!linked.IsCancellationRequested)
         {
             NamedPipeServerStream pipe;
             try
             {
-                pipe = NamedPipeServerStreamAcl.Create(
-                    pipeName, PipeDirection.InOut, MaxInstances,
-                    // Byte mode: we length-prefix our own frames, so a 512 KB replay doesn't have to
-                    // fit whatever the transport considers one message.
-                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.WriteThrough,
-                    inBufferSize: 64 * 1024, outBufferSize: 64 * 1024, security);
+                // Byte mode: we length-prefix our own frames, so a 512 KB replay doesn't have to fit
+                // whatever the transport considers one message.
+                pipe = OperatingSystem.IsWindows()
+                    ? NamedPipeServerStreamAcl.Create(
+                        pipeName, PipeDirection.InOut, MaxInstances,
+                        PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.WriteThrough,
+                        inBufferSize: 64 * 1024, outBufferSize: 64 * 1024, security)
+                    // A Unix domain socket has no DACL to name the user in. The equivalent there is
+                    // two locks: the socket sits in a 0700 folder (PtyStateStore.SocketDirectory), and
+                    // CurrentUserOnly refuses a peer whose uid isn't ours on accept.
+                    : new NamedPipeServerStream(
+                        pipeName, PipeDirection.InOut, MaxInstances,
+                        PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
+                        inBufferSize: 64 * 1024, outBufferSize: 64 * 1024);
             }
             catch (Exception ex)
             {
@@ -100,6 +109,7 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
     /// Windows service lives in session 0 and a later interactive launch still has to reach it, so
     /// the DACL has to name the account rather than rely on whatever the default is in each context.
     /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static PipeSecurity BuildSecurity()
     {
         var security = new PipeSecurity();
@@ -110,6 +120,28 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
         security.AddAccessRule(new PipeAccessRule(
             new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         return security;
+    }
+
+    /// <summary>
+    /// Clear the way for the socket. Unlike a Windows pipe, a Unix socket outlives its listener as a
+    /// file, and binding over one a crashed host left behind fails with "address in use". The path is
+    /// this session's alone — nobody else can be listening on it — so whatever is there is ours to remove.
+    /// </summary>
+    private void PrepareSocketPath()
+    {
+        try
+        {
+            PtyStateStore.EnsureSocketDirectory();
+            if (Path.IsPathRooted(pipeName)) File.Delete(pipeName);
+        }
+        catch (Exception ex) { HostLog.Warn($"Could not clear the socket path '{pipeName}': {ex.Message}"); }
+    }
+
+    /// <summary>Remove the socket file once nothing listens on it any more (Unix only; a no-op elsewhere).</summary>
+    public void RemoveSocketFile()
+    {
+        if (OperatingSystem.IsWindows() || !Path.IsPathRooted(pipeName)) return;
+        try { File.Delete(pipeName); } catch { }
     }
 
     /// <summary>One attached client: a queue of ready-to-write frames drained by its write loop.</summary>

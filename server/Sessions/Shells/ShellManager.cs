@@ -306,7 +306,7 @@ public sealed class ShellManager : IDisposable
         {
             if (ct.IsCancellationRequested) return; // mid-adoption: the file still holds the truth
             seen.Add(state.SessionId);
-            if (!PtyStateStore.HostAlive(state)) { PtyStateStore.Delete(path); continue; }
+            if (!PtyStateStore.HostAlive(state)) { PtyStateStore.Forget(path, state); continue; }
 
             var meta = persisted.FirstOrDefault(p => p.Id == state.SessionId);
             PtyHostClient? client = null;

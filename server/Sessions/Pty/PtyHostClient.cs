@@ -82,6 +82,13 @@ public sealed class PtyHostClient : ITerminal
     /// <summary>True when a permission/confirmation prompt appears to be waiting on the user.</summary>
     public bool IsAwaitingInput { get { lock (_lock) return _waiting; } }
 
+    public bool AcceptsPaste { get { lock (_lock) return _screen.IsDecModeSet(2004); } }
+
+    // When output last arrived (Environment.TickCount64), for MillisSinceOutput.
+    private long _lastOutputTick = Environment.TickCount64;
+
+    public long MillisSinceOutput => Environment.TickCount64 - Volatile.Read(ref _lastOutputTick);
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     public bool IsCompacting { get { lock (_lock) return _compacting; } }
 
@@ -125,7 +132,10 @@ public sealed class PtyHostClient : ITerminal
     public static async Task<PtyHostClient?> ConnectAsync(
         string pipeName, string sessionId, int timeoutMs, ILogger log, CancellationToken ct = default)
     {
-        var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        // On Unix, CurrentUserOnly also has the client check that the socket's listener is this user —
+        // the far side of the host's own check, and a second lock beside the 0700 socket folder.
+        var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut,
+            OperatingSystem.IsWindows() ? PipeOptions.Asynchronous : PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         try
         {
             await pipe.ConnectAsync(timeoutMs, ct);
@@ -228,6 +238,7 @@ public sealed class PtyHostClient : ITerminal
 
     private void OnOutput(byte[] chunk)
     {
+        Volatile.Write(ref _lastOutputTick, Environment.TickCount64);
         lock (_lock)
         {
             _screen.Write(chunk);

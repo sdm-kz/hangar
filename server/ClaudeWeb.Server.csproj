@@ -2,8 +2,9 @@
 
   <PropertyGroup>
     <!-- The daemon. Plain net10.0: no WinForms and no UI of its own — the tray is a separate project
-         (tray\) and only a client of this app's API. What is still Windows-bound in here is P/Invoke and
-         PowerShell (the pty host launch, the shell catalog, the updater), not a Windows-only framework. -->
+         (tray\) and only a client of this app's API. It runs on Windows, Linux and macOS; what differs
+         between them (the pty host launch, the shell catalog, the updater) is chosen at run time with
+         OperatingSystem.IsWindows(). -->
     <TargetFramework>net10.0</TargetFramework>
     <!-- No console window when it starts at logon. Only Windows has a GUI subsystem to pick; anywhere
          else this builds an ordinary executable. -->
@@ -41,6 +42,9 @@
     <!-- The in-app updater runs this after the app stops (a running exe can't overwrite itself), so it
          has to travel inside the exe rather than sit in the install folder it's about to mirror over. -->
     <EmbeddedResource Include="..\scripts\apply-update.ps1" LogicalName="ClaudeWeb.Server.apply-update.ps1" />
+    <!-- Its Linux and macOS counterpart. Kept LF by .gitattributes: a CRLF checkout on Windows would
+         otherwise embed a script /bin/sh can't run. -->
+    <EmbeddedResource Include="..\scripts\apply-update.sh" LogicalName="ClaudeWeb.Server.apply-update.sh" />
   </ItemGroup>
 
   <!-- The built React app lives in wwwroot; the Web SDK includes and publishes it automatically. -->

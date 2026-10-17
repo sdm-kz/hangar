@@ -4,9 +4,10 @@
 > from). The rename (repo, `ClaudeWeb.exe`, namespaces) is not done yet — for now the executable is
 > still `ClaudeWeb.exe`.
 
-A .NET 10 app for Windows that **launches Claude Code CLI sessions with Remote Control enabled** so
-you can drive them from the **Claude Code app** (claude.ai/code and mobile) — from any device on your
-LAN. It is two programs:
+A .NET 10 app for Windows (the server also runs on Linux and macOS — see
+[Linux and macOS](#linux-and-macos)) that **launches Claude Code CLI sessions with Remote Control
+enabled** so you can drive them from the **Claude Code app** (claude.ai/code and mobile) — from any
+device on your LAN. It is two programs:
 
 - **`ClaudeWeb.exe` — the server.** A headless daemon that owns everything: the sessions, the web UI
   and its API, every store. It starts at sign-in as you — or, when it has to run while nobody is
@@ -359,7 +360,8 @@ authenticated for every other process on the machine.
 
 ## Prerequisites
 
-- Windows 11, **.NET 10 SDK**, **Node 20+**
+- Windows 11 (or Linux / macOS for the server alone — see [Linux and macOS](#linux-and-macos)),
+  **.NET 10 SDK**, **Node 20+**
 - **Claude Code v2.1.51+** installed and authenticated (OAuth / claude.ai login) for your user
   account. Remote Control requires a Pro/Max/Team/Enterprise plan.
   - If you have **multiple claude installs**, the app uses the first `claude` on `PATH`. Make sure
@@ -471,6 +473,61 @@ same (the tray itself still starts at sign-in, in your session). Two things to k
   can't open a browser, so the service should only ever read a login you have already made.
 - **Mapped drives aren't visible** to a service — they belong to a logon session. Use UNC paths for
   project folders and for `FileSystem:DefaultFolder`.
+
+## Linux and macOS
+
+The server and the pty host run on Linux (x64, arm64) and macOS (Apple silicon, Intel). The tray is
+Windows-only (WinForms); everything else is the same app — the web UI, sessions that survive a restart
+of the server, shell tabs, schedules, the in-app updater.
+
+```bash
+scripts/build.sh                 # this machine's runtime; or: scripts/build.sh linux-arm64 | osx-arm64 | …
+scripts/install-unix.sh          # ./publish -> ~/.local/opt/claude-web, started at sign-in
+scripts/install-unix.sh --uninstall
+```
+
+`build.sh` cross-builds from anywhere the .NET SDK and Node run (Git Bash on Windows too) into
+`publish/`: `ClaudeWeb` and `ClaudeWeb.PtyHost`, self-contained, no .NET runtime needed. Before the
+first install, set `Server:Urls` and `FileSystem:DefaultFolder` in `publish/appsettings.json` (the
+committed one names `C:\Git`); an install never overwrites an `appsettings.json` already in place.
+The default `Server:Urls` binds every interface over plain HTTP, and Linux has no firewall prompt to
+ask about it: bind `127.0.0.1` behind a reverse proxy, or limit the port with `ufw`/`nftables`.
+
+`install-unix.sh` runs the server as **you**, for the same reason sign-in beats a service on Windows:
+`claude`'s login, settings and trust list are yours. On Linux it is a **systemd user unit**
+(`~/.config/systemd/user/claudeweb.service`) — it runs while you are signed in, and
+`loginctl enable-linger $USER` keeps it running with nobody signed in. On macOS it is a **launchd
+agent** (`~/Library/LaunchAgents/com.claudeweb.server.plist`), which also gives it your login
+keychain — where `claude` keeps its credentials on macOS. The script copies the `PATH` of the shell you run it
+from into the unit: a unit otherwise starts with little more than `/usr/bin:/bin`, and every session
+and shell inherits the server's `PATH`. Re-run it after installing tools somewhere new.
+
+Two settings in those units are load-bearing — keep them if you write your own:
+
+- **`KillMode=process`** (systemd) / **`AbandonProcessGroup`** (launchd). A session lives in its own
+  `ClaudeWeb.PtyHost`, which outlives the server on purpose. Left at their defaults, both managers
+  kill everything the server started when it stops, and every restart becomes a resume.
+- **`Restart=on-failure`** / **`KeepAlive.SuccessfulExit=false`**, not "always". The updater stops the
+  server cleanly and starts it again itself once the files are in place.
+
+What is different from Windows:
+
+| | Windows | Linux / macOS |
+|---|---|---|
+| Pseudoconsole | ConPTY, in a kill-on-close job | `forkpty`; the host `setsid`s, and ends the child's process group (hang-up, then kill) |
+| Host pipe | named pipe, ACL for this user | Unix socket in `<data>/ClaudeWeb/sock` (0700), peer uid checked |
+| App data (`<data>`) | `%LocalAppData%` | `~/.local/share` (Linux), `~/Library/Application Support` (macOS); `ClaudeWeb` in it made 0700 |
+| Shells (**+** menu) | PowerShell, cmd, Git Bash, WSL | your login shell first, then bash, zsh, fish, pwsh, sh — each as a login shell |
+| Updater | `apply-update.ps1`, robocopy | `apply-update.sh`: each top-level entry replaced by a rename (wwwroot whole), extra files kept; restarts the systemd unit / launchd job / process |
+| Staging folder default | `C:\apps\claude-web-updates` | `<data>/ClaudeWeb/updates` (`scripts/stage-update.sh` builds into it) |
+| `claude` lookup | PATH, unwrapping npm `.cmd` shims | PATH, then `~/.local/bin`, `~/.claude/local`, Homebrew, `/usr/local/bin` |
+| Launch prompt | on `claude`'s command line | typed in once its input is up (bracketed paste switched on, no dialog, paint settled); a headless schedule passes it on stdin. Any user can read a command line with `ps` here. Not delivered within 2 minutes (or the server stopped first) → the session's postponed messages |
+
+Shell integration (the "running" mark on a shell tab) comes from bash's `PROMPT_COMMAND`/`PS0` and
+PowerShell's prompt hook, as on Windows; zsh, fish and sh tabs open without it.
+
+A macOS build made on another OS comes out unsigned, which Apple silicon refuses to run;
+`install-unix.sh` removes the quarantine flag and signs both binaries ad hoc when it installs them.
 
 ## Checking what the server runs as
 
@@ -812,5 +869,6 @@ ptyhost/  the per-session pty host that owns each pseudoconsole
 shared/   source compiled into two projects: Pty/ (daemon ↔ pty host), Contract/ (daemon ↔ tray)
 web/      React + Vite + TS + Tailwind + shadcn/ui launcher UI
 scripts/  dev.ps1, run.ps1, build.ps1, register-autostart.ps1, install-service.ps1, uninstall-service.ps1,
-          stage-update.ps1 + apply-update.ps1 (the two halves of the in-app updater)
+          stage-update.ps1 + apply-update.ps1 (the two halves of the in-app updater);
+          build.sh, install-unix.sh, stage-update.sh + apply-update.sh (the same, for Linux and macOS)
 ```

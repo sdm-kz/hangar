@@ -61,6 +61,9 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     private string? _launchPath;   // the per-build copy we launch from, resolved once
     private string? _buildStamp;
 
+    /// <summary>The host binary's file name: an .exe on Windows, a bare name elsewhere.</summary>
+    private static string HostFileName => OperatingSystem.IsWindows() ? "ClaudeWeb.PtyHost.exe" : "ClaudeWeb.PtyHost";
+
     /// <summary>The instance key in force, defaulted so a misconfigured instance still isolates itself.</summary>
     public string InstanceKey => string.IsNullOrWhiteSpace(options.InstanceKey) ? "default" : options.InstanceKey;
 
@@ -105,7 +108,9 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
         int hostPid;
         try
         {
-            hostPid = SpawnDetached(exe, $"\"{exe}\" --spawn \"{requestFile}\"", workingDirectory);
+            hostPid = OperatingSystem.IsWindows()
+                ? SpawnDetached(exe, $"\"{exe}\" --spawn \"{requestFile}\"", workingDirectory)
+                : SpawnUnix(exe, requestFile, workingDirectory);
         }
         catch
         {
@@ -161,7 +166,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
             var installed = InstalledHostPath();
             if (!File.Exists(installed))
                 throw new FileNotFoundException(
-                    $"ClaudeWeb.PtyHost.exe was not found at '{installed}'. It is published alongside ClaudeWeb.exe by scripts\\build.ps1.", installed);
+                    $"{HostFileName} was not found at '{installed}'. It is published alongside the server by scripts/build.ps1 (or build.sh).", installed);
 
             _buildStamp = BuildStamp(installed);
             if (!IsSingleFile(installed))
@@ -170,13 +175,15 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
                 log.LogDebug("Pty host at {Path} is not a single-file build; launching it in place.", installed);
                 return _launchPath = installed;
             }
-            var target = Path.Combine(CopyRoot, _buildStamp, "ClaudeWeb.PtyHost.exe");
+            var target = Path.Combine(CopyRoot, _buildStamp, HostFileName);
             try
             {
                 if (!File.Exists(target) || new FileInfo(target).Length != new FileInfo(installed).Length)
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                     File.Copy(installed, target, overwrite: true);
+                    if (!OperatingSystem.IsWindows())
+                        File.SetUnixFileMode(target, File.GetUnixFileMode(installed) | UnixFileMode.UserExecute);
                     log.LogInformation("Copied the pty host binary to {Path} (build {Stamp}).", target, _buildStamp);
                 }
                 PruneUnusedCopies(_buildStamp);
@@ -206,9 +213,9 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     {
         if (!string.IsNullOrWhiteSpace(options.HostExecutable))
             return Path.GetFullPath(options.HostExecutable);
-        var published = Path.Combine(AppContext.BaseDirectory, "ClaudeWeb.PtyHost.exe");
+        var published = Path.Combine(AppContext.BaseDirectory, HostFileName);
         if (File.Exists(published)) return published;
-        var local = Path.Combine(AppContext.BaseDirectory, "ptyhost", "ClaudeWeb.PtyHost.exe");
+        var local = Path.Combine(AppContext.BaseDirectory, "ptyhost", HostFileName);
         return File.Exists(local) ? local : published; // report the published path when neither exists
     }
 
@@ -218,7 +225,9 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// only the published binary gets the per-build staging the updater relies on.
     /// </summary>
     private static bool IsSingleFile(string exe) =>
-        !File.Exists(Path.ChangeExtension(exe, ".dll"));
+        // Off Windows the apphost has no extension to change, and ChangeExtension would read
+        // "ClaudeWeb.PtyHost" as "ClaudeWeb" plus ".PtyHost" and look for ClaudeWeb.dll.
+        !File.Exists(OperatingSystem.IsWindows() ? Path.ChangeExtension(exe, ".dll") : exe + ".dll");
 
     /// <summary>
     /// Names the build a host copy came from. The exe's own last-write time and size identify it well
@@ -286,24 +295,43 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
 
     /// <summary>
     /// Terminate a session's host and forget its state file. This is a complete teardown, not a
-    /// partial one: the pseudoconsole's job object is kill-on-close and job membership is inherited,
-    /// so <c>claude.exe</c> and anything we launched it through go down with the host. Used as the
-    /// backstop for a host that ignored <c>shutdown</c>, and as the whole story for an orphan.
+    /// partial one: on Windows the pseudoconsole's job object is kill-on-close and job membership is
+    /// inherited, so <c>claude.exe</c> and anything we launched it through go down with the host. Unix
+    /// has no such object, and a host killed outright never runs its own teardown, so there the child's
+    /// tree is ended here first. Used as the backstop for a host that ignored <c>shutdown</c>, and as
+    /// the whole story for an orphan.
     /// </summary>
     public void KillHost(string sessionId)
     {
         var path = PtyStateStore.PathFor(InstanceKey, sessionId);
         var state = PtyStateStore.Read(path);
-        if (state is null || !PtyStateStore.HostAlive(state)) { PtyStateStore.Delete(path); return; }
+        if (state is null || !PtyStateStore.HostAlive(state)) { PtyStateStore.Forget(path, state); return; }
         try
         {
+            if (!OperatingSystem.IsWindows()) KillChildTree(state);
             using var p = System.Diagnostics.Process.GetProcessById(state.HostPid);
             log.LogWarning("Terminating pty host pid {Pid} for session {Id}.", state.HostPid, sessionId);
             p.Kill();
             p.WaitForExit(3000);
         }
         catch (Exception ex) { log.LogWarning(ex, "Error terminating the pty host for session {Id}", sessionId); }
-        PtyStateStore.Delete(path);
+        PtyStateStore.Forget(path, state);
+    }
+
+    /// <summary>
+    /// The host's child and everything under it, on Unix — but only while the pid is still the process
+    /// the state file recorded, never a stranger that has since been handed the same number.
+    /// </summary>
+    private void KillChildTree(PtyState state)
+    {
+        if (state.ChildPid <= 0 || state.ChildStartTicks == 0) return;
+        try
+        {
+            using var child = System.Diagnostics.Process.GetProcessById(state.ChildPid);
+            if (child.HasExited || !PtyStateStore.StartedAt(child, state.ChildStartTicks)) return;
+            child.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) { log.LogDebug(ex, "Could not end the child tree of pty host {Pid}", state.HostPid); }
     }
 
     /// <summary>
@@ -326,6 +354,38 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
         }
         catch (Exception ex) { log.LogDebug(ex, "Orphaned pty host for session {Id} did not acknowledge shutdown", sessionId); }
         KillHost(sessionId);
+    }
+
+    // ---- Linux and macOS ------------------------------------------------------------------------
+
+    /// <summary>
+    /// Start the host on Unix. Process.Start is enough here: the detaching that Windows does with
+    /// creation flags, the host does for itself on arrival (<c>setsid</c>, see its <c>Unix.Detach</c>),
+    /// and .NET opens every descriptor close-on-exec, so nothing of ours is inherited but the three
+    /// standard streams — which are redirected and dropped, so the host holds no terminal or journal
+    /// pipe of ours. A service manager can still end it with us; see the systemd and launchd notes in
+    /// the README (<c>KillMode=process</c>, <c>AbandonProcessGroup</c>).
+    /// </summary>
+    private static int SpawnUnix(string exe, string requestFile, string workingDirectory)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo(exe)
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = Directory.Exists(workingDirectory) ? workingDirectory : AppContext.BaseDirectory,
+        };
+        psi.ArgumentList.Add("--spawn");
+        psi.ArgumentList.Add(requestFile);
+        using var p = System.Diagnostics.Process.Start(psi)
+            ?? throw new InvalidOperationException($"Could not start the pty host '{exe}'.");
+        // Closing our ends: the host never reads its stdin, and a write to a closed stdout is an EPIPE
+        // .NET's console swallows rather than a signal that kills it.
+        try { p.StandardInput.Close(); } catch { }
+        try { p.StandardOutput.Close(); } catch { }
+        try { p.StandardError.Close(); } catch { }
+        return p.Id;
     }
 
     // ---- CreateProcess, because .NET's Process.Start can't ask for these flags -------------------

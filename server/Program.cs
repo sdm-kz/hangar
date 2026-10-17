@@ -31,9 +31,12 @@ internal static class Program
     // would put the window here, where nothing pumps, and a logoff would never be heard.
     private static void Main(string[] args)
     {
+        // Linux and macOS: the data folder has to exist before the crash log can go in it.
+        PrepareDataFolder();
         // Install the runtime-wide crash handlers before anything else runs, so any fault during
         // startup (or later, on a background thread) is written to crash.log instead of vanishing.
         CrashHandler.Install(LogDirectory());
+        Update.UpdateService.CaptureServiceManager();
 
         var isService = OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService();
         var contentRoot = ResolveContentRoot();
@@ -1866,6 +1869,33 @@ internal static class Program
     // Shared on-disk diagnostics location: %LocalAppData%\ClaudeWeb\logs (claudeweb.log + crash.log).
     private static string LogDirectory() =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "logs");
+
+    /// <summary>
+    /// Get the app's data folder ready on Linux and macOS, before anything asks for it.
+    /// <list type="bullet">
+    /// <item>Create %LocalAppData%'s counterpart. There <c>GetFolderPath(LocalApplicationData)</c> answers
+    /// with an empty string when the folder isn't there (~/.local/share on a fresh account, or one that
+    /// only ever ran services) — and every store, log and pty state file built on it would then land
+    /// relative to the working directory. Creating it once here lets every other call site, the pty
+    /// host's included, keep the plain overload.</item>
+    /// <item>Make <c>ClaudeWeb</c> in it this user's alone. It holds the password hash, the login tokens,
+    /// the VAPID keys and every session's state; %LocalAppData% is private by default on Windows, but
+    /// ~/.local/share under the usual umask of 022 is readable by every account on the box.</item>
+    /// </list>
+    /// </summary>
+    private static void PrepareDataFolder()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        try
+        {
+            var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create);
+            var dir = Path.Combine(root, "ClaudeWeb");
+            const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+            Directory.CreateDirectory(dir, ownerOnly);
+            File.SetUnixFileMode(dir, ownerOnly); // a folder made before this existed keeps its old mode otherwise
+        }
+        catch { /* best effort: the stores fail with their own errors, and nothing better can be done here */ }
+    }
 
     // Published: exe + wwwroot together → base dir. `dotnet run`: bin has no wwwroot → project dir.
     private static string ResolveContentRoot()

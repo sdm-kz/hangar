@@ -49,8 +49,39 @@ public static class PtyStateStore
     /// The pipe a session's host listens on. Namespaced by instance for the same reason the state
     /// directory is.
     /// </summary>
-    public static string PipeName(string instanceKey, string sessionId) =>
-        $"claudeweb-pty-{Sanitize(instanceKey)}-{Sanitize(sessionId)}";
+    /// <remarks>
+    /// On Linux and macOS a .NET named pipe is a Unix domain socket, and a bare name would put it at
+    /// <c>$TMPDIR/CoreFxPipe_&lt;name&gt;</c>. Neither half of that holds up: a socket path is capped
+    /// at 104 bytes on macOS, which a per-user <c>/var/folders/…/T/</c> plus this name overruns, and
+    /// <c>/tmp</c> is swept by systemd-tmpfiles after ten days — while a session can run longer, and its
+    /// socket is the only way back to it. So there the name is an absolute path (which .NET takes
+    /// as-is) in a folder of the app's own, with the session part hashed down to keep it short.
+    /// </remarks>
+    public static string PipeName(string instanceKey, string sessionId)
+    {
+        var name = $"claudeweb-pty-{Sanitize(instanceKey)}-{Sanitize(sessionId)}";
+        if (OperatingSystem.IsWindows()) return name;
+        var hash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(name)))[..16].ToLowerInvariant();
+        return Path.Combine(SocketDirectory, hash + ".sock");
+    }
+
+    /// <summary>Where the Unix sockets live: owner-only, beside the state files.</summary>
+    public static string SocketDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "sock");
+
+    /// <summary>
+    /// Create <see cref="SocketDirectory"/> readable by this user alone. The socket itself is checked
+    /// on connect too (<c>PipeOptions.CurrentUserOnly</c>), but a folder nobody else can list keeps the
+    /// session names out of view as well.
+    /// </summary>
+    public static void EnsureSocketDirectory()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        System.IO.Directory.CreateDirectory(SocketDirectory, ownerOnly);
+        File.SetUnixFileMode(SocketDirectory, ownerOnly); // the mode above only applies to a folder it creates
+    }
 
     /// <summary>Write (or overwrite) a state file, creating its directory.</summary>
     public static void Write(string path, PtyState state)
@@ -114,6 +145,18 @@ public static class PtyStateStore
     }
 
     /// <summary>
+    /// Drop a dead (or killed) host's state file and, on Unix, its socket. A host that exits cleanly
+    /// removes the socket itself; one that was killed, or went down with the machine, leaves it behind
+    /// in <see cref="SocketDirectory"/>.
+    /// </summary>
+    public static void Forget(string path, PtyState? state)
+    {
+        Delete(path);
+        if (!OperatingSystem.IsWindows() && state is not null && Path.IsPathRooted(state.PipeName))
+            try { File.Delete(state.PipeName); } catch { }
+    }
+
+    /// <summary>
     /// Whether the host process a state file names is still the one that wrote it. The start-time
     /// check is what makes this safe: PIDs are recycled, heavily so after a reboot.
     /// </summary>
@@ -123,10 +166,28 @@ public static class PtyStateStore
         try
         {
             using var p = System.Diagnostics.Process.GetProcessById(state.HostPid);
-            return !p.HasExited
-                && (state.HostStartTicks == 0 || p.StartTime.ToUniversalTime().Ticks == state.HostStartTicks);
+            return !p.HasExited && (state.HostStartTicks == 0 || StartedAt(p, state.HostStartTicks));
         }
         catch { return false; } // no such process, or we can't inspect it — treat as gone
+    }
+
+    /// <summary>
+    /// Whether <paramref name="p"/> started at the time recorded as <paramref name="ticks"/> (UTC) —
+    /// the half of a pid-reuse check that a pid alone can't give.
+    /// </summary>
+    /// <remarks>
+    /// Exact on Windows, where the kernel keeps a creation timestamp. Linux and macOS don't: .NET works
+    /// the start time out as the boot time plus the process's age in clock ticks, and the boot time it
+    /// derives moves by microseconds from one reading to the next — so the same process reads back a
+    /// different value in another process, and an exact match calls every live host dead. A second's
+    /// slack is far finer than pid reuse, which needs the pid space to wrap.
+    /// </remarks>
+    public static bool StartedAt(System.Diagnostics.Process p, long ticks)
+    {
+        var actual = p.StartTime.ToUniversalTime().Ticks;
+        return OperatingSystem.IsWindows()
+            ? actual == ticks
+            : Math.Abs(actual - ticks) < TimeSpan.TicksPerSecond;
     }
 
     /// <summary>Keep a key usable as both a file name and a pipe name.</summary>

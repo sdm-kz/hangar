@@ -53,6 +53,11 @@ public static class Host
         HostLog.Open(request.LogFile);
         HostLog.Info($"Host starting for session {request.SessionId} (pid {Environment.ProcessId}), pipe '{request.PipeName}'.");
 
+        // The Unix half of what the web app's spawn flags do on Windows (see PtyHostLauncher): out of
+        // its session and process group, so nothing aimed at the web app's lands here.
+        if (!OperatingSystem.IsWindows() && !Unix.Detach())
+            HostLog.Warn("setsid failed; the host stays in the web app's process group.");
+
         try
         {
             return Run(request);
@@ -158,9 +163,11 @@ public static class Host
         server.Stop();
         try { Task.WaitAll([serving, watching], TimeSpan.FromSeconds(2)); } catch { }
 
-        // Disposing closes the pseudoconsole and the job handle, which terminates the whole child tree
-        // if any of it is somehow still up (see PtySession's remarks).
+        // Disposing closes the pseudoconsole and the job handle (on Unix, signals the child's process
+        // group), which terminates the whole child tree if any of it is somehow still up (see
+        // PtySession's remarks).
         terminal.Dispose();
+        server.RemoveSocketFile();
         PtyStateStore.Delete(request.StateFile);
         HostLog.Info("Host exiting.");
         return 0;

@@ -54,7 +54,23 @@ public static class PtySpawnRequestStore
     public static void Write(string path, PtySpawnRequest request)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, JsonSerializer.Serialize(request, PtyJsonFileContext.Default.PtySpawnRequest));
+        var json = JsonSerializer.Serialize(request, PtyJsonFileContext.Default.PtySpawnRequest);
+        if (OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(path, json);
+            return;
+        }
+        // It carries the session's hook token. %LocalAppData% is the user's own on Windows, but under a
+        // umask of 022 ~/.local/share is readable by every account on the box — so 0600, set at creation.
+        File.Delete(path);
+        using var stream = new FileStream(path, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+        });
+        using var writer = new StreamWriter(stream);
+        writer.Write(json);
     }
 
     public static PtySpawnRequest? Read(string path)

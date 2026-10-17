@@ -76,6 +76,10 @@ public sealed class SessionManager : IDisposable
     // and the sessions that were running at exit would never auto-resume. The last save before
     // shutdown already holds the truth, so freeze the file here.
     private volatile bool _shuttingDown;
+    // The same moment, for the work that waits on it: a launch prompt still waiting to be typed in
+    // (TypeInitialPromptAsync) is stashed rather than lost. Never disposed — cancelled at most once,
+    // from BeginShutdown, which can be reached again from Dispose.
+    private readonly CancellationTokenSource _stopping = new();
     // How long after a session's process dies we keep persisting it as "was running".
     //
     // A Windows shutdown terminates the claude children first and can take this app down before it
@@ -980,6 +984,71 @@ public sealed class SessionManager : IDisposable
     /// <summary>The browser's <c>IMAGE_SETTLE_MS</c>: how long a pasted image takes to be taken in.</summary>
     private static readonly TimeSpan ImageSettle = TimeSpan.FromMilliseconds(600);
 
+    /// <summary>How long a launch prompt waits for claude's input before going to the postponed pool.</summary>
+    private static readonly TimeSpan PromptReadyTimeout = TimeSpan.FromMinutes(2);
+
+    /// <summary>How quiet claude's opening paint must have gone before the prompt is typed in.</summary>
+    private const long PromptQuietMs = 1000;
+
+    /// <summary>
+    /// How long after claude's input comes up the prompt goes in anyway, quiet or not — a spinner on
+    /// the screen (Remote Control connecting, say) must not hold it back for good.
+    /// </summary>
+    private static readonly TimeSpan PromptMaxSettle = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Type a launch prompt in once claude can take it — the Linux and macOS half of what the command
+    /// line does on Windows (see <c>ClaudeSession.PromptOnCommandLine</c>, and why it isn't used there).
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Ready</b> means: claude's TUI has switched bracketed paste on, which it does as it mounts
+    /// (<see cref="Pty.ITerminal.AcceptsPaste"/>); nothing is asking a question — a paste into a dialog
+    /// would answer it; and the opening paint has gone quiet for <see cref="PromptQuietMs"/>, or the
+    /// input has been up for <see cref="PromptMaxSettle"/>. Then it goes in the way any message does,
+    /// through <see cref="SendMessageAsync(string, string, CancellationToken)"/>.</para>
+    /// <para>A prompt that can't be delivered — claude never got there inside
+    /// <see cref="PromptReadyTimeout"/>, or this app began shutting down first — is put in the
+    /// session's postponed messages rather than dropped, as a schedule's undeliverable prompt is: the
+    /// badge then says something is waiting, and it is one click from being sent.</para>
+    /// </remarks>
+    private async Task TypeInitialPromptAsync(ClaudeSession s, string prompt)
+    {
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        TimeSpan? inputUpAt = null;
+        try
+        {
+            while (waited.Elapsed < PromptReadyTimeout)
+            {
+                await Task.Delay(250, _stopping.Token);
+                if (s.State != SessionState.Running || s.Terminal is not { } term)
+                {
+                    // Ended before it got there: a reopen is a new session with a pool of its own, so
+                    // there is nowhere left to put the prompt.
+                    _log.LogWarning("Session {Id} ended before its launch prompt could be typed in.", s.Id);
+                    return;
+                }
+                if (!term.AcceptsPaste) continue;
+                inputUpAt ??= waited.Elapsed;
+                if (IsAwaitingInput(s)) continue;
+                if (term.MillisSinceOutput < PromptQuietMs && waited.Elapsed - inputUpAt < PromptMaxSettle) continue;
+
+                if (await SendMessageAsync(s.Id, prompt, _stopping.Token)) return;
+                break; // the terminal went between the checks and the write
+            }
+        }
+        catch (OperationCanceledException) { /* shutting down: stash it below */ }
+        catch (Exception ex) { _log.LogWarning(ex, "Typing the launch prompt into session {Id} failed", s.Id); }
+
+        var stashed = PostponedStore.Append(s.WorkingDirectory, s.Id, prompt, []);
+        if (stashed == PostponedStore.AppendResult.Added)
+        {
+            _log.LogWarning("Could not type the launch prompt into session {Id}; it is in the session's postponed messages.", s.Id);
+            RaiseChanged();
+        }
+        else
+            _log.LogError("Could not type the launch prompt into session {Id}, nor stash it ({Result}).", s.Id, stashed);
+    }
+
     /// <summary>
     /// The project a launch should link its folder into (null when none, or when the folder is already
     /// there) and the group to file it in, from <see cref="CreateSessionRequest.ProjectId"/> and
@@ -1075,6 +1144,7 @@ public sealed class SessionManager : IDisposable
         }
         SavePersisted();
         RaiseChanged();
+        if (session.PromptToType is { } prompt) _ = TypeInitialPromptAsync(session, prompt);
 
         var info = session.ToInfo(ConversationId(session));
         if (linkTo is not null && _projects.AddFolder(linkTo.Id, fullDir) is not null)
@@ -1387,7 +1457,7 @@ public sealed class SessionManager : IDisposable
             {
                 _log.LogInformation("Pty host for session {Id} (pid {Pid}) is gone; discarding its stale state file.",
                     state.SessionId, state.HostPid);
-                PtyStateStore.Delete(path);
+                PtyStateStore.Forget(path, state);
                 continue;
             }
 
@@ -1460,7 +1530,7 @@ public sealed class SessionManager : IDisposable
         foreach (var (path, state) in PtyStateStore.ReadAll(_hosts.InstanceKey))
         {
             if (_sessions.ContainsKey(state.SessionId) || _restorable.ContainsKey(state.SessionId)) continue;
-            if (!PtyStateStore.HostAlive(state)) { PtyStateStore.Delete(path); continue; }
+            if (!PtyStateStore.HostAlive(state)) { PtyStateStore.Forget(path, state); continue; }
             orphans.Add(new PtyOrphanInfo(
                 state.SessionId, state.HostPid, state.ChildPid, state.WorkingDirectory, state.CreatedAt,
                 Math.Round((now - state.CreatedAt).TotalHours, 2)));
@@ -1606,7 +1676,7 @@ public sealed class SessionManager : IDisposable
         try
         {
             using var proc = System.Diagnostics.Process.GetProcessById(p.ProcessId);
-            return !proc.HasExited && proc.StartTime.ToUniversalTime().Ticks == p.ProcessStartTicks;
+            return !proc.HasExited && PtyStateStore.StartedAt(proc, p.ProcessStartTicks);
         }
         catch
         {
@@ -1890,7 +1960,11 @@ public sealed class SessionManager : IDisposable
     /// "nothing was running". Called on every shutdown signal we get — the host stopping, and the
     /// Windows session ending — as well as from <see cref="Dispose"/>.
     /// </summary>
-    public void BeginShutdown() => _shuttingDown = true;
+    public void BeginShutdown()
+    {
+        _shuttingDown = true;
+        if (!_stopping.IsCancellationRequested) _stopping.Cancel();
+    }
 
     private void SavePersisted()
     {

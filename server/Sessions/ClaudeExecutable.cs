@@ -21,8 +21,8 @@ public static class ClaudeExecutableResolver
         if (Path.IsPathRooted(configured) && File.Exists(configured))
             return Wrap(configured, isWindows);
 
-        if (!isWindows)
-            return new ExecutableSpec(configured, Array.Empty<string>());
+        if (!OperatingSystem.IsWindows())
+            return new ExecutableSpec(SearchUnix(configured) ?? configured, Array.Empty<string>());
 
         // Resolve like the shell would: walk PATH in order and take the FIRST directory that
         // has a launchable claude (.exe/.cmd/.bat). This matters when several claude installs
@@ -221,6 +221,47 @@ public static class ClaudeExecutableResolver
         }
         catch { return null; }
     }
+
+    /// <summary>
+    /// A bare name resolved on Linux and macOS: PATH first, then the places claude installs itself.
+    /// The fallbacks are not decoration — a systemd or launchd unit starts with a PATH of little more
+    /// than <c>/usr/bin:/bin</c>, which has neither the native installer's <c>~/.local/bin</c>, npm's
+    /// global bin, nor Homebrew's. Null when it is nowhere, and the caller passes the name on as it was.
+    /// </summary>
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    private static string? SearchUnix(string name)
+    {
+        if (name.Contains('/'))
+            return null; // a relative path: the caller's to make sense of, not ours to search for
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var dirs = (Environment.GetEnvironmentVariable("PATH") ?? "")
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Concat(UnixInstallDirs(home));
+        foreach (var dir in dirs)
+        {
+            try
+            {
+                var full = Path.Combine(dir, name);
+                if (File.Exists(full) && (File.GetUnixFileMode(full) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0)
+                    return full;
+            }
+            catch { /* a malformed PATH entry */ }
+        }
+        return null;
+    }
+
+    /// <summary>Where claude lands outside a login PATH.</summary>
+    private static IEnumerable<string> UnixInstallDirs(string home) =>
+    [
+        Path.Combine(home, ".local", "bin"),            // the native installer
+        Path.Combine(home, ".claude", "local"),         // `claude migrate-installer`
+        Path.Combine(home, ".npm-global", "bin"),       // a user-level npm prefix
+        Path.Combine(home, ".bun", "bin"),
+        "/opt/homebrew/bin",                            // Homebrew on Apple silicon
+        "/usr/local/bin",                               // Homebrew on Intel, and npm's default prefix
+        "/home/linuxbrew/.linuxbrew/bin",
+        "/snap/bin",
+    ];
 
     private static readonly string[] WindowsExecExtensions = { ".exe", ".cmd", ".bat" };
 

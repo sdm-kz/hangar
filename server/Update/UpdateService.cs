@@ -170,17 +170,17 @@ public sealed class UpdateService : BackgroundService
             if (_state == UpdateState.Applying) return Status; // already handed off — second click, same update
             if (_staged is null || _staged.BuildId == _current?.BuildId) return Fail("no update is staged");
             if (string.IsNullOrWhiteSpace(_installPath)) return Fail("could not work out the install folder");
-            if (!File.Exists(Path.Combine(_installPath, "ClaudeWeb.exe")))
-                return Fail($"'{_installPath}' is not a Claude Web install (no ClaudeWeb.exe) — this looks like a dev run");
-            if (!File.Exists(Path.Combine(_payloadPath, "ClaudeWeb.exe")))
-                return Fail("the staged build has no ClaudeWeb.exe");
+            if (!File.Exists(Path.Combine(_installPath, ServerExe)))
+                return Fail($"'{_installPath}' is not a Claude Web install (no {ServerExe}) — this looks like a dev run");
+            if (!File.Exists(Path.Combine(_payloadPath, ServerExe)))
+                return Fail($"the staged build has no {ServerExe}");
             if (SamePath(_installPath, _payloadPath))
                 return Fail("the staging folder is the install folder — nothing to copy");
 
             try
             {
                 var script = ExtractUpdater();
-                var mode = OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService() ? "service" : "process";
+                var mode = ServiceMode();
                 StartUpdater(script, mode);
                 _state = UpdateState.Applying;
                 _error = null;
@@ -219,8 +219,44 @@ public sealed class UpdateService : BackgroundService
         return status;
     }
 
+    /// <summary>The server's executable in an install folder: an .exe on Windows, a bare name elsewhere.</summary>
+    private static string ServerExe => OperatingSystem.IsWindows() ? "ClaudeWeb.exe" : "ClaudeWeb";
+
+    // The unit this daemon runs as on Linux or macOS, if any (see CaptureServiceManager).
+    private static string? _serviceManager;
+    private static string? _serviceName;
+
     /// <summary>
-    /// Write the embedded apply-update.ps1 out where it can run. Deliberately NOT in the install
+    /// Read, then remove, the two variables scripts/install-unix.sh puts in the units it writes:
+    /// <c>CLAUDEWEB_SERVICE_MANAGER</c> (systemd | launchd) and <c>CLAUDEWEB_SERVICE_NAME</c>. Called
+    /// first thing in <c>Main</c>, before any session starts. Removing them is the point: every session
+    /// and shell inherits this process's environment, so a second ClaudeWeb started from one of them — a
+    /// test build, say — would otherwise believe it was the unit, and its updater would start, or on a
+    /// timeout <i>stop</i>, the live app's unit.
+    /// </summary>
+    public static void CaptureServiceManager()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var manager = Environment.GetEnvironmentVariable("CLAUDEWEB_SERVICE_MANAGER");
+        var name = Environment.GetEnvironmentVariable("CLAUDEWEB_SERVICE_NAME");
+        Environment.SetEnvironmentVariable("CLAUDEWEB_SERVICE_MANAGER", null);
+        Environment.SetEnvironmentVariable("CLAUDEWEB_SERVICE_NAME", null);
+        if (manager is "systemd" or "launchd" && !string.IsNullOrWhiteSpace(name))
+            (_serviceManager, _serviceName) = (manager, name);
+    }
+
+    /// <summary>
+    /// How this process was started, so the updater can start the new build the same way: "service"
+    /// under the Windows SCM; "systemd" or "launchd" when the unit said so (see
+    /// <see cref="CaptureServiceManager"/>); otherwise "process", which relaunches the executable.
+    /// </summary>
+    private static string ServiceMode() =>
+        OperatingSystem.IsWindows()
+            ? WindowsServiceHelpers.IsWindowsService() ? "service" : "process"
+            : _serviceManager ?? "process";
+
+    /// <summary>
+    /// Write the embedded updater script out where it can run. Deliberately NOT in the install
     /// folder — the script mirrors over that folder, so it would be replacing the file it's executing.
     /// </summary>
     private static string ExtractUpdater()
@@ -228,40 +264,75 @@ public sealed class UpdateService : BackgroundService
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "update");
         Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, "apply-update.ps1");
+        var name = OperatingSystem.IsWindows() ? "apply-update.ps1" : "apply-update.sh";
+        var path = Path.Combine(dir, name);
+        var resource = "ClaudeWeb.Server." + name;
 
-        using var src = Assembly.GetExecutingAssembly().GetManifestResourceStream(UpdaterResourceName)
-            ?? throw new InvalidOperationException($"'{UpdaterResourceName}' is missing from the build");
-        using var dst = File.Create(path);
+        using var src = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource)
+            ?? throw new InvalidOperationException($"'{resource}' is missing from the build");
+        File.Delete(path); // so the mode below applies: it is only honoured when the file is created
+        using var dst = OperatingSystem.IsWindows()
+            ? File.Create(path)
+            : new FileStream(path, new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+            });
         src.CopyTo(dst);
         return path;
     }
 
-    private const string UpdaterResourceName = "ClaudeWeb.Server.apply-update.ps1";
-
     private void StartUpdater(string script, string mode)
     {
-        var psi = new ProcessStartInfo("powershell.exe")
+        var waitSeconds = Math.Max(10, _options.ShutdownWaitSeconds).ToString();
+        ProcessStartInfo psi;
+        if (OperatingSystem.IsWindows())
         {
-            // The working directory must not be the install folder, or robocopy can't mirror it.
-            WorkingDirectory = Path.GetDirectoryName(script)!,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var arg in new[]
-                 {
-                     "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                     "-File", script,
-                     "-Staging", _payloadPath,
-                     "-Target", _installPath!,
-                     "-ProcessId", Environment.ProcessId.ToString(),
-                     "-Mode", mode,
-                     "-WaitSeconds", Math.Max(10, _options.ShutdownWaitSeconds).ToString(),
-                 })
-            psi.ArgumentList.Add(arg);
+            psi = new ProcessStartInfo("powershell.exe");
+            foreach (var arg in new[]
+                     {
+                         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                         "-File", script,
+                         "-Staging", _payloadPath,
+                         "-Target", _installPath!,
+                         "-ProcessId", Environment.ProcessId.ToString(),
+                         "-Mode", mode,
+                         "-WaitSeconds", waitSeconds,
+                     })
+                psi.ArgumentList.Add(arg);
+        }
+        else
+        {
+            // Through setsid where there is one (Linux), so the updater leaves our process group and a
+            // signal aimed at us on the way down can't reach it. macOS has no setsid(1); there, the
+            // launchd job's AbandonProcessGroup is what keeps it alive (see install-unix.sh).
+            var setsid = new[] { "/usr/bin/setsid", "/bin/setsid" }.FirstOrDefault(File.Exists);
+            psi = new ProcessStartInfo(setsid ?? "/bin/sh");
+            if (setsid is not null) psi.ArgumentList.Add("/bin/sh");
+            foreach (var arg in new[]
+                     {
+                         script, _payloadPath, _installPath!, Environment.ProcessId.ToString(), mode,
+                         _serviceName ?? "", waitSeconds,
+                     })
+                psi.ArgumentList.Add(arg);
+            // Its own output goes to update.log; ours may be a terminal or a journal that goes away
+            // with us.
+            psi.RedirectStandardInput = psi.RedirectStandardOutput = psi.RedirectStandardError = true;
+        }
+        // The working directory must not be the install folder, or it can't be mirrored over.
+        psi.WorkingDirectory = Path.GetDirectoryName(script)!;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
 
-        var proc = Process.Start(psi) ?? throw new InvalidOperationException("powershell.exe did not start");
+        var proc = Process.Start(psi) ?? throw new InvalidOperationException($"{psi.FileName} did not start");
         // Nothing here waits on it: this process is about to exit and the updater must outlive it.
+        if (!OperatingSystem.IsWindows())
+        {
+            try { proc.StandardInput.Close(); } catch { }
+            try { proc.StandardOutput.Close(); } catch { }
+            try { proc.StandardError.Close(); } catch { }
+        }
         proc.Dispose();
     }
 

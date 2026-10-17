@@ -10,19 +10,20 @@ namespace ClaudeWeb.Server.Sessions.Shells;
 /// the family, which is all the UI needs to pick an icon (several WSL distributions share one).
 /// </remarks>
 public sealed record ShellOption(
-    /// <summary>Stable id: "cmd" | "powershell" | "pwsh" | "gitbash" | "wsl:&lt;distro&gt;".</summary>
+    /// <summary>Stable id: "cmd" | "powershell" | "pwsh" | "gitbash" | "wsl:&lt;distro&gt;" on Windows; "bash" | "zsh" | "fish" | "pwsh" | "sh" elsewhere.</summary>
     string Id,
     /// <summary>What the menu shows, e.g. "PowerShell 7" or "Ubuntu-24.04 (WSL)".</summary>
     string Label,
-    /// <summary>Family, for the icon: "cmd" | "powershell" | "pwsh" | "bash" | "wsl".</summary>
+    /// <summary>Family, for the icon: "cmd" | "powershell" | "pwsh" | "bash" | "wsl" (and "zsh" | "fish" | "sh" off Windows).</summary>
     string Kind,
     /// <summary>Where it was found (an exe path, or the distribution name) — shown as a tooltip.</summary>
     string Detail);
 
 /// <summary>How to actually launch a shell: what to spawn in the pseudoconsole, and with what.</summary>
 /// <param name="Arguments">
-/// Already-quoted tokens: they are joined with spaces into a verbatim command line rather than being
-/// quoted again per-argument. See <see cref="ShellCatalog.Quote"/>.
+/// Already-quoted tokens on Windows: they are joined with spaces into a verbatim command line rather
+/// than being quoted again per-argument. Elsewhere each token is one argv entry as it stands. See
+/// <see cref="ShellCatalog.Quote"/>.
 /// </param>
 public sealed record ShellLaunch(
     string FileName,
@@ -84,9 +85,13 @@ public static class ShellCatalog
         get
         {
             var available = Available();
-            foreach (var id in new[] { "pwsh", "powershell", "cmd", "gitbash" })
+            // On Linux and macOS, the user's own login shell leads the list (see DetectUnix).
+            string[] preferred = OperatingSystem.IsWindows()
+                ? ["pwsh", "powershell", "cmd", "gitbash"]
+                : [];
+            foreach (var id in preferred)
                 if (available.Any(o => o.Id == id)) return id;
-            return available.Count > 0 ? available[0].Id : "cmd";
+            return available.Count > 0 ? available[0].Id : OperatingSystem.IsWindows() ? "cmd" : "sh";
         }
     }
 
@@ -117,8 +122,10 @@ public static class ShellCatalog
             }
             case "bash":
                 // Git for Windows' bin\bash.exe is the MSYS launcher: --login runs /etc/profile, which
-                // is what puts the unix tools on PATH. CHERE_INVOKING keeps it in the folder we start
-                // it in rather than cd-ing to $HOME, which is the whole point of a per-folder tab.
+                // is what puts the unix tools on PATH (on Linux and macOS, the profile is where a PATH the
+                // daemon's unit never had comes from). CHERE_INVOKING keeps MSYS in the folder we start it
+                // in rather than cd-ing to $HOME, which is the whole point of a per-folder tab; elsewhere
+                // nothing reads it.
                 env["CHERE_INVOKING"] = "1";
                 env["TERM"] = "xterm-256color";
                 // Shell integration (see PowerShellIntegration): bash takes both hooks from the
@@ -133,14 +140,25 @@ public static class ShellCatalog
                 // -NoExit runs the integration once the profile has set its prompt up, and leaves the
                 // shell interactive. Encoded rather than run from a file, so execution policy, which
                 // governs script files, has nothing to say about it.
+                // -Login (Unix only, and only as the first argument) reads the profile the way a login
+                // shell does: under systemd or launchd, that is where PATH comes from.
                 return new ShellLaunch(option.Detail,
-                    new[] { "-NoLogo", "-NoExit", "-EncodedCommand", EncodedPowerShellIntegration }, env);
+                    OperatingSystem.IsWindows()
+                        ? new[] { "-NoLogo", "-NoExit", "-EncodedCommand", EncodedPowerShellIntegration }
+                        : new[] { "-Login", "-NoLogo", "-NoExit", "-EncodedCommand", EncodedPowerShellIntegration },
+                    env);
             case "cmd":
                 // cmd has no hook before a command runs, only its prompt: that gets the "prompt is up"
                 // mark, and the pty host takes Enter at that prompt as the start of a command.
                 env["PROMPT"] = @"$E]133;A$E\" +
                     (Environment.GetEnvironmentVariable("PROMPT") is { Length: > 0 } prompt ? prompt : "$P$G");
                 return new ShellLaunch(option.Detail, Array.Empty<string>(), env);
+            case "zsh":
+            case "fish":
+            case "sh":
+                // Login shells, as macOS's Terminal opens them: the profile is what fills in a PATH
+                // that a daemon started by systemd or launchd was never given.
+                return new ShellLaunch(option.Detail, new[] { "-l" }, env);
             default:
                 return new ShellLaunch(option.Detail, Array.Empty<string>(), env);
         }
@@ -155,7 +173,9 @@ public static class ShellCatalog
     /// The ssh client to run: whatever is on PATH, else Windows' own OpenSSH, else the one Git ships.
     /// Null when the machine has none.
     /// </summary>
-    public static string? SshPath => FirstExisting(
+    public static string? SshPath => !OperatingSystem.IsWindows()
+        ? FirstExisting(Which("ssh"), "/usr/bin/ssh", "/usr/local/bin/ssh", "/opt/homebrew/bin/ssh")
+        : FirstExisting(
         Which("ssh.exe"),
         Path.Combine(System32, "OpenSSH", "ssh.exe"),
         Which("git.exe") is { } git && Path.GetDirectoryName(Path.GetDirectoryName(git)) is { } root
@@ -264,10 +284,14 @@ public static class ShellCatalog
     /// <summary>
     /// Quote one token of a verbatim command line, the way a person typing it would: only when it
     /// holds a space, a tab or a quote of its own. Leaving the simple ones bare is not cosmetic —
-    /// <c>wsl.exe</c> matches its flags against the raw text, and <c>"-d"</c> is not <c>-d</c>.
+    /// <c>wsl.exe</c> matches its flags against the raw text, and <c>"-d"</c> is not <c>-d</c>. Off
+    /// Windows there is no command line, and the token comes back unchanged.
     /// </summary>
     public static string Quote(string arg)
     {
+        // Off Windows there is no command line to quote for: each token reaches execvp() as one argv
+        // entry, and quotes added here would arrive as part of the argument.
+        if (!OperatingSystem.IsWindows()) return arg;
         if (arg.Length > 0 && arg.IndexOfAny([' ', '\t', '"']) < 0) return arg;
         // A run of backslashes before the closing quote would escape it, so double those (and only
         // those) — the CommandLineToArgvW rule.
@@ -299,6 +323,8 @@ public static class ShellCatalog
 
     private static IReadOnlyList<ShellOption> Detect()
     {
+        if (!OperatingSystem.IsWindows()) return DetectUnix();
+
         var found = new List<ShellOption>();
 
         // PowerShell 7+ first: it is the one a Windows developer actually lives in, and it is the
@@ -324,6 +350,48 @@ public static class ShellCatalog
             found.Add(new ShellOption($"wsl:{distro}", $"{distro} (WSL)", "wsl", distro));
 
         return found;
+    }
+
+    /// <summary>The shells a Linux or macOS machine offers, its user's login shell first.</summary>
+    private static readonly (string Id, string Label)[] UnixShells =
+    [
+        ("bash", "Bash"), ("zsh", "Zsh"), ("fish", "Fish"), ("pwsh", "PowerShell"), ("sh", "sh"),
+    ];
+
+    private static IReadOnlyList<ShellOption> DetectUnix()
+    {
+        var found = new List<ShellOption>();
+        foreach (var (id, label) in UnixShells)
+        {
+            if (FirstExisting(Which(id), $"/bin/{id}", $"/usr/bin/{id}", $"/usr/local/bin/{id}", $"/opt/homebrew/bin/{id}") is { } path)
+                // The id doubles as the kind: LaunchFor's "bash" and "pwsh" cases carry the shell
+                // integration, and the rest open plain.
+                found.Add(new ShellOption(id, label, id, path));
+        }
+
+        // A daemon under systemd or launchd may have no SHELL at all; the passwd entry still names it.
+        var login = Path.GetFileName(Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } shell ? shell
+            : PasswdShell() ?? (OperatingSystem.IsMacOS() ? "zsh" : ""));
+        var mine = found.FindIndex(o => o.Id == login);
+        if (mine > 0)
+        {
+            var option = found[mine];
+            found.RemoveAt(mine);
+            found.Insert(0, option);
+        }
+        return found;
+    }
+
+    /// <summary>This user's shell from <c>/etc/passwd</c> (Linux; macOS keeps users in Directory Services).</summary>
+    private static string? PasswdShell()
+    {
+        try
+        {
+            var prefix = Environment.UserName + ":";
+            var line = File.ReadLines("/etc/passwd").FirstOrDefault(l => l.StartsWith(prefix, StringComparison.Ordinal));
+            return line?.Split(':') is { Length: >= 7 } fields ? fields[6] : null;
+        }
+        catch { return null; }
     }
 
     /// <summary>Git for Windows' bash launcher, wherever Git was installed.</summary>

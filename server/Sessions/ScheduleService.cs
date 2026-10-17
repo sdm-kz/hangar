@@ -685,7 +685,16 @@ public sealed class ScheduleService : BackgroundService
                 psi.ArgumentList.Add("--dangerously-skip-permissions");
                 break;
         }
-        psi.ArgumentList.Add(prompt); // positional, last, as in ClaudeSession
+        // Positional and last, as in ClaudeSession — on Windows. On Linux and macOS a command line is
+        // readable by every user on the machine, so there the prompt goes in on stdin, which `claude -p`
+        // reads when it is given no prompt argument.
+        var promptOnStdin = !OperatingSystem.IsWindows();
+        if (promptOnStdin)
+        {
+            psi.RedirectStandardInput = true;
+            psi.StandardInputEncoding = new UTF8Encoding(false);
+        }
+        else psi.ArgumentList.Add(prompt);
 
         var started = Stopwatch.StartNew();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -699,6 +708,18 @@ public sealed class ScheduleService : BackgroundService
         // out from under us would fault a task nobody is left to observe.
         var stdout = proc.StandardOutput.ReadToEndAsync();
         var stderr = proc.StandardError.ReadToEndAsync();
+        if (promptOnStdin)
+        {
+            // Closed at once, so claude sees the end of its input and starts. A child that dies before
+            // reading it is a failed run, which the exit code below already reports; one that never
+            // reads it runs into the timeout, which the wait below then acts on.
+            try
+            {
+                await proc.StandardInput.WriteAsync(prompt.AsMemory(), timeout.Token);
+                proc.StandardInput.Close();
+            }
+            catch (Exception ex) when (ex is IOException or OperationCanceledException) { }
+        }
         try
         {
             try

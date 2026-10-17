@@ -63,6 +63,17 @@ public interface ITerminal : IDisposable
     /// <summary>True when a permission/confirmation prompt appears to be waiting on the user.</summary>
     bool IsAwaitingInput { get; }
 
+    /// <summary>
+    /// Whether the child has switched bracketed paste on (DEC mode 2004). Claude Code's TUI does so as
+    /// it mounts, so for a session that is the moment its input starts taking a paste. Read off the
+    /// screen this app keeps — off Windows, a raw copy of what the child wrote; ConPTY re-renders the
+    /// output instead, so nothing relies on this there.
+    /// </summary>
+    bool AcceptsPaste { get; }
+
+    /// <summary>Milliseconds since the child last wrote anything to its terminal.</summary>
+    long MillisSinceOutput { get; }
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     bool IsCompacting { get; }
 

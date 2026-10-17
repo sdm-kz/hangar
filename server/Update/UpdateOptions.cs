@@ -10,10 +10,13 @@ public sealed class UpdateOptions
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// Folder scripts\stage-update.ps1 publishes into. The staged build itself lives in the
+    /// Folder scripts\stage-update.ps1 (stage-update.sh on Linux and macOS) publishes into. The staged build itself lives in the
     /// "payload" subfolder; this is the folder that holds it.
     /// </summary>
-    public string StagingPath { get; set; } = @"C:\apps\claude-web-updates";
+    public string StagingPath { get; set; } = OperatingSystem.IsWindows()
+        ? @"C:\apps\claude-web-updates"
+        // ~/.local/share/ClaudeWeb/updates (Linux), ~/Library/Application Support/ClaudeWeb/updates (macOS).
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "updates");
 
     /// <summary>
     /// How often to re-read the staged build stamp. A FileSystemWatcher already reacts within a
