@@ -16,7 +16,7 @@ public sealed class PtyHostOptions
     public string InstanceKey { get; set; } = "";
 
     /// <summary>
-    /// Path to <c>ClaudeWeb.PtyHost.exe</c>. Empty means "next to this app's own executable", which is
+    /// Path to <c>Hangar.PtyHost.exe</c>. Empty means "next to this app's own executable", which is
     /// where both <c>build.ps1</c> and the updater put it.
     /// </summary>
     public string HostExecutable { get; set; } = "";
@@ -43,7 +43,7 @@ public sealed class PtyHostOptions
 /// <para>The spawn flags are the load-bearing part. <c>DETACHED_PROCESS</c> so the host gets no
 /// console of ours; <c>CREATE_NEW_PROCESS_GROUP</c> so a Ctrl+C in our group can't reach it; no
 /// handle inheritance; and <c>CREATE_BREAKAWAY_FROM_JOB</c> <b>where the parent job allows it</b> —
-/// if <c>ClaudeWeb.exe</c> is ever inside a job with kill-on-close (a service host, a debugger, some
+/// if <c>Hangar.exe</c> is ever inside a job with kill-on-close (a service host, a debugger, some
 /// CI parents), the host would otherwise inherit that job and die with us, silently defeating the
 /// entire feature. Windows refuses the flag when the job forbids breakaway, so we try it and retry
 /// without on ERROR_ACCESS_DENIED.</para>
@@ -61,7 +61,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     private string? _buildStamp;
 
     /// <summary>The host binary's file name: an .exe on Windows, a bare name elsewhere.</summary>
-    private static string HostFileName => OperatingSystem.IsWindows() ? "ClaudeWeb.PtyHost.exe" : "ClaudeWeb.PtyHost";
+    private static string HostFileName => OperatingSystem.IsWindows() ? "Hangar.PtyHost.exe" : "Hangar.PtyHost";
 
     /// <summary>The instance key in force, defaulted so a misconfigured instance still isolates itself.</summary>
     public string InstanceKey => string.IsNullOrWhiteSpace(options.InstanceKey) ? "default" : options.InstanceKey;
@@ -223,7 +223,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// </summary>
     private static bool IsSingleFile(string exe) =>
         // Off Windows the apphost has no extension to change, and ChangeExtension would read
-        // "ClaudeWeb.PtyHost" as "ClaudeWeb" plus ".PtyHost" and look for ClaudeWeb.dll.
+        // "Hangar.PtyHost" as "Hangar" plus ".PtyHost" and look for Hangar.dll.
         !File.Exists(OperatingSystem.IsWindows() ? Path.ChangeExtension(exe, ".dll") : exe + ".dll");
 
     /// <summary>

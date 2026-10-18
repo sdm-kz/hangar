@@ -14,7 +14,7 @@ public sealed class UpdateOptions
     /// "payload" subfolder; this is the folder that holds it.
     /// </summary>
     public string StagingPath { get; set; } = OperatingSystem.IsWindows()
-        ? @"C:\apps\claude-web-updates"
+        ? @"C:\apps\hangar-updates"
         // ~/.local/share/Hangar/updates (Linux), ~/Library/Application Support/Hangar/updates (macOS).
         // stage-update.sh picks the same folder: this one once a build that has it has run.
         : AppDataFolder.PathFor("updates");

@@ -1,21 +1,20 @@
 # Hangar
 
-> **Name:** the project is being renamed from Claude Web to **Hangar** (short form `hgr`). The
-> namespaces, the data folder (`%LocalAppData%\Hangar`, copied over from `ClaudeWeb` on start) and the
-> session environment (`HANGAR_*`, still alongside `CLAUDEWEB_*`) are done; the executables
-> (`ClaudeWeb.exe`, …) and the Windows service keep their old names until the cutover — see
-> [plans/rename-to-hangar.md](plans/rename-to-hangar.md).
+> **Name:** this project was called Claude Web (`ClaudeWeb.exe`, `%LocalAppData%\ClaudeWeb`,
+> `C:\apps\claude-web`). An install from before the rename moves over with
+> `scripts\cutover-to-hangar.ps1`; the data folder is copied across on start. What is left of the
+> old names, and why, is in [plans/rename-to-hangar.md](plans/rename-to-hangar.md).
 
 A .NET 10 app for Windows (the server also runs on Linux and macOS — see
 [Linux and macOS](#linux-and-macos)) that **launches Claude Code CLI sessions with Remote Control
 enabled** so you can drive them from the **Claude Code app** (claude.ai/code and mobile) — from any
 device on your LAN. It is two programs:
 
-- **`ClaudeWeb.exe` — the server.** A headless daemon that owns everything: the sessions, the web UI
+- **`Hangar.exe` — the server.** A headless daemon that owns everything: the sessions, the web UI
   and its API, every store. It starts at sign-in as you — or, when it has to run while nobody is
   signed in, as a Windows service under your account — and there is one per port: launching it again
   just opens the UI.
-- **`ClaudeWeb.Tray.exe` — the tray icon.** A client of the server's API, and nothing more:
+- **`Hangar.Tray.exe` — the tray icon.** A client of the server's API, and nothing more:
   - **Left-click** → opens the web UI in your browser.
   - **Right-click** → menu listing running sessions. Each project is a submenu, and inside it the
     sessions are laid out the way the sidebar's grouped view lays them out with its active-only filter
@@ -317,7 +316,7 @@ Each session is launched as:
 claude --remote-control <name> --name <name> [--model <m>]
 ```
 
-The pseudoconsole is owned by a per-session `ClaudeWeb.PtyHost.exe` rather than by the app itself,
+The pseudoconsole is owned by a per-session `Hangar.PtyHost.exe` rather than by the app itself,
 which is what lets a session outlive an app restart — see **Architecture** above.
 
 Permission mode is chosen per session at launch. The default leaves decisions to the Claude Code app;
@@ -327,17 +326,17 @@ otherwise block startup, so the app pre-accepts it.
 ## Architecture
 
 ```
-Browser (React + Vite + TS + Tailwind + shadcn/ui)       ClaudeWeb.Tray.exe  (tray icon, WinForms)
+Browser (React + Vite + TS + Tailwind + shadcn/ui)       Hangar.Tray.exe  (tray icon, WinForms)
    │  REST /api/*     ──►  auth, session create/list/stop,  │  the same REST + /hub/events, with a
    │                       filesystem browse                │  per-run token from the instance file
    │  WS /hub/events  ──►  live session list                │
    │  WS /hub/sessions/{id}/terminal  ──►  xterm.js         │
    ▼                                                        ▼
-ClaudeWeb.exe  (the daemon: ASP.NET Core Minimal API, headless)   ← restarts, updates and crashes freely
+Hangar.exe  (the daemon: ASP.NET Core Minimal API, headless)   ← restarts, updates and crashes freely
    │  started at sign-in as the user, or as a Windows service under the user's account
    │  named pipe \\.\pipe\claudeweb-pty-<instance>-<sessionId>
    ▼
-ClaudeWeb.PtyHost.exe   (one per session — and one per shell tab — detached; owns the pseudoconsole)
+Hangar.PtyHost.exe   (one per session — and one per shell tab — detached; owns the pseudoconsole)
    │  ConPTY + 512 KB scrollback ring + fan-out + the hang watchdog
    ▼
 claude --remote-control <name> --name <name>
@@ -423,7 +422,7 @@ for login and no recoverable password is left on disk.
 ## Build and install
 
 ```powershell
-# Builds the SPA and publishes ClaudeWeb.exe, ClaudeWeb.Tray.exe and ClaudeWeb.PtyHost.exe into .\publish
+# Builds the SPA and publishes Hangar.exe, Hangar.Tray.exe and Hangar.PtyHost.exe into .\publish
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
@@ -435,15 +434,15 @@ stay paired; a tray for another port takes `--port <n>`.
 **Start at sign-in** — the recommended setup (current user, no admin needed):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath .\publish\ClaudeWeb.exe
+powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath .\publish\Hangar.exe
 # the server only, no tray icon:
-powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath .\publish\ClaudeWeb.exe -NoTray
+powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath .\publish\Hangar.exe -NoTray
 # remove both later:
 powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -Remove
 ```
 
-That adds `ClaudeWeb` and `ClaudeWeb.Tray` to your per-user Run key. To start them now, run
-`ClaudeWeb.exe` and then `ClaudeWeb.Tray.exe`; the icon lights up once the server is listening.
+That adds `Hangar` and `Hangar.Tray` to your per-user Run key. To start them now, run
+`Hangar.exe` and then `Hangar.Tray.exe`; the icon lights up once the server is listening.
 
 Why at sign-in rather than as a service: the server never logs in to anything — it *inherits* a login.
 `claude`'s credentials, its settings and its trust list all live in your profile, as does every store
@@ -453,9 +452,11 @@ and a desktop to open a browser on if `claude` ever needs you to log in again.
 Browse to `http://<this-pc>:5099` from any device on your network, launch a session, and pick it up
 in the Claude Code app.
 
-**Upgrading from the single-exe build.** `ClaudeWeb.exe` used to be the tray and the server in one.
-An existing `ClaudeWeb` autostart entry keeps working — it now starts the server — but nothing starts
-the tray until you run `register-autostart.ps1` once more.
+**Upgrading from a Claude Web install.** `scripts\cutover-to-hangar.ps1` moves it to
+`C:\apps\hangar` in one go: it allows `Hangar.exe` through Windows Firewall the way `ClaudeWeb.exe`
+was (one UAC prompt), carries `appsettings.json` over, stops the old daemon and tray, deploys, swaps the
+`ClaudeWeb` autostart entries for `Hangar` ones and starts the new build. Running sessions keep running.
+The old folder is left in place to roll back to; delete it once the new one has run for a while.
 
 ## Optional: run as a Windows service
 
@@ -484,12 +485,12 @@ of the server, shell tabs, schedules, the in-app updater.
 
 ```bash
 scripts/build.sh                 # this machine's runtime; or: scripts/build.sh linux-arm64 | osx-arm64 | …
-scripts/install-unix.sh          # ./publish -> ~/.local/opt/claude-web, started at sign-in
+scripts/install-unix.sh          # ./publish -> ~/.local/opt/hangar, started at sign-in
 scripts/install-unix.sh --uninstall
 ```
 
 `build.sh` cross-builds from anywhere the .NET SDK and Node run (Git Bash on Windows too) into
-`publish/`: `ClaudeWeb` and `ClaudeWeb.PtyHost`, self-contained, no .NET runtime needed. Before the
+`publish/`: `Hangar` and `Hangar.PtyHost`, self-contained, no .NET runtime needed. Before the
 first install, set `Server:Urls` and `FileSystem:DefaultFolder` in `publish/appsettings.json` (the
 committed one names `C:\Git`); an install never overwrites an `appsettings.json` already in place.
 The default `Server:Urls` binds every interface over plain HTTP, and Linux has no firewall prompt to
@@ -497,9 +498,9 @@ ask about it: bind `127.0.0.1` behind a reverse proxy, or limit the port with `u
 
 `install-unix.sh` runs the server as **you**, for the same reason sign-in beats a service on Windows:
 `claude`'s login, settings and trust list are yours. On Linux it is a **systemd user unit**
-(`~/.config/systemd/user/claudeweb.service`) — it runs while you are signed in, and
+(`~/.config/systemd/user/hangar.service`) — it runs while you are signed in, and
 `loginctl enable-linger $USER` keeps it running with nobody signed in. On macOS it is a **launchd
-agent** (`~/Library/LaunchAgents/com.claudeweb.server.plist`), which also gives it your login
+agent** (`~/Library/LaunchAgents/com.hangar.server.plist`), which also gives it your login
 keychain — where `claude` keeps its credentials on macOS. The script copies the `PATH` of the shell you run it
 from into the unit: a unit otherwise starts with little more than `/usr/bin:/bin`, and every session
 and shell inherits the server's `PATH`. Re-run it after installing tools somewhere new.
@@ -507,7 +508,7 @@ and shell inherits the server's `PATH`. Re-run it after installing tools somewhe
 Two settings in those units are load-bearing — keep them if you write your own:
 
 - **`KillMode=process`** (systemd) / **`AbandonProcessGroup`** (launchd). A session lives in its own
-  `ClaudeWeb.PtyHost`, which outlives the server on purpose. Left at their defaults, both managers
+  `Hangar.PtyHost`, which outlives the server on purpose. Left at their defaults, both managers
   kill everything the server started when it stops, and every restart becomes a resume.
 - **`Restart=on-failure`** / **`KeepAlive.SuccessfulExit=false`**, not "always". The updater stops the
   server cleanly and starts it again itself once the files are in place.
@@ -521,7 +522,7 @@ What is different from Windows:
 | App data (`<data>`) | `%LocalAppData%` | `~/.local/share` (Linux), `~/Library/Application Support` (macOS); `Hangar` in it made 0700 |
 | Shells (**+** menu) | PowerShell, cmd, Git Bash, WSL | your login shell first, then bash, zsh, fish, pwsh, sh — each as a login shell |
 | Updater | `apply-update.ps1`, robocopy | `apply-update.sh`: each top-level entry replaced by a rename (wwwroot whole), extra files kept; restarts the systemd unit / launchd job / process |
-| Staging folder default | `C:\apps\claude-web-updates` | `<data>/Hangar/updates` (`scripts/stage-update.sh` builds into it) |
+| Staging folder default | `C:\apps\hangar-updates` | `<data>/Hangar/updates` (`scripts/stage-update.sh` builds into it) |
 | `claude` lookup | PATH, unwrapping npm `.cmd` shims | PATH, then `~/.local/bin`, `~/.claude/local`, Homebrew, `/usr/local/bin` |
 | Launch prompt | on `claude`'s command line | typed in once its input box is up (bracketed paste on, the box on screen with no dialog in front of it, paint settled), so it waits behind a first-run dialog until someone answers it; a headless schedule passes it on stdin. Any user can read a command line with `ps` here. Not delivered within 10 minutes (or the server stopped first) → the session's postponed messages |
 
@@ -558,7 +559,7 @@ installed with a click in the UI:
 powershell -ExecutionPolicy Bypass -File scripts\stage-update.ps1
 ```
 
-That drops the published build into `C:\apps\claude-web-updates\payload` (override with `-Staging`).
+That drops the published build into `C:\apps\hangar-updates\payload` (override with `-Staging`).
 The running app watches that folder, compares the staged `build.json` with its own, and puts an
 **Update** button next to the "Hangar" title in the sidebar as soon as they differ. Clicking it
 shows both build stamps and, on confirmation:
@@ -569,7 +570,7 @@ shows both build stamps and, on confirmation:
    replaced, leaving a small detached PowerShell to start it again once the new server answers;
 3. a detached `apply-update.ps1` (embedded in the exe, extracted to `%LocalAppData%\Hangar\update`)
    waits for the server to exit, mirrors the payload over the install folder and restarts the server
-   the same way it was running — the service if there is one, otherwise `ClaudeWeb.exe`;
+   the same way it was running — the service if there is one, otherwise `Hangar.exe`;
 4. the sessions that were running are re-attached, exactly as after a `deploy.ps1` redeploy (one
    that did die is resumed instead — see `Sessions:ResumeOnStart`);
 5. the browser sits behind an "Installing the update…" overlay until the new build answers, then
@@ -592,7 +593,7 @@ the whole thing off and go back to `deploy.ps1` only.
   atomically, and only adds entries for folders not already present). Set it to `false` to disable
   and accept the prompt manually from the Claude Code app instead.
 - **Sessions survive an app restart.** Each session's pseudoconsole lives in its own detached
-  `ClaudeWeb.PtyHost.exe`, so an in-app update, a `deploy.ps1`, the tray's **Stop server** or even a
+  `Hangar.PtyHost.exe`, so an in-app update, a `deploy.ps1`, the tray's **Stop server** or even a
   crash of the server leaves the session running — and closing the tray never touches a session at
   all. On the next start the server **re-attaches** to it: same session id, scrollback
   replayed into the terminal, and a conversation that was mid-turn simply carries on. Nothing is
@@ -650,7 +651,7 @@ the whole thing off and go back to `deploy.ps1` only.
 | `Hooks:Enabled`             | Register this instance's hooks in `~/.claude/settings.json` (drives busy/waiting/failed status). Off = terminal heuristics only | `true` |
 | `Hooks:Force`               | Claim that registration even when another instance is live on the port it currently names — see below | `false` |
 | `Pty:InstanceKey`           | Namespaces this instance's pty pipes and state dir; empty = the bound port. Keeps a dev instance from adopting the live app's sessions | `""` |
-| `Pty:HostExecutable`        | Path to `ClaudeWeb.PtyHost.exe`; empty = beside the app | `""`                 |
+| `Pty:HostExecutable`        | Path to `Hangar.PtyHost.exe`; empty = beside the app | `""`                 |
 | `Pty:AttachTimeoutMs`       | How long a host has to answer its pipe before its state file is called stale | `3000` |
 | `Pty:StartTimeoutMs`        | How long a freshly launched host has to come up and accept a connection | `20000` |
 | `Pty:OrphanMaxAgeHours`     | Auto-stop untracked sessions older than this; `0` never does (they are listed in the sidebar and tray instead) | `0` |
@@ -666,7 +667,7 @@ the whole thing off and go back to `deploy.ps1` only.
 | `Watchdog:ErrorPatterns`    | Case-insensitive regexes that mean "this session looks hung" | (API/stream errors) |
 | `Watchdog:PromptGuardPatterns` | Regexes for an on-screen prompt; any match and the watchdog stays silent | (dialog wording) |
 | `Update:Enabled`            | Offer in-app updates staged by `scripts\stage-update.ps1` | `true`           |
-| `Update:StagingPath`        | Folder updates are staged into (the build lands in its `payload` subfolder) | `C:\apps\claude-web-updates` |
+| `Update:StagingPath`        | Folder updates are staged into (the build lands in its `payload` subfolder) | `C:\apps\hangar-updates` |
 | `Update:PollSeconds`        | Re-read the staged build this often (a watcher already catches it sooner) | `30` |
 | `Update:InstallPath`        | Install folder to update; empty = the folder the running exe is in | `""`   |
 | `Update:ShutdownWaitSeconds`| How long the updater lets the app close before forcing it down | `45`       |

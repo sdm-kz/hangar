@@ -6,7 +6,7 @@ namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// A launched interactive <c>claude</c> session. The process runs attached to a pseudoconsole
-/// (ConPTY) — but the pseudoconsole is owned by a per-session <c>ClaudeWeb.PtyHost.exe</c>, not by
+/// (ConPTY) — but the pseudoconsole is owned by a per-session <c>Hangar.PtyHost.exe</c>, not by
 /// this app, and we reach it over a named pipe (see <see cref="Terminal"/>). That indirection is the
 /// whole point: <b>a session outlives this app</b>. An in-app update, a redeploy, a stop of the daemon or a
 /// crash leaves the host and its <c>claude</c> running, and the next start re-attaches to the live
@@ -290,7 +290,7 @@ public sealed class ClaudeSession : IDisposable
 
     /// <summary>
     /// Launch the session: start a pty host for it, then attach to that host over its pipe. The
-    /// process tree that results is <c>ClaudeWeb.PtyHost.exe -&gt; claude.exe</c> (with a cmd.exe in
+    /// process tree that results is <c>Hangar.PtyHost.exe -&gt; claude.exe</c> (with a cmd.exe in
     /// between only when an npm shim could not be resolved), and the first of those is ours to end.
     /// </summary>
     public async Task StartAsync(CancellationToken ct = default)

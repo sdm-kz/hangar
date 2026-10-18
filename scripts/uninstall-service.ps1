@@ -2,7 +2,7 @@
 .SYNOPSIS
   Stops and removes the Hangar Windows service. Run elevated.
 #>
-param([string]$ServiceName = "ClaudeWeb")
+param([string]$ServiceName = "Hangar")
 $ErrorActionPreference = "Stop"
 
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()

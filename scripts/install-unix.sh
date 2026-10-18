@@ -3,7 +3,7 @@
 # a systemd user unit on Linux, a launchd agent on macOS. The counterpart of register-autostart.ps1.
 #
 # Usage:
-#   scripts/install-unix.sh [publish dir] [install dir]   # defaults: ./publish, ~/.local/opt/claude-web
+#   scripts/install-unix.sh [publish dir] [install dir]   # defaults: ./publish, ~/.local/opt/hangar
 #   scripts/install-unix.sh --uninstall                   # stop and remove the unit (files are kept)
 #
 # Why a user unit and not a system one: the server never logs in to anything -- it inherits a login.
@@ -13,7 +13,7 @@
 #
 # Two settings in the units below are load-bearing, and must survive any edit:
 #   * KillMode=process (systemd) / AbandonProcessGroup (launchd). Each session lives in its own
-#     ClaudeWeb.PtyHost, which outlives the daemon on purpose -- that is how a session survives a
+#     Hangar.PtyHost, which outlives the daemon on purpose -- that is how a session survives a
 #     restart or an update. Left at their defaults, both managers kill everything the daemon started
 #     when it stops.
 #   * Restart=on-failure / KeepAlive.SuccessfulExit=false, not "always": the in-app updater stops the
@@ -22,8 +22,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-systemd_unit=claudeweb.service
-launchd_label=com.claudeweb.server
+systemd_unit=hangar.service
+launchd_label=com.hangar.server
 
 case "$(uname -s)" in
   Linux) platform=linux ;;
@@ -47,7 +47,27 @@ stop_unit() {
   fi
 }
 
+# The unit under its name from before the rename (claudeweb.service / com.claudeweb.server). One left
+# behind would start the old build at sign-in beside this one, and the two would fight over the port.
+# Its install folder is left alone: it is what a rollback would go back to.
+remove_legacy_unit() {
+  if [ "$platform" = linux ]; then
+    legacy="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/claudeweb.service"
+    [ -f "$legacy" ] || return 0
+    systemctl --user disable --now claudeweb.service 2> /dev/null || true
+    rm -f "$legacy"
+    systemctl --user daemon-reload
+  else
+    legacy="$HOME/Library/LaunchAgents/com.claudeweb.server.plist"
+    [ -f "$legacy" ] || return 0
+    launchctl bootout "gui/$(id -u)/com.claudeweb.server" 2> /dev/null || true
+    rm -f "$legacy"
+  fi
+  echo "Removed $legacy, the unit from before the rename. Running sessions keep running."
+}
+
 if [ "${1:-}" = "--uninstall" ]; then
+  remove_legacy_unit
   stop_unit
   rm -f "$(unit_path)"
   [ "$platform" = linux ] && systemctl --user daemon-reload
@@ -56,7 +76,7 @@ if [ "${1:-}" = "--uninstall" ]; then
 fi
 
 publish=$(cd "${1:-$root/publish}" && pwd)
-target=${2:-$HOME/.local/opt/claude-web}
+target=${2:-$HOME/.local/opt/hangar}
 # A newline would end a line of the unit early and start a directive of its own.
 nl='
 '
@@ -65,8 +85,8 @@ mkdir -p "$target"
 target=$(cd "$target" && pwd) # the unit needs it absolute
 # -f, not -x: a build made on Windows and copied over arrives without the executable bit, which the
 # copy below sets anyway.
-[ -f "$publish/ClaudeWeb" ] || { echo "No ClaudeWeb build in $publish -- run scripts/build.sh first." >&2; exit 1; }
-[ -f "$publish/ClaudeWeb.PtyHost" ] || { echo "No ClaudeWeb.PtyHost in $publish." >&2; exit 1; }
+[ -f "$publish/Hangar" ] || { echo "No Hangar build in $publish -- run scripts/build.sh first." >&2; exit 1; }
+[ -f "$publish/Hangar.PtyHost" ] || { echo "No Hangar.PtyHost in $publish." >&2; exit 1; }
 
 # --- Files ---------------------------------------------------------------------------------------
 # Stop first: a running daemon would be replaced underneath itself. Its sessions are not touched.
@@ -84,12 +104,12 @@ for path in "$publish"/* "$publish"/.[!.]*; do
   rm -rf "$target/$name"
   mv "$target/.$name.new" "$target/$name"
 done
-chmod +x "$target/ClaudeWeb" "$target/ClaudeWeb.PtyHost"
+chmod +x "$target/Hangar" "$target/Hangar.PtyHost"
 
 if [ "$platform" = macos ]; then
   # A build made on another OS (or downloaded) arrives quarantined and, on Apple silicon, unsigned --
   # and macOS kills an unsigned arm64 binary on launch. An ad-hoc signature is all it needs.
-  for exe in ClaudeWeb ClaudeWeb.PtyHost; do
+  for exe in Hangar Hangar.PtyHost; do
     xattr -d com.apple.quarantine "$target/$exe" 2> /dev/null || true
     codesign --verify "$target/$exe" 2> /dev/null || codesign --force --sign - "$target/$exe"
   done
@@ -116,6 +136,8 @@ command -v claude > /dev/null 2>&1 || PATH=$daemon_path command -v claude > /dev
   || echo "warning: claude is not on PATH; set Sessions:ClaudeExecutable in $target/appsettings.json." >&2
 
 # --- Unit ----------------------------------------------------------------------------------------
+# Stopped before the new unit starts, so the port is free for it.
+remove_legacy_unit
 unit=$(unit_path)
 mkdir -p "$(dirname "$unit")"
 if [ "$platform" = linux ]; then
@@ -131,7 +153,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$(esc "$target")
-ExecStart="$(esc_cmd "$target/ClaudeWeb")"
+ExecStart="$(esc_cmd "$target/Hangar")"
 Environment="PATH=$(esc_q "$daemon_path")"
 Environment=HANGAR_SERVICE_MANAGER=systemd
 Environment=HANGAR_SERVICE_NAME=$systemd_unit
@@ -159,7 +181,7 @@ else
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$launchd_label</string>
-  <key>ProgramArguments</key><array><string>$(xml "$target/ClaudeWeb")</string></array>
+  <key>ProgramArguments</key><array><string>$(xml "$target/Hangar")</string></array>
   <key>WorkingDirectory</key><string>$(xml "$target")</string>
   <key>EnvironmentVariables</key>
   <dict>

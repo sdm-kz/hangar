@@ -220,7 +220,7 @@ public sealed class UpdateService : BackgroundService
     }
 
     /// <summary>The server's executable in an install folder: an .exe on Windows, a bare name elsewhere.</summary>
-    private static string ServerExe => OperatingSystem.IsWindows() ? "ClaudeWeb.exe" : "ClaudeWeb";
+    private static string ServerExe => OperatingSystem.IsWindows() ? "Hangar.exe" : "Hangar";
 
     // The unit this daemon runs as on Linux or macOS, if any (see CaptureServiceManager).
     private static string? _serviceManager;

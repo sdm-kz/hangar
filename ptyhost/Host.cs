@@ -12,7 +12,7 @@ namespace Hangar.PtyHost;
 /// <para>The point of the split is that <b>ConPTY handles are not transferable</b>. There is no
 /// supported way to hand an <c>HPCON</c> to another process, and the <c>conhost.exe --pty</c> behind
 /// it is bound to the process that created it — when that process dies the pipes break and the child
-/// gets a console-close. So the only way a session can survive a restart of <c>ClaudeWeb.exe</c> is
+/// gets a console-close. So the only way a session can survive a restart of <c>Hangar.exe</c> is
 /// for the process that owns the pseudoconsole not to be the one that restarts.</para>
 /// <para>One host per session rather than one multiplexer: crash isolation is free, the lifecycle is
 /// trivial (the host exits when its child exits), and each pseudoconsole spawns its own conhost
@@ -36,7 +36,7 @@ public static class Host
         var spawnFile = ArgValue(args, "--spawn");
         if (spawnFile is null)
         {
-            Console.Error.WriteLine("ClaudeWeb.PtyHost --spawn <request.json>");
+            Console.Error.WriteLine("Hangar.PtyHost --spawn <request.json>");
             return 2;
         }
 

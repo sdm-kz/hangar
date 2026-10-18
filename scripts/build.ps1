@@ -25,7 +25,7 @@ Pop-Location
 # straight into ./publish would let one project's runtime files land on top of another's.
 
 # The per-session pty host. It owns each session's pseudoconsole, which is what lets a claude session
-# outlive the daemon -- so it ships alongside ClaudeWeb.exe and the daemon refuses to launch a session
+# outlive the daemon -- so it ships alongside Hangar.exe and the daemon refuses to launch a session
 # without it. Self-contained for the same reason the daemon is (no .NET runtime assumed), but a much
 # smaller image: no ASP.NET.
 Write-Host "==> Publishing pty host (ptyhost)" -ForegroundColor Cyan
@@ -77,9 +77,9 @@ $stamp | ConvertTo-Json | Set-Content (Join-Path $publish "build.json") -Encodin
 
 Write-Host "==> Done. Published to: $publish" -ForegroundColor Green
 Write-Host "    Build stamp: $($stamp.buildId)" -ForegroundColor DarkGray
-foreach ($exe in @("ClaudeWeb.exe", "ClaudeWeb.PtyHost.exe", "ClaudeWeb.Tray.exe")) {
+foreach ($exe in @("Hangar.exe", "Hangar.PtyHost.exe", "Hangar.Tray.exe")) {
   if (-not (Test-Path (Join-Path $publish $exe))) { throw "$exe is missing from '$publish'." }
 }
-Write-Host "    Run the server:      $publish\ClaudeWeb.exe        (headless; browse to its port)"
-Write-Host "    Run the tray icon:   $publish\ClaudeWeb.Tray.exe"
-Write-Host "    Both at sign-in:     scripts\register-autostart.ps1 -ExePath $publish\ClaudeWeb.exe"
+Write-Host "    Run the server:      $publish\Hangar.exe        (headless; browse to its port)"
+Write-Host "    Run the tray icon:   $publish\Hangar.Tray.exe"
+Write-Host "    Both at sign-in:     scripts\register-autostart.ps1 -ExePath $publish\Hangar.exe"

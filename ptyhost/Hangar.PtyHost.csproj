@@ -3,13 +3,13 @@
   <PropertyGroup>
     <!-- Deliberately net10.0, not net10.0-windows: no ASP.NET, no WinForms. One of these runs per
          session, so the published image being ~15 MB rather than ~50 MB is the whole point of it
-         being a separate project rather than a "pty host" switch on ClaudeWeb.exe. -->
+         being a separate project rather than a "pty host" switch on Hangar.exe. -->
     <TargetFramework>net10.0</TargetFramework>
     <OutputType>Exe</OutputType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Hangar.PtyHost</RootNamespace>
-    <AssemblyName>ClaudeWeb.PtyHost</AssemblyName>
+    <AssemblyName>Hangar.PtyHost</AssemblyName>
     <AssemblyTitle>Hangar session host</AssemblyTitle>
     <Product>Hangar</Product>
     <InvariantGlobalization>true</InvariantGlobalization>

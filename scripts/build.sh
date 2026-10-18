@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds the SPA and publishes Hangar for Linux or macOS into ./publish: the daemon (ClaudeWeb) and
-# the pty host (ClaudeWeb.PtyHost), each a single self-contained executable. The counterpart of
+# Builds the SPA and publishes Hangar for Linux or macOS into ./publish: the daemon (Hangar) and
+# the pty host (Hangar.PtyHost), each a single self-contained executable. The counterpart of
 # build.ps1, minus the tray, which is Windows-only (WinForms).
 #
 # Usage:  scripts/build.sh [rid]
@@ -62,7 +62,7 @@ cp -R "$pty_out"/. "$publish"/
 rm -rf "$pty_out"
 
 # The pipeline that produced these may not have carried the executable bit (a build on Windows).
-chmod +x "$publish/ClaudeWeb" "$publish/ClaudeWeb.PtyHost"
+chmod +x "$publish/Hangar" "$publish/Hangar.PtyHost"
 # Windows-only leftovers of the web SDK.
 rm -f "$publish/web.config"
 
@@ -82,10 +82,10 @@ cat > "$publish/build.json" << EOF
 }
 EOF
 
-for exe in ClaudeWeb ClaudeWeb.PtyHost; do
+for exe in Hangar Hangar.PtyHost; do
   [ -f "$publish/$exe" ] || { echo "$exe is missing from $publish" >&2; exit 1; }
 done
 echo "==> Done. Published to: $publish ($rid)"
 echo "    Build stamp: $build_id"
-echo "    Run the server:   $publish/ClaudeWeb   (headless; browse to its port)"
+echo "    Run the server:   $publish/Hangar   (headless; browse to its port)"
 echo "    Install it:       scripts/install-unix.sh $publish   (systemd user unit or launchd agent)"

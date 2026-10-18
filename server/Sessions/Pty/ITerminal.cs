@@ -10,7 +10,7 @@ namespace Hangar.Server.Sessions.Pty;
 /// <remarks>
 /// This used to be the concrete <c>TerminalChannel</c>, which lived in this process and owned the
 /// pseudoconsole — which is what made restarting the app kill every session. The implementation now
-/// sits in <c>ClaudeWeb.PtyHost.exe</c> and <see cref="PtyHostClient"/> speaks to it over a named
+/// sits in <c>Hangar.PtyHost.exe</c> and <see cref="PtyHostClient"/> speaks to it over a named
 /// pipe; keeping the shape of the old class as an interface is what let the rest of the app
 /// (<see cref="ClaudeSession"/>, <see cref="TerminalSocket"/>, <see cref="SessionManager"/>) carry on
 /// almost unchanged.

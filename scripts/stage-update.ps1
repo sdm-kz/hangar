@@ -43,15 +43,15 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\stage-update.ps1 -NotesFile .\whats-new.md
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File scripts\stage-update.ps1 -Staging D:\apps\claude-web-updates -SkipBuild
+  powershell -ExecutionPolicy Bypass -File scripts\stage-update.ps1 -Staging D:\apps\hangar-updates -SkipBuild
 #>
 param(
-  [string]$Staging = "C:\apps\claude-web-updates",
+  [string]$Staging = "C:\apps\hangar-updates",
   [switch]$SkipBuild,  # stage the existing ./publish output without rebuilding
   [string]$NotesFile,
   [string]$Summary,
   [switch]$NoNotes,
-  [string]$InstallPath = "C:\apps\claude-web",
+  [string]$InstallPath = "C:\apps\hangar",
   [switch]$AllowDroppingCommits
 )
 
@@ -97,7 +97,7 @@ if (-not $SkipBuild) {
 # --- 1) Build + publish (single self-contained exe into ./publish) ---------------------------
 if (-not $SkipBuild) {
   & (Join-Path $PSScriptRoot "build.ps1")
-} elseif (-not (Test-Path (Join-Path $publish "ClaudeWeb.exe"))) {
+} elseif (-not (Test-Path (Join-Path $publish "Hangar.exe"))) {
   throw "No published build at '$publish'. Run without -SkipBuild first."
 }
 

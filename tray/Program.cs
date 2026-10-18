@@ -19,7 +19,7 @@ internal static class Program
         var port = ResolvePort(args);
 
         // One tray per daemon port. A second launch just opens the UI, when there is a daemon to open.
-        using var mutex = new Mutex(true, $"ClaudeWeb.Tray.SingleInstance.v1.{port}", out var isNew);
+        using var mutex = new Mutex(true, $"Hangar.Tray.SingleInstance.v1.{port}", out var isNew);
         if (!isNew)
         {
             if (DaemonInstance.Read(port) is { } running && running.ProcessAlive()) Browser.Open(running.OpenUrl);

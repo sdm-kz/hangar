@@ -9,10 +9,10 @@
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\deploy-wwwroot.ps1
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File scripts\deploy-wwwroot.ps1 -Target D:\apps\claude-web -SkipBuild
+  powershell -ExecutionPolicy Bypass -File scripts\deploy-wwwroot.ps1 -Target D:\apps\hangar -SkipBuild
 #>
 param(
-  [string]$Target = "C:\apps\claude-web",
+  [string]$Target = "C:\apps\hangar",
   [switch]$SkipBuild   # deploy the existing server\wwwroot without rebuilding
 )
 

@@ -7,7 +7,7 @@ namespace Hangar.Pty;
 /// Source-generated serializers for everything that crosses between the web app and a pty host.
 /// </summary>
 /// <remarks>
-/// Not a nicety: <c>ClaudeWeb.PtyHost.exe</c> publishes <b>trimmed</b> (13 MB rather than 70), and
+/// Not a nicety: <c>Hangar.PtyHost.exe</c> publishes <b>trimmed</b> (13 MB rather than 70), and
 /// reflection-based <c>JsonSerializer</c> is not trim-safe — the trimmer would quietly drop the
 /// record properties nothing appears to reference, and the two processes would stop understanding
 /// each other at runtime with no build-time signal. Going through a context makes every one of these

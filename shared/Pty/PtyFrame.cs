@@ -14,7 +14,7 @@ public enum PtyFrameType : byte
 }
 
 /// <summary>
-/// The framing shared by <c>ClaudeWeb.PtyHost</c> and the web app: <c>[1 byte type][4 byte LE
+/// The framing shared by <c>Hangar.PtyHost</c> and the web app: <c>[1 byte type][4 byte LE
 /// length][payload]</c> over a byte-mode named pipe. Length-prefixing rather than the pipe's own
 /// message mode, so a scrollback replay larger than the pipe buffer still arrives as one frame.
 /// </summary>

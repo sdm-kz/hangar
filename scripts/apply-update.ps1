@@ -11,19 +11,19 @@
     3. start the daemon again the same way it was running (service or process)
 
   Running sessions are NOT interrupted. Each one's pseudoconsole lives in its own
-  ClaudeWeb.PtyHost.exe, which this script never touches: the daemon detaches on the way down, the
+  Hangar.PtyHost.exe, which this script never touches: the daemon detaches on the way down, the
   hosts and their claude processes keep running throughout, and the restarted daemon re-attaches to
   them with their scrollback and their in-flight conversations intact. Only a session that genuinely
   died comes back the old way, by resuming its conversation (Sessions:ResumeOnStart, or the explicit
   --resume-sessions this script passes to the daemon exe).
 
   Two details make that work, and both must be preserved if this script is edited:
-    * The process matching below is by exact name ("ClaudeWeb"), which does not catch
-      "ClaudeWeb.PtyHost" -- stopping the hosts would kill the very sessions we are protecting.
+    * The process matching below is by exact name ("Hangar"), which does not catch
+      "Hangar.PtyHost" -- stopping the hosts would kill the very sessions we are protecting.
     * The daemon launches each host from a per-build copy under %LocalAppData%\Hangar\ptyhost, so
-      the ClaudeWeb.PtyHost.exe this script mirrors into <Target> is never a running, locked file.
+      the Hangar.PtyHost.exe this script mirrors into <Target> is never a running, locked file.
 
-  The tray (ClaudeWeb.Tray.exe) is a separate process that holds its own exe open. It steps aside by
+  The tray (Hangar.Tray.exe) is a separate process that holds its own exe open. It steps aside by
   itself: when the daemon reports the update, the tray exits and arranges to start again once the new
   daemon answers. As a backstop, a tray still running from <Target> when the copy is due is stopped --
   it is only a client, so nothing is lost, but that one stays closed until it is next started.
@@ -36,7 +36,7 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File apply-update.ps1 `
-    -Staging C:\apps\claude-web-updates\payload -Target C:\apps\claude-web -ProcessId 1234 -Mode process
+    -Staging C:\apps\hangar-updates\payload -Target C:\apps\hangar -ProcessId 1234 -Mode process
 #>
 # Keep this file pure ASCII. Windows PowerShell 5.1 reads a .ps1 as ANSI, so a UTF-8 em-dash arrives
 # as bytes including 0x94 -- a CP1252 smart quote, which closes a double-quoted string early and turns
@@ -46,7 +46,7 @@ param(
   [Parameter(Mandatory)][string]$Target,                # install folder to update in place
   [Parameter(Mandatory)][int]$ProcessId,                # the daemon process to wait for; it is stopping itself
   [ValidateSet("service", "process")][string]$Mode = "process",
-  [string]$ServiceName = "ClaudeWeb",
+  [string]$ServiceName = "Hangar",
   [string]$LogPath,
   [int]$WaitSeconds = 45                                # how long to let the daemon close gracefully
 )
@@ -69,7 +69,7 @@ function Start-App {
     Write-Log "Starting service '$ServiceName'"
     Start-Service -Name $ServiceName
   } else {
-    $exe = Join-Path $Target "ClaudeWeb.exe"
+    $exe = Join-Path $Target "Hangar.exe"
     Write-Log "Launching $exe (daemon, resuming sessions)"
     # The daemon auto-resumes what was running, but say so explicitly: this launch must resume even if
     # the installed appsettings.json has Sessions:ResumeOnStart turned off.
@@ -96,10 +96,10 @@ function Stop-FromTarget([string]$name) {
 Write-Log "=== apply-update: $Staging -> $Target (mode=$Mode, pid=$ProcessId) ==="
 
 try {
-  if (-not (Test-Path (Join-Path $Staging "ClaudeWeb.exe"))) {
-    throw "Staged build has no ClaudeWeb.exe: $Staging"
+  if (-not (Test-Path (Join-Path $Staging "Hangar.exe"))) {
+    throw "Staged build has no Hangar.exe: $Staging"
   }
-  if (-not (Test-Path (Join-Path $Target "ClaudeWeb.exe"))) {
+  if (-not (Test-Path (Join-Path $Target "Hangar.exe"))) {
     throw "Target is not a Hangar install: $Target"
   }
 
@@ -135,8 +135,8 @@ try {
 
   # Anything of THIS install still holding its exe open would fail the copy: a leftover daemon, or a
   # tray that did not step aside on its own (an older tray, or one that had lost its connection).
-  Stop-FromTarget "ClaudeWeb"
-  Stop-FromTarget "ClaudeWeb.Tray"
+  Stop-FromTarget "Hangar"
+  Stop-FromTarget "Hangar.Tray"
 
   # --- 2) Mirror the payload over the install, preserving settings -----------------------------
   # Same shape as deploy.ps1: top-level files copied without /MIR (so unrelated files the target may

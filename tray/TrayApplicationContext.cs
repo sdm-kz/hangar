@@ -71,7 +71,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 Balloon("Hangar server is not responding", "It is running but not answering. The tray keeps trying.");
             else
                 Balloon("Hangar server is not running", DaemonExecutable() is null
-                    ? "Start ClaudeWeb.exe, or check which port this tray follows (--port)."
+                    ? "Start Hangar.exe, or check which port this tray follows (--port)."
                     : "Right-click the tray icon to start it.");
         };
         _startupCheck.Start();
@@ -280,7 +280,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// <summary>The daemon beside this exe, where an install puts both — or null in a dev layout, which has none.</summary>
     private static string? DaemonExecutable()
     {
-        var exe = Path.Combine(AppContext.BaseDirectory, "ClaudeWeb.exe");
+        var exe = Path.Combine(AppContext.BaseDirectory, "Hangar.exe");
         return File.Exists(exe) ? exe : null;
     }
 

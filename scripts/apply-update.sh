@@ -7,7 +7,7 @@
 #      installed appsettings*.json and anything else <target> has that the build does not
 #   3. start the daemon again the same way it was running (systemd unit, launchd job, or process)
 #
-# Running sessions are NOT interrupted: each one lives in its own ClaudeWeb.PtyHost, launched from a
+# Running sessions are NOT interrupted: each one lives in its own Hangar.PtyHost, launched from a
 # per-build copy under the app's data folder, so nothing here touches them -- and nothing here may
 # match processes by name, which would catch the hosts too.
 #
@@ -57,10 +57,10 @@ start_app() {
       return 1
       ;;
     *)
-      say "Launching $target/ClaudeWeb (daemon, resuming sessions)"
+      say "Launching $target/Hangar (daemon, resuming sessions)"
       # --resume-sessions: this launch must resume even if the installed appsettings.json turned
       # Sessions:ResumeOnStart off.
-      (cd "$target" && nohup "$target/ClaudeWeb" --resume-sessions > /dev/null 2>&1 &)
+      (cd "$target" && nohup "$target/Hangar" --resume-sessions > /dev/null 2>&1 &)
       ;;
   esac
 }
@@ -96,8 +96,8 @@ replace() {
 
 say "=== apply-update: $staging -> $target (mode=$mode, pid=$pid) ==="
 
-[ -f "$staging/ClaudeWeb" ] || fail "Staged build has no ClaudeWeb: $staging"
-[ -f "$target/ClaudeWeb" ] || fail "Target is not a Hangar install: $target"
+[ -f "$staging/Hangar" ] || fail "Staged build has no Hangar: $staging"
+[ -f "$target/Hangar" ] || fail "Target is not a Hangar install: $target"
 
 # --- 1) Wait the daemon out, then insist -----------------------------------------------------------
 waited=0
@@ -134,7 +134,7 @@ for path in "$staging"/* "$staging"/.[!.]*; do
   esac
   replace "$name" || fail "could not copy $name"
 done
-chmod +x "$target/ClaudeWeb" "$target/ClaudeWeb.PtyHost" 2> /dev/null
+chmod +x "$target/Hangar" "$target/Hangar.PtyHost" 2> /dev/null
 
 # --- 3) Back up on its feet ------------------------------------------------------------------------
 start_app || fail "could not start the app"

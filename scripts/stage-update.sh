@@ -27,7 +27,7 @@ else
 fi
 
 [ -n "$skip_build" ] || bash "$root/scripts/build.sh" ${rid:+"$rid"}
-[ -f "$root/publish/ClaudeWeb" ] || { echo "No ClaudeWeb build in $root/publish." >&2; exit 1; }
+[ -f "$root/publish/Hangar" ] || { echo "No Hangar build in $root/publish." >&2; exit 1; }
 
 # Built beside the payload and swapped in at the end, so the app never sees a half-copied update.
 mkdir -p "$staging"

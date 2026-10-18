@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-  Register (or remove) Hangar in the CURRENT USER's autostart, so the daemon (ClaudeWeb.exe) and
-  the tray icon (ClaudeWeb.Tray.exe) both launch at sign-in.
+  Register (or remove) Hangar in the CURRENT USER's autostart, so the daemon (Hangar.exe) and
+  the tray icon (Hangar.Tray.exe) both launch at sign-in.
   Uses the per-user Run key (HKCU) -- no admin rights required, affects only your account.
 
 .DESCRIPTION
@@ -14,7 +14,7 @@
   daemon on its port -- it never starts one by itself -- so -NoTray gives a headless setup.
 
 .PARAMETER ExePath
-  Path to the daemon, ClaudeWeb.exe. Defaults to .\publish\ClaudeWeb.exe next to the repo. The tray is
+  Path to the daemon, Hangar.exe. Defaults to .\publish\Hangar.exe next to the repo. The tray is
   expected beside it.
 
 .PARAMETER NoTray
@@ -24,14 +24,14 @@
   Remove both autostart entries instead of adding them.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath "C:\Apps\ClaudeWeb\ClaudeWeb.exe"
+  powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath "C:\apps\hangar\Hangar.exe"
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -Remove
 #>
 param(
-  [string]$ExePath = "$PSScriptRoot\..\publish\ClaudeWeb.exe",
-  [string]$Name = "ClaudeWeb",
+  [string]$ExePath = "$PSScriptRoot\..\publish\Hangar.exe",
+  [string]$Name = "Hangar",
   [switch]$NoTray,
   [switch]$Remove
 )
@@ -56,10 +56,10 @@ if ($Remove) {
 
 $resolved = Resolve-Path $ExePath -ErrorAction SilentlyContinue
 if (-not $resolved -or -not (Test-Path $resolved.Path)) {
-  throw "ClaudeWeb.exe not found at '$ExePath'. Build it first (scripts\build.ps1) or pass -ExePath <path>."
+  throw "Hangar.exe not found at '$ExePath'. Build it first (scripts\build.ps1) or pass -ExePath <path>."
 }
 $daemon = $resolved.Path
-$tray = Join-Path (Split-Path -Parent $daemon) "ClaudeWeb.Tray.exe"
+$tray = Join-Path (Split-Path -Parent $daemon) "Hangar.Tray.exe"
 $withTray = -not $NoTray -and (Test-Path $tray)
 
 # Values are quoted exe paths (quotes handle spaces in the path).
@@ -73,7 +73,7 @@ if ($withTray) {
 } elseif ($NoTray) {
   if (Get-ItemProperty -Path $runKey -Name $trayName -ErrorAction SilentlyContinue) { Remove-Entry $trayName }
 } else {
-  Write-Warning "No ClaudeWeb.Tray.exe beside the daemon ('$tray'); registered the server only."
+  Write-Warning "No Hangar.Tray.exe beside the daemon ('$tray'); registered the server only."
 }
 
 Write-Host "It starts automatically at your next sign-in. Start it now with:"

@@ -12,7 +12,7 @@
   pwsh -File scripts\install-service.ps1 -PublishPath .\publish
 #>
 param(
-  [string]$ServiceName = "ClaudeWeb",
+  [string]$ServiceName = "Hangar",
   [string]$PublishPath = "$PSScriptRoot\..\publish",
   [string]$UserName = "$env:USERDOMAIN\$env:USERNAME",
   [string]$DisplayName = "Hangar"
@@ -24,7 +24,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
   ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) { throw "Please run this script from an elevated (Administrator) PowerShell." }
 
-$exe = Join-Path (Resolve-Path $PublishPath) "ClaudeWeb.exe"
+$exe = Join-Path (Resolve-Path $PublishPath) "Hangar.exe"
 if (-not (Test-Path $exe)) { throw "Not found: $exe. Run scripts\build.ps1 first." }
 
 Write-Host "Service account: $UserName"

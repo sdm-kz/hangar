@@ -57,7 +57,7 @@ public sealed record ShellActivity(
 /// </summary>
 /// <remarks>
 /// <para>The machinery underneath is the session one, deliberately: a shell gets its own
-/// <c>ClaudeWeb.PtyHost.exe</c> from a <see cref="PtyHostLauncher"/>, so a shell with a build running
+/// <c>Hangar.PtyHost.exe</c> from a <see cref="PtyHostLauncher"/>, so a shell with a build running
 /// in it <b>survives a restart of this app</b> exactly as a session does, and comes back with its
 /// scrollback on the next start.</para>
 /// <para>What it does <em>not</em> share is the launcher's instance key: shells run under
@@ -118,7 +118,7 @@ public sealed class ShellManager : IDisposable
                 StartTimeoutMs = ptyHost.StartTimeoutMs,
             },
             loggerFactory.CreateLogger<PtyHostLauncher>());
-        // Namespaced by instance for the same reason the pty state directory is: the ClaudeWeb
+        // Namespaced by instance for the same reason the pty state directory is: the Hangar
         // folder under %LocalAppData% is shared by every instance on the machine, and a dev instance
         // that found none of the live app's hosts (they live under a different key) would otherwise
         // rewrite the file to [] and strand them.

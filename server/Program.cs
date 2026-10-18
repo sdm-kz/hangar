@@ -51,7 +51,7 @@ internal static class Program
         if (!isService)
         {
             // Port-specific so a debug instance on another port can coexist with the live app.
-            mutex = new Mutex(true, $"ClaudeWeb.SingleInstance.v1.{port}", out var isNew);
+            mutex = new Mutex(true, $"Hangar.SingleInstance.v1.{port}", out var isNew);
             if (!isNew)
             {
                 OpenBrowser(openUrl);
@@ -257,7 +257,7 @@ internal static class Program
         });
 
         // Run as a Windows service when hosted by the SCM; a no-op when launched interactively.
-        builder.Host.UseWindowsService(o => o.ServiceName = "ClaudeWeb");
+        builder.Host.UseWindowsService(o => o.ServiceName = "Hangar");
 
         // A faulting hosted service (e.g. the watchdog) must NOT tear the whole host down — the
         // default is StopHost, which would take the app with it. Isolate it so one loop dying can't
