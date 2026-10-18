@@ -2442,8 +2442,10 @@ export function SessionSidebar({
             {/* A prompt half-written and left in the input box. Coloured, unlike the provenance icons
                 around it: it is the one thing on this line you still have to do something about. In
                 the line rather than the corner, because it is not an activity — it can sit beside a
-                tick or a pulse, and the corner holds one mark. */}
-            {draftIds?.has(s.id) && editingId !== s.id && (
+                tick or a pulse, and the corner holds one mark. Not on the selected row: that is the
+                session you are typing into, and a pencil lighting up beside it with every keystroke
+                only says what is already on screen. */}
+            {draftIds?.has(s.id) && s.id !== activeId && editingId !== s.id && (
               <span className="flex shrink-0 items-center text-sky-500" title="Unsent text in the input box">
                 <PencilLine className="size-3" aria-label="unsent input" />
               </span>
