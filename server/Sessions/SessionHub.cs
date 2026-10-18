@@ -144,6 +144,8 @@ public sealed class SessionHub : BackgroundService
                 waiting = _mgr.AwaitingInputIds(),
                 compacting = _mgr.CompactingSessionIds(),
                 failed = _mgr.FailedSessionIds(),
+                // Not an activity: text typed into a session's input box and left there unsent.
+                drafts = _mgr.DraftSessionIds(),
                 // Only the sessions with something to say are in here, so on a quiet machine it is an
                 // empty object and the snapshot is the size it always was.
                 activity = _mgr.ActivityDetails(),

@@ -91,6 +91,8 @@ public sealed class PtyHostClient : ITerminal
 
     public string ScreenText() { lock (_lock) return _screen.ScreenText(); }
 
+    public bool HasInputDraft { get { lock (_lock) return ClaudeInputBox.HasDraft(_screen); } }
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     public bool IsCompacting { get { lock (_lock) return _compacting; } }
 

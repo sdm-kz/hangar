@@ -54,6 +54,8 @@ export function App() {
   const [waitingIds, setWaitingIds] = useState<Set<string>>(() => new Set()); // waiting on a prompt
   const [compactingIds, setCompactingIds] = useState<Set<string>>(() => new Set()); // compacting the conversation
   const [failedIds, setFailedIds] = useState<Set<string>>(() => new Set()); // last turn died on an API error
+  // Something typed into claude's input box and not sent. Not an activity, so not in the bag below.
+  const [draftIds, setDraftIds] = useState<Set<string>>(() => new Set());
   // What the waiting/failed marks are about, keyed by session id — see SessionActivityDetail on the
   // server. Only the sessions with something to say are in here.
   const [activityDetail, setActivityDetail] = useState<Record<string, ActivityDetail>>({});
@@ -353,6 +355,7 @@ export function App() {
             waiting?: string[];
             compacting?: string[];
             failed?: string[];
+            drafts?: string[];
             activity?: Record<string, ActivityDetail>;
             update?: UpdateStatus;
             shellsRev?: number;
@@ -364,6 +367,7 @@ export function App() {
           setWaitingIds(new Set(msg.waiting ?? []));
           setCompactingIds(new Set(msg.compacting ?? []));
           setFailedIds(new Set(msg.failed ?? []));
+          setDraftIds(new Set(msg.drafts ?? []));
           setActivityDetail(msg.activity ?? {});
           // Only the revision travels; the open session re-fetches its own tabs when it moves (see
           // SessionView). A server that predates shells sends none, which reads as "never changed".
@@ -1044,6 +1048,7 @@ export function App() {
               <SessionSidebar
                 sessions={sessions}
                 activityIds={activityIds}
+                draftIds={draftIds}
                 shellMarks={shellMarks}
                 onMarkSeen={markSeen}
                 activeId={activeId}
@@ -1113,6 +1118,7 @@ export function App() {
                   <SessionSidebar
                     sessions={sessions}
                     activityIds={activityIds}
+                    draftIds={draftIds}
                     shellMarks={shellMarks}
                     onMarkSeen={markSeen}
                     activeId={activeId}

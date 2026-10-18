@@ -704,6 +704,17 @@ public sealed class SessionManager : IDisposable
             .ToArray();
 
     /// <summary>
+    /// Ids of live sessions with something typed into Claude's input box and not sent. Not an activity
+    /// — nothing is happening there — but a thing left behind, which is easy to lose track of once you
+    /// have moved to another session. Read off the screen; see <see cref="Pty.ClaudeInputBox"/>.
+    /// </summary>
+    public IReadOnlyCollection<string> DraftSessionIds() =>
+        _sessions.Values
+            .Where(s => s.State == SessionState.Running && s.Terminal is { HasInputDraft: true })
+            .Select(s => s.Id)
+            .ToArray();
+
+    /// <summary>
     /// Ids of live sessions that appear to be waiting on the user — a permission/confirmation dialog
     /// or numbered selection menu is on screen and Claude isn't emitting. Best-effort (keys off the
     /// same on-screen prompt patterns as the watchdog guard); reliable for dialogs, not for

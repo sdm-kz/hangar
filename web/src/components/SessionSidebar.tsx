@@ -84,6 +84,7 @@ import {
   Square,
   X,
   Pencil,
+  PencilLine,
   Pin,
   PinOff,
   Terminal,
@@ -1466,6 +1467,7 @@ function saveCollapsedForks(set: Set<string>) {
 export function SessionSidebar({
   sessions,
   activityIds,
+  draftIds,
   shellMarks,
   onMarkSeen,
   activeId,
@@ -1494,6 +1496,8 @@ export function SessionSidebar({
   sessions: SessionInfo[];
   // Who is busy / waiting on you / compacting / finished-but-unseen, in one bag — see ActivityIds.
   activityIds: ActivityIds;
+  // Sessions with text typed into claude's input box and not sent.
+  draftIds?: ReadonlySet<string>;
   // What each session's shell tabs have to say: a command running in one, or one that finished
   // there (or failed) since it was last looked at. Only sessions with something to say are in it.
   shellMarks?: ReadonlyMap<string, ShellMark>;
@@ -2435,6 +2439,15 @@ export function SessionSidebar({
               </span>
             )}
             {nested && editingId !== s.id && <HeadingProgress done={nested.done} active={nested.active} />}
+            {/* A prompt half-written and left in the input box. Coloured, unlike the provenance icons
+                around it: it is the one thing on this line you still have to do something about. In
+                the line rather than the corner, because it is not an activity — it can sit beside a
+                tick or a pulse, and the corner holds one mark. */}
+            {draftIds?.has(s.id) && editingId !== s.id && (
+              <span className="flex shrink-0 items-center text-sky-500" title="Unsent text in the input box">
+                <PencilLine className="size-3" aria-label="unsent input" />
+              </span>
+            )}
             {s.remoteControl && editingId !== s.id && (
               <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
             )}

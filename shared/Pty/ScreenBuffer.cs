@@ -553,6 +553,9 @@ public sealed class ScreenBuffer
     /// <summary>Whether row <paramref name="y"/> runs on into the row below (one logical line).</summary>
     public bool IsWrapped(int y) => _wrapped[y];
 
+    /// <summary>One cell of the visible grid, pen and all — for a scanner that needs more than the text.</summary>
+    public Cell CellAt(int x, int y) => _rows[y][x];
+
     // A wrapped line keeps its trailing blanks: it only wraps again at the far end of the row, and
     // trimming a space off the edge would glue it to the line below instead.
     private static string RenderRow(Cell[] row, bool full)

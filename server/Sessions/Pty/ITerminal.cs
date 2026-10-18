@@ -77,6 +77,12 @@ public interface ITerminal : IDisposable
     /// <summary>The visible screen as plain text, one line per row, as this app's screen model has it.</summary>
     string ScreenText();
 
+    /// <summary>
+    /// True when Claude's input box holds text that hasn't been sent. Read off this app's own screen
+    /// model when asked, not pushed by the host: see <see cref="ClaudeInputBox"/>.
+    /// </summary>
+    bool HasInputDraft { get; }
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     bool IsCompacting { get; }
 

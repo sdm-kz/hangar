@@ -101,6 +101,12 @@ public sealed class ScreenModel
     public string ScreenText() => Screen.PlainText();
 
     /// <summary>
+    /// One cell of the visible screen. Where <see cref="ScreenText"/> is not enough: plain text cannot
+    /// tell a dim placeholder from the same words typed in.
+    /// </summary>
+    public Cell CellAt(int x, int y) => Screen.CellAt(x, y);
+
+    /// <summary>
     /// Whether the child has a DEC private mode switched on — one of those kept for the snapshot
     /// (<see cref="RestorableDecModes"/>); any other reads as off.
     /// </summary>
