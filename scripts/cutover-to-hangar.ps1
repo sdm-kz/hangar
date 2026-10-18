@@ -82,7 +82,10 @@ if ($oldRules.Count -eq 0) {
     try {
       Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden `
         -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded
-    } catch { throw "The firewall rule needs elevation, which was declined. Nothing else was changed." }
+    } catch {
+      throw ("The firewall rule needs elevation, which did not happen ($($_.Exception.Message)). Nothing else was " +
+        "changed. Run this from an elevated PowerShell instead.")
+    }
   }
   $haveNew = @(Get-NetFirewallApplicationFilter | Where-Object {
     $_.Program -and ([Environment]::ExpandEnvironmentVariables($_.Program) -ieq $newExe) })
