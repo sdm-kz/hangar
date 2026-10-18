@@ -37,6 +37,7 @@ internal static class Program
         // startup (or later, on a background thread) is written to crash.log instead of vanishing.
         CrashHandler.Install(LogDirectory());
         Update.UpdateService.CaptureServiceManager();
+        ScrubLaunchingSessionEnvironment();
 
         var isService = OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService();
         var contentRoot = ResolveContentRoot();
@@ -1877,6 +1878,36 @@ internal static class Program
     // Shared on-disk diagnostics location: %LocalAppData%\Hangar\logs (hangar.log + crash.log).
     private static string LogDirectory() =>
         AppDataFolder.PathFor("logs");
+
+    /// <summary>
+    /// Drop what this process inherited from a Claude Code session that started it. A deploy or an
+    /// update run from inside a session starts the daemon there, and everything the daemon starts
+    /// inherits its environment: every new session would then carry that session's ids, its messaging
+    /// socket and hook token, and Claude Code's NO_COLOR for tool output (a session in black and white).
+    /// Started at sign-in, by the tray or by a service manager, there is nothing to drop.
+    /// </summary>
+    private static void ScrubLaunchingSessionEnvironment()
+    {
+        // CLAUDECODE is what Claude Code sets in every process it runs. Without it this was started
+        // the ordinary way, and its environment is the user's own.
+        if (Environment.GetEnvironmentVariable("CLAUDECODE") is null) return;
+        foreach (System.Collections.DictionaryEntry kv in Environment.GetEnvironmentVariables())
+        {
+            var name = (string)kv.Key;
+            var sessionScoped =
+                name is "CLAUDECODE" or "CLAUDE_PID" or "NO_COLOR"
+                || name.StartsWith("CLAUDE_CODE_", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("CLAUDEWEB_", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("HANGAR_", StringComparison.OrdinalIgnoreCase) && name != "HANGAR_TEST_ROOT";
+            if (!sessionScoped) continue;
+            // One the user set for good (CLAUDE_CODE_USE_BEDROCK, say) is configuration, not the session's.
+            if (OperatingSystem.IsWindows()
+                && (Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User) is not null
+                    || Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine) is not null))
+                continue;
+            Environment.SetEnvironmentVariable(name, null);
+        }
+    }
 
     /// <summary>
     /// Get the app's data folder ready on Linux and macOS, before anything asks for it.
