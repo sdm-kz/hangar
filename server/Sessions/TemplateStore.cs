@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// A <em>session template</em>: a named, reusable way to start a particular kind of session — the

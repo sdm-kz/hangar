@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the SPA and publishes Claude Web for Linux or macOS into ./publish: the daemon (ClaudeWeb) and
+# Builds the SPA and publishes Hangar for Linux or macOS into ./publish: the daemon (ClaudeWeb) and
 # the pty host (ClaudeWeb.PtyHost), each a single self-contained executable. The counterpart of
 # build.ps1, minus the tray, which is Windows-only (WinForms).
 #

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// Everything the web app hands a freshly launched host. Passed as a JSON file rather than a command

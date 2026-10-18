@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.FileSystem;
+namespace Hangar.Server.FileSystem;
 
 /// <summary>
 /// Which files of a pull request the user has marked as read, persisted to

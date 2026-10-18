@@ -1,4 +1,4 @@
-//! The Homeport server, as this app uses it: who's running, and "send this image with this text to
+//! The Hangar server, as this app uses it: who's running, and "send this image with this text to
 //! that session". Everything here is a client of the same HTTP API the web UI and the tray speak.
 
 use std::path::{Path, PathBuf};
@@ -146,7 +146,7 @@ pub struct CreatedSession {
     pub name: String,
     #[serde(default)]
     pub claude_session_id: Option<String>,
-    /// The group it was filed in. Missing from a Homeport that predates filing on launch.
+    /// The group it was filed in. Missing from a Hangar that predates filing on launch.
     #[serde(default)]
     pub group_id: Option<String>,
 }
@@ -240,8 +240,8 @@ impl Client {
             401 => ApiError::Unauthorized,
             404 => ApiError::NotFound(message),
             413 => ApiError::Failed("The picture is too big for the server to take (25 MB at most). Crop it, or send part of the screen.".into()),
-            // A route the server doesn't have for this method: a Homeport from before the feature.
-            405 => ApiError::Failed("This Homeport can't do that yet. Update it, then try again.".into()),
+            // A route the server doesn't have for this method: a Hangar from before the feature.
+            405 => ApiError::Failed("This Hangar can't do that yet. Update it, then try again.".into()),
             _ => ApiError::Failed(message),
         })
     }
@@ -373,7 +373,7 @@ impl Client {
     }
 
     /// Stash `text` and the uploaded `images` in the session's postponed messages, to be sent later
-    /// from Homeport (or by its auto-send) instead of now.
+    /// from Hangar (or by its auto-send) instead of now.
     pub async fn postpone(&self, session_id: &str, text: &str, images: &[String]) -> Result<(), ApiError> {
         let url = self.session_url(session_id, &["postponed", "items"])?;
         let body = serde_json::json!({ "text": text, "images": images });
@@ -525,7 +525,7 @@ mod tests {
     }
 
     fn instances_dir_with(port: u16, body: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("homeport-snap-inst-{port}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hangar-snap-inst-{port}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("{port}.json")), body).unwrap();
         dir
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(client.login("nope").await, Err(ApiError::Failed("Wrong password".into())));
         assert_eq!(
             client.postpone("x", "t", &[]).await,
-            Err(ApiError::Failed("This Homeport can't do that yet. Update it, then try again.".into()))
+            Err(ApiError::Failed("This Hangar can't do that yet. Update it, then try again.".into()))
         );
 
         let dead = Client::new(Credentials { base: Url::parse("http://127.0.0.1:9").unwrap(), token: None, local: false });

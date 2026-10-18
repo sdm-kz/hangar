@@ -1,7 +1,7 @@
-using ClaudeWeb.Server.FileSystem;
-using ClaudeWeb.Server.Sessions;
+using Hangar.Server.FileSystem;
+using Hangar.Server.Sessions;
 
-namespace ClaudeWeb.Server.Remote;
+namespace Hangar.Server.Remote;
 
 internal record RemotePathRequest(string? Path);
 internal record RemoteRenameRequest(string? Path, string? NewName);

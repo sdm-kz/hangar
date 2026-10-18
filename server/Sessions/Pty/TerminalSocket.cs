@@ -1,7 +1,7 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Sessions.Pty;
+namespace Hangar.Server.Sessions.Pty;
 
 /// <summary>
 /// Bridges a browser WebSocket to an <see cref="ITerminal"/>. Framing is by opcode:

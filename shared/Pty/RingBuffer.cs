@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// Fixed-capacity circular byte buffer holding the most recent <c>capacity</c> bytes. Both sides of

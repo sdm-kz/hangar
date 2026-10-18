@@ -1,7 +1,7 @@
 // The session list as it crosses the wire. Compiled into both the daemon and the tray, like shared\Pty:
 // the daemon serializes these and the tray deserializes the very same records, so the two can't drift.
 
-namespace ClaudeWeb.Contract;
+namespace Hangar.Contract;
 
 /// <summary>Lifecycle state of a launched Claude session.</summary>
 public enum SessionState

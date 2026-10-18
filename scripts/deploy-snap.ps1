@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-  Builds Homeport Snap (snap/) in release mode and installs it to a folder of its own
-  (default C:\apps\homeport-snap), then starts it.
+  Builds Hangar Snap (snap/) in release mode and installs it to a folder of its own
+  (default C:\apps\hangar-snap), then starts it.
 
   Snap is a single executable — the web pages are compiled into it — so installing is copying that one
   file. Its settings and recents live in the user's local app data
   (%LOCALAPPDATA%\io.github.sdm-kz.homeport.snap), not next to the exe, so a reinstall keeps them.
 
-  Every running Homeport Snap is stopped first, wherever it runs from: the app is single-instance, so a
+  Every running Hangar Snap is stopped first, wherever it runs from: the app is single-instance, so a
   copy left running (a dev build, an older install) would swallow the new one's launch. When the app
   is registered to start at sign-in, that registration names the exe it was made from; it is pointed
   at the installed one, so sign-in starts this build rather than whatever registered itself last.
@@ -18,7 +18,7 @@
   powershell -ExecutionPolicy Bypass -File scripts\deploy-snap.ps1 -SkipBuild -Autostart
 #>
 param(
-  [string]$Target = "C:\apps\homeport-snap",
+  [string]$Target = "C:\apps\hangar-snap",
   [switch]$SkipBuild,   # install the existing release build without rebuilding
   [switch]$NoStart,     # leave it stopped after installing
   [switch]$Autostart    # also register it to start at sign-in (it is always re-pointed if registered)
@@ -27,12 +27,12 @@ param(
 $ErrorActionPreference = "Stop"
 $root  = Split-Path -Parent $PSScriptRoot
 $snap  = Join-Path $root "snap"
-$built = Join-Path $snap "src-tauri\target\release\homeport-snap.exe"
-$exe   = Join-Path $Target "homeport-snap.exe"
+$built = Join-Path $snap "src-tauri\target\release\hangar-snap.exe"
+$exe   = Join-Path $Target "hangar-snap.exe"
 
 # --- 1) Build ---------------------------------------------------------------------------------------
 if (-not $SkipBuild) {
-  Write-Host "==> Building Homeport Snap (release)" -ForegroundColor Cyan
+  Write-Host "==> Building Hangar Snap (release)" -ForegroundColor Cyan
   Push-Location $snap
   try {
     if (-not (Test-Path (Join-Path $snap "node_modules"))) {
@@ -49,9 +49,11 @@ if (-not $SkipBuild) {
 if (-not (Test-Path $built)) { throw "No release build at '$built'. Run without -SkipBuild first." }
 
 # --- 2) Stop every running Snap ------------------------------------------------------------------------
-$running = @(Get-Process -Name "homeport-snap" -ErrorAction SilentlyContinue)
+# "homeport-snap" is the exe's name from before the rename to Hangar: one still running holds the
+# single-instance lock (keyed by the unchanged identifier) and would swallow the new one's launch.
+$running = @(Get-Process -Name "hangar-snap", "homeport-snap" -ErrorAction SilentlyContinue)
 if ($running.Count -gt 0) {
-  Write-Host "==> Stopping Homeport Snap ($($running.Count) process(es))" -ForegroundColor Cyan
+  Write-Host "==> Stopping Hangar Snap ($($running.Count) process(es))" -ForegroundColor Cyan
   $running | Stop-Process -Force
   $running | ForEach-Object { try { $_.WaitForExit(5000) | Out-Null } catch { } }
 }
@@ -65,10 +67,18 @@ Copy-Item -LiteralPath $built -Destination $exe -Force
 # The same entry tauri-plugin-autostart writes: HKCU Run, named after the product, the exe and the flag
 # that tells the app it was started at sign-in (so it doesn't open its settings window).
 $runKey  = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$runName = "Homeport Snap"
+$runName = "Hangar Snap"
 $command = "`"$exe`" --autostart"
 $current = (Get-ItemProperty -Path $runKey -Name $runName -ErrorAction SilentlyContinue).$runName
-if ($Autostart -or $current) {
+# Before the rename the entry was "Homeport Snap", pointing at homeport-snap.exe. Carry the choice
+# over to the new name rather than leave sign-in starting the old exe.
+$legacyName = "Homeport Snap"
+$legacy = (Get-ItemProperty -Path $runKey -Name $legacyName -ErrorAction SilentlyContinue).$legacyName
+if ($legacy) {
+  Remove-ItemProperty -Path $runKey -Name $legacyName
+  Write-Host "==> Removed the old '$legacyName' sign-in entry" -ForegroundColor Cyan
+}
+if ($Autostart -or $current -or $legacy) {
   if ($current -ne $command) {
     Set-ItemProperty -Path $runKey -Name $runName -Value $command
     Write-Host "==> Starts at sign-in: $command" -ForegroundColor Cyan
@@ -77,7 +87,7 @@ if ($Autostart -or $current) {
 
 # --- 5) Run --------------------------------------------------------------------------------------------
 if (-not $NoStart) {
-  Write-Host "==> Starting Homeport Snap" -ForegroundColor Cyan
+  Write-Host "==> Starting Hangar Snap" -ForegroundColor Cyan
   # Without --autostart: on a machine that has never run it, the settings window should open.
   Start-Process -FilePath $exe -WorkingDirectory $Target
 }

@@ -46,12 +46,12 @@ fn main() {
         };
         if flags.iter().any(|f| f == "--wake") {
             let t = std::time::Instant::now();
-            homeport_snap_lib::elements::wake(top.0 as isize);
+            hangar_snap_lib::elements::wake(top.0 as isize);
             println!("woke in {:?}", t.elapsed());
         }
         for round in 0..4 {
             let t = std::time::Instant::now();
-            let chain = homeport_snap_lib::elements::chain_at(top.0 as isize, x, y);
+            let chain = hangar_snap_lib::elements::chain_at(top.0 as isize, x, y);
             println!("after {}ms: {} elements in {:?}", round * 500, chain.len(), t.elapsed());
             for e in chain.iter().take(6) {
                 println!("  {:>9} {:?}  {}", e.role, e.rect, e.name.chars().take(50).collect::<String>());

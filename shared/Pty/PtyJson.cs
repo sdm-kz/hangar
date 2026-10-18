@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// Source-generated serializers for everything that crosses between the web app and a pty host.

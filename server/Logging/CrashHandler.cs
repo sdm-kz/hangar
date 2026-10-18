@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Server.Logging;
+namespace Hangar.Server.Logging;
 
 /// <summary>
 /// Process-wide last line of defence. On Windows the daemon is a <c>WinExe</c> with no console, so an

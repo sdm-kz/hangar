@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// How many cells a character occupies — the one thing a terminal has to agree with its emulator

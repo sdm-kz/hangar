@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 
-namespace ClaudeWeb.Server.Web;
+namespace Hangar.Server.Web;
 
 /// <summary>
 /// Capability tickets for the HTML preview. A ticket is a random id standing for one directory on

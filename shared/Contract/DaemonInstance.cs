@@ -5,7 +5,7 @@ using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ClaudeWeb.Contract;
+namespace Hangar.Contract;
 
 /// <summary>
 /// How a local client — the tray today — finds and authenticates to a running daemon: a small JSON file

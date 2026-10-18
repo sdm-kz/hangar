@@ -1,8 +1,8 @@
 using System.IO.Pipes;
 using System.Threading.Channels;
-using ClaudeWeb.Pty;
+using Hangar.Pty;
 
-namespace ClaudeWeb.Server.Sessions.Pty;
+namespace Hangar.Server.Sessions.Pty;
 
 /// <summary>
 /// The web app's end of a pty host: an <see cref="ITerminal"/> backed by a named pipe instead of a

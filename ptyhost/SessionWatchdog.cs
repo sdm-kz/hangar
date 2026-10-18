@@ -1,9 +1,9 @@
 using System.Text;
 using System.Text.RegularExpressions;
-using ClaudeWeb.Pty;
-using ClaudeWeb.PtyHost.Pty;
+using Hangar.Pty;
+using Hangar.PtyHost.Pty;
 
-namespace ClaudeWeb.PtyHost;
+namespace Hangar.PtyHost;
 
 /// <summary>
 /// Watches this host's session and auto-recovers it when it hangs on an API/streaming error banner,

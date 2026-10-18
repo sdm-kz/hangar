@@ -1,7 +1,7 @@
 using System.Text.Json;
 using WebPush;
 
-namespace ClaudeWeb.Server.Push;
+namespace Hangar.Server.Push;
 
 /// <summary>The VAPID keypair the server signs push messages with, plus the contact subject.</summary>
 public sealed record VapidKeys(string PublicKey, string PrivateKey, string Subject);

@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// A terminal, as far as the bytes are concerned: it consumes the child's VT output and keeps the

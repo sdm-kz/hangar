@@ -4,9 +4,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
-using ClaudeWeb.Server.Update;
+using Hangar.Server.Update;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// Pushes session-list changes to connected browsers over a WebSocket at <c>/hub/events</c>, so the

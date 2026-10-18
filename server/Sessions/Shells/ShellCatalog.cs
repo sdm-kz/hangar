@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using System.Text;
-using ClaudeWeb.Contract;
+using Hangar.Contract;
 
-namespace ClaudeWeb.Server.Sessions.Shells;
+namespace Hangar.Server.Sessions.Shells;
 
 /// <summary>One shell the host machine can run, as offered in the "+" menu of a session's tab bar.</summary>
 /// <remarks>

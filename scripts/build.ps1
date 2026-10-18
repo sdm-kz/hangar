@@ -1,4 +1,4 @@
-# Builds the SPA and publishes Claude Web into ./publish: the daemon, the tray and the pty host, each a
+# Builds the SPA and publishes Hangar into ./publish: the daemon, the tray and the pty host, each a
 # single self-contained exe.
 # Usage:  powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 $ErrorActionPreference = "Stop"

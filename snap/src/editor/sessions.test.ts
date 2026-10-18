@@ -15,15 +15,15 @@ const item = (id: string, name: string, project: string | null, folder: string):
 });
 
 const items = [
-  item("1", "Fix login", "Homeport", "claude-web"),
+  item("1", "Fix login", "Hangar", "claude-web"),
   item("2", "Invoices", "Finance", "invoices"),
-  item("3", "Snap app", "Homeport", "feat-snap"),
+  item("3", "Snap app", "Hangar", "feat-snap"),
 ];
 
 describe("filterSessions", () => {
   it("matches every word across name, project and folder", () => {
-    expect(filterSessions(items, "home snap").map((s) => s.id)).toEqual(["3"]);
-    expect(filterSessions(items, "HOMEPORT").map((s) => s.id)).toEqual(["1", "3"]);
+    expect(filterSessions(items, "hang snap").map((s) => s.id)).toEqual(["3"]);
+    expect(filterSessions(items, "HANGAR").map((s) => s.id)).toEqual(["1", "3"]);
     expect(filterSessions(items, "  ")).toBe(items);
     expect(filterSessions(items, "nothing")).toEqual([]);
   });

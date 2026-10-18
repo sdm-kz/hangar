@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace ClaudeWeb.Server.Auth;
+namespace Hangar.Server.Auth;
 
 /// <summary>
 /// Salted PBKDF2 (HMAC-SHA256) password hashing. The login password is only ever *verified*,

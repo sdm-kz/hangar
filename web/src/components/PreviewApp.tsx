@@ -36,7 +36,7 @@ export function PreviewApp({ path }: { path: string }) {
   // Name the browser tab after the file so preview tabs are tellable apart.
   useEffect(() => {
     const name = path.split(/[/\\]+/).filter(Boolean).pop() ?? path;
-    document.title = `${name} - Claude Web`;
+    document.title = `${name} - Hangar`;
   }, [path]);
 
   if (auth === "loading") {

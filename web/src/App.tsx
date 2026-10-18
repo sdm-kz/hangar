@@ -258,7 +258,7 @@ export function App() {
   // Reflect the active session in the page title so browser tabs are tellable apart.
   useEffect(() => {
     const name = sessions.find((s) => s.id === activeId)?.name;
-    document.title = name ? `${name} - Claude Web` : "Claude Web";
+    document.title = name ? `${name} - Hangar` : "Hangar";
   }, [activeId, sessions]);
 
   // Sessions that finished something you haven't seen yet — the gap the green pulse leaves behind
@@ -1319,7 +1319,7 @@ function EmptyState({
         {collapsed && (
           <ShowSidebarButton onClick={onToggleCollapsed} />
         )}
-        <span className="font-semibold">Claude Web</span>
+        <span className="font-semibold">Hangar</span>
         {update}
       </header>
       <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">

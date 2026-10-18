@@ -1,7 +1,7 @@
-# Homeport Snap
+# Hangar Snap
 
 A tray app for Windows, macOS and Linux: press a hotkey, pick part of the screen, mark it up, type a
-message, and send both to one of the Claude sessions a Homeport server is running. The picture lands in
+message, and send both to one of the Claude sessions a Hangar server is running. The picture lands in
 the session's prompt exactly as an image pasted in the web UI does.
 
 Built with [Tauri 2](https://tauri.app): a small Rust shell (tray, hotkeys, screen capture, talking to
@@ -35,7 +35,7 @@ The **editor** opens with the message box focused. The quickest path is: capture
 
 **Postpone** (`Ctrl+Shift+Enter`, `⌘⇧↵`) puts the picture and the message in the session's postponed
 messages instead of its prompt, for when Claude is busy: they wait in the Postponed bar under the
-session in Homeport, to be sent from there or by its auto-send. Needs a Homeport that has
+session in Hangar, to be sent from there or by its auto-send. Needs a Hangar that has
 `POST /api/sessions/{id}/postponed/items`; an older one says to update it.
 
 **New session** (the `+` over the session list) starts a session for the capture instead of sending
@@ -66,7 +66,7 @@ a row to send straight to it.
 ## Installing (Windows)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\deploy-snap.ps1            # build, install to C:\apps\homeport-snap, start
+powershell -ExecutionPolicy Bypass -File scripts\deploy-snap.ps1            # build, install to C:\apps\hangar-snap, start
 powershell -ExecutionPolicy Bypass -File scripts\deploy-snap.ps1 -Autostart # …and start it at sign-in
 ```
 
@@ -77,7 +77,7 @@ points an existing registration at the installed exe.
 
 ## Connecting to a server
 
-Settings → *Homeport address*. On the machine that runs Homeport (`http://127.0.0.1:5099`) there is
+Settings → *Hangar address*. On the machine that runs Hangar (`http://127.0.0.1:5099`) there is
 nothing else to do: Snap reads the server's instance file, the same way the tray does. Any other address
 asks for the server's password once; the token is kept in the app's settings file (readable only by you
 on macOS/Linux) until it expires, then the editor asks you to sign in again.
@@ -88,13 +88,13 @@ on macOS/Linux) until it expires, then the editor asks you to sign in again.
   Security). Without it, captures show only the wallpaper. Snap runs as a menu-bar app with no Dock icon.
 - **Linux, X11**: everything works. The tray needs `libayatana-appindicator3`.
 - **Linux, Wayland**: apps can't register global hotkeys or list windows, so bind
-  `homeport-snap --capture region` (or `window`, `fullscreen`, `freeform`) in your desktop's keyboard
+  `hangar-snap --capture region` (or `window`, `fullscreen`, `freeform`) in your desktop's keyboard
   settings. Region and freeform still work on the frozen screen; window mode falls back to the whole
   screen.
 - **Windows**: `Ctrl+Shift+digit` overrides apps that use those keys (Excel's number formats, for
   example). Change them in Settings; a combo another app already holds is reported there.
 
-`homeport-snap --capture <mode>` works on every platform, and goes to the running instance.
+`hangar-snap --capture <mode>` works on every platform, and goes to the running instance.
 
 ## Developing
 
@@ -109,9 +109,9 @@ npm run tauri build      # installers for this platform
 Linux needs the [Tauri prerequisites](https://tauri.app/start/prerequisites/) plus `libxcb1-dev
 libxrandr-dev libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev` for screen capture.
 
-Set `HOMEPORT_SNAP_CONFIG_DIR` to keep a test run's settings and recents apart from your real ones
+Set `HANGAR_SNAP_CONFIG_DIR` to keep a test run's settings and recents apart from your real ones
 (otherwise they live in the app's local data folder, e.g. `%LOCALAPPDATA%\io.github.sdm-kz.homeport.snap`). In
-a debug build, `HOMEPORT_SNAP_TEST_FRAMES=1` makes every capture a generated picture per screen, for
+a debug build, `HANGAR_SNAP_TEST_FRAMES=1` makes every capture a generated picture per screen, for
 exercising the overlays and editor where there is nothing to capture (a disconnected remote session, CI).
 The log (`…\logs`) records how long each overlay and editor took to come up.
 

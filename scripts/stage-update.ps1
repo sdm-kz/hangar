@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Builds Claude Web and stages the result as a pending update, without touching the running app.
+  Builds Hangar and stages the result as a pending update, without touching the running app.
 
 .DESCRIPTION
   This is the "publish an update" half of the in-app updater. It builds (scripts\build.ps1) and drops

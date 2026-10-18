@@ -1,6 +1,6 @@
-using ClaudeWeb.Pty;
+using Hangar.Pty;
 
-namespace ClaudeWeb.Server.Sessions.Pty;
+namespace Hangar.Server.Sessions.Pty;
 
 /// <summary>
 /// Claude Code's input box, read off the screen: whether something has been typed into it and not

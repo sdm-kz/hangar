@@ -34,7 +34,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
           <div className="flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <Bot className="size-6" />
           </div>
-          <h1 className="text-xl font-semibold">Claude Web</h1>
+          <h1 className="text-xl font-semibold">Hangar</h1>
           <p className="text-sm text-muted-foreground">Sign in to manage Claude Code sessions</p>
         </div>
         <div className="space-y-2">

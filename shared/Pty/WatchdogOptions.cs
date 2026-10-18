@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// Tunables for the hang watchdog (bound from the "Watchdog" config section in the web app, then

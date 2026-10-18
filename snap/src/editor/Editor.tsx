@@ -184,7 +184,7 @@ export default function Editor({ id }: { id: string }) {
           img.onload = () => {
             if (cancelled) return;
             setImage(img);
-            void getCurrentWindow().setTitle(`Homeport Snap — ${info.width} × ${info.height}`);
+            void getCurrentWindow().setTitle(`Hangar Snap — ${info.width} × ${info.height}`);
             void api.editorReady().then(() => messageRef.current?.focus());
           };
           img.onerror = () => setLoadError("Could not load the capture.");
@@ -750,7 +750,7 @@ export default function Editor({ id }: { id: string }) {
           }}
           onRetry={loadSessions}
           onSettings={() => void api.openSettings()}
-          onOpenHomeport={() => void api.openHomeport()}
+          onOpenHangar={() => void api.openHangar()}
           onNew={startCreating}
           searchRef={searchRef}
         />

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Text;
 
-namespace ClaudeWeb.Tray;
+namespace Hangar.Tray;
 
 /// <summary>
 /// The tray icon. Left-click opens the web UI; right-click lists running sessions and offers orphan cleanup,
@@ -49,7 +49,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _icon = new NotifyIcon
         {
             Icon = _offlineIcon,
-            Text = "Claude Web — connecting…",
+            Text = "Hangar — connecting…",
             Visible = true,
             ContextMenuStrip = menu,
         };
@@ -68,9 +68,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _startupCheck.Stop();
             if (_announcedPid is not null) return;
             if (_daemon.View.Instance is not null)
-                Balloon("Claude Web server is not responding", "It is running but not answering. The tray keeps trying.");
+                Balloon("Hangar server is not responding", "It is running but not answering. The tray keeps trying.");
             else
-                Balloon("Claude Web server is not running", DaemonExecutable() is null
+                Balloon("Hangar server is not running", DaemonExecutable() is null
                     ? "Start ClaudeWeb.exe, or check which port this tray follows (--port)."
                     : "Right-click the tray icon to start it.");
         };
@@ -89,9 +89,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _icon.Icon = view.Connected ? _onlineIcon : _offlineIcon;
         _icon.Text = view switch
         {
-            { Connected: true } => $"Claude Web — {view.Sessions.Count(s => s.State == SessionState.Running)} running",
-            { Instance: not null } => "Claude Web — server not responding",
-            _ => "Claude Web — server not running",
+            { Connected: true } => $"Hangar — {view.Sessions.Count(s => s.State == SessionState.Running)} running",
+            { Instance: not null } => "Hangar — server not responding",
+            _ => "Hangar — server not running",
         };
 
         if (view is { Connected: true, Instance: { } instance })
@@ -99,13 +99,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _stopRequested = false;
             // Once per daemon: a reconnect after a moment's silence is the same server, and not news.
             if (_announcedPid != instance.Pid)
-                Balloon("Claude Web is running", $"Click the tray icon to open ({instance.OpenUrl}). Right-click for sessions.");
+                Balloon("Hangar is running", $"Click the tray icon to open ({instance.OpenUrl}). Right-click for sessions.");
             _announcedPid = instance.Pid;
         }
         // Only when the daemon is really gone, not when it merely stopped answering for a moment.
         else if (view.Instance is null && _hadDaemon && !_stopRequested && !_relaunching)
         {
-            Balloon("Claude Web server stopped",
+            Balloon("Hangar server stopped",
                 "Running sessions keep running. Right-click the tray icon to start the server again.");
         }
         _hadDaemon = view.Instance is not null;
@@ -115,7 +115,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (_daemon.View is not { Connected: true, Instance: { } instance })
         {
-            Balloon("Claude Web server is not running", "Right-click the tray icon for options.");
+            Balloon("Hangar server is not running", "Right-click the tray icon for options.");
             return;
         }
         var url = instance.OpenUrl;
@@ -131,8 +131,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (!view.Connected)
         {
             menu.Items.Add(new ToolStripMenuItem(view.Instance is null
-                ? "Claude Web server is not running"
-                : "Claude Web server is not responding") { Enabled = false });
+                ? "Hangar server is not running"
+                : "Hangar server is not responding") { Enabled = false });
             if (view.Instance is null && DaemonExecutable() is { } exe)
                 menu.Items.Add(new ToolStripMenuItem("Start server", null, (_, _) => StartDaemon(exe)) { Font = bold });
             menu.Items.Add(new ToolStripSeparator());
@@ -140,7 +140,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        menu.Items.Add(new ToolStripMenuItem("Open Claude Web", null, (_, _) => OpenUi()) { Font = bold });
+        menu.Items.Add(new ToolStripMenuItem("Open Hangar", null, (_, _) => OpenUi()) { Font = bold });
         menu.Items.Add(new ToolStripSeparator());
 
         var sessions = view.Sessions;
@@ -171,7 +171,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 recent.DropDownItems.Add(new ToolStripSeparator());
                 recent.DropDownItems.Add(new ToolStripMenuItem(
-                    $"{closed.Length - RecentLimit} more — open Claude Web…", null, (_, _) => OpenUi()));
+                    $"{closed.Length - RecentLimit} more — open Hangar…", null, (_, _) => OpenUi()));
             }
             menu.Items.Add(recent);
         }
@@ -181,7 +181,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Stop server…", null, (_, _) => StopDaemon())
         {
-            ToolTipText = "Stop the Claude Web server. Running sessions keep running and are picked up again when it starts.",
+            ToolTipText = "Stop the Hangar server. Running sessions keep running and are picked up again when it starts.",
         });
         menu.Items.Add(ExitItem());
     }
@@ -262,7 +262,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void StopDaemon()
     {
         var answer = MessageBox.Show(
-            "Stop the Claude Web server?" + Environment.NewLine + Environment.NewLine
+            "Stop the Hangar server?" + Environment.NewLine + Environment.NewLine
             + "Running sessions are not stopped: they keep running on their own, and the server picks them up "
             + "again the next time it starts. Until then neither the web UI nor this menu can reach them.",
             "Stop server",
@@ -273,7 +273,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         RunInBackground(
             async () => { await _daemon.StopDaemonAsync(); return true; },
             "Could not stop the server",
-            _ => Balloon("Claude Web server stopped", "Running sessions keep running. Right-click the tray icon to start it again."),
+            _ => Balloon("Hangar server stopped", "Running sessions keep running. Right-click the tray icon to start it again."),
             failed: () => _stopRequested = false); // it is still running, so its going away later is news again
     }
 
@@ -290,12 +290,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe)! })?.Dispose();
             TrayLog.Info($"Started {exe} from the tray menu.");
-            Balloon("Starting Claude Web…", "The icon lights up once the server is ready.");
+            Balloon("Starting Hangar…", "The icon lights up once the server is ready.");
         }
         catch (Exception ex)
         {
             TrayLog.Error($"Could not start {exe}", ex);
-            MessageBox.Show($"Could not start the server: {ex.Message}", "Claude Web", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"Could not start the server: {ex.Message}", "Hangar", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -375,7 +375,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var ex = t.Exception?.GetBaseException() ?? new TimeoutException("The server did not answer in time.");
             TrayLog.Error(failure, ex);
             failed?.Invoke();
-            MessageBox.Show($"{failure}: {ex.Message}", "Claude Web", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show($"{failure}: {ex.Message}", "Hangar", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }), TaskScheduler.Default);
     }
 

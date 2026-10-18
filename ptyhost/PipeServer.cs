@@ -3,10 +3,10 @@ using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading.Channels;
-using ClaudeWeb.Pty;
-using ClaudeWeb.PtyHost.Pty;
+using Hangar.Pty;
+using Hangar.PtyHost.Pty;
 
-namespace ClaudeWeb.PtyHost;
+namespace Hangar.PtyHost;
 
 /// <summary>
 /// Serves a session's <see cref="TerminalChannel"/> over a named pipe. Several clients at once (the

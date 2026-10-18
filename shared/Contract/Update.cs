@@ -2,7 +2,7 @@
 // aside — exit, so its exe can be replaced — the moment it reads Applying; a name kept by hand in two
 // places would stop that from happening the first time one of them changed, and nothing would say so.
 
-namespace ClaudeWeb.Contract;
+namespace Hangar.Contract;
 
 /// <summary>Where an update is in its lifecycle, as far as the app that's being replaced can tell.</summary>
 public enum UpdateState

@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// Auto-send for the postponed pool: with it switched on for a session (the play button on the

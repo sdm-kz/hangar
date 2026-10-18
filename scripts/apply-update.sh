@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs a staged update over a Claude Web install folder and restarts the daemon -- the Linux and
+# Installs a staged update over a Hangar install folder and restarts the daemon -- the Linux and
 # macOS counterpart of apply-update.ps1. Read that file's header first: the design is the same.
 #
 #   1. wait for the daemon's process to exit (it is stopping itself); force it down if it hangs
@@ -97,7 +97,7 @@ replace() {
 say "=== apply-update: $staging -> $target (mode=$mode, pid=$pid) ==="
 
 [ -f "$staging/ClaudeWeb" ] || fail "Staged build has no ClaudeWeb: $staging"
-[ -f "$target/ClaudeWeb" ] || fail "Target is not a Claude Web install: $target"
+[ -f "$target/ClaudeWeb" ] || fail "Target is not a Hangar install: $target"
 
 # --- 1) Wait the daemon out, then insist -----------------------------------------------------------
 waited=0

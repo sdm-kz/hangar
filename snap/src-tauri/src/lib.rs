@@ -1,8 +1,8 @@
-//! Homeport Snap: a tray app that takes a screenshot on a hotkey, lets you mark it up, and sends it —
-//! with a message — to one of the Claude sessions a Homeport server is running.
+//! Hangar Snap: a tray app that takes a screenshot on a hotkey, lets you mark it up, and sends it —
+//! with a message — to one of the Claude sessions a Hangar server is running.
 //!
 //! The flow, end to end:
-//! 1. A hotkey (or the tray menu, or `homeport-snap --capture <mode>`) freezes every monitor
+//! 1. A hotkey (or the tray menu, or `hangar-snap --capture <mode>`) freezes every monitor
 //!    ([`capture::take`]).
 //! 2. Full screen goes straight to the editor; the other modes put an overlay over each monitor showing
 //!    its frozen frame, where the person drags a region, clicks a window or traces a shape.
@@ -91,7 +91,7 @@ fn now_ms() -> i64 {
 fn notify_error(app: &AppHandle, message: impl Into<String>) {
     let message = message.into();
     log::error!("{message}");
-    app.dialog().message(message).title("Homeport Snap").kind(tauri_plugin_dialog::MessageDialogKind::Error).show(|_| {});
+    app.dialog().message(message).title("Hangar Snap").kind(tauri_plugin_dialog::MessageDialogKind::Error).show(|_| {});
 }
 
 // ---- Capturing ------------------------------------------------------------------------------------
@@ -490,7 +490,7 @@ async fn pick_folder(app: AppHandle, start: Option<String>) -> Result<Option<Str
 struct StartedSession {
     id: String,
     name: String,
-    /// Something the person should know although it started: a Homeport too old to file it.
+    /// Something the person should know although it started: a Hangar too old to file it.
     note: Option<String>,
 }
 
@@ -529,7 +529,7 @@ async fn start_session(app: AppHandle, request: Request<'_>) -> Result<StartedSe
         log::warn!("Could not remember the session: {e}");
     }
     let note = (group.is_some() && created.group_id != group)
-        .then(|| "Started, but this Homeport can't file it in a group yet. Update it.".to_string());
+        .then(|| "Started, but this Hangar can't file it in a group yet. Update it.".to_string());
     Ok(StartedSession { id: created.id, name: created.name, note })
 }
 
@@ -590,7 +590,7 @@ fn screenshot_stamp() -> String {
 }
 
 #[tauri::command]
-fn open_homeport(app: AppHandle, session_id: Option<String>) -> Result<(), String> {
+fn open_hangar(app: AppHandle, session_id: Option<String>) -> Result<(), String> {
     let base = state(&app).settings.lock().unwrap().server_url.clone();
     let mut url = url::Url::parse(&base).map_err(|e| e.to_string())?;
     if let Some(id) = session_id {
@@ -786,19 +786,19 @@ fn build_menu(app: &AppHandle, hotkeys: &Hotkeys) -> tauri::Result<Menu<tauri::W
         menu.append(&item)?;
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "open", "Open Homeport", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "open", "Open Hangar", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?)?;
     let autostart = app.autolaunch().is_enabled().unwrap_or(false);
     menu.append(&CheckMenuItem::with_id(app, "autostart", "Start when I sign in", true, autostart, None::<&str>)?)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "quit", "Quit Homeport Snap", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, "quit", "Quit Hangar Snap", true, None::<&str>)?)?;
     Ok(menu)
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "open" => {
-            if let Err(e) = open_homeport(app.clone(), None) {
+            if let Err(e) = open_hangar(app.clone(), None) {
                 notify_error(app, e);
             }
         }
@@ -833,7 +833,7 @@ fn build_tray(app: &AppHandle, hotkeys: &Hotkeys) -> tauri::Result<()> {
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon::image_for(tray_icon::current_look(app))?)
         .icon_as_template(cfg!(target_os = "macos"))
-        .tooltip("Homeport Snap")
+        .tooltip("Hangar Snap")
         .menu(&build_menu(app, hotkeys)?)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
@@ -935,7 +935,7 @@ pub fn run() {
             start_session,
             copy_image,
             save_image,
-            open_homeport,
+            open_hangar,
             get_settings,
             save_settings,
             connection_status,
@@ -949,8 +949,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            // HOMEPORT_SNAP_CONFIG_DIR keeps a test run's settings and recents away from the real ones.
-            let dir = match std::env::var_os("HOMEPORT_SNAP_CONFIG_DIR") {
+            // HANGAR_SNAP_CONFIG_DIR keeps a test run's settings and recents away from the real ones.
+            let dir = match std::env::var_os("HANGAR_SNAP_CONFIG_DIR") {
                 Some(d) => std::path::PathBuf::from(d),
                 // The local, not the roaming, folder on Windows: the settings hold a bearer token,
                 // which has no business following a roaming profile to other machines.
@@ -1024,7 +1024,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building Homeport Snap")
+        .expect("error while building Hangar Snap")
         // A tray app: closing the last window doesn't quit it.
         .run(|_app, event| {
             if let tauri::RunEvent::ExitRequested { api, code, .. } = event {

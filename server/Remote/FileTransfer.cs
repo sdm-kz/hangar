@@ -1,7 +1,7 @@
 using Renci.SshNet;
-using ClaudeWeb.Server.FileSystem;
+using Hangar.Server.FileSystem;
 
-namespace ClaudeWeb.Server.Remote;
+namespace Hangar.Server.Remote;
 
 /// <summary>
 /// One end of a copy or a move: a session's folder on this machine, or a remote tab's host. Paths are

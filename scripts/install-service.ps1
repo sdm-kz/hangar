@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Installs Claude Web as a Windows service running under a user account.
+  Installs Hangar as a Windows service running under a user account.
   Run this from an elevated (Administrator) PowerShell prompt.
 
 .DESCRIPTION
@@ -15,7 +15,7 @@ param(
   [string]$ServiceName = "ClaudeWeb",
   [string]$PublishPath = "$PSScriptRoot\..\publish",
   [string]$UserName = "$env:USERDOMAIN\$env:USERNAME",
-  [string]$DisplayName = "Claude Web"
+  [string]$DisplayName = "Hangar"
 )
 $ErrorActionPreference = "Stop"
 
@@ -76,5 +76,5 @@ Write-Host "Starting service..."
 sc.exe start $ServiceName | Out-Null
 
 Write-Host ""
-Write-Host "Installed. Claude Web is running as a Windows service under $UserName." -ForegroundColor Green
+Write-Host "Installed. Hangar is running as a Windows service under $UserName." -ForegroundColor Green
 Write-Host "Edit the port/password in: $PublishPath\appsettings.json (then restart the service)."

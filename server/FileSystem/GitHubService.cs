@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace ClaudeWeb.Server.FileSystem;
+namespace Hangar.Server.FileSystem;
 
 /// <summary>Whether a folder's repo lives on GitHub, and which repo it is ("owner/name").</summary>
 public sealed record GitHubRepo(bool IsGitHub, string? NameWithOwner);

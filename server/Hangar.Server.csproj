@@ -11,7 +11,7 @@
     <OutputType>WinExe</OutputType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>ClaudeWeb.Server</RootNamespace>
+    <RootNamespace>Hangar.Server</RootNamespace>
     <AssemblyName>ClaudeWeb</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
@@ -30,21 +30,21 @@
 
   <ItemGroup>
     <!-- The wire types, the VT stripper and the ring buffer are compiled into both this project and
-         ClaudeWeb.PtyHost: they are the contract between the two processes, so they must not drift. -->
+         Hangar.PtyHost: they are the contract between the two processes, so they must not drift. -->
     <Compile Include="..\shared\Pty\*.cs" LinkBase="Sessions\Pty\Shared" />
     <!-- Likewise the contract with the tray: the session and project records it deserializes, and the
          instance file it finds this daemon through. -->
     <Compile Include="..\shared\Contract\*.cs" LinkBase="Contract" />
-    <Using Include="ClaudeWeb.Contract" />
+    <Using Include="Hangar.Contract" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- The in-app updater runs this after the app stops (a running exe can't overwrite itself), so it
          has to travel inside the exe rather than sit in the install folder it's about to mirror over. -->
-    <EmbeddedResource Include="..\scripts\apply-update.ps1" LogicalName="ClaudeWeb.Server.apply-update.ps1" />
+    <EmbeddedResource Include="..\scripts\apply-update.ps1" LogicalName="Hangar.Server.apply-update.ps1" />
     <!-- Its Linux and macOS counterpart. Kept LF by .gitattributes: a CRLF checkout on Windows would
          otherwise embed a script /bin/sh can't run. -->
-    <EmbeddedResource Include="..\scripts\apply-update.sh" LogicalName="ClaudeWeb.Server.apply-update.sh" />
+    <EmbeddedResource Include="..\scripts\apply-update.sh" LogicalName="Hangar.Server.apply-update.sh" />
   </ItemGroup>
 
   <!-- The built React app lives in wwwroot; the Web SDK includes and publishes it automatically. -->
@@ -54,7 +54,7 @@
        after the published layout. A released build never takes this path - scripts\build.ps1 publishes
        the host as a single trimmed exe straight into ./publish. -->
   <ItemGroup>
-    <ProjectReference Include="..\ptyhost\ClaudeWeb.PtyHost.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\ptyhost\Hangar.PtyHost.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <Target Name="CopyPtyHostForLocalRun" AfterTargets="Build" Condition="'$(PublishSingleFile)' != 'true'">

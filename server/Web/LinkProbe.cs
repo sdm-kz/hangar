@@ -3,7 +3,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace ClaudeWeb.Server.Web;
+namespace Hangar.Server.Web;
 
 /// <summary>
 /// What the server could learn about a web page a session is linking to: what it is called, what its
@@ -66,7 +66,7 @@ public sealed class LinkProbeService
         // like a browser, and the framing headers can differ with it.
         _http.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/124.0 Safari/537.36 ClaudeWeb/1.0");
+            "Chrome/124.0 Safari/537.36 Hangar/1.0");
         _http.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,*/*;q=0.8");
     }
 

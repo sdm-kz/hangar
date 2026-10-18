@@ -18,6 +18,6 @@ if (-not (Test-Path (Join-Path $root "server\wwwroot\index.html"))) {
 }
 
 Push-Location (Join-Path $root "server")
-Write-Host "Starting Claude Web..." -ForegroundColor Cyan
+Write-Host "Starting Hangar..." -ForegroundColor Cyan
 dotnet run
 Pop-Location

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Stops and removes the Claude Web Windows service. Run elevated.
+  Stops and removes the Hangar Windows service. Run elevated.
 #>
 param([string]$ServiceName = "ClaudeWeb")
 $ErrorActionPreference = "Stop"

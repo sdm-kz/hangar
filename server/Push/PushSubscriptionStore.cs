@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Push;
+namespace Hangar.Server.Push;
 
 /// <summary>A browser/PWA Web Push subscription: the push-service endpoint plus its two keys.</summary>
 public sealed record PushSubscriptionEntry(string Endpoint, string P256dh, string Auth);

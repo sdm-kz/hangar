@@ -9,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>ClaudeWeb.Tray</RootNamespace>
+    <RootNamespace>Hangar.Tray</RootNamespace>
     <AssemblyName>ClaudeWeb.Tray</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
@@ -19,7 +19,7 @@
     <!-- The session and project records, and the membership rules the running-sessions menu is built
          from. Shared source with the daemon, so the two describe the same world. -->
     <Compile Include="..\shared\Contract\*.cs" LinkBase="Contract" />
-    <Using Include="ClaudeWeb.Contract" />
+    <Using Include="Hangar.Contract" />
   </ItemGroup>
 
 </Project>

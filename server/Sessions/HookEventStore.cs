@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>Authoritative, hook-derived view of one session: what Claude is doing right now.</summary>
 public sealed record HookStatus(

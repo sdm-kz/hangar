@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Cronos;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>How a schedule's fire turns into work.</summary>
 public enum ScheduleMode

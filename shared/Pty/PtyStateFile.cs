@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// The on-disk marker a pty host writes for its session: enough to find the host again after the web

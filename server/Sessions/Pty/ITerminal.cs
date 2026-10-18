@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 
-namespace ClaudeWeb.Server.Sessions.Pty;
+namespace Hangar.Server.Sessions.Pty;
 
 /// <summary>
 /// A session's live terminal, as the web app sees it: a broadcast of the child's VT output with

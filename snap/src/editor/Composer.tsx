@@ -55,7 +55,7 @@ export function SessionPicker(props: {
   onSend(id: string): void;
   onRetry(): void;
   onSettings(): void;
-  onOpenHomeport(): void;
+  onOpenHangar(): void;
   /** Start a new session for this capture instead. */
   onNew(): void;
   searchRef: React.RefObject<HTMLInputElement | null>;
@@ -103,8 +103,8 @@ export function SessionPicker(props: {
                 <button className="mt-1 flex items-center gap-1 text-accent hover:underline" onClick={props.onNew}>
                   <Plus size={12} /> Start a new session with this
                 </button>
-                <button className="mt-1 flex items-center gap-1 text-accent hover:underline" onClick={props.onOpenHomeport}>
-                  Open Homeport <ExternalLink size={12} />
+                <button className="mt-1 flex items-center gap-1 text-accent hover:underline" onClick={props.onOpenHangar}>
+                  Open Hangar <ExternalLink size={12} />
                 </button>
               </>
             )}
@@ -179,7 +179,7 @@ function Empty({ children }: { children: React.ReactNode }) {
 
 function SessionsError({ error, onRetry, onSettings }: { error: ApiError | string; onRetry(): void; onSettings(): void }) {
   const unauthorized = typeof error !== "string" && error.kind === "unauthorized";
-  const message = typeof error === "string" ? error : unauthorized ? "Sign in to the Homeport server to see its sessions." : error.message;
+  const message = typeof error === "string" ? error : unauthorized ? "Sign in to the Hangar server to see its sessions." : error.message;
   return (
     <div className="flex flex-col items-center gap-2 px-4 py-5 text-center">
       <p className="text-muted-foreground">{message}</p>

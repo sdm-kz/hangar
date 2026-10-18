@@ -38,7 +38,7 @@ impl Default for Hotkeys {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
-    /// Base URL of the Homeport server.
+    /// Base URL of the Hangar server.
     pub server_url: String,
     /// Bearer token from signing in with the server's password. Not needed when the server is on this
     /// machine: its instance file carries a token of its own (see `api::Credentials`).
@@ -170,7 +170,7 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("homeport-snap-test-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hangar-snap-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
     }

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Register (or remove) Claude Web in the CURRENT USER's autostart, so the daemon (ClaudeWeb.exe) and
+  Register (or remove) Hangar in the CURRENT USER's autostart, so the daemon (ClaudeWeb.exe) and
   the tray icon (ClaudeWeb.Tray.exe) both launch at sign-in.
   Uses the per-user Run key (HKCU) -- no admin rights required, affects only your account.
 

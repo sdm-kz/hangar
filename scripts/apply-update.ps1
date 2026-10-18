@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Installs a staged update over a Claude Web install folder and restarts the daemon.
+  Installs a staged update over a Hangar install folder and restarts the daemon.
 
 .DESCRIPTION
   The daemon cannot overwrite its own running exe, so it launches this script as a detached process and
@@ -78,7 +78,7 @@ function Start-App {
 }
 
 # Stop processes named $name that run from this install. Match on the executable's path, never on the
-# process name alone: other Claude Web installs (a second port, a test build, a colleague's copy) are
+# process name alone: other Hangar installs (a second port, a test build, a colleague's copy) are
 # none of our business and must be left alone.
 function Stop-FromTarget([string]$name) {
   $exe = [IO.Path]::GetFullPath((Join-Path $Target "$name.exe"))
@@ -100,7 +100,7 @@ try {
     throw "Staged build has no ClaudeWeb.exe: $Staging"
   }
   if (-not (Test-Path (Join-Path $Target "ClaudeWeb.exe"))) {
-    throw "Target is not a Claude Web install: $Target"
+    throw "Target is not a Hangar install: $Target"
   }
 
   # --- 1) Wait the daemon out, then insist ----------------------------------------------------

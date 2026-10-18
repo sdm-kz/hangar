@@ -3,7 +3,7 @@
 // as the daemon does, and a second answer to "which project is this folder in?" would be a second thing
 // to keep in step.
 
-namespace ClaudeWeb.Contract;
+namespace Hangar.Contract;
 
 /// <summary>
 /// A named grouping of folders. A project is the user's own unit of work — it can span several

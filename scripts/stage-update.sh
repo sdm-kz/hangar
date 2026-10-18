@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Claude Web for Linux or macOS and stages it as a pending update, without touching the running
+# Builds Hangar for Linux or macOS and stages it as a pending update, without touching the running
 # app -- the counterpart of stage-update.ps1, minus its "what's new" notes and its check for commits the
 # installed build has and this one doesn't. The running app watches the staging folder and offers the
 # update in its UI; installing it hands off to apply-update.sh.

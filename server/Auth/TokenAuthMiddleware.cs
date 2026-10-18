@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Server.Auth;
+namespace Hangar.Server.Auth;
 
 /// <summary>
 /// Gates /api/* and /hub/* behind a bearer token (Authorization header or ?access_token= for SignalR).

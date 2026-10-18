@@ -1,6 +1,6 @@
-using ClaudeWeb.Server.FileSystem;
+using Hangar.Server.FileSystem;
 
-namespace ClaudeWeb.Server.Web;
+namespace Hangar.Server.Web;
 
 /// <summary>
 /// The pieces of the ticketed HTML preview that aren't routing: what content type to serve a file

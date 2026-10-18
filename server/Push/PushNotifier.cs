@@ -1,9 +1,9 @@
 using System.Net;
 using System.Text.Json;
-using ClaudeWeb.Server.Sessions;
+using Hangar.Server.Sessions;
 using WebPush;
 
-namespace ClaudeWeb.Server.Push;
+namespace Hangar.Server.Push;
 
 /// <summary>
 /// Sends a Web Push notification when a session newly needs attention or newly starts waiting on a

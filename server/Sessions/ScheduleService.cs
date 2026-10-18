@@ -1,10 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
-using ClaudeWeb.Server.FileSystem;
+using Hangar.Server.FileSystem;
 using Microsoft.Win32;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 public sealed class ScheduleOptions
 {

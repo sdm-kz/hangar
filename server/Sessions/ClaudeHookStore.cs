@@ -3,10 +3,10 @@ using System.Net.NetworkInformation;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>
-/// Registers ClaudeWeb's <c>http</c> hooks in <c>~/.claude/settings.json</c> so every launched session
+/// Registers Hangar's <c>http</c> hooks in <c>~/.claude/settings.json</c> so every launched session
 /// reports its lifecycle events back to the app (consumed by <see cref="HookEventStore"/> to drive
 /// reliable busy/idle/waiting status). Best-effort and conservative, mirroring <see cref="ClaudeBypassStore"/>:
 /// backs the file up once, writes atomically, and only merges our own handlers — a handler is identified
@@ -76,7 +76,7 @@ public static class ClaudeHookStore
             {
                 log.LogWarning(
                     "Leaving the Claude hooks in ~/.claude/settings.json pointed at port {Owner}: something is " +
-                    "listening there, so another ClaudeWeb is live and owns them. This instance ({Port}) will not " +
+                    "listening there, so another Hangar is live and owns them. This instance ({Port}) will not " +
                     "receive hook events, so its session status falls back to terminal heuristics. Set " +
                     "Hooks:Force=true to take them over, or Hooks:Enabled=false to stop asking.",
                     owner, port);
@@ -139,11 +139,11 @@ public static class ClaudeHookStore
                 File.Move(tmp, path);
             }
 
-            log.LogInformation("Registered ClaudeWeb hooks in ~/.claude/settings.json (endpoint {Url})", url);
+            log.LogInformation("Registered Hangar hooks in ~/.claude/settings.json (endpoint {Url})", url);
         }
         catch (Exception ex)
         {
-            log.LogWarning(ex, "Could not register ClaudeWeb hooks");
+            log.LogWarning(ex, "Could not register Hangar hooks");
         }
     }
 

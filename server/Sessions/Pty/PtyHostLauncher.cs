@@ -1,8 +1,8 @@
 using System.Runtime.InteropServices;
 using System.Text;
-using ClaudeWeb.Pty;
+using Hangar.Pty;
 
-namespace ClaudeWeb.Server.Sessions.Pty;
+namespace Hangar.Server.Sessions.Pty;
 
 /// <summary>Tunables for the pty host (bound from the "Pty" config section).</summary>
 public sealed class PtyHostOptions

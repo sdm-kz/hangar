@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// How a session was last being looked at — which view tab was showing, which files are open as

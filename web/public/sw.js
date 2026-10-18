@@ -16,9 +16,9 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch {
-    data = { title: "Claude Web", body: event.data ? event.data.text() : "" };
+    data = { title: "Hangar", body: event.data ? event.data.text() : "" };
   }
-  const title = data.title || "Claude Web";
+  const title = data.title || "Hangar";
   const options = {
     body: data.body || "",
     tag: data.tag,

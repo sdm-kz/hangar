@@ -1,8 +1,9 @@
-# Homeport
+# Hangar
 
-> **Name:** the project will be renamed to **Homeport** (the home port your remote sessions launch
-> from). The rename (repo, `ClaudeWeb.exe`, namespaces) is not done yet — for now the executable is
-> still `ClaudeWeb.exe`.
+> **Name:** the project is being renamed from Claude Web to **Hangar** (short form `hgr`). The
+> namespaces are done; the executables (`ClaudeWeb.exe`, …), the data folder
+> (`%LocalAppData%\ClaudeWeb`) and the environment variables keep their old names until the cutover —
+> see [plans/rename-to-hangar.md](plans/rename-to-hangar.md).
 
 A .NET 10 app for Windows (the server also runs on Linux and macOS — see
 [Linux and macOS](#linux-and-macos)) that **launches Claude Code CLI sessions with Remote Control
@@ -24,7 +25,7 @@ device on your LAN. It is two programs:
     *Sessions survive an app restart* below). The icon greys out while the server isn't running, and
     the menu then offers **Start server**.
 
-Beside them sits **Homeport Snap** (`snap/`), a separate tray app for Windows, macOS and Linux: a hotkey
+Beside them sits **Hangar Snap** (`snap/`), a separate tray app for Windows, macOS and Linux: a hotkey
 freezes the screen, you pick a region, window, screen or freeform shape, mark it up, type a message, and
 send both to one of the server's running sessions — the picture lands in the prompt as a pasted image
 would. It is a client of the same API and can run on any machine that reaches the server. See
@@ -405,7 +406,7 @@ Two things now prevent that, and it is worth knowing both:
   falls back to terminal heuristics, which is the right trade. A registration whose port is dead is
   still taken over as before, so an ordinary port change needs no intervention. `Hooks:Force=true`
   overrides the check.
-- **The debug paths don't ask.** The `ClaudeWeb (debug 5199, no hooks)` launch profile sets
+- **The debug paths don't ask.** The `Hangar (debug 5199, no hooks)` launch profile sets
   `Hooks__Enabled=false`, and `scripts\dev.ps1 -Port <other>` passes `--Hooks:Enabled=false` for any
   port that isn't the app's own `5099` (`-Hooks` forces it back on). On 5099 it registers normally,
   since that is the registration the installed app wants anyway.
@@ -558,7 +559,7 @@ powershell -ExecutionPolicy Bypass -File scripts\stage-update.ps1
 
 That drops the published build into `C:\apps\claude-web-updates\payload` (override with `-Staging`).
 The running app watches that folder, compares the staged `build.json` with its own, and puts an
-**Update** button next to the "Claude Web" title in the sidebar as soon as they differ. Clicking it
+**Update** button next to the "Hangar" title in the sidebar as soon as they differ. Clicking it
 shows both build stamps and, on confirmation:
 
 1. the server answers the request, then stops itself — gracefully, detaching from each session's pty
@@ -717,7 +718,7 @@ browser's own route for this is `POST /api/sessions/{id}/message`, behind the be
 
 A running session can rename **itself**, so a `claude` command (or a hook, or any script the session
 runs) can name the session after the work it turns out to be doing. `POST /api/self/name` needs no
-browser login and no API key: every session ClaudeWeb launches already carries its own credentials in
+browser login and no API key: every session Hangar launches already carries its own credentials in
 its environment, and they are all the call takes.
 
 | Env var                | What it is                                                       |

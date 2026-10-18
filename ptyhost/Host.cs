@@ -1,8 +1,8 @@
 using System.Diagnostics;
-using ClaudeWeb.Pty;
-using ClaudeWeb.PtyHost.Pty;
+using Hangar.Pty;
+using Hangar.PtyHost.Pty;
 
-namespace ClaudeWeb.PtyHost;
+namespace Hangar.PtyHost;
 
 /// <summary>
 /// One pty host process per session: it owns the pseudoconsole and the <see cref="TerminalChannel"/>

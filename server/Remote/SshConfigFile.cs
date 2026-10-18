@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace ClaudeWeb.Server.Remote;
+namespace Hangar.Server.Remote;
 
 /// <summary>A host as the server user's <c>~/.ssh/config</c> describes it. Null = not said there.</summary>
 public sealed record SshHostConfig(string Alias, string? HostName, string? User, int? Port, string? IdentityFile);

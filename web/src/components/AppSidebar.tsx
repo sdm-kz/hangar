@@ -10,7 +10,7 @@ import { ThemeToggle } from "./ThemeToggle";
 export type SidebarTab = "sessions" | "files" | "shells";
 
 /**
- * Wraps the left sidebar: the "Claude Web" header on top, then a three-tab switcher between the
+ * Wraps the left sidebar: the "Hangar" header on top, then a three-tab switcher between the
  * session list, the server-filesystem Files tree and every open shell, and a footer under all of
  * them. The panels are supplied by the caller; only the active one is mounted.
  */
@@ -55,7 +55,7 @@ export function AppSidebar({
         <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <Bot className="size-4" />
         </div>
-        <span className="min-w-0 truncate font-semibold">Claude Web</span>
+        <span className="min-w-0 truncate font-semibold">Hangar</span>
         {/* New session lives here rather than in the session list: it applies to both tabs, and the
             header has room the list header doesn't. */}
         <div className="ml-auto flex items-center gap-1">

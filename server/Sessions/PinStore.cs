@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// Sessions the user has pinned to the top of their folder, persisted to

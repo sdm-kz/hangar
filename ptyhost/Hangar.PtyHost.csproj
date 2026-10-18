@@ -8,12 +8,12 @@
     <OutputType>Exe</OutputType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>ClaudeWeb.PtyHost</RootNamespace>
+    <RootNamespace>Hangar.PtyHost</RootNamespace>
     <AssemblyName>ClaudeWeb.PtyHost</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- The host is launched DETACHED_PROCESS with no console; nothing would read a console anyway,
          and diagnostics go to its per-session log file. -->
-    <StartupObject>ClaudeWeb.PtyHost.Host</StartupObject>
+    <StartupObject>Hangar.PtyHost.Host</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>

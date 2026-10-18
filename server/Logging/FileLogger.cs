@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 
-namespace ClaudeWeb.Server.Logging;
+namespace Hangar.Server.Logging;
 
 /// <summary>
 /// Tiny append-only file logger. On Windows the daemon runs without a console, so this keeps a

@@ -1,8 +1,8 @@
 using System.Diagnostics;
-using ClaudeWeb.Pty;
-using ClaudeWeb.Server.Sessions.Pty;
+using Hangar.Pty;
+using Hangar.Server.Sessions.Pty;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// A launched interactive <c>claude</c> session. The process runs attached to a pseudoconsole

@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Server;
+namespace Hangar.Server;
 
 /// <summary>
 /// The file mechanics every JSON state file in this app shares — the sessions list, the projects,

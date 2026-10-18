@@ -4,7 +4,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ClaudeWeb.Tray;
+namespace Hangar.Tray;
 
 /// <summary>
 /// What the tray knows about the daemon at one moment. Immutable and replaced wholesale, so the UI thread

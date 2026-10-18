@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.FileSystem;
+namespace Hangar.Server.FileSystem;
 
 /// <summary>
 /// Extra folders the user has attached to a session so its Files panel can browse (and edit) them

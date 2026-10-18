@@ -400,7 +400,7 @@ export function ProjectDialog({
                     onFocus={() => {
                       nameFocusedRef.current = true;
                     }}
-                    placeholder="Homeport"
+                    placeholder="Hangar"
                     onChange={(e) => setName(e.target.value)}
                     onBlur={commitName}
                     onKeyDown={(e) => {

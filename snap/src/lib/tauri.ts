@@ -165,7 +165,7 @@ export const api = {
     }),
   copyImage: (png: Uint8Array) => invoke<void>("copy_image", png),
   saveImage: (png: Uint8Array) => invoke<string | null>("save_image", png),
-  openHomeport: (sessionId?: string) => invoke<void>("open_homeport", { sessionId: sessionId ?? null }),
+  openHangar: (sessionId?: string) => invoke<void>("open_hangar", { sessionId: sessionId ?? null }),
 
   getSettings: () => invoke<SettingsView>("get_settings"),
   saveSettings: (input: { serverUrl: string; hotkeys: Hotkeys; autostart: boolean }) =>

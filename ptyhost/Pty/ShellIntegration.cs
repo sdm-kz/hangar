@@ -1,4 +1,4 @@
-namespace ClaudeWeb.PtyHost.Pty;
+namespace Hangar.PtyHost.Pty;
 
 /// <summary>
 /// Follows the commands run at a shell prompt through the FinalTerm / VS Code shell-integration marks

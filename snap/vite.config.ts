@@ -6,7 +6,7 @@ import tailwindcss from "@tailwindcss/vite";
 // Tauri serves the built files; `tauri dev` points its windows at this dev server instead.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // "@web" reaches into the Homeport web UI for what both must agree on (session colours).
+  // "@web" reaches into the Hangar web UI for what both must agree on (session colours).
   resolve: { alias: { "@": path.resolve(__dirname, "src"), "@web": path.resolve(__dirname, "../web/src") } },
   clearScreen: false,
   server: { port: 1430, strictPort: true },

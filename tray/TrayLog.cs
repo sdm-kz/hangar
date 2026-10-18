@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Tray;
+namespace Hangar.Tray;
 
 /// <summary>
 /// The tray's diagnostic trail, <c>%LocalAppData%\ClaudeWeb\logs\tray.log</c>: beside the daemon's own logs,

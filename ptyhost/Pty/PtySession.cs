@@ -1,6 +1,6 @@
 using Porta.Pty;
 
-namespace ClaudeWeb.PtyHost.Pty;
+namespace Hangar.PtyHost.Pty;
 
 /// <summary>
 /// Launches a console program attached to a Windows <b>pseudoconsole</b> (ConPTY) via the

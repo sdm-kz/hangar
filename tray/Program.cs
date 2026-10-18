@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace ClaudeWeb.Tray;
+namespace Hangar.Tray;
 
 /// <summary>
-/// The Windows tray icon for a Claude Web daemon. It is only a client: everything it shows comes from the
+/// The Windows tray icon for a Hangar daemon. It is only a client: everything it shows comes from the
 /// daemon's HTTP API and its <c>/hub/events</c> stream, and closing it leaves the daemon — and every
 /// session — running. <see cref="DaemonConnection"/> is how it finds the daemon.
 /// </summary>

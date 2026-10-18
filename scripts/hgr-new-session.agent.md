@@ -1,4 +1,4 @@
-# `new-claude-session.ps1` — agent reference
+# `hgr-new-session.ps1` — agent reference
 
 Launches a **new Claude Code session** on this machine through the claude-web server
 (`POST /api/external/sessions`). The session runs as a real `claude` process in the folder you
@@ -20,13 +20,13 @@ Two things must be true, or the call fails:
 From PowerShell (PowerShell resolves `.ps1` files on `PATH`):
 
 ```powershell
-new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -Name build -Model opus
+hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Name build -Model opus
 ```
 
 From bash/cmd, go through PowerShell so `PATH` lookup still applies:
 
 ```bash
-powershell -NoProfile -Command "new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -Name build"
+powershell -NoProfile -Command "hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Name build"
 ```
 
 ## Parameters
@@ -46,7 +46,7 @@ so the server's own default applies — omit rather than guess.
 | `-Continue` | switch | off | Resume the folder's **most recent** conversation (`claude --continue`) instead of starting fresh. |
 | `-ResumeSessionId` | string | none | Resume one **specific** conversation by its Claude session id (`claude --resume <id>`). Takes precedence over `-Continue`; prefer it when you know the id, since one folder can hold many conversations. |
 | `-Color` | string | none | Session color name (same values `/color` accepts), for visual grouping in the list. |
-| `-NestUnderSessionId` | string | none | Draw the new session under this one in the sessions list (its `nestedUnderId`). An arrangement of the list only — the new session has its own conversation and is not a fork. An id no session answers to is a 400, not a silently top-level session. `new-claude-child-session.ps1` is the wrapper that fills this in from `$env:CLAUDEWEB_SESSION_ID`. |
+| `-NestUnderSessionId` | string | none | Draw the new session under this one in the sessions list (its `nestedUnderId`). An arrangement of the list only — the new session has its own conversation and is not a fork. An id no session answers to is a 400, not a silently top-level session. `hgr-new-child-session.ps1` is the wrapper that fills this in from `$env:CLAUDEWEB_SESSION_ID`. |
 | `-WatchdogEnabled` | switch | off | Lets the hang watchdog auto-continue this session if it stalls. |
 | `-BaseUrl` | string | `$env:CLAUDE_WEB_URL`, else `http://localhost:5099` | Server base URL — set it when targeting another machine. |
 | `-ApiKey` | string | `$env:CLAUDE_WEB_API_KEY` | Sent as the `X-Api-Key` header. |
@@ -66,7 +66,7 @@ Useful response fields: `id` (claude-web session id — use it against `/api/ses
 only appears once the session prints it, so don't expect it in this response), `createdAt`.
 
 ```powershell
-$s = new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -PassThru
+$s = hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -PassThru
 $s.id; $s.state
 ```
 
@@ -76,7 +76,7 @@ $s.id; $s.state
 PowerShell leaves `$`, backticks and quotes alone — the closing `'@` must sit at column 0:
 
 ```powershell
-new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -PermissionMode auto -InitialPrompt @'
+hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -PermissionMode auto -InitialPrompt @'
 Review the diff on this branch.
 Write the findings to review.md, one heading per file.
 Don't commit anything.
@@ -98,20 +98,20 @@ Two things to know:
 
 ```powershell
 # Minimal: session in a given folder, all server defaults
-new-claude-session.ps1 -WorkingDirectory C:\Git\myproject
+hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject
 
 # Named, timestamped, with a task to run on start
-new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -Name nightly -NameTimestamp `
+hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Name nightly -NameTimestamp `
     -Model opus -PermissionMode auto -InitialPrompt 'run the tests and fix any failures'
 
 # Pick up where the folder left off
-new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -Continue
+hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Continue
 
 # Resume one exact conversation
-new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -ResumeSessionId 3f2b1c8a-...
+hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -ResumeSessionId 3f2b1c8a-...
 
 # Against another machine, web UI only, capture the id
-$s = new-claude-session.ps1 -WorkingDirectory C:\Git\myproject `
+$s = hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject `
     -BaseUrl http://build-box:5099 -RemoteControl:$false -PassThru
 ```
 

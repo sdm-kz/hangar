@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
-namespace ClaudeWeb.PtyHost;
+namespace Hangar.PtyHost;
 
 /// <summary>
 /// The few libc calls the host needs on Linux and macOS, where there is no job object to lean on.

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Remote;
+namespace Hangar.Server.Remote;
 
 public enum HostKeyVerdict { Known, Unknown, Changed }
 

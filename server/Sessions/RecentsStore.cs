@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>A reusable launch preset: everything needed to relaunch the same session.</summary>
 public sealed record RecentSession(

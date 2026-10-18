@@ -1,12 +1,12 @@
 [package]
-name = "homeport-snap"
+name = "hangar-snap"
 version = "0.1.0"
-description = "Screenshot, mark up, and send to a Homeport session"
+description = "Screenshot, mark up, and send to a Hangar session"
 edition = "2021"
 publish = false
 
 [lib]
-name = "homeport_snap_lib"
+name = "hangar_snap_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

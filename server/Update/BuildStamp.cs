@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Update;
+namespace Hangar.Server.Update;
 
 /// <summary>
 /// What changed in a build, for the update dialog to show before anyone commits to installing it.

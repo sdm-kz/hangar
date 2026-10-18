@@ -1845,6 +1845,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "hangar-snap"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "dirs 6.0.0",
+ "image",
+ "log",
+ "mockito",
+ "objc2",
+ "percent-encoding",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-log",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "url",
+ "windows",
+ "windows-registry",
+ "windows-sys 0.61.2",
+ "xcap",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1888,38 +1920,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "homeport-snap"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "dirs 6.0.0",
- "image",
- "log",
- "mockito",
- "objc2",
- "percent-encoding",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-log",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tokio",
- "url",
- "windows",
- "windows-registry",
- "windows-sys 0.61.2",
- "xcap",
-]
 
 [[package]]
 name = "html5ever"

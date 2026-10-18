@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// One terminal screen: a grid of cells, a cursor, scroll margins, and — for the normal buffer —

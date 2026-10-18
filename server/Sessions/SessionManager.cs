@@ -2,10 +2,10 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using ClaudeWeb.Pty;
-using ClaudeWeb.Server.Auth;
+using Hangar.Pty;
+using Hangar.Server.Auth;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 public sealed class SessionManagerOptions
 {
@@ -1193,7 +1193,7 @@ public sealed class SessionManager : IDisposable
             RaiseChanged(); // the projects don't ride the session list; see the same move below
         if (groupId is not null && SetGroup(new[] { session.Id }, groupId) is not null)
             info = info with { GroupId = groupId };
-        // A session launched under another — new-claude-child-session.ps1 posts NestedUnderId — is
+        // A session launched under another — hgr-new-child-session.ps1 posts NestedUnderId — is
         // drawn under it, and a row is only ever drawn under something in its own list: placed
         // anywhere its host is not, it comes out at the top level of that other list and the nesting
         // the caller asked for is simply gone. So it takes its host's place in the list, for the same

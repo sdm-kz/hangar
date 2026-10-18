@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "ClaudeWeb (debug 5199, no hooks)": {
+    "Hangar (debug 5199, no hooks)": {
       "commandName": "Project",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",

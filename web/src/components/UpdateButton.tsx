@@ -65,7 +65,7 @@ export function UpdateButton({
       <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Update Claude Web</DialogTitle>
+            <DialogTitle>Update Hangar</DialogTitle>
             <DialogDescription>
               The app restarts to install this build. It takes a few seconds, and the sessions running
               right now are resumed automatically once it's back.

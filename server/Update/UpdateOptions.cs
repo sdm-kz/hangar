@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Server.Update;
+namespace Hangar.Server.Update;
 
 /// <summary>Tunables for the in-app updater (bound from the "Update" config section).</summary>
 public sealed class UpdateOptions

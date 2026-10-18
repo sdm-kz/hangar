@@ -1,6 +1,6 @@
 {
-  "name": "Claude Web",
-  "short_name": "Claude Web",
+  "name": "Hangar",
+  "short_name": "Hangar",
   "description": "Manage and monitor Claude Code sessions.",
   "start_url": "/",
   "scope": "/",

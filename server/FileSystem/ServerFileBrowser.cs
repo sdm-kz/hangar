@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Server.FileSystem;
+namespace Hangar.Server.FileSystem;
 
 /// <summary>A file or directory entry with its absolute path (for the general server-fs browser).</summary>
 public sealed record FsNode(string Name, string Path, bool IsDir, long Size);

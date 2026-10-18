@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 // Project and ProjectGroup, and the rules for which project a session falls under (ProjectMembership),
 // live in shared\Contract\Projects.cs: the tray menu arranges sessions by the same rules.

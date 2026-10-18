@@ -1,10 +1,10 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using ClaudeWeb.Contract;
-using ClaudeWeb.Pty;
-using ClaudeWeb.Server.Sessions.Pty;
+using Hangar.Contract;
+using Hangar.Pty;
+using Hangar.Server.Sessions.Pty;
 
-namespace ClaudeWeb.Server.Sessions.Shells;
+namespace Hangar.Server.Sessions.Shells;
 
 /// <summary>Request to open a shell tab.</summary>
 public sealed record CreateShellRequest(

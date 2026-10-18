@@ -125,7 +125,7 @@ if [ "$platform" = linux ]; then
   esc_cmd() { esc_q "$1" | sed -e 's/\$/$$/g'; }
   cat > "$unit" << EOF
 [Unit]
-Description=Claude Web (Homeport) server
+Description=Hangar server
 After=network-online.target
 
 [Service]

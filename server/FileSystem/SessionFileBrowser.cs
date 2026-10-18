@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Server.FileSystem;
+namespace Hangar.Server.FileSystem;
 
 public sealed record FileEntry(string Name, string Path, bool IsDir, long Size);
 

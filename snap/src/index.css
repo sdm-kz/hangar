@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* The same neutral scale as the Homeport web UI, with the icon's coral as the one accent. The editor is
+/* The same neutral scale as the Hangar web UI, with the icon's coral as the one accent. The editor is
    a tool window full of someone else's pixels, so it stays quiet: greys, and colour only where it means
    "this is what will happen". Light and dark follow the OS. */
 :root {

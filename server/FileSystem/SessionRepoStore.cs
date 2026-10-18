@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeWeb.Server.FileSystem;
+namespace Hangar.Server.FileSystem;
 
 /// <summary>
 /// GitHub repositories attached to a session beyond the one its own folder points at, persisted to

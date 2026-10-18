@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
-namespace ClaudeWeb.Server.Auth;
+namespace Hangar.Server.Auth;
 
 public sealed class AuthOptions
 {
@@ -124,7 +124,7 @@ public sealed class TokenStore
 
     /// <summary>
     /// Validate the <c>X-Hook-Token</c> header on a hook callback. Constant-time compare. Returns false
-    /// for a null/empty header (a non-ClaudeWeb session, whose env var is unset, sends an empty value).
+    /// for a null/empty header (a non-Hangar session, whose env var is unset, sends an empty value).
     /// </summary>
     public bool IsValidHookToken(string? token)
     {

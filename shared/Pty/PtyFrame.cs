@@ -1,6 +1,6 @@
 using System.Buffers.Binary;
 
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>Frame kinds on the pty-host pipe. Values are wire constants — never renumber them.</summary>
 public enum PtyFrameType : byte

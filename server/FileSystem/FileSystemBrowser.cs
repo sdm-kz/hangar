@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace ClaudeWeb.Server.FileSystem;
+namespace Hangar.Server.FileSystem;
 
 public sealed record DirEntry(string Name, string Path);
 

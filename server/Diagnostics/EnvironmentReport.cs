@@ -1,8 +1,8 @@
 using System.Diagnostics;
-using ClaudeWeb.Server.Sessions;
+using Hangar.Server.Sessions;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
-namespace ClaudeWeb.Server.Diagnostics;
+namespace Hangar.Server.Diagnostics;
 
 /// <summary>One file the daemon depends on, as this process sees it.</summary>
 public sealed record FileProbe(string Path, bool Exists, bool Readable);
@@ -75,7 +75,7 @@ public sealed record EnvironmentReport(
                          "and mapped drives aren't visible. Autostart at logon avoids both.");
         if (configDir is not null)
             problems.Add($"CLAUDE_CONFIG_DIR is set ({configDir}): claude reads its settings and credentials from there, " +
-                         $"but ClaudeWeb registers its hooks in {settings.Path}.");
+                         $"but Hangar registers its hooks in {settings.Path}.");
         if (OperatingSystem.IsLinux() && xdgRuntimeDir is null)
             problems.Add("XDG_RUNTIME_DIR is not set: the daemon isn't running in a user session. Run it as a systemd --user unit.");
 

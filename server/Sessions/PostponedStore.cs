@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using ClaudeWeb.Server.FileSystem;
+using Hangar.Server.FileSystem;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// Counts the "postponed messages" a session has stashed (in <c>.claudeweb/postponed/&lt;id&gt;.json</c>

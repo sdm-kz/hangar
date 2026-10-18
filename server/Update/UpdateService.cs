@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
-namespace ClaudeWeb.Server.Update;
+namespace Hangar.Server.Update;
 
 // UpdateState lives in shared\Contract\Update.cs: the tray reads it off the event stream too.
 
@@ -171,7 +171,7 @@ public sealed class UpdateService : BackgroundService
             if (_staged is null || _staged.BuildId == _current?.BuildId) return Fail("no update is staged");
             if (string.IsNullOrWhiteSpace(_installPath)) return Fail("could not work out the install folder");
             if (!File.Exists(Path.Combine(_installPath, ServerExe)))
-                return Fail($"'{_installPath}' is not a Claude Web install (no {ServerExe}) — this looks like a dev run");
+                return Fail($"'{_installPath}' is not a Hangar install (no {ServerExe}) — this looks like a dev run");
             if (!File.Exists(Path.Combine(_payloadPath, ServerExe)))
                 return Fail($"the staged build has no {ServerExe}");
             if (SamePath(_installPath, _payloadPath))
@@ -230,7 +230,7 @@ public sealed class UpdateService : BackgroundService
     /// Read, then remove, the two variables scripts/install-unix.sh puts in the units it writes:
     /// <c>CLAUDEWEB_SERVICE_MANAGER</c> (systemd | launchd) and <c>CLAUDEWEB_SERVICE_NAME</c>. Called
     /// first thing in <c>Main</c>, before any session starts. Removing them is the point: every session
-    /// and shell inherits this process's environment, so a second ClaudeWeb started from one of them — a
+    /// and shell inherits this process's environment, so a second Hangar started from one of them — a
     /// test build, say — would otherwise believe it was the unit, and its updater would start, or on a
     /// timeout <i>stop</i>, the live app's unit.
     /// </summary>
@@ -266,7 +266,7 @@ public sealed class UpdateService : BackgroundService
         Directory.CreateDirectory(dir);
         var name = OperatingSystem.IsWindows() ? "apply-update.ps1" : "apply-update.sh";
         var path = Path.Combine(dir, name);
-        var resource = "ClaudeWeb.Server." + name;
+        var resource = "Hangar.Server." + name;
 
         using var src = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource)
             ?? throw new InvalidOperationException($"'{resource}' is missing from the build");

@@ -12,24 +12,24 @@
       CLAUDE_WEB_URL       base URL of the server (default http://localhost:5099)
 
 .EXAMPLE
-    .\new-claude-session.ps1
+    .\hgr-new-session.ps1
     Starts a session in the current folder with server defaults.
 
 .EXAMPLE
-    .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -Name build -NameTimestamp `
+    .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Name build -NameTimestamp `
         -Model opus -PermissionMode auto -InitialPrompt 'run the tests and fix any failures'
 
 .EXAMPLE
-    .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -Continue -PassThru
+    .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Continue -PassThru
 
 .EXAMPLE
-    .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -NestUnderSessionId $env:CLAUDEWEB_SESSION_ID
-    Starts a session nested under the one this script is running inside. new-claude-child-session.ps1
+    .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -NestUnderSessionId $env:CLAUDEWEB_SESSION_ID
+    Starts a session nested under the one this script is running inside. hgr-new-child-session.ps1
     does exactly this, and fails with something to read when there is no session to nest under.
 
 .EXAMPLE
     $prompt = Get-Content .\task.md -Raw
-    pwsh -File .\new-claude-session.ps1 -WorkingDirectory C:\Git\myproject -InitialPrompt $prompt
+    pwsh -File .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -InitialPrompt $prompt
     A multi-line prompt. Written inline instead, a here-string works too, but its closing '@ has to
     sit at column 0 -- which is why this example reads the text from a file. See the .agent.md notes.
 #>
@@ -72,7 +72,7 @@ param(
     # the list and nothing more — the new session gets its own conversation, so this is not a fork.
     # It does take that session's place in the list, though: its virtual folder, and its project when
     # no project claims the folder this one runs in — a row is only drawn under something in its own
-    # list. new-claude-child-session.ps1 is the wrapper that fills it in from the session it runs inside.
+    # list. hgr-new-child-session.ps1 is the wrapper that fills it in from the session it runs inside.
     [string] $NestUnderSessionId,
 
     # Let the hang watchdog auto-continue this session.

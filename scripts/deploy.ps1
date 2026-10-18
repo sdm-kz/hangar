@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Builds and deploys Claude Web to an install folder (default C:\apps\claude-web).
+  Builds and deploys Hangar to an install folder (default C:\apps\claude-web).
 
   Settings are preserved: the target's appsettings.json / appsettings.*.json are NEVER
   overwritten. Everything else (the single-file exes, web.config, wwwroot) is replaced, and

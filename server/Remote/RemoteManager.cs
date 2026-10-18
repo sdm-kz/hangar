@@ -8,7 +8,7 @@ using Renci.SshNet.Sftp;
 using SshNet.Agent;
 using ConnectionInfo = Renci.SshNet.ConnectionInfo;
 
-namespace ClaudeWeb.Server.Remote;
+namespace Hangar.Server.Remote;
 
 /// <summary>Connect a remote files tab. The secrets are used for this connection and kept in memory only.</summary>
 public sealed record RemoteConnectRequest(

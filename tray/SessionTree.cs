@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Tray;
+namespace Hangar.Tray;
 
 /// <summary>One session in the tray menu, and how deep it hangs off its folder (0 = not a fork).</summary>
 internal sealed record TreeSession(SessionInfo Session, int ForkDepth);

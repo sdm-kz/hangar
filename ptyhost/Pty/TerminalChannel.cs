@@ -1,9 +1,9 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
-using ClaudeWeb.Pty;
+using Hangar.Pty;
 
-namespace ClaudeWeb.PtyHost.Pty;
+namespace Hangar.PtyHost.Pty;
 
 /// <summary>
 /// Owns a <see cref="PtySession"/> and turns its single output stream into a broadcast: a model of
@@ -16,7 +16,7 @@ namespace ClaudeWeb.PtyHost.Pty;
 /// This class used to live in the web app, which made "detach" and "kill" the same thing: the app
 /// owned the pseudoconsole, so restarting it took every session down. It is unchanged logic in a new
 /// home — the pty host — and the web app now reaches it over a named pipe
-/// (<c>ClaudeWeb.Server.Sessions.Pty.PtyHostClient</c>). The screen, the busy heuristic and the
+/// (<c>Hangar.Server.Sessions.Pty.PtyHostClient</c>). The screen, the busy heuristic and the
 /// <c>/rename</c> · <c>/color</c> · remote-URL sniffers all have to run here: a web app that restarts
 /// mid-session must find the screen intact and must not have missed a rename while it was away.
 /// </remarks>

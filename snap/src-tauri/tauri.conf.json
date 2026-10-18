@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Homeport Snap",
+  "productName": "Hangar Snap",
   "version": "0.1.0",
   "identifier": "io.github.sdm-kz.homeport.snap",
   "build": {
@@ -19,7 +19,7 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "shortDescription": "Screenshot, mark up, and send to a Homeport session",
+    "shortDescription": "Screenshot, mark up, and send to a Hangar session",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -103,7 +103,7 @@ export default function Settings() {
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
         <header>
-          <h1 className="text-[17px] font-semibold">Homeport Snap</h1>
+          <h1 className="text-[17px] font-semibold">Hangar Snap</h1>
           <p className="text-muted-foreground">
             Take a screenshot, mark it up, and send it to a Claude session with a message.
           </p>
@@ -111,7 +111,7 @@ export default function Settings() {
 
         <Section title="Server">
           <label className="block">
-            <span className="mb-1 block text-muted-foreground">Homeport address</span>
+            <span className="mb-1 block text-muted-foreground">Hangar address</span>
             <input
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
@@ -129,7 +129,7 @@ export default function Settings() {
                   ? ""
                   : st.ok
                     ? st.local
-                      ? "Connected to the Homeport on this computer — no sign-in needed."
+                      ? "Connected to the Hangar on this computer — no sign-in needed."
                       : st.authRequired
                         ? "Connected and signed in."
                         : "Connected."
@@ -153,7 +153,7 @@ export default function Settings() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Homeport password"
+                placeholder="Hangar password"
                 autoFocus
                 className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2.5 outline-none focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
               />
@@ -299,7 +299,7 @@ function PlatformNote({ platform }: { platform: string }) {
   if (platform === "linux") {
     return (
       <p className="text-[12px] text-muted-foreground">
-        On Wayland, apps can't register global hotkeys. Bind <code>homeport-snap --capture region</code> (or <code>window</code>,{" "}
+        On Wayland, apps can't register global hotkeys. Bind <code>hangar-snap --capture region</code> (or <code>window</code>,{" "}
         <code>fullscreen</code>, <code>freeform</code>) in your desktop's keyboard settings instead.
       </p>
     );

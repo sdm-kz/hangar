@@ -1,16 +1,16 @@
 using System.Diagnostics;
 using System.Text.Json;
-using ClaudeWeb.Pty;
-using ClaudeWeb.Server.Auth;
-using ClaudeWeb.Server.Diagnostics;
-using ClaudeWeb.Server.FileSystem;
-using ClaudeWeb.Server.Logging;
-using ClaudeWeb.Server.Push;
-using ClaudeWeb.Server.Sessions;
+using Hangar.Pty;
+using Hangar.Server.Auth;
+using Hangar.Server.Diagnostics;
+using Hangar.Server.FileSystem;
+using Hangar.Server.Logging;
+using Hangar.Server.Push;
+using Hangar.Server.Sessions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 
-namespace ClaudeWeb.Server;
+namespace Hangar.Server;
 
 /// <summary>
 /// The daemon: a headless web host that owns every session, store and endpoint. It has no UI of its own —
@@ -61,7 +61,7 @@ internal static class Program
 
         var app = BuildApp(args, contentRoot);
 
-        // Register ClaudeWeb's Claude Code hooks in ~/.claude/settings.json so launched sessions report
+        // Register Hangar's Claude Code hooks in ~/.claude/settings.json so launched sessions report
         // their lifecycle back to /api/hooks (driving reliable busy/idle/waiting status). Opt out with
         // Hooks:Enabled=false; the app then falls back to terminal-scraping heuristics.
         if (app.Configuration.GetValue("Hooks:Enabled", true))
@@ -170,7 +170,7 @@ internal static class Program
         var loggers = app.Services.GetRequiredService<ILoggerFactory>();
         CrashHandler.AttachLogger(loggers.CreateLogger("Crash"));
         var log = loggers.CreateLogger("Startup");
-        log.LogInformation("ClaudeWeb started on port {Port}. Logs: {LogDir} (crash log: {CrashLog}).",
+        log.LogInformation("Hangar started on port {Port}. Logs: {LogDir} (crash log: {CrashLog}).",
             port, LogDirectory(), CrashHandler.CrashLogPath);
 
         // The instance file first, and on its own: it is what the tray is waiting for.
@@ -472,7 +472,7 @@ internal static class Program
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             using var life = SocketLifetime(ctx, lifetime);
             await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, life.Token,
-                ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("ClaudeWeb.Terminal"));
+                ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("Hangar.Terminal"));
         });
 
         app.MapGet("/api/sessions/{id}", (string id, SessionManager mgr) =>
@@ -500,7 +500,7 @@ internal static class Program
         // the UI's POST /api/sessions; auth is handled by TokenAuthMiddleware for /api/external/*.
         app.MapPost("/api/external/sessions", async (CreateSessionRequest req, SessionManager mgr) =>
         {
-            // Launching one session under another is what new-claude-child-session.ps1 does, and the
+            // Launching one session under another is what hgr-new-child-session.ps1 does, and the
             // id it nests under comes from a script's environment. A stale one would otherwise be
             // written as a link to nothing and the session would come out at the top level, looking
             // like the request was honoured — so it is refused here, where the caller can still see why.
@@ -621,7 +621,7 @@ internal static class Program
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             using var life = SocketLifetime(ctx, lifetime);
             await Sessions.Pty.TerminalSocket.PumpAsync(ws, term, life.Token,
-                ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("ClaudeWeb.Terminal"));
+                ctx.RequestServices.GetService<ILoggerFactory>()?.CreateLogger("Hangar.Terminal"));
         });
 
         // A socket's lifetime: until the client leaves or the app stops — see the note above /hub/events.

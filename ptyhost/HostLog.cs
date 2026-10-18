@@ -1,4 +1,4 @@
-namespace ClaudeWeb.PtyHost;
+namespace Hangar.PtyHost;
 
 /// <summary>
 /// A one-file log for a host process. Deliberately not <c>ILogger</c>: the host's only package

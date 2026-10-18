@@ -3,7 +3,7 @@
     Creates a Claude session nested under another one in the claude-web sessions list.
 
 .DESCRIPTION
-    new-claude-session.ps1 with the parent filled in, and every other parameter passed straight
+    hgr-new-session.ps1 with the parent filled in, and every other parameter passed straight
     through to it. Run from inside a claude-web session with no -ParentSessionId, the parent is the
     session you are running in: claude-web puts its id in CLAUDEWEB_SESSION_ID when it launches one.
 
@@ -18,24 +18,24 @@
 
     Failing rather than guessing is the point of this wrapper: with no parent to nest under it stops,
     because a session that silently arrived at the top level is the one outcome nobody asked for. Use
-    new-claude-session.ps1 directly when a top-level session is what you want.
+    hgr-new-session.ps1 directly when a top-level session is what you want.
 
 .EXAMPLE
-    .\new-claude-child-session.ps1 -PermissionMode auto -InitialPrompt 'run the tests'
+    .\hgr-new-child-session.ps1 -PermissionMode auto -InitialPrompt 'run the tests'
     A child of the session this runs inside, in the current folder.
 
 .EXAMPLE
-    .\new-claude-child-session.ps1 -ParentSessionId 8f2c1b... -WorkingDirectory C:\Git\other `
+    .\hgr-new-child-session.ps1 -ParentSessionId 8f2c1b... -WorkingDirectory C:\Git\other `
         -Name 'docs pass' -Model sonnet -PermissionMode auto -InitialPrompt '/docs'
     Under a session named explicitly -- what to use when this is not running inside one.
 
 .EXAMPLE
-    $child = .\new-claude-child-session.ps1 -PermissionMode auto -PassThru
+    $child = .\hgr-new-child-session.ps1 -PermissionMode auto -PassThru
     $child.id
 #>
 [CmdletBinding()]
 param(
-    # Folder the session runs in. Defaults to the current directory, like new-claude-session.ps1 --
+    # Folder the session runs in. Defaults to the current directory, like hgr-new-session.ps1 --
     # a child session is a separate session, so it need not share the parent's folder.
     [Parameter(Position = 0)]
     [string] $WorkingDirectory = (Get-Location).Path,
@@ -44,7 +44,7 @@ param(
     # in every session it launches -- so from inside one, the parent is that one.
     [string] $ParentSessionId = $env:CLAUDEWEB_SESSION_ID,
 
-    # Everything below is new-claude-session.ps1's, passed through untouched. See its help.
+    # Everything below is hgr-new-session.ps1's, passed through untouched. See its help.
     [string] $Name,
     [switch] $NameTimestamp,
     [string] $Model,
@@ -65,22 +65,22 @@ $ErrorActionPreference = 'Stop'
 
 if (-not $ParentSessionId) {
     Write-Error ("No parent session. Pass -ParentSessionId, or run this from inside a claude-web " +
-        "session (it sets `$env:CLAUDEWEB_SESSION_ID). For a top-level session use new-claude-session.ps1.")
+        "session (it sets `$env:CLAUDEWEB_SESSION_ID). For a top-level session use hgr-new-session.ps1.")
     exit 1
 }
 
 # The sibling first: both scripts ship together, and finding the one next to this file beats
 # whichever copy happens to be on PATH. The PATH lookup is the fallback for a relocated script.
-$create = Join-Path $PSScriptRoot 'new-claude-session.ps1'
+$create = Join-Path $PSScriptRoot 'hgr-new-session.ps1'
 if (-not (Test-Path $create)) {
-    $create = (Get-Command 'new-claude-session.ps1' -ErrorAction SilentlyContinue).Source
+    $create = (Get-Command 'hgr-new-session.ps1' -ErrorAction SilentlyContinue).Source
 }
 if (-not $create) {
-    Write-Error "Can't find new-claude-session.ps1 (looked next to this script and on PATH)."
+    Write-Error "Can't find hgr-new-session.ps1 (looked next to this script and on PATH)."
     exit 1
 }
 
-# Pass on exactly what was asked for: anything the caller left out stays out, so new-claude-session
+# Pass on exactly what was asked for: anything the caller left out stays out, so hgr-new-session
 # omits it from the request and the server applies its own default. -ParentSessionId is this script's
 # own word for it and becomes the parameter that script knows.
 $pass = @{}
@@ -90,7 +90,7 @@ $pass.WorkingDirectory = $WorkingDirectory
 $pass.NestUnderSessionId = $ParentSessionId
 
 # Cleared first, and read back global: $LASTEXITCODE belongs to the session, and a script that
-# returns without calling exit -- which is what new-claude-session.ps1 does when it succeeds -- leaves
+# returns without calling exit -- which is what hgr-new-session.ps1 does when it succeeds -- leaves
 # whatever ran before it standing. Without the reset, launching a session from a shell where anything
 # had failed would report that old failure as this one's.
 $global:LASTEXITCODE = 0

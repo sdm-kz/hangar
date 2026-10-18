@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 
-namespace ClaudeWeb.Server.FileSystem;
+namespace Hangar.Server.FileSystem;
 
 public sealed record GitStatus(bool IsRepo, string? Branch, Dictionary<string, string> Files);
 

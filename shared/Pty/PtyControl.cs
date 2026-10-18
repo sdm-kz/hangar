@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 
-namespace ClaudeWeb.Pty;
+namespace Hangar.Pty;
 
 /// <summary>
 /// The JSON control messages carried in <see cref="PtyFrameType.Control"/> frames. One record with

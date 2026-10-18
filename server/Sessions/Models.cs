@@ -1,4 +1,4 @@
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 // SessionState, SessionInfo and PtyOrphanInfo cross the wire to the tray as well as the browser, so they
 // live in shared\Contract\Sessions.cs, compiled into both processes.

@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace ClaudeWeb.Server.Sessions;
+namespace Hangar.Server.Sessions;
 
 /// <summary>How to launch the CLI: a filename plus any argument prefix (e.g. node.exe cli.js).</summary>
 public sealed record ExecutableSpec(string FileName, IReadOnlyList<string> Prefix);
