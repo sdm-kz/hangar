@@ -4,7 +4,7 @@ namespace Hangar.Server.FileSystem;
 
 /// <summary>
 /// Which files of a pull request the user has marked as read, persisted to
-/// %LocalAppData%\ClaudeWeb\pr-viewed.json.
+/// %LocalAppData%\Hangar\pr-viewed.json.
 ///
 /// <para>Keyed by <b>repo and pull request number</b> rather than by session, because that is what
 /// the mark is about. Reviewing #42 is the same piece of work whichever terminal happens to be open
@@ -36,9 +36,7 @@ public sealed class PullViewStore
     public PullViewStore(ILogger<PullViewStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "pr-viewed.json");
+        _file = AppDataFolder.PathFor("pr-viewed.json");
         Load();
     }
 

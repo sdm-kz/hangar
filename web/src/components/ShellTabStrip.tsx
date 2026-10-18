@@ -8,7 +8,7 @@ import { ChevronDown, Loader2, Plus, Server, SquareTerminal, Terminal, X } from 
 // Which shell a new tab opens with, remembered per browser. The server has a sensible default
 // (newest PowerShell present), but someone who works in WSL should get WSL on the next click
 // rather than picking it out of the menu every time.
-const LAST_SHELL_KEY = "claudeweb.lastShell";
+const LAST_SHELL_KEY = "hangar.lastShell";
 
 function readLastShell(): string | null {
   try {

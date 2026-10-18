@@ -1,9 +1,10 @@
 # Hangar
 
 > **Name:** the project is being renamed from Claude Web to **Hangar** (short form `hgr`). The
-> namespaces are done; the executables (`ClaudeWeb.exe`, …), the data folder
-> (`%LocalAppData%\ClaudeWeb`) and the environment variables keep their old names until the cutover —
-> see [plans/rename-to-hangar.md](plans/rename-to-hangar.md).
+> namespaces, the data folder (`%LocalAppData%\Hangar`, copied over from `ClaudeWeb` on start) and the
+> session environment (`HANGAR_*`, still alongside `CLAUDEWEB_*`) are done; the executables
+> (`ClaudeWeb.exe`, …) and the Windows service keep their old names until the cutover — see
+> [plans/rename-to-hangar.md](plans/rename-to-hangar.md).
 
 A .NET 10 app for Windows (the server also runs on Linux and macOS — see
 [Linux and macOS](#linux-and-macos)) that **launches Claude Code CLI sessions with Remote Control
@@ -353,7 +354,7 @@ the process that restarts. The daemon attaches and detaches; the host holds the 
 The tray is split off from the daemon for a similar reason, one level up. The daemon has nothing to
 draw, so it can run before anyone signs in, and a tray that crashes or is closed takes nothing with it.
 The tray finds the daemon through an **instance file**: once listening, the daemon writes
-`%LocalAppData%\ClaudeWeb\instances\<port>.json` — its pid, its loopback and public URLs, and a bearer
+`%LocalAppData%\Hangar\instances\<port>.json` — its pid, its loopback and public URLs, and a bearer
 token minted for that run — and removes it on the way down. The file is created readable by your account
 alone (an explicit ACL, not whatever the folder passes down), the token grants nothing that account
 couldn't already read in the same folder (the browser tokens live there too), and loopback stays
@@ -415,7 +416,7 @@ Note that `dotnet run` applies the launch profile by default — that env-var `S
 the hook port is read from, so `--urls` on the command line alone does **not** change it.
 
 Set the login password by putting it in `server/appsettings.json` (`Auth:Password`) and starting
-the app once — it hashes the password to `%LocalAppData%\ClaudeWeb\auth.json` and logs a reminder
+the app once — it hashes the password to `%LocalAppData%\Hangar\auth.json` and logs a reminder
 to clear the plaintext. After that first run, blank `Auth:Password`; the persisted hash is used
 for login and no recoverable password is left on disk.
 
@@ -516,11 +517,11 @@ What is different from Windows:
 | | Windows | Linux / macOS |
 |---|---|---|
 | Pseudoconsole | ConPTY, in a kill-on-close job | `forkpty`; the host `setsid`s, and ends the child's process group (hang-up, then kill) |
-| Host pipe | named pipe, ACL for this user | Unix socket in `<data>/ClaudeWeb/sock` (0700), peer uid checked |
-| App data (`<data>`) | `%LocalAppData%` | `~/.local/share` (Linux), `~/Library/Application Support` (macOS); `ClaudeWeb` in it made 0700 |
+| Host pipe | named pipe, ACL for this user | Unix socket in `<data>/Hangar/sock` (0700), peer uid checked |
+| App data (`<data>`) | `%LocalAppData%` | `~/.local/share` (Linux), `~/Library/Application Support` (macOS); `Hangar` in it made 0700 |
 | Shells (**+** menu) | PowerShell, cmd, Git Bash, WSL | your login shell first, then bash, zsh, fish, pwsh, sh — each as a login shell |
 | Updater | `apply-update.ps1`, robocopy | `apply-update.sh`: each top-level entry replaced by a rename (wwwroot whole), extra files kept; restarts the systemd unit / launchd job / process |
-| Staging folder default | `C:\apps\claude-web-updates` | `<data>/ClaudeWeb/updates` (`scripts/stage-update.sh` builds into it) |
+| Staging folder default | `C:\apps\claude-web-updates` | `<data>/Hangar/updates` (`scripts/stage-update.sh` builds into it) |
 | `claude` lookup | PATH, unwrapping npm `.cmd` shims | PATH, then `~/.local/bin`, `~/.claude/local`, Homebrew, `/usr/local/bin` |
 | Launch prompt | on `claude`'s command line | typed in once its input box is up (bracketed paste on, the box on screen with no dialog in front of it, paint settled), so it waits behind a first-run dialog until someone answers it; a headless schedule passes it on stdin. Any user can read a command line with `ps` here. Not delivered within 10 minutes (or the server stopped first) → the session's postponed messages |
 
@@ -535,10 +536,10 @@ A macOS build made on another OS comes out unsigned, which Apple silicon refuses
 Sessions that won't authenticate, a `claude` that "isn't installed", folders that come up empty: these
 usually mean the server is running as a different identity, or with a different environment, than the
 one you use `claude` from. The server reports its own at startup — one `Environment:` line in
-`%LocalAppData%\ClaudeWeb\logs\claudeweb.log`, plus a warning for each problem it finds — and on demand:
+`%LocalAppData%\Hangar\logs\hangar.log`, plus a warning for each problem it finds — and on demand:
 
 ```bash
-# any logged-in browser's token, or the "token" in %LocalAppData%\ClaudeWeb\instances\<port>.json
+# any logged-in browser's token, or the "token" in %LocalAppData%\Hangar\instances\<port>.json
 curl -H "Authorization: Bearer <token>" http://localhost:5099/api/health/environment
 ```
 
@@ -566,7 +567,7 @@ shows both build stamps and, on confirmation:
    host, so the sessions themselves keep running;
 2. the tray hears the update coming over `/hub/events` and steps aside: it exits so its exe can be
    replaced, leaving a small detached PowerShell to start it again once the new server answers;
-3. a detached `apply-update.ps1` (embedded in the exe, extracted to `%LocalAppData%\ClaudeWeb\update`)
+3. a detached `apply-update.ps1` (embedded in the exe, extracted to `%LocalAppData%\Hangar\update`)
    waits for the server to exit, mirrors the payload over the install folder and restarts the server
    the same way it was running — the service if there is one, otherwise `ClaudeWeb.exe`;
 4. the sessions that were running are re-attached, exactly as after a `deploy.ps1` redeploy (one
@@ -575,7 +576,7 @@ shows both build stamps and, on confirmation:
    reloads so it picks up the new frontend assets too.
 
 `appsettings*.json` in the install folder are preserved, never overwritten by the payload. The
-updater logs every step to `%LocalAppData%\ClaudeWeb\logs\update.log`, and on any failure it restarts
+updater logs every step to `%LocalAppData%\Hangar\logs\update.log`, and on any failure it restarts
 the app rather than leaving the machine with nothing running.
 
 Staging is safe at any time — it only writes to the staging folder, and the payload is swapped into
@@ -587,7 +588,7 @@ the whole thing off and go back to `deploy.ps1` only.
 - **Workspace trust.** A brand-new folder normally triggers Claude's one-time trust prompt, which
   would block an unattended launch. With `Sessions:AutoTrustFolders` on (default), the app
   pre-accepts trust for the folder before launching by adding `hasTrustDialogAccepted` to
-  `~/.claude.json` (it backs the file up once to `~/.claude.json.claudeweb-backup`, writes
+  `~/.claude.json` (it backs the file up once to `~/.claude.json.hangar-backup`, writes
   atomically, and only adds entries for folders not already present). Set it to `false` to disable
   and accept the prompt manually from the Claude Code app instead.
 - **Sessions survive an app restart.** Each session's pseudoconsole lives in its own detached
@@ -727,6 +728,10 @@ its environment, and they are all the call takes.
 | `CLAUDEWEB_SESSION_ID` | This session's id — also the session the call renames             |
 | `CLAUDEWEB_HOOK_TOKEN` | Local secret that authorizes the call (also used by the hooks)   |
 
+Every session also carries them as `HANGAR_URL`, `HANGAR_SESSION_ID` and `HANGAR_HOOK_TOKEN`, their
+names after the rename. The examples keep the old names for now: a session launched before the
+rename has only those.
+
 ```bash
 curl -s -X POST "$CLAUDEWEB_URL/api/self/name" \
   -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
@@ -856,7 +861,7 @@ and it survives a reopen; a worktree removed later quietly falls back to the ses
 ## Security notes
 
 - Auth is a single shared password that mints an in-memory bearer token. The password is stored
-  only as a salted PBKDF2 hash in `%LocalAppData%\ClaudeWeb\auth.json` — no plaintext in config
+  only as a salted PBKDF2 hash in `%LocalAppData%\Hangar\auth.json` — no plaintext in config
   once you clear `Auth:Password` after first launch. Serve over your trusted LAN; put it behind a
   reverse proxy with TLS if you expose it more widely.
 - Launched sessions run in Claude's normal permission mode — you approve actions from the app.

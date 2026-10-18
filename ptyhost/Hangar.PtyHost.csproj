@@ -24,6 +24,7 @@
     <!-- The wire types, the VT stripper and the ring buffer are compiled into both this project and
          the web app: they are the contract between the two processes, so they must not drift. -->
     <Compile Include="..\shared\Pty\*.cs" LinkBase="Shared" />
+    <Compile Include="..\shared\Common\*.cs" LinkBase="Shared" />
   </ItemGroup>
 
 </Project>

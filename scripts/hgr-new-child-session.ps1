@@ -1,11 +1,12 @@
 <#
 .SYNOPSIS
-    Creates a Claude session nested under another one in the claude-web sessions list.
+    Creates a Claude session nested under another one in the Hangar sessions list.
 
 .DESCRIPTION
     hgr-new-session.ps1 with the parent filled in, and every other parameter passed straight
-    through to it. Run from inside a claude-web session with no -ParentSessionId, the parent is the
-    session you are running in: claude-web puts its id in CLAUDEWEB_SESSION_ID when it launches one.
+    through to it. Run from inside a Hangar session with no -ParentSessionId, the parent is the
+    session you are running in: Hangar puts its id in HANGAR_SESSION_ID when it launches one
+    (and in CLAUDEWEB_SESSION_ID, all a session launched before the rename has).
 
     Nesting is an arrangement of the list and nothing more. The new session gets its own conversation
     and its own folder -- it is not a fork of the parent, shares no history with it, and can be moved
@@ -40,9 +41,9 @@ param(
     [Parameter(Position = 0)]
     [string] $WorkingDirectory = (Get-Location).Path,
 
-    # The session to nest the new one under. Defaults to CLAUDEWEB_SESSION_ID, which claude-web sets
+    # The session to nest the new one under. Defaults to HANGAR_SESSION_ID, which Hangar sets
     # in every session it launches -- so from inside one, the parent is that one.
-    [string] $ParentSessionId = $env:CLAUDEWEB_SESSION_ID,
+    [string] $ParentSessionId = $(if ($env:HANGAR_SESSION_ID) { $env:HANGAR_SESSION_ID } else { $env:CLAUDEWEB_SESSION_ID }),
 
     # Everything below is hgr-new-session.ps1's, passed through untouched. See its help.
     [string] $Name,
@@ -64,8 +65,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $ParentSessionId) {
-    Write-Error ("No parent session. Pass -ParentSessionId, or run this from inside a claude-web " +
-        "session (it sets `$env:CLAUDEWEB_SESSION_ID). For a top-level session use hgr-new-session.ps1.")
+    Write-Error ("No parent session. Pass -ParentSessionId, or run this from inside a Hangar " +
+        "session (it sets `$env:HANGAR_SESSION_ID). For a top-level session use hgr-new-session.ps1.")
     exit 1
 }
 

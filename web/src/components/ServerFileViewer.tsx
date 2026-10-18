@@ -47,7 +47,7 @@ const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB — matches the per-session browser'
 // Scroll position per file, per browser tab: lets the standalone preview tab (and a reopened file
 // in the app) come back where it was after a reload. sessionStorage keeps it tab-local and drops
 // it when the tab closes, so positions from different tabs never fight each other.
-const scrollKey = (p: string) => `claudeweb.previewScroll:${p}`;
+const scrollKey = (p: string) => `hangar.previewScroll:${p}`;
 
 function baseName(p: string): string {
   const parts = p.split(/[/\\]+/).filter(Boolean);

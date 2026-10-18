@@ -141,7 +141,7 @@ function legacyLayout(sessionId: string, present: PaneRef[]): PaneLayout {
     const side = { tabs: files, active: FILES };
     let atBottom = false;
     try {
-      atBottom = localStorage.getItem("claudeweb.splitSide") === "bottom";
+      atBottom = localStorage.getItem("hangar.splitSide") === "bottom";
     } catch {
       /* storage disabled — side by side, as it defaulted to */
     }

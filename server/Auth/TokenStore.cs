@@ -9,7 +9,7 @@ public sealed class AuthOptions
 {
     /// <summary>
     /// Bootstrap-only plaintext password. Leave empty in steady state: when set, it is treated as a
-    /// one-time set/rotate request — hashed to <c>%LocalAppData%\ClaudeWeb\auth.json</c> on startup
+    /// one-time set/rotate request — hashed to <c>%LocalAppData%\Hangar\auth.json</c> on startup
     /// and then ignored, so no recoverable secret lives in config. Clear it after the first launch.
     /// When no hash has ever been persisted and this is empty, auth is disabled (localhost dev only).
     /// </summary>
@@ -25,7 +25,7 @@ public sealed class AuthOptions
 /// <summary>
 /// Minimal shared-password auth: a correct password mints an opaque bearer token. Tokens are
 /// validated on every /api and /hub request by <see cref="TokenAuthMiddleware"/>, and persisted to
-/// disk (<c>%LocalAppData%\ClaudeWeb\tokens.json</c>) so a browser stays logged in across an app
+/// disk (<c>%LocalAppData%\Hangar\tokens.json</c>) so a browser stays logged in across an app
 /// restart/redeploy instead of being bounced to the login screen.
 /// </summary>
 public sealed class TokenStore
@@ -42,16 +42,14 @@ public sealed class TokenStore
     private readonly object _saveLock = new();
 
     // Salted PBKDF2 hash of the login password (or null when never set). The plaintext is never
-    // stored — see PasswordHasher. Persisted alongside tokens under %LocalAppData%\ClaudeWeb.
+    // stored — see PasswordHasher. Persisted alongside tokens under %LocalAppData%\Hangar.
     private string? _passwordHash;
 
     public TokenStore(AuthOptions options, ILogger<TokenStore> logger)
     {
         _options = options;
         _logger = logger;
-        var stateDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb");
+        var stateDir = AppDataFolder.Root;
         _stateFile = Path.Combine(stateDir, "tokens.json");
         _authFile = Path.Combine(stateDir, "auth.json");
         Load();

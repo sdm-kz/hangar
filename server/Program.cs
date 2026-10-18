@@ -59,7 +59,15 @@ internal static class Program
             }
         }
 
+        // Before any store loads: bring the data over from the folder's name from before the rename.
+        var migrated = LegacyDataMigration.Run();
+
         var app = BuildApp(args, contentRoot);
+        if (migrated.Count > 0)
+        {
+            var migrationLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Migration");
+            foreach (var line in migrated) migrationLog.LogInformation("{Line}", line);
+        }
 
         // Register Hangar's Claude Code hooks in ~/.claude/settings.json so launched sessions report
         // their lifecycle back to /api/hooks (driving reliable busy/idle/waiting status). Opt out with
@@ -259,7 +267,7 @@ internal static class Program
 
         // No console in the WinExe build — keep a diagnostic trail on disk.
         var logDir = LogDirectory();
-        builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(logDir, "claudeweb.log")));
+        builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(logDir, "hangar.log")));
 
         var urls = builder.Configuration["Server:Urls"] ?? "http://0.0.0.0:5099";
         builder.WebHost.UseUrls(urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
@@ -278,7 +286,7 @@ internal static class Program
             sessionOptions.SelfUrl = $"http://127.0.0.1:{PortFromUrls(urls)}";
 
         // Namespace this instance's pty pipes and state directory by the bound port, matching the
-        // port-scoped single-instance mutex above. %LocalAppData%\ClaudeWeb is shared by every
+        // port-scoped single-instance mutex above. %LocalAppData%\Hangar is shared by every
         // instance on the machine, so without this a dev instance would adopt the live app's hosts —
         // and stopping a session there would stop a real one. Pty:InstanceKey overrides it.
         if (string.IsNullOrWhiteSpace(ptyHostOptions.InstanceKey))
@@ -1866,9 +1874,9 @@ internal static class Program
     private static bool IsCommitHash(string? hash) =>
         !string.IsNullOrEmpty(hash) && hash.Length is >= 4 and <= 64 && hash.All(Uri.IsHexDigit);
 
-    // Shared on-disk diagnostics location: %LocalAppData%\ClaudeWeb\logs (claudeweb.log + crash.log).
+    // Shared on-disk diagnostics location: %LocalAppData%\Hangar\logs (hangar.log + crash.log).
     private static string LogDirectory() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "logs");
+        AppDataFolder.PathFor("logs");
 
     /// <summary>
     /// Get the app's data folder ready on Linux and macOS, before anything asks for it.
@@ -1878,7 +1886,7 @@ internal static class Program
     /// only ever ran services) — and every store, log and pty state file built on it would then land
     /// relative to the working directory. Creating it once here lets every other call site, the pty
     /// host's included, keep the plain overload.</item>
-    /// <item>Make <c>ClaudeWeb</c> in it this user's alone. It holds the password hash, the login tokens,
+    /// <item>Make <c>Hangar</c> in it this user's alone. It holds the password hash, the login tokens,
     /// the VAPID keys and every session's state; %LocalAppData% is private by default on Windows, but
     /// ~/.local/share under the usual umask of 022 is readable by every account on the box.</item>
     /// </list>
@@ -1888,8 +1896,8 @@ internal static class Program
         if (OperatingSystem.IsWindows()) return;
         try
         {
-            var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create);
-            var dir = Path.Combine(root, "ClaudeWeb");
+            _ = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create);
+            var dir = AppDataFolder.Root;
             const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
             Directory.CreateDirectory(dir, ownerOnly);
             File.SetUnixFileMode(dir, ownerOnly); // a folder made before this existed keeps its old mode otherwise

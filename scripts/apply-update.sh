@@ -26,7 +26,7 @@ mode=${4:-process}
 service=$5
 wait_seconds=${6:-45}
 
-# The script is extracted to <data>/ClaudeWeb/update; the daemon's logs sit beside that folder.
+# The script is extracted to <data>/Hangar/update; the daemon's logs sit beside that folder.
 data_dir=$(cd "$(dirname "$0")/.." 2> /dev/null && pwd) || data_dir=${TMPDIR:-/tmp}
 log_dir="$data_dir/logs"
 mkdir -p "$log_dir"

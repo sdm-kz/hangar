@@ -228,7 +228,7 @@ public sealed class UpdateService : BackgroundService
 
     /// <summary>
     /// Read, then remove, the two variables scripts/install-unix.sh puts in the units it writes:
-    /// <c>CLAUDEWEB_SERVICE_MANAGER</c> (systemd | launchd) and <c>CLAUDEWEB_SERVICE_NAME</c>. Called
+    /// <c>HANGAR_SERVICE_MANAGER</c> (systemd | launchd) and <c>HANGAR_SERVICE_NAME</c>. Called
     /// first thing in <c>Main</c>, before any session starts. Removing them is the point: every session
     /// and shell inherits this process's environment, so a second Hangar started from one of them — a
     /// test build, say — would otherwise believe it was the unit, and its updater would start, or on a
@@ -237,10 +237,13 @@ public sealed class UpdateService : BackgroundService
     public static void CaptureServiceManager()
     {
         if (OperatingSystem.IsWindows()) return;
-        var manager = Environment.GetEnvironmentVariable("CLAUDEWEB_SERVICE_MANAGER");
-        var name = Environment.GetEnvironmentVariable("CLAUDEWEB_SERVICE_NAME");
-        Environment.SetEnvironmentVariable("CLAUDEWEB_SERVICE_MANAGER", null);
-        Environment.SetEnvironmentVariable("CLAUDEWEB_SERVICE_NAME", null);
+        // CLAUDEWEB_* is what a unit written before the rename sets.
+        var manager = Environment.GetEnvironmentVariable("HANGAR_SERVICE_MANAGER")
+                      ?? Environment.GetEnvironmentVariable("CLAUDEWEB_SERVICE_MANAGER");
+        var name = Environment.GetEnvironmentVariable("HANGAR_SERVICE_NAME")
+                   ?? Environment.GetEnvironmentVariable("CLAUDEWEB_SERVICE_NAME");
+        foreach (var variable in new[] { "HANGAR_SERVICE_MANAGER", "HANGAR_SERVICE_NAME", "CLAUDEWEB_SERVICE_MANAGER", "CLAUDEWEB_SERVICE_NAME" })
+            Environment.SetEnvironmentVariable(variable, null);
         if (manager is "systemd" or "launchd" && !string.IsNullOrWhiteSpace(name))
             (_serviceManager, _serviceName) = (manager, name);
     }
@@ -261,8 +264,7 @@ public sealed class UpdateService : BackgroundService
     /// </summary>
     private static string ExtractUpdater()
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "update");
+        var dir = AppDataFolder.PathFor("update");
         Directory.CreateDirectory(dir);
         var name = OperatingSystem.IsWindows() ? "apply-update.ps1" : "apply-update.sh";
         var path = Path.Combine(dir, name);

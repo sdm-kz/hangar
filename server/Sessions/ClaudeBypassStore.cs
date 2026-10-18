@@ -40,12 +40,13 @@ public static class ClaudeBypassStore
             root["skipDangerousModePermissionPrompt"] = true;
 
             // One-time backup so the user can restore if anything looks wrong.
-            var backup = path + ".claudeweb-backup";
-            if (File.Exists(path) && !File.Exists(backup))
+            // One made before the rename (.claudeweb-backup) already holds the original.
+            var backup = path + ".hangar-backup";
+            if (File.Exists(path) && !File.Exists(backup) && !File.Exists(path + ".claudeweb-backup"))
                 try { File.Copy(path, backup); } catch { /* non-fatal */ }
 
             // Atomic-ish replace to avoid a torn write.
-            var tmp = path + ".claudeweb.tmp";
+            var tmp = path + ".hangar.tmp";
             File.WriteAllText(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             if (File.Exists(path))
             {

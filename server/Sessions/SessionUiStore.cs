@@ -5,7 +5,7 @@ namespace Hangar.Server.Sessions;
 /// <summary>
 /// How a session was last being looked at — which view tab was showing, which files are open as
 /// tabs, which folders the tree has expanded — persisted to
-/// %LocalAppData%\ClaudeWeb\session-ui.json so it follows the user to every browser and device,
+/// %LocalAppData%\Hangar\session-ui.json so it follows the user to every browser and device,
 /// like the pins, recents and projects.
 ///
 /// <para>Keyed by <b>Claude's conversation id</b> for the same reason pins are: a session id is
@@ -55,9 +55,7 @@ public sealed class SessionUiStore
     public SessionUiStore(ILogger<SessionUiStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "session-ui.json");
+        _file = AppDataFolder.PathFor("session-ui.json");
         Load();
     }
 

@@ -7,12 +7,12 @@ import { cn } from "@/lib/utils";
 export const ZOOM_LEVELS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 
 /**
- * Zoom state persisted in localStorage under `claudeweb.zoom:<key>`, so a chosen size survives
+ * Zoom state persisted in localStorage under `hangar.zoom:<key>`, so a chosen size survives
  * page reloads (and is shared across tabs). Previews with different natural sizes use different
  * keys — e.g. text previews vs Word documents — so one doesn't inherit the other's level.
  */
 export function usePersistentZoom(key: string): [number, (zoom: number) => void] {
-  const storageKey = `claudeweb.zoom:${key}`;
+  const storageKey = `hangar.zoom:${key}`;
   const [zoom, setZoom] = useState(() => {
     try {
       const v = Number(localStorage.getItem(storageKey));
@@ -45,12 +45,12 @@ export const READING_WIDTHS: (number | null)[] = [null, 1200, 960, 760];
 const READING_WIDTH_LABELS = ["full width", "wide", "medium", "narrow"];
 
 /**
- * Reading width persisted in localStorage under `claudeweb.readingWidth:<key>` — same key space as
+ * Reading width persisted in localStorage under `hangar.readingWidth:<key>` — same key space as
  * usePersistentZoom, so the text previews across the app share one chosen width and it survives a
  * reload (and the standalone preview tab picks up what was set in the app).
  */
 export function usePersistentReadingWidth(key: string): [number | null, (width: number | null) => void] {
-  const storageKey = `claudeweb.readingWidth:${key}`;
+  const storageKey = `hangar.readingWidth:${key}`;
   const [width, setWidth] = useState<number | null>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
@@ -77,13 +77,13 @@ export function usePersistentReadingWidth(key: string): [number | null, (width: 
 }
 
 /**
- * Word wrap for text previews, persisted under `claudeweb.wordWrap:<key>` beside the zoom and the
+ * Word wrap for text previews, persisted under `hangar.wordWrap:<key>` beside the zoom and the
  * reading width. Off by default: source is laid out in lines by whoever wrote it, and wrapping quietly
  * changes what a line looks like, so it is something you turn on for the file that needs it -- a log,
  * a minified bundle, prose in a .txt -- rather than the resting state.
  */
 export function usePersistentWordWrap(key: string): [boolean, (wrap: boolean) => void] {
-  const storageKey = `claudeweb.wordWrap:${key}`;
+  const storageKey = `hangar.wordWrap:${key}`;
   const [wrap, setWrap] = useState(() => {
     try {
       return localStorage.getItem(storageKey) === "1";

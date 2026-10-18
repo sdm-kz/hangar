@@ -37,7 +37,7 @@ internal static class StateFile
     /// Throws what the write threw, having cleaned the temporary file up.
     /// </summary>
     /// <remarks>
-    /// <para>The temp name carries this process's id because <c>%LocalAppData%\ClaudeWeb</c> is shared
+    /// <para>The temp name carries this process's id because <c>%LocalAppData%\Hangar</c> is shared
     /// by every instance on the machine — a dev instance beside the live app writes the same state
     /// files — and two of them filling one temp file would publish each other's half-serialized bytes.</para>
     /// <para><c>File.Move(overwrite)</c> rather than <c>File.Replace</c>: it is the same atomic rename,

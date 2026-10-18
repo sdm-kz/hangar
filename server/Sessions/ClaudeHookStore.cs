@@ -210,6 +210,12 @@ public static class ClaudeHookStore
         return null;
     }
 
+    /// <remarks>
+    /// Still the CLAUDEWEB_* names, which every session carries alongside HANGAR_*: the hook config is
+    /// one file for every session on the machine, and one launched before the rename has only the old
+    /// names — a header naming a variable it lacks would go out empty and orphan its status. Switches to HANGAR_* once no
+    /// such session is left (plans/rename-to-hangar.md, step 4).
+    /// </remarks>
     private static JsonObject BuildHandler(string url) => new()
     {
         ["type"] = "http",

@@ -335,10 +335,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Wait-Process -Id {{instance.Pid}} -Timeout 180
             $deadline = (Get-Date).AddMinutes(10)
             while ((Get-Date) -lt $deadline) {
-              try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri $env:CLAUDEWEB_RELAUNCH_PROBE | Out-Null; break }
+              try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri $env:HANGAR_RELAUNCH_PROBE | Out-Null; break }
               catch { Start-Sleep -Seconds 2 }
             }
-            Start-Process -FilePath $env:CLAUDEWEB_RELAUNCH_EXE -ArgumentList '--port', '{{instance.Port}}'
+            Start-Process -FilePath $env:HANGAR_RELAUNCH_EXE -ArgumentList '--port', '{{instance.Port}}'
             """;
 
         // By full path: a bare name is looked up beside this exe first.
@@ -350,8 +350,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // Anywhere but the install folder, which the updater is about to mirror over.
             WorkingDirectory = Path.GetTempPath(),
         };
-        psi.Environment["CLAUDEWEB_RELAUNCH_EXE"] = exe;
-        psi.Environment["CLAUDEWEB_RELAUNCH_PROBE"] = instance.LocalUrl.TrimEnd('/') + "/api/auth/config"; // public: answers before any login
+        psi.Environment["HANGAR_RELAUNCH_EXE"] = exe;
+        psi.Environment["HANGAR_RELAUNCH_PROBE"] = instance.LocalUrl.TrimEnd('/') + "/api/auth/config"; // public: answers before any login
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
                                     "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) })
             psi.ArgumentList.Add(arg);

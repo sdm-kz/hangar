@@ -7,7 +7,7 @@ public sealed record PushSubscriptionEntry(string Endpoint, string P256dh, strin
 
 /// <summary>
 /// Server-side store of Web Push subscriptions, one per browser/PWA install that opted in. Persisted
-/// to %LocalAppData%\ClaudeWeb\push-subscriptions.json so they survive restarts and are shared across
+/// to %LocalAppData%\Hangar\push-subscriptions.json so they survive restarts and are shared across
 /// the (single-user) install. Deduped by <see cref="PushSubscriptionEntry.Endpoint"/> — the push
 /// service mints a unique endpoint per subscription, and re-subscribing just refreshes the keys.
 /// Mirrors the lock + load/save shape of <c>RecentsStore</c>.
@@ -22,9 +22,7 @@ public sealed class PushSubscriptionStore
     public PushSubscriptionStore(ILogger<PushSubscriptionStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "push-subscriptions.json");
+        _file = AppDataFolder.PathFor("push-subscriptions.json");
         Load();
     }
 

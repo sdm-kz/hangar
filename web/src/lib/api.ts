@@ -37,7 +37,7 @@ import type {
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
 
-const TOKEN_KEY = "claudeweb.token";
+const TOKEN_KEY = "hangar.token";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);

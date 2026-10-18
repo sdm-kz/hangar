@@ -149,7 +149,7 @@ export function Markdown({
 }
 
 // Whether the TOC panel is open; a preference, so it sticks across files and reloads.
-const TOC_OPEN_KEY = "claudeweb.mdTocOpen";
+const TOC_OPEN_KEY = "hangar.mdTocOpen";
 
 /**
  * Table of contents for a rendered-markdown preview. It scans the rendered headings (which already

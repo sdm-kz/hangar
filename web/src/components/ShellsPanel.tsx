@@ -49,7 +49,7 @@ export function useAllShells(shellsRev: number, enabled: boolean): ShellInfo[] |
 export type ShellsShown = { folder: string } | { ssh: true } | { sessionId: string } | null;
 
 // The folder the "New shell" dialog last opened one in, so the next one starts there.
-const LAST_FOLDER_KEY = "claudeweb.lastShellFolder";
+const LAST_FOLDER_KEY = "hangar.lastShellFolder";
 
 function readLastFolder(): string {
   try {

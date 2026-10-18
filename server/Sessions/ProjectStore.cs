@@ -6,7 +6,7 @@ namespace Hangar.Server.Sessions;
 // live in shared\Contract\Projects.cs: the tray menu arranges sessions by the same rules.
 
 /// <summary>
-/// Server-side store for projects, persisted to %LocalAppData%\ClaudeWeb\projects.json so they follow
+/// Server-side store for projects, persisted to %LocalAppData%\Hangar\projects.json so they follow
 /// the user across every browser and device pointed at this app — like <see cref="RecentsStore"/>, and
 /// unlike the sidebar's per-browser view preferences (pins, manual order, collapse state).
 ///
@@ -36,9 +36,7 @@ public sealed class ProjectStore
     public ProjectStore(ILogger<ProjectStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "projects.json");
+        _file = AppDataFolder.PathFor("projects.json");
         Load();
     }
 

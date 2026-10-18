@@ -69,18 +69,18 @@ import {
 
 // Whether the file sidebar is showing, remembered per browser: it's a use of screen width, like the
 // Split view's divider, not something the session should carry to every device.
-const SIDEBAR_KEY = "claudeweb.prFilesSidebar";
+const SIDEBAR_KEY = "hangar.prFilesSidebar";
 // Whether long lines wrap instead of running off to the right. Per-browser for the same reason: it
 // is a reaction to how wide this screen's pane is. On by default, which is where this differs from
 // GitHub — GitHub is read in a whole browser window, this in half of one, and two columns of eighty
 // characters do not fit in half a window. Off gives GitHub's behaviour exactly.
-const WRAP_KEY = "claudeweb.prDiffWrap";
+const WRAP_KEY = "hangar.prDiffWrap";
 // Width of the file sidebar, dragged by the divider beside it. Per-browser like the Split view's
 // own divider, and for the same reason: how much of this screen the list deserves is a fact about
 // this screen. Paths are long and deeply nested, so the default is wider than a tab strip wants.
 const SIDEBAR_MIN = 140;
 const SIDEBAR_DEFAULT = 256;
-const SIDEBAR_WIDTH_KEY = "claudeweb.prFilesWidth";
+const SIDEBAR_WIDTH_KEY = "hangar.prFilesWidth";
 // Left for the diffs whatever the sidebar is dragged to. A two-column diff needs the room far more
 // than a list of file names does.
 const DIFF_MIN = 320;
@@ -91,7 +91,7 @@ const DIFF_MIN = 320;
 const SHARE_MIN = 0.15;
 const SHARE_MAX = 0.85;
 const SHARE_DEFAULT = 0.5;
-const SHARE_KEY = "claudeweb.prDiffSplit";
+const SHARE_KEY = "hangar.prDiffSplit";
 // Code geometry at 100%, in pixels rather than rem so the zoom and the divider drag can both do
 // arithmetic with it. Everything the grid draws is one of these times the zoom; the file headers and
 // the sidebar are not, because zoom here is for reading the code, not for resizing the furniture.

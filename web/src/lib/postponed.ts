@@ -6,7 +6,7 @@
 
 import { api } from "./api";
 
-const LEGACY_PREFIX = "claudeweb.postponed."; // pre-server-storage browser key, migrated on first load
+const LEGACY_PREFIX = "hangar.postponed."; // pre-server-storage browser key, migrated on first load
 const MAX = 100; // cap stashed messages per session so storage can't grow without bound
 
 export interface PostponedImage {

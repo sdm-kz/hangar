@@ -26,8 +26,8 @@ export function dirKey(dir: string): string {
 // conversation, not about this browser's view of it, so it belongs to the server (keyed by
 // conversation id, which survives the reopen that mints a new session id) and arrives on the session
 // list as SessionInfo.pinned. PINNED_KEY remains only to hand the old per-browser pins over once.
-const PINNED_KEY = "claudeweb.pinnedSessions";
-const ORDER_KEY = "claudeweb.sessionOrder";
+const PINNED_KEY = "hangar.pinnedSessions";
+const ORDER_KEY = "hangar.sessionOrder";
 
 /** Manual row order per folder (see dirKey): session ids, topmost first. */
 export type SessionOrder = Record<string, string[]>;

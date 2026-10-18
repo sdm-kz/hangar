@@ -32,7 +32,7 @@ public sealed record Recents(
 
 /// <summary>
 /// Server-side store for the "recent" launch presets and folders shown in the New Session dialog.
-/// Persisted to %LocalAppData%\ClaudeWeb\recents.json so they follow the user across devices — these
+/// Persisted to %LocalAppData%\Hangar\recents.json so they follow the user across devices — these
 /// previously lived in each browser's localStorage and so didn't sync. Owns the dedupe logic
 /// that used to run client-side.
 /// </summary>
@@ -57,9 +57,7 @@ public sealed class RecentsStore
     public RecentsStore(ILogger<RecentsStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "recents.json");
+        _file = AppDataFolder.PathFor("recents.json");
         Load();
     }
 

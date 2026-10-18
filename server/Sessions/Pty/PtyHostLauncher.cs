@@ -9,7 +9,7 @@ public sealed class PtyHostOptions
 {
     /// <summary>
     /// Namespaces this instance's pipe names and pty state directory. <b>Load-bearing:</b>
-    /// <c>%LocalAppData%\ClaudeWeb</c> is shared by every instance on the machine, so without it a dev
+    /// <c>%LocalAppData%\Hangar</c> is shared by every instance on the machine, so without it a dev
     /// instance on another port would adopt the live app's hosts — and could then stop them. Left
     /// empty in config; the host fills it in from the bound port (see <c>Program.cs</c>).
     /// </summary>
@@ -54,8 +54,7 @@ public sealed class PtyHostOptions
 public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
 {
     /// <summary>Where per-build copies of the host binary live.</summary>
-    private static string CopyRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "ptyhost");
+    private static string CopyRoot => AppDataFolder.PathFor("ptyhost");
 
     private readonly object _copyLock = new();
     private string? _launchPath;   // the per-build copy we launch from, resolved once
@@ -80,9 +79,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
         var exe = ResolveLaunchPath();
         var pipeName = PtyStateStore.PipeName(InstanceKey, sessionId);
         var stateFile = PtyStateStore.PathFor(InstanceKey, sessionId);
-        var logFile = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "logs", $"ptyhost-{sessionId}.log");
+        var logFile = AppDataFolder.PathFor("logs", $"ptyhost-{sessionId}.log");
 
         // The request carries the hook token and the user's initial prompt, so it goes in a file the
         // host deletes on read rather than on a command line any process on the box can enumerate.
@@ -152,7 +149,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     }
 
     /// <summary>
-    /// The host binary to launch: a copy under <c>%LocalAppData%\ClaudeWeb\ptyhost\&lt;buildStamp&gt;</c>,
+    /// The host binary to launch: a copy under <c>%LocalAppData%\Hangar\ptyhost\&lt;buildStamp&gt;</c>,
     /// made once per build. Copying is what keeps the updater working — mirroring over the install
     /// folder must never meet a running, locked host exe. Falls back to the installed binary if the
     /// copy fails, since a working session beats a tidy update path.
@@ -244,11 +241,12 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// </summary>
     /// <remarks>
     /// The set to keep is taken from the state files of <b>every instance on the machine</b>, not just
-    /// ours: <c>%LocalAppData%\ClaudeWeb\ptyhost</c> is shared, and deleting a build a dev instance
+    /// ours: <c>%LocalAppData%\Hangar\ptyhost</c> is shared, and deleting a build a dev instance
     /// (or a service alongside a daemon started at logon) still has live hosts on would be destructive. Windows
     /// would refuse to delete a running exe anyway, but relying on a file lock to enforce that is a
     /// thin guarantee to hang sessions on. Best-effort throughout — a folder that won't delete is
-    /// simply retried on the next launch.
+    /// simply retried on the next launch. The copies an older build made under the data folder's name
+    /// from before the rename go the same way, once their hosts are gone.
     /// </remarks>
     private void PruneUnusedCopies(string keep)
     {
@@ -259,7 +257,8 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
                 if (state.BuildStamp is { Length: > 0 } stamp && PtyStateStore.HostAlive(state))
                     inUse.Add(stamp);
 
-            foreach (var dir in Directory.EnumerateDirectories(CopyRoot))
+            var roots = new[] { CopyRoot, AppDataFolder.LegacyPathFor("ptyhost") };
+            foreach (var dir in roots.Where(Directory.Exists).SelectMany(Directory.EnumerateDirectories))
             {
                 var stamp = Path.GetFileName(dir);
                 if (inUse.Contains(stamp)) continue;
@@ -278,7 +277,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
 
     /// <summary>This session's pty state file, whether or not a host is behind it.</summary>
     public PtyState? StateFor(string sessionId) =>
-        PtyStateStore.Read(PtyStateStore.PathFor(InstanceKey, sessionId));
+        PtyStateStore.Read(PtyStateStore.Locate(InstanceKey, sessionId));
 
     /// <summary>Wait for a session's host process to exit; false if it's still there when time runs out.</summary>
     public bool WaitForHostExit(string sessionId, TimeSpan timeout)
@@ -303,7 +302,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// </summary>
     public void KillHost(string sessionId)
     {
-        var path = PtyStateStore.PathFor(InstanceKey, sessionId);
+        var path = PtyStateStore.Locate(InstanceKey, sessionId);
         var state = PtyStateStore.Read(path);
         if (state is null || !PtyStateStore.HostAlive(state)) { PtyStateStore.Forget(path, state); return; }
         try

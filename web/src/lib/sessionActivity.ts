@@ -59,7 +59,7 @@ export function failureLine(detail: ActivityDetail | undefined): string {
  */
 const SEEN_MS = 4000;
 
-const KEY = "claudeweb.sessionsDone";
+const KEY = "hangar.sessionsDone";
 
 function parseDone(raw: string | null): Set<string> {
   try {

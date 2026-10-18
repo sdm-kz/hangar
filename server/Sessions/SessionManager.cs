@@ -20,7 +20,7 @@ public sealed class SessionManagerOptions
 
     /// <summary>
     /// Where launched sessions are persisted so they can be re-attached after the app restarts.
-    /// Defaults to %LocalAppData%\ClaudeWeb\sessions.json when null/empty.
+    /// Defaults to %LocalAppData%\Hangar\sessions.json when null/empty.
     /// </summary>
     public string? StateFile { get; set; }
 
@@ -133,9 +133,7 @@ public sealed class SessionManager : IDisposable
         _exitRecheck = new System.Threading.Timer(_ => OnExitRecheck(), null, Timeout.Infinite, Timeout.Infinite);
 
         _stateFile = string.IsNullOrWhiteSpace(options.StateFile)
-            ? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ClaudeWeb", "sessions.json")
+            ? AppDataFolder.PathFor("sessions.json")
             : options.StateFile;
 
         LoadPersisted();

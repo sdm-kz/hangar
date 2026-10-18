@@ -1,7 +1,7 @@
 namespace Hangar.Tray;
 
 /// <summary>
-/// The tray's diagnostic trail, <c>%LocalAppData%\ClaudeWeb\logs\tray.log</c>: beside the daemon's own logs,
+/// The tray's diagnostic trail, <c>%LocalAppData%\Hangar\logs\tray.log</c>: beside the daemon's own logs,
 /// and deliberately a separate file, since the two are separate processes that come and go on their own. A
 /// WinExe has no console, so without this an unhandled fault would end the process without a trace.
 /// </summary>
@@ -10,8 +10,7 @@ internal static class TrayLog
     private const long MaxBytes = 2 * 1024 * 1024; // roll at 2 MB, keeping one previous generation
 
     private static readonly object Gate = new();
-    private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "logs", "tray.log");
+    private static readonly string LogPath = AppDataFolder.PathFor("logs", "tray.log");
 
     /// <summary>Record faults that escape everything else. Call first thing in Main.</summary>
     public static void Install()

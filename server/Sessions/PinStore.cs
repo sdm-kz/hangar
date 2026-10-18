@@ -4,7 +4,7 @@ namespace Hangar.Server.Sessions;
 
 /// <summary>
 /// Sessions the user has pinned to the top of their folder, persisted to
-/// %LocalAppData%\ClaudeWeb\pins.json so a pin follows them across every browser and device — like
+/// %LocalAppData%\Hangar\pins.json so a pin follows them across every browser and device — like
 /// the recents and projects, and unlike the sidebar's other view preferences, which stay per-browser.
 ///
 /// <para>Pins are keyed by <b>Claude's conversation id</b>, not by our session id. A session id is
@@ -36,9 +36,7 @@ public sealed class PinStore
     public PinStore(ILogger<PinStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "pins.json");
+        _file = AppDataFolder.PathFor("pins.json");
         Load();
     }
 

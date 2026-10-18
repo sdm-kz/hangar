@@ -10,7 +10,7 @@ namespace Hangar.Server.FileSystem;
 /// afresh every time a conversation is resumed (see <c>SessionManager.Restore</c>), so id-keyed links
 /// would evaporate on the first restart — which is exactly what they have to survive. Keying by folder
 /// also means every session opened on a project inherits the same links, which is what you want.
-/// Persisted to %LocalAppData%\ClaudeWeb\linked-folders.json.
+/// Persisted to %LocalAppData%\Hangar\linked-folders.json.
 /// </summary>
 public sealed class LinkedFolderStore
 {
@@ -24,9 +24,7 @@ public sealed class LinkedFolderStore
     public LinkedFolderStore(ILogger<LinkedFolderStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "linked-folders.json");
+        _file = AppDataFolder.PathFor("linked-folders.json");
         Load();
     }
 

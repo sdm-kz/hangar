@@ -13,7 +13,7 @@ import { api } from "./api";
 import type { PullFolds, SessionLink, SessionPull, SessionRemote } from "@/types";
 import type { TabName } from "./urlState";
 
-const KEY = "claudeweb.sessionUi";
+const KEY = "hangar.sessionUi";
 const MAX = 200; // cap mirrored sessions so the map can't grow without bound
 const FLUSH_MS = 400; // coalesce bursts (a scroll settling, a tab open) into one request
 

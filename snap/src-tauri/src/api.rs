@@ -1,7 +1,7 @@
 //! The Hangar server, as this app uses it: who's running, and "send this image with this text to
 //! that session". Everything here is a client of the same HTTP API the web UI and the tray speak.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use base64::Engine;
@@ -20,7 +20,7 @@ pub struct Credentials {
     pub local: bool,
 }
 
-/// The fields of a server's instance file (`ClaudeWeb.Contract.DaemonInstance`) this app reads.
+/// The fields of a server's instance file (`Hangar.Contract.DaemonInstance`) this app reads.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DaemonInstance {
@@ -30,9 +30,12 @@ struct DaemonInstance {
 
 /// Where a server on this machine writes its instance files: .NET's LocalApplicationData, which is
 /// `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS and `~/.local/share` on Linux
-/// — the same folders `dirs::data_local_dir` answers with.
-pub fn default_instances_dir() -> Option<PathBuf> {
-    dirs::data_local_dir().map(|d| d.join("ClaudeWeb").join("instances"))
+/// — the same folders `dirs::data_local_dir` answers with. `Hangar` in it, then `ClaudeWeb`, the
+/// folder's name before the rename, where a server of an older build writes.
+pub fn default_instances_dirs() -> Vec<PathBuf> {
+    dirs::data_local_dir()
+        .map(|d| ["Hangar", "ClaudeWeb"].iter().map(|name| d.join(name).join("instances")).collect())
+        .unwrap_or_default()
 }
 
 fn is_loopback(url: &Url) -> bool {
@@ -50,19 +53,20 @@ fn is_loopback(url: &Url) -> bool {
 pub fn resolve_credentials(
     server_url: &str,
     saved_token: Option<&str>,
-    instances_dir: Option<&Path>,
+    instances_dirs: &[PathBuf],
 ) -> Result<Credentials, String> {
     let base = Url::parse(server_url.trim()).map_err(|e| format!("Not a valid server URL: {e}"))?;
     if !matches!(base.scheme(), "http" | "https") {
         return Err("The server URL must start with http:// or https://".into());
     }
     if is_loopback(&base) {
-        if let (Some(dir), Some(port)) = (instances_dir, base.port_or_known_default()) {
-            let file = dir.join(format!("{port}.json"));
-            if let Some(instance) = std::fs::read_to_string(&file)
-                .ok()
-                .and_then(|t| serde_json::from_str::<DaemonInstance>(&t).ok())
-            {
+        if let Some(port) = base.port_or_known_default() {
+            let instance = instances_dirs.iter().find_map(|dir| {
+                std::fs::read_to_string(dir.join(format!("{port}.json")))
+                    .ok()
+                    .and_then(|t| serde_json::from_str::<DaemonInstance>(&t).ok())
+            });
+            if let Some(instance) = instance {
                 // The server never writes anything but a loopback address here; a file that says
                 // otherwise wasn't written by it, and must not be handed the token's destination.
                 if let Ok(local) = Url::parse(&instance.local_url) {
@@ -537,7 +541,7 @@ mod tests {
             5099,
             r#"{"pid":1,"port":5099,"localUrl":"http://127.0.0.1:5099","openUrl":"x","token":"local-tok","startedAt":"2026-01-01T00:00:00Z"}"#,
         );
-        let c = resolve_credentials("http://localhost:5099", Some("saved"), Some(&dir)).unwrap();
+        let c = resolve_credentials("http://localhost:5099", Some("saved"), std::slice::from_ref(&dir)).unwrap();
         assert_eq!((c.base.as_str(), c.token.as_deref(), c.local), ("http://127.0.0.1:5099/", Some("local-tok"), true));
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -545,7 +549,7 @@ mod tests {
     #[test]
     fn instance_file_pointing_off_machine_is_ignored() {
         let dir = instances_dir_with(5098, r#"{"localUrl":"http://evil.example:5098","token":"t"}"#);
-        let c = resolve_credentials("http://127.0.0.1:5098", Some("saved"), Some(&dir)).unwrap();
+        let c = resolve_credentials("http://127.0.0.1:5098", Some("saved"), std::slice::from_ref(&dir)).unwrap();
         assert_eq!((c.token.as_deref(), c.local), (Some("saved"), false));
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -553,10 +557,10 @@ mod tests {
     #[test]
     fn remote_server_uses_the_saved_token() {
         let dir = instances_dir_with(5097, r#"{"localUrl":"http://127.0.0.1:5097","token":"t"}"#);
-        let c = resolve_credentials("http://nas.lan:5097", Some("saved"), Some(&dir)).unwrap();
+        let c = resolve_credentials("http://nas.lan:5097", Some("saved"), std::slice::from_ref(&dir)).unwrap();
         assert_eq!((c.token.as_deref(), c.local), (Some("saved"), false));
-        assert!(resolve_credentials("ftp://x", None, None).is_err());
-        assert!(resolve_credentials("not a url", None, None).is_err());
+        assert!(resolve_credentials("ftp://x", None, &[]).is_err());
+        assert!(resolve_credentials("not a url", None, &[]).is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 

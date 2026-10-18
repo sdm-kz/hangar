@@ -4,8 +4,8 @@ import type { RecentSession } from "./recentSessions";
 // One-time migration of pre-server "recent" presets/folders out of localStorage.
 // Older builds stored these per-browser (keys below); move anything found into the shared
 // server store, then drop the local copies so this runs at most once per browser.
-const SESS_KEY = "claudeweb.recentSessions";
-const FOLD_KEY = "claudeweb.recentFolders";
+const SESS_KEY = "hangar.recentSessions";
+const FOLD_KEY = "hangar.recentFolders";
 
 export async function migrateLegacyRecents(): Promise<void> {
   let rawSessions: unknown = [];

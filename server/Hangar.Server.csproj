@@ -35,6 +35,8 @@
     <!-- Likewise the contract with the tray: the session and project records it deserializes, and the
          instance file it finds this daemon through. -->
     <Compile Include="..\shared\Contract\*.cs" LinkBase="Contract" />
+    <!-- Where the data folder is, which every process of the app has to agree on. -->
+    <Compile Include="..\shared\Common\*.cs" LinkBase="Common" />
     <Using Include="Hangar.Contract" />
   </ItemGroup>
 

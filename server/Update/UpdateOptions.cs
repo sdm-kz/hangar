@@ -15,8 +15,9 @@ public sealed class UpdateOptions
     /// </summary>
     public string StagingPath { get; set; } = OperatingSystem.IsWindows()
         ? @"C:\apps\claude-web-updates"
-        // ~/.local/share/ClaudeWeb/updates (Linux), ~/Library/Application Support/ClaudeWeb/updates (macOS).
-        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "updates");
+        // ~/.local/share/Hangar/updates (Linux), ~/Library/Application Support/Hangar/updates (macOS).
+        // stage-update.sh picks the same folder: this one once a build that has it has run.
+        : AppDataFolder.PathFor("updates");
 
     /// <summary>
     /// How often to re-read the staged build stamp. A FileSystemWatcher already reacts within a

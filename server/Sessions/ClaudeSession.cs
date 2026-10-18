@@ -390,15 +390,23 @@ public sealed class ClaudeSession : IDisposable
         // starts from ours — which is what it inherited implicitly when we spawned it in-process.
         foreach (System.Collections.DictionaryEntry kv in Environment.GetEnvironmentVariables())
             env[(string)kv.Key] = kv.Value?.ToString() ?? "";
-        env["CLAUDEWEB_SESSION_ID"] = Id;
+        // Each under both names: HANGAR_* from the rename on, CLAUDEWEB_* for what still reads that —
+        // the global hook config (see ClaudeHookStore.BuildHandler) and commands written before it.
+        SetBoth(env, "SESSION_ID", Id);
         if (!string.IsNullOrEmpty(_hookToken))
-            env["CLAUDEWEB_HOOK_TOKEN"] = _hookToken;
+            SetBoth(env, "HOOK_TOKEN", _hookToken);
         // Where the session can reach us: the same pair of correlation headers also authorizes the
         // self-service endpoints (POST /api/self/name), so a command run *inside* the session can
         // rename it with a one-line curl. Loopback — a session always runs on this machine.
         if (!string.IsNullOrEmpty(_selfUrl))
-            env["CLAUDEWEB_URL"] = _selfUrl;
+            SetBoth(env, "URL", _selfUrl);
         return env;
+
+        static void SetBoth(Dictionary<string, string> env, string name, string value)
+        {
+            env["HANGAR_" + name] = value;
+            env["CLAUDEWEB_" + name] = value;
+        }
     }
 
     private List<string> BuildArgs()

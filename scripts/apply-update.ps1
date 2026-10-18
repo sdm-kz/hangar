@@ -20,7 +20,7 @@
   Two details make that work, and both must be preserved if this script is edited:
     * The process matching below is by exact name ("ClaudeWeb"), which does not catch
       "ClaudeWeb.PtyHost" -- stopping the hosts would kill the very sessions we are protecting.
-    * The daemon launches each host from a per-build copy under %LocalAppData%\ClaudeWeb\ptyhost, so
+    * The daemon launches each host from a per-build copy under %LocalAppData%\Hangar\ptyhost, so
       the ClaudeWeb.PtyHost.exe this script mirrors into <Target> is never a running, locked file.
 
   The tray (ClaudeWeb.Tray.exe) is a separate process that holds its own exe open. It steps aside by
@@ -54,7 +54,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $LogPath) {
-  $LogPath = Join-Path $env:LOCALAPPDATA "ClaudeWeb\logs\update.log"
+  $LogPath = Join-Path $env:LOCALAPPDATA "Hangar\logs\update.log"
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
 

@@ -23,7 +23,7 @@ export interface FileClip {
   items: ClipItem[];
 }
 
-const KEY = "claudeweb.fileClipboard";
+const KEY = "hangar.fileClipboard";
 
 let current: FileClip | null = read();
 const listeners = new Set<(c: FileClip | null) => void>();
@@ -89,7 +89,7 @@ export function useFileClip(): FileClip | null {
 
 // A remote panel hears about a change made from another panel — a move out of its folder, a paste
 // into it — and re-lists what it has open. Same page only; the server is the source of truth anyway.
-export const REMOTE_CHANGED_EVENT = "claudeweb:remote-changed";
+export const REMOTE_CHANGED_EVENT = "hangar:remote-changed";
 export interface RemoteChange {
   tab: string;
   /** Paths moved away from that tab — a preview still showing one of them must let it go. */

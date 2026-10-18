@@ -8,8 +8,10 @@
     not supplied are omitted from the body, so the server applies its own defaults.
 
     The API key and base URL come from the environment unless passed explicitly:
-      CLAUDE_WEB_API_KEY   key matching Auth:ApiKey in server/appsettings.json
-      CLAUDE_WEB_URL       base URL of the server (default http://localhost:5099)
+      HANGAR_API_KEY   key matching Auth:ApiKey in server/appsettings.json
+      HANGAR_URL       base URL of the server (default http://localhost:5099). Inside a session
+                       Hangar sets it to itself, so a session launches into the server it runs under.
+    CLAUDE_WEB_API_KEY and CLAUDE_WEB_URL, their names from before the rename, still work.
 
 .EXAMPLE
     .\hgr-new-session.ps1
@@ -23,7 +25,7 @@
     .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Continue -PassThru
 
 .EXAMPLE
-    .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -NestUnderSessionId $env:CLAUDEWEB_SESSION_ID
+    .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -NestUnderSessionId $env:HANGAR_SESSION_ID
     Starts a session nested under the one this script is running inside. hgr-new-child-session.ps1
     does exactly this, and fails with something to read when there is no session to nest under.
 
@@ -90,11 +92,13 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $BaseUrl) {
-    $BaseUrl = if ($env:CLAUDE_WEB_URL) { $env:CLAUDE_WEB_URL } else { 'http://localhost:5099' }
+    $BaseUrl = if ($env:HANGAR_URL) { $env:HANGAR_URL }
+               elseif ($env:CLAUDE_WEB_URL) { $env:CLAUDE_WEB_URL }
+               else { 'http://localhost:5099' }
 }
-if (-not $ApiKey) { $ApiKey = $env:CLAUDE_WEB_API_KEY }
+if (-not $ApiKey) { $ApiKey = if ($env:HANGAR_API_KEY) { $env:HANGAR_API_KEY } else { $env:CLAUDE_WEB_API_KEY } }
 if (-not $ApiKey) {
-    Write-Error "No API key. Pass -ApiKey or set `$env:CLAUDE_WEB_API_KEY (must match Auth:ApiKey in appsettings.json)."
+    Write-Error "No API key. Pass -ApiKey or set `$env:HANGAR_API_KEY (must match Auth:ApiKey in appsettings.json)."
     exit 1
 }
 

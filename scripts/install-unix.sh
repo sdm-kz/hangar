@@ -133,8 +133,8 @@ Type=simple
 WorkingDirectory=$(esc "$target")
 ExecStart="$(esc_cmd "$target/ClaudeWeb")"
 Environment="PATH=$(esc_q "$daemon_path")"
-Environment=CLAUDEWEB_SERVICE_MANAGER=systemd
-Environment=CLAUDEWEB_SERVICE_NAME=$systemd_unit
+Environment=HANGAR_SERVICE_MANAGER=systemd
+Environment=HANGAR_SERVICE_NAME=$systemd_unit
 # Sessions run in pty hosts that must outlive this process; see the header of install-unix.sh.
 KillMode=process
 Restart=on-failure
@@ -164,8 +164,8 @@ else
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>$(xml "$daemon_path")</string>
-    <key>CLAUDEWEB_SERVICE_MANAGER</key><string>launchd</string>
-    <key>CLAUDEWEB_SERVICE_NAME</key><string>$launchd_label</string>
+    <key>HANGAR_SERVICE_MANAGER</key><string>launchd</string>
+    <key>HANGAR_SERVICE_NAME</key><string>$launchd_label</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>

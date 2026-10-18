@@ -40,7 +40,7 @@ const SIDEBAR_MAX = 560;
 const SIDEBAR_DEFAULT = 288;
 
 function readSidebarWidth() {
-  const n = Number(localStorage.getItem("claudeweb.sidebarWidth"));
+  const n = Number(localStorage.getItem("hangar.sidebarWidth"));
   return Number.isFinite(n) && n > 0
     ? Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, n))
     : SIDEBAR_DEFAULT;
@@ -119,7 +119,7 @@ export function App() {
   >(null);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem("claudeweb.sidebarCollapsed") === "1"
+    () => localStorage.getItem("hangar.sidebarCollapsed") === "1"
   ); // desktop sidebar collapsed
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth); // desktop sidebar width (px)
 
@@ -138,7 +138,7 @@ export function App() {
       window.removeEventListener("pointerup", onUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      localStorage.setItem("claudeweb.sidebarWidth", String(width));
+      localStorage.setItem("hangar.sidebarWidth", String(width));
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -149,7 +149,7 @@ export function App() {
   const toggleCollapsed = () =>
     setCollapsed((c) => {
       const next = !c;
-      localStorage.setItem("claudeweb.sidebarCollapsed", next ? "1" : "0");
+      localStorage.setItem("hangar.sidebarCollapsed", next ? "1" : "0");
       return next;
     });
 
@@ -1093,7 +1093,7 @@ export function App() {
             onPointerDown={startResize}
             onDoubleClick={() => {
               setSidebarWidth(SIDEBAR_DEFAULT);
-              localStorage.setItem("claudeweb.sidebarWidth", String(SIDEBAR_DEFAULT));
+              localStorage.setItem("hangar.sidebarWidth", String(SIDEBAR_DEFAULT));
             }}
             title="Drag to resize · double-click to reset"
             className="absolute -right-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-primary/20 active:bg-primary/30"

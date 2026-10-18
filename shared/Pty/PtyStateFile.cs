@@ -33,17 +33,33 @@ public static class PtyStateStore
 {
     /// <summary>
     /// Where a given instance's state files live:
-    /// <c>%LocalAppData%\ClaudeWeb\pty\&lt;instanceKey&gt;</c>. The instance key is load-bearing —
-    /// <c>%LocalAppData%\ClaudeWeb</c> is shared by every instance on the machine, so without it a dev
-    /// instance would adopt (and could then stop) the live app's sessions.
+    /// <c>%LocalAppData%\Hangar\pty\&lt;instanceKey&gt;</c>. The instance key is load-bearing — the data
+    /// folder is shared by every instance on the machine, so without it a dev instance would adopt (and
+    /// could then stop) the live app's sessions.
     /// </summary>
-    public static string Directory(string instanceKey) => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "ClaudeWeb", "pty", Sanitize(instanceKey));
+    public static string Directory(string instanceKey) => AppDataFolder.PathFor("pty", Sanitize(instanceKey));
 
-    /// <summary>The state file for one session.</summary>
+    /// <summary>
+    /// The same folder under the data folder's name from before the rename. A host an older build
+    /// started writes its state there for as long as it runs, so readers look in both.
+    /// </summary>
+    private static string LegacyDirectory(string instanceKey) => AppDataFolder.LegacyPathFor("pty", Sanitize(instanceKey));
+
+    /// <summary>The state file a host launched now writes for one session.</summary>
     public static string PathFor(string instanceKey, string sessionId) =>
         Path.Combine(Directory(instanceKey), Sanitize(sessionId) + ".json");
+
+    /// <summary>
+    /// The state file a session's host already has: <see cref="PathFor"/>, unless only the folder from
+    /// before the rename has one — the session's host was started by an older build.
+    /// </summary>
+    public static string Locate(string instanceKey, string sessionId)
+    {
+        var path = PathFor(instanceKey, sessionId);
+        if (File.Exists(path)) return path;
+        var legacy = Path.Combine(LegacyDirectory(instanceKey), Sanitize(sessionId) + ".json");
+        return File.Exists(legacy) ? legacy : path;
+    }
 
     /// <summary>
     /// The pipe a session's host listens on. Namespaced by instance for the same reason the state
@@ -67,8 +83,7 @@ public static class PtyStateStore
     }
 
     /// <summary>Where the Unix sockets live: owner-only, beside the state files.</summary>
-    public static string SocketDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "sock");
+    public static string SocketDirectory => AppDataFolder.PathFor("sock");
 
     /// <summary>
     /// Create <see cref="SocketDirectory"/> readable by this user alone. The socket itself is checked
@@ -106,12 +121,14 @@ public static class PtyStateStore
     /// <summary>Every state file for an instance, with the path each was read from.</summary>
     public static IEnumerable<(string Path, PtyState State)> ReadAll(string instanceKey)
     {
-        var dir = Directory(instanceKey);
-        if (!System.IO.Directory.Exists(dir)) yield break;
-        foreach (var path in System.IO.Directory.EnumerateFiles(dir, "*.json"))
+        foreach (var dir in new[] { Directory(instanceKey), LegacyDirectory(instanceKey) })
         {
-            var state = Read(path);
-            if (state is not null) yield return (path, state);
+            if (!System.IO.Directory.Exists(dir)) continue;
+            foreach (var path in System.IO.Directory.EnumerateFiles(dir, "*.json"))
+            {
+                var state = Read(path);
+                if (state is not null) yield return (path, state);
+            }
         }
     }
 
@@ -122,10 +139,8 @@ public static class PtyStateStore
     /// </summary>
     public static IEnumerable<(string Path, PtyState State)> ReadAllInstances()
     {
-        var root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClaudeWeb", "pty");
-        if (!System.IO.Directory.Exists(root)) yield break;
-        foreach (var dir in System.IO.Directory.EnumerateDirectories(root))
+        var roots = new[] { AppDataFolder.PathFor("pty"), AppDataFolder.LegacyPathFor("pty") };
+        foreach (var dir in roots.Where(System.IO.Directory.Exists).SelectMany(System.IO.Directory.EnumerateDirectories))
         {
             IEnumerable<string> files;
             try { files = System.IO.Directory.EnumerateFiles(dir, "*.json"); }

@@ -19,6 +19,7 @@
     <!-- The session and project records, and the membership rules the running-sessions menu is built
          from. Shared source with the daemon, so the two describe the same world. -->
     <Compile Include="..\shared\Contract\*.cs" LinkBase="Contract" />
+    <Compile Include="..\shared\Common\*.cs" LinkBase="Contract" />
     <Using Include="Hangar.Contract" />
   </ItemGroup>
 

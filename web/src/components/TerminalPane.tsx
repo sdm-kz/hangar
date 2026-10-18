@@ -22,10 +22,10 @@ import { cn } from "@/lib/utils";
 const BASE_FONT_SIZE = 13;
 const fontSizeFor = (zoom: number) => Math.max(6, Math.round(BASE_FONT_SIZE * zoom));
 
-const TOOLS_COLLAPSED_KEY = "claudeweb.terminalToolsCollapsed";
+const TOOLS_COLLAPSED_KEY = "hangar.terminalToolsCollapsed";
 // Tells the other panes on this page that the toolbar was folded or opened; the storage event only
 // reaches the page's other tabs.
-const TOOLS_COLLAPSED_EVENT = "claudeweb:terminalToolsCollapsed";
+const TOOLS_COLLAPSED_EVENT = "hangar:terminalToolsCollapsed";
 
 function readToolsCollapsed(): boolean {
   try {

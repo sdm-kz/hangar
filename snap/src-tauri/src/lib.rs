@@ -398,7 +398,7 @@ fn client(app: &AppHandle) -> Result<(Client, String), ApiError> {
     let creds = api::resolve_credentials(
         &settings.server_url,
         settings.token.as_deref(),
-        api::default_instances_dir().as_deref(),
+        &api::default_instances_dirs(),
     )
     .map_err(ApiError::Failed)?;
     Ok((Client::new(creds), settings.server_url))
@@ -642,7 +642,7 @@ struct SettingsInput {
 #[tauri::command]
 fn save_settings(app: AppHandle, input: SettingsInput) -> Result<SettingsView, String> {
     let server_url = input.server_url.trim().trim_end_matches('/').to_string();
-    api::resolve_credentials(&server_url, None, None)?;
+    api::resolve_credentials(&server_url, None, &[])?;
     let st = state(&app);
     {
         let mut settings = st.settings.lock().unwrap();

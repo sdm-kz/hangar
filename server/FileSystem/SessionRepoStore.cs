@@ -4,7 +4,7 @@ namespace Hangar.Server.FileSystem;
 
 /// <summary>
 /// GitHub repositories attached to a session beyond the one its own folder points at, persisted to
-/// %LocalAppData%\ClaudeWeb\session-repos.json.
+/// %LocalAppData%\Hangar\session-repos.json.
 ///
 /// <para>A session works in one folder, but the work rarely stays there: a change in one repo is
 /// answered by a change in another, and a folder opened a level up holds several repos with no
@@ -31,9 +31,7 @@ public sealed class SessionRepoStore
     public SessionRepoStore(ILogger<SessionRepoStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "session-repos.json");
+        _file = AppDataFolder.PathFor("session-repos.json");
         Load();
     }
 

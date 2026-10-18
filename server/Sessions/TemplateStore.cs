@@ -60,7 +60,7 @@ public sealed record SessionTemplatePatch(
     string? InputHint = null);
 
 /// <summary>
-/// Server-side store for session templates, persisted to %LocalAppData%\ClaudeWeb\templates.json so
+/// Server-side store for session templates, persisted to %LocalAppData%\Hangar\templates.json so
 /// they follow the user across every browser and device pointed at this app — like
 /// <see cref="ProjectStore"/> and <see cref="RecentsStore"/>, and unlike the sidebar's per-browser
 /// view preferences.
@@ -84,9 +84,7 @@ public sealed class TemplateStore
     public TemplateStore(ILogger<TemplateStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "templates.json");
+        _file = AppDataFolder.PathFor("templates.json");
         Load();
     }
 

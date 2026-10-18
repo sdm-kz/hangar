@@ -101,7 +101,7 @@ export function useShownShellsSeen(
   }, [unseenShown, onSeen]);
 }
 
-const SEEN_KEY = "claudeweb.shellsSeen";
+const SEEN_KEY = "hangar.shellsSeen";
 
 function readSeen(): Record<string, number> {
   try {

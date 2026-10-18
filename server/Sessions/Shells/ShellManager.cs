@@ -122,9 +122,7 @@ public sealed class ShellManager : IDisposable
         // folder under %LocalAppData% is shared by every instance on the machine, and a dev instance
         // that found none of the live app's hosts (they live under a different key) would otherwise
         // rewrite the file to [] and strand them.
-        _stateFile = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", $"shells-{_hosts.InstanceKey}.json");
+        _stateFile = AppDataFolder.PathFor($"shells-{_hosts.InstanceKey}.json");
     }
 
     /// <summary>

@@ -118,7 +118,7 @@ type VirtualGroup = {
 };
 
 // Grouped-vs-flat is a per-browser view preference, kept client-side like the session order.
-const GROUPED_KEY = "claudeweb.sessionsGrouped";
+const GROUPED_KEY = "hangar.sessionsGrouped";
 function loadGrouped(): boolean {
   try {
     return localStorage.getItem(GROUPED_KEY) === "1";
@@ -138,7 +138,7 @@ function saveGrouped(v: boolean) {
 // activity mark (working, waiting, failed, finished-but-unseen…), "all" shows everything
 // (exited/closed too). Per-browser preference, remembered across refreshes like the grouped toggle.
 type SessionFilter = "active" | "activity" | "all";
-const FILTER_KEY = "claudeweb.sessionsFilter";
+const FILTER_KEY = "hangar.sessionsFilter";
 function loadFilter(): SessionFilter {
   try {
     const v = localStorage.getItem(FILTER_KEY);
@@ -1358,7 +1358,7 @@ function useFolderDrag(onDropFolder: (dir: string, projectId: string | null) => 
 
 // Which folder groups are collapsed is a per-browser preference, remembered across refreshes (like
 // the grouped-vs-flat toggle). Stored as the list of collapsed dir paths; anything absent is expanded.
-const COLLAPSED_KEY = "claudeweb.sessionsCollapsedGroups";
+const COLLAPSED_KEY = "hangar.sessionsCollapsedGroups";
 function loadCollapsed(): Set<string> {
   try {
     const raw = localStorage.getItem(COLLAPSED_KEY);
@@ -1377,7 +1377,7 @@ function saveCollapsed(set: Set<string>) {
 
 // Which projects are folded away, by project id — the same kind of per-browser preference as the
 // folder collapse above, in its own key so the two can't collide (a project id is not a path).
-const COLLAPSED_PROJECTS_KEY = "claudeweb.collapsedProjects";
+const COLLAPSED_PROJECTS_KEY = "hangar.collapsedProjects";
 function loadCollapsedProjects(): Set<string> {
   try {
     const raw = localStorage.getItem(COLLAPSED_PROJECTS_KEY);
@@ -1427,7 +1427,7 @@ function useCollapsedSet(load: () => Set<string>, save: (set: Set<string>) => vo
 // Which sessions have their forks folded away. Per-browser like the folder-group collapse, but keyed
 // by session id — and ids are minted fresh on every reopen/auto-resume, so the set is pruned against
 // the live list on each write to stop it accumulating entries for sessions that no longer exist.
-const COLLAPSED_FORKS_KEY = "claudeweb.collapsedForks";
+const COLLAPSED_FORKS_KEY = "hangar.collapsedForks";
 /**
  * How a row of the sessions tree names itself to the keyboard navigation. Which fold a → or ← acts
  * on can't be read off the row — a project heading, a folder header and a session each keep their

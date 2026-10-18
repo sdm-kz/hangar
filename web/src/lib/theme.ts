@@ -1,6 +1,6 @@
 export type Theme = "light" | "dark";
 
-const KEY = "claudeweb.theme";
+const KEY = "hangar.theme";
 
 export function getTheme(): Theme {
   return localStorage.getItem(KEY) === "dark" ? "dark" : "light";

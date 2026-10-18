@@ -125,7 +125,7 @@ const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB
 const TREE_MIN = 180;
 const TREE_MAX = 640;
 const TREE_DEFAULT = 288; // matches the old md:w-72
-const TREE_WIDTH_KEY = "claudeweb.filesTreeWidth";
+const TREE_WIDTH_KEY = "hangar.filesTreeWidth";
 
 function readTreeWidth() {
   const n = Number(localStorage.getItem(TREE_WIDTH_KEY));
@@ -137,7 +137,7 @@ function readTreeWidth() {
 const TREE_H_MIN = 96;
 const TREE_H_DEFAULT = 256; // matches the old max-h-64
 const PREVIEW_H_MIN = 120; // room the preview keeps below the tree, and so the tree's ceiling
-const TREE_HEIGHT_KEY = "claudeweb.filesTreeHeight";
+const TREE_HEIGHT_KEY = "hangar.filesTreeHeight";
 
 function readTreeHeight() {
   const n = Number(localStorage.getItem(TREE_HEIGHT_KEY));

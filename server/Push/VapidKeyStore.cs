@@ -8,7 +8,7 @@ public sealed record VapidKeys(string PublicKey, string PrivateKey, string Subje
 
 /// <summary>
 /// Holds the server's VAPID keypair, generated once on first run and persisted to
-/// %LocalAppData%\ClaudeWeb\vapid.json — the same out-of-wwwroot location as the other stores, so a
+/// %LocalAppData%\Hangar\vapid.json — the same out-of-wwwroot location as the other stores, so a
 /// wwwroot-only redeploy never disturbs it (regenerating would invalidate every existing browser
 /// subscription). Only the public key is ever exposed to the client (via /api/push/config); the
 /// private key stays on disk here. Mirrors the load/save shape of <c>RecentsStore</c>.
@@ -19,9 +19,7 @@ public sealed class VapidKeyStore
 
     public VapidKeyStore(IConfiguration config, ILogger<VapidKeyStore> log)
     {
-        var file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "vapid.json");
+        var file = AppDataFolder.PathFor("vapid.json");
 
         // The VAPID subject must be a valid mailto: or https: URL; the configured public URL fits.
         var subject = config["Push:Subject"]

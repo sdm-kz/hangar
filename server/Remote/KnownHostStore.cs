@@ -6,7 +6,7 @@ public enum HostKeyVerdict { Known, Unknown, Changed }
 
 /// <summary>
 /// The SSH host keys this app has been told to trust, persisted to
-/// %LocalAppData%\ClaudeWeb\ssh-known-hosts.json — trust on first use, the way OpenSSH asks the first
+/// %LocalAppData%\Hangar\ssh-known-hosts.json — trust on first use, the way OpenSSH asks the first
 /// time. A key is only ever added because a person looked at its fingerprint and said yes; a host
 /// that later presents a <em>different</em> key of the same type is refused until someone says yes
 /// to that one too, deliberately.
@@ -32,9 +32,7 @@ public sealed class KnownHostStore
     public KnownHostStore(ILogger<KnownHostStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "ssh-known-hosts.json");
+        _file = AppDataFolder.PathFor("ssh-known-hosts.json");
         Load();
     }
 

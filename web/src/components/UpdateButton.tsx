@@ -148,7 +148,7 @@ export function UpdatingOverlay({ targetBuildId }: { targetBuildId: string }) {
         <p className="font-medium">Installing the update…</p>
         <p className="text-sm text-muted-foreground">
           {slow
-            ? "This is taking longer than usual. Check the update log at %LocalAppData%\\ClaudeWeb\\logs\\update.log."
+            ? "This is taking longer than usual. Check the update log at %LocalAppData%\\Hangar\\logs\\update.log."
             : "The app is restarting. Your running sessions come back on their own."}
         </p>
       </div>

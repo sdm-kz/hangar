@@ -18,10 +18,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Hangar" />
     <script>
-      // Apply saved theme before render to avoid a flash. Default: light.
+      // Apply saved theme before render to avoid a flash. Default: light. This runs before the app's
+      // own scripts move the settings from their names before the rename, so it reads both.
       (function () {
         try {
-          if (localStorage.getItem("claudeweb.theme") === "dark")
+          var theme = localStorage.getItem("hangar.theme") || localStorage.getItem("claudeweb.theme");
+          if (theme === "dark")
             document.documentElement.classList.add("dark");
         } catch (e) {}
       })();

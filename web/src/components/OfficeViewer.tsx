@@ -91,7 +91,7 @@ function DocxViewer({ url }: { url: string }) {
           containerRef={scrollRef}
           entries={outline}
           onSelect={(e) => jumpToDocxSection(e.el)}
-          storageKey="claudeweb.docxTocOpen"
+          storageKey="hangar.docxTocOpen"
           align="start"
         />
       )}

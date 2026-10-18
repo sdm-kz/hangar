@@ -31,14 +31,14 @@ export interface CommitSelection {
   status?: string;
 }
 
-const OPEN_KEY = "claudeweb.gitHistoryOpen";
+const OPEN_KEY = "hangar.gitHistoryOpen";
 const PAGE = 50;
 
 // Drag-resizable panel height (px), persisted per-browser like the tree/sidebar panes.
 const H_MIN = 100;
 const H_MAX = 900;
 const H_DEFAULT = 260;
-const HEIGHT_KEY = "claudeweb.gitHistoryHeight";
+const HEIGHT_KEY = "hangar.gitHistoryHeight";
 
 // Last path segment of a worktree's folder, for a compact "@folder" hint in the branch picker.
 function worktreeLabel(path: string): string {

@@ -33,7 +33,7 @@ export interface PaneTab {
 /** Where a dragged tab is dropped on a group: one of its edges (a new split) or its middle (a move). */
 export type DropZone = Edge | "center";
 
-const DRAG_TYPE = "application/x-claudeweb-pane";
+const DRAG_TYPE = "application/x-hangar-pane";
 // Narrowest a group may be dragged to, along the axis of the split: a strip still worth clicking.
 const MIN_GROUP_PX = 160;
 

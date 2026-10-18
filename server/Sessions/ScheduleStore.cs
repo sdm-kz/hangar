@@ -181,7 +181,7 @@ public sealed record SessionSchedulePatch(
     string? TargetConversationId = null);
 
 /// <summary>
-/// Server-side store for schedules, persisted to <c>%LocalAppData%\ClaudeWeb\schedules.json</c> so
+/// Server-side store for schedules, persisted to <c>%LocalAppData%\Hangar\schedules.json</c> so
 /// they follow the user across devices — like <see cref="TemplateStore"/> and <see cref="ProjectStore"/>,
 /// and unlike anything kept per-browser.
 ///
@@ -209,9 +209,7 @@ public sealed class ScheduleStore
     public ScheduleStore(ILogger<ScheduleStore> log)
     {
         _log = log;
-        _file = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "ClaudeWeb", "schedules.json");
+        _file = AppDataFolder.PathFor("schedules.json");
         Load();
     }
 

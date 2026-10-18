@@ -65,8 +65,8 @@ const LABEL_MIN = 64;
 // Below this width the tree and the preview take turns instead of sitting side by side.
 const NARROW = 640;
 
-const TREE_WIDTH_KEY = "claudeweb.remoteTreeWidth";
-const HIDDEN_KEY = "claudeweb.remoteShowHidden";
+const TREE_WIDTH_KEY = "hangar.remoteTreeWidth";
+const HIDDEN_KEY = "hangar.remoteShowHidden";
 
 function readNumber(key: string, fallback: number): number {
   try {

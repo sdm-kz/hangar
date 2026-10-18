@@ -40,7 +40,7 @@ import {
 
 // Which folders are expanded in the tree is a per-browser preference, remembered across refreshes so
 // the tree comes back the way you left it instead of collapsing to the default start folder.
-const EXPANDED_KEY = "claudeweb.filesExpanded";
+const EXPANDED_KEY = "hangar.filesExpanded";
 function loadExpanded(): Set<string> {
   try {
     const raw = localStorage.getItem(EXPANDED_KEY);
@@ -60,8 +60,8 @@ function saveExpanded(set: Set<string>) {
 // The rest of the tree's view state, remembered the same way: which folder the toolbar actions target,
 // and how far the tree is scrolled. The panel unmounts whenever the sidebar switches to Sessions, so
 // without this every trip back to Files (and every refresh) would drop you at the top of the tree.
-const SELECTED_KEY = "claudeweb.filesSelectedDir";
-const SCROLL_KEY = "claudeweb.filesScroll";
+const SELECTED_KEY = "hangar.filesSelectedDir";
+const SCROLL_KEY = "hangar.filesScroll";
 function readStored(key: string): string | null {
   try {
     return localStorage.getItem(key);
