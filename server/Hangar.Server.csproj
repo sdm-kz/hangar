@@ -13,6 +13,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Hangar.Server</RootNamespace>
     <AssemblyName>ClaudeWeb</AssemblyName>
+    <!-- What Windows shows for the exe (Task Manager, notification headers) until the exe itself is
+         renamed: it reads the version resource's description, which otherwise repeats AssemblyName. -->
+    <AssemblyTitle>Hangar</AssemblyTitle>
+    <Product>Hangar</Product>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 

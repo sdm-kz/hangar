@@ -10,6 +10,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Hangar.PtyHost</RootNamespace>
     <AssemblyName>ClaudeWeb.PtyHost</AssemblyName>
+    <AssemblyTitle>Hangar session host</AssemblyTitle>
+    <Product>Hangar</Product>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- The host is launched DETACHED_PROCESS with no console; nothing would read a console anyway,
          and diagnostics go to its per-session log file. -->

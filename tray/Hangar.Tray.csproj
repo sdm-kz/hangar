@@ -11,6 +11,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Hangar.Tray</RootNamespace>
     <AssemblyName>ClaudeWeb.Tray</AssemblyName>
+    <!-- The name Windows puts on the tray's notifications (and in Task Manager): the version
+         resource's description, which otherwise repeats AssemblyName. -->
+    <AssemblyTitle>Hangar</AssemblyTitle>
+    <Product>Hangar</Product>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
