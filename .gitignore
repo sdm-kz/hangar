@@ -19,7 +19,7 @@ server/appsettings.Local.json
 server/appsettings.Development.json
 
 # Per-session runtime state written into a working directory (e.g. pasted-image uploads)
-.claudeweb/
+.hangar/
 
 # Editor / OS
 .vs/
