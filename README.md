@@ -1,10 +1,5 @@
 # Hangar
 
-> **Name:** this project was called Claude Web (`ClaudeWeb.exe`, `%LocalAppData%\ClaudeWeb`,
-> `C:\apps\claude-web`). An install from before the rename moves over with
-> `scripts\cutover-to-hangar.ps1`; the data folder is copied across on start. What is left of the
-> old names, and why, is in [plans/rename-to-hangar.md](plans/rename-to-hangar.md).
-
 A .NET 10 app for Windows (the server also runs on Linux and macOS — see
 [Linux and macOS](#linux-and-macos)) that **launches Claude Code CLI sessions with Remote Control
 enabled** so you can drive them from the **Claude Code app** (claude.ai/code and mobile) — from any
@@ -451,12 +446,6 @@ and a desktop to open a browser on if `claude` ever needs you to log in again.
 
 Browse to `http://<this-pc>:5099` from any device on your network, launch a session, and pick it up
 in the Claude Code app.
-
-**Upgrading from a Claude Web install.** `scripts\cutover-to-hangar.ps1` moves it to
-`C:\apps\hangar` in one go: it allows `Hangar.exe` through Windows Firewall the way `ClaudeWeb.exe`
-was (one UAC prompt), carries `appsettings.json` over, stops the old daemon and tray, deploys, swaps the
-`ClaudeWeb` autostart entries for `Hangar` ones and starts the new build. Running sessions keep running.
-The old folder is left in place to roll back to; delete it once the new one has run for a while.
 
 ## Optional: run as a Windows service
 
