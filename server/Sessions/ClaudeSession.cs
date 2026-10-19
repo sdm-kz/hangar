@@ -390,8 +390,8 @@ public sealed class ClaudeSession : IDisposable
         // starts from ours — which is what it inherited implicitly when we spawned it in-process.
         foreach (System.Collections.DictionaryEntry kv in Environment.GetEnvironmentVariables())
             env[(string)kv.Key] = kv.Value?.ToString() ?? "";
-        // Each under both names: HANGAR_* from the rename on, CLAUDEWEB_* for what still reads that —
-        // the global hook config (see ClaudeHookStore.BuildHandler) and commands written before it.
+        // Each under both names: HANGAR_*, which the hook config and the commands read, and CLAUDEWEB_*
+        // for scripts written before the rename (plans/rename-to-hangar.md, step 4).
         SetBoth(env, "SESSION_ID", Id);
         if (!string.IsNullOrEmpty(_hookToken))
             SetBoth(env, "HOOK_TOKEN", _hookToken);

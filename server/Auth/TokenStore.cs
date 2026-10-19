@@ -110,7 +110,7 @@ public sealed class TokenStore
     /// <summary>
     /// Secret that authorizes Claude hook callbacks (<c>POST /api/hooks</c>) and a session's self-rename
     /// (<c>POST /api/self/name</c>), passed as the <c>X-Hook-Token</c> header. Injected into each
-    /// launched session's environment as <c>CLAUDEWEB_HOOK_TOKEN</c>, so the static global hook config
+    /// launched session's environment as <c>HANGAR_HOOK_TOKEN</c>, so the static global hook config
     /// only references the env var — never the literal secret.
     /// <para>Minted once and persisted to <c>auth.json</c>, NOT per app run: a session's environment is
     /// fixed when its claude process starts, and that process outlives the app — a restart or a redeploy

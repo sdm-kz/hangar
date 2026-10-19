@@ -647,7 +647,7 @@ the whole thing off and go back to `deploy.ps1` only.
 | `Sessions:ResumeOnStart`    | On start, relaunch the sessions that were running at the last exit | `true` |
 | `Sessions:ResumeDelayMs`    | Settling delay before auto-resume starts (lets a booting PC come up)| `5000`  |
 | `Sessions:ResumeStaggerMs`  | Pause between consecutive auto-resumed launches      | `2000`               |
-| `Sessions:SelfUrl`          | URL a session calls back on (`CLAUDEWEB_URL`); empty = derived from the bound port | `""` |
+| `Sessions:SelfUrl`          | URL a session calls back on (`HANGAR_URL`); empty = derived from the bound port | `""` |
 | `Hooks:Enabled`             | Register this instance's hooks in `~/.claude/settings.json` (drives busy/waiting/failed status). Off = terminal heuristics only | `true` |
 | `Hooks:Force`               | Claim that registration even when another instance is live on the port it currently names — see below | `false` |
 | `Pty:InstanceKey`           | Namespaces this instance's pty pipes and state dir; empty = the bound port. Keeps a dev instance from adopting the live app's sessions | `""` |
@@ -725,18 +725,17 @@ its environment, and they are all the call takes.
 
 | Env var                | What it is                                                       |
 | ---------------------- | ---------------------------------------------------------------- |
-| `CLAUDEWEB_URL`        | Base URL of the app, on loopback (e.g. `http://127.0.0.1:5099`)  |
-| `CLAUDEWEB_SESSION_ID` | This session's id — also the session the call renames             |
-| `CLAUDEWEB_HOOK_TOKEN` | Local secret that authorizes the call (also used by the hooks)   |
+| `HANGAR_URL`        | Base URL of the app, on loopback (e.g. `http://127.0.0.1:5099`)  |
+| `HANGAR_SESSION_ID` | This session's id — also the session the call renames             |
+| `HANGAR_HOOK_TOKEN` | Local secret that authorizes the call (also used by the hooks)   |
 
-Every session also carries them as `HANGAR_URL`, `HANGAR_SESSION_ID` and `HANGAR_HOOK_TOKEN`, their
-names after the rename. The examples keep the old names for now: a session launched before the
-rename has only those.
+A session also carries them under their names from before the rename (`CLAUDEWEB_URL`,
+`CLAUDEWEB_SESSION_ID`, `CLAUDEWEB_HOOK_TOKEN`), for scripts that still read those.
 
 ```bash
-curl -s -X POST "$CLAUDEWEB_URL/api/self/name" \
-  -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
-  -H "X-Hook-Token: $CLAUDEWEB_HOOK_TOKEN" \
+curl -s -X POST "$HANGAR_URL/api/self/name" \
+  -H "X-Session-Id: $HANGAR_SESSION_ID" \
+  -H "X-Hook-Token: $HANGAR_HOOK_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"refactor auth middleware"}'
 # {"id":"664d6618…","name":"refactor auth middleware"}
@@ -771,9 +770,9 @@ Files panel would. `POST /api/self/open` takes the same three environment variab
 above, and nothing else.
 
 ```bash
-curl -s -X POST "$CLAUDEWEB_URL/api/self/open" \
-  -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
-  -H "X-Hook-Token: $CLAUDEWEB_HOOK_TOKEN" \
+curl -s -X POST "$HANGAR_URL/api/self/open" \
+  -H "X-Session-Id: $HANGAR_SESSION_ID" \
+  -H "X-Hook-Token: $HANGAR_HOOK_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"paths":["server/Program.cs","web/src/App.tsx"]}'
 # {"id":"664d6618…","opened":["server/Program.cs","web/src/App.tsx"],"missing":[],"active":"web/src/App.tsx"}
@@ -806,9 +805,9 @@ environment variables and nothing else. Name it by `repo` and `number`, or by it
 `gh pr create` prints):
 
 ```bash
-curl -s -X POST "$CLAUDEWEB_URL/api/self/open-pr" \
-  -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
-  -H "X-Hook-Token: $CLAUDEWEB_HOOK_TOKEN" \
+curl -s -X POST "$HANGAR_URL/api/self/open-pr" \
+  -H "X-Session-Id: $HANGAR_SESSION_ID" \
+  -H "X-Hook-Token: $HANGAR_HOOK_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"repo":"cli/cli","number":42}'
 # {"id":"664d6618…","repo":"cli/cli","number":42,"title":"…","key":"cli/cli#42"}
@@ -839,9 +838,9 @@ header's branch badge goes on naming the folder's branch rather than the one the
 variables again:
 
 ```bash
-curl -s -X POST "$CLAUDEWEB_URL/api/self/worktree" \
-  -H "X-Session-Id: $CLAUDEWEB_SESSION_ID" \
-  -H "X-Hook-Token: $CLAUDEWEB_HOOK_TOKEN" \
+curl -s -X POST "$HANGAR_URL/api/self/worktree" \
+  -H "X-Session-Id: $HANGAR_SESSION_ID" \
+  -H "X-Hook-Token: $HANGAR_HOOK_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"branch":"AB-6692-repoint-e2e-tests-to-uat"}'
 # {"id":"664d6618…","worktree":"C:/Git/myproject-worktrees/myproject/AB-6692-…","branch":"AB-6692-…"}

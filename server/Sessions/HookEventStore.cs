@@ -29,7 +29,7 @@ public sealed record HookStatus(
 /// Collects Claude Code hook callbacks (delivered to <c>POST /api/hooks</c>) and turns them into a
 /// per-session live status — busy (generating), waiting (on a permission/idle prompt), and the tool
 /// currently running. Keyed by <em>our</em> session GUID (the hook posts it back via the
-/// <c>X-Session-Id</c> header, sourced from the <c>CLAUDEWEB_SESSION_ID</c> env var we inject at
+/// <c>X-Session-Id</c> header, sourced from the <c>HANGAR_SESSION_ID</c> env var we inject at
 /// launch). This replaces the fragile terminal-scraping heuristics with exact lifecycle transitions;
 /// <see cref="SessionManager"/> consults it first and falls back to the heuristics only for sessions
 /// that haven't produced a hook event yet.

@@ -14,7 +14,7 @@ namespace Hangar.Server.Sessions;
 /// the user's other hooks.
 ///
 /// The hooks carry correlation via headers interpolated from environment variables we inject into each
-/// session's process (<c>CLAUDEWEB_SESSION_ID</c> / <c>CLAUDEWEB_HOOK_TOKEN</c>). For a plain <c>claude</c>
+/// session's process (<c>HANGAR_SESSION_ID</c> / <c>HANGAR_HOOK_TOKEN</c>). For a plain <c>claude</c>
 /// run those vars are unset, so the headers are empty and the server treats the callback as a no-op.
 /// </summary>
 public static class ClaudeHookStore
@@ -100,10 +100,13 @@ public static class ClaudeHookStore
 
                 if (FindOurHandler(groups) is { } existing)
                 {
-                    // Already registered — just refresh the URL in case the port changed.
-                    if (existing["url"]?.GetValue<string>() != url)
+                    // Already registered — refresh what may have moved: the URL (a port change) and the
+                    // variables the headers name (renamed from CLAUDEWEB_* to HANGAR_*).
+                    var fresh = BuildHandler(url);
+                    foreach (var key in new[] { "url", "headers", "allowedEnvVars" })
                     {
-                        existing["url"] = url;
+                        if (JsonNode.DeepEquals(existing[key], fresh[key])) continue;
+                        existing[key] = fresh[key]?.DeepClone();
                         changed = true;
                     }
                 }
@@ -121,13 +124,14 @@ public static class ClaudeHookStore
             if (!changed)
                 return; // nothing to write — hooks already current
 
-            // One-time backup so the user can restore if anything looks wrong.
-            var backup = path + ".claudeweb-hooks-backup";
-            if (File.Exists(path) && !File.Exists(backup))
+            // One-time backup so the user can restore if anything looks wrong. One made before the
+            // rename (.claudeweb-hooks-backup) already holds the original.
+            var backup = path + ".hangar-hooks-backup";
+            if (File.Exists(path) && !File.Exists(backup) && !File.Exists(path + ".claudeweb-hooks-backup"))
                 try { File.Copy(path, backup); } catch { /* non-fatal */ }
 
             // Atomic-ish replace to avoid a torn write.
-            var tmp = path + ".claudeweb-hooks.tmp";
+            var tmp = path + ".hangar-hooks.tmp";
             File.WriteAllText(tmp, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             if (File.Exists(path))
             {
@@ -210,12 +214,6 @@ public static class ClaudeHookStore
         return null;
     }
 
-    /// <remarks>
-    /// Still the CLAUDEWEB_* names, which every session carries alongside HANGAR_*: the hook config is
-    /// one file for every session on the machine, and one launched before the rename has only the old
-    /// names — a header naming a variable it lacks would go out empty and orphan its status. Switches to HANGAR_* once no
-    /// such session is left (plans/rename-to-hangar.md, step 4).
-    /// </remarks>
     private static JsonObject BuildHandler(string url) => new()
     {
         ["type"] = "http",
@@ -223,9 +221,9 @@ public static class ClaudeHookStore
         ["timeout"] = 5,
         ["headers"] = new JsonObject
         {
-            ["X-Session-Id"] = "$CLAUDEWEB_SESSION_ID",
-            ["X-Hook-Token"] = "$CLAUDEWEB_HOOK_TOKEN",
+            ["X-Session-Id"] = "$HANGAR_SESSION_ID",
+            ["X-Hook-Token"] = "$HANGAR_HOOK_TOKEN",
         },
-        ["allowedEnvVars"] = new JsonArray { "CLAUDEWEB_SESSION_ID", "CLAUDEWEB_HOOK_TOKEN" },
+        ["allowedEnvVars"] = new JsonArray { "HANGAR_SESSION_ID", "HANGAR_HOOK_TOKEN" },
     };
 }

@@ -370,7 +370,7 @@ public sealed class ShellManager : IDisposable
 
     /// <summary>
     /// The environment the shell is launched with: ours (the host is detached and passes on nothing of
-    /// its own), plus whatever the shell needs. Deliberately without <c>CLAUDEWEB_HOOK_TOKEN</c> — a
+    /// its own), plus whatever the shell needs. Deliberately without <c>HANGAR_HOOK_TOKEN</c> — a
     /// shell is an interactive prompt for the user, not a session reporting its lifecycle back.
     /// </summary>
     private static Dictionary<string, string> BuildEnvironment(ShellLaunch launch)

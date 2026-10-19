@@ -41,7 +41,7 @@ public sealed class SessionManagerOptions
     public int ResumeStaggerMs { get; set; } = 2000;
 
     /// <summary>
-    /// Base URL a launched session uses to call back into this app (<c>CLAUDEWEB_URL</c> in its
+    /// Base URL a launched session uses to call back into this app (<c>HANGAR_URL</c> in its
     /// environment, used by <c>POST /api/self/name</c>). Left empty in config: the host fills it in
     /// from the bound port at startup. Set it explicitly only to override that.
     /// </summary>

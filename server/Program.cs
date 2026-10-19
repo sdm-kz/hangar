@@ -280,7 +280,7 @@ internal static class Program
         var ptyHostOptions = builder.Configuration.GetSection("Pty").Get<Sessions.Pty.PtyHostOptions>() ?? new Sessions.Pty.PtyHostOptions();
         var scheduleOptions = builder.Configuration.GetSection("Schedules").Get<ScheduleOptions>() ?? new ScheduleOptions();
 
-        // The URL a launched session calls back on (CLAUDEWEB_URL in its environment). Derived from the
+        // The URL a launched session calls back on (HANGAR_URL in its environment). Derived from the
         // bound port unless the operator pinned Sessions:SelfUrl; always loopback, since the session's
         // process runs on this machine.
         if (string.IsNullOrWhiteSpace(sessionOptions.SelfUrl))
@@ -658,8 +658,8 @@ internal static class Program
 
         // Self-rename from inside a running session: a command the session itself runs (typically
         // `claude` calling curl) POSTs its own new name. It authenticates with the very credentials we
-        // injected into its environment at launch — X-Session-Id (CLAUDEWEB_SESSION_ID, which also
-        // names the session to rename) and X-Hook-Token (CLAUDEWEB_HOOK_TOKEN, minted per app run) —
+        // injected into its environment at launch — X-Session-Id (HANGAR_SESSION_ID, which also
+        // names the session to rename) and X-Hook-Token (HANGAR_HOOK_TOKEN, minted per app run) —
         // so no browser token or API key is involved and a session can only ever rename itself.
         // Beyond the id, this is exactly the UI rename: the display name changes and `/rename <name>`
         // is injected into the terminal so Claude's own conversation title follows.
