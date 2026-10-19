@@ -571,13 +571,13 @@ mod tests {
             .mock("POST", "/api/sessions/s%201/fs/upload-image")
             .match_header("authorization", "Bearer tok")
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({ "ext": "png", "dataBase64": "iVBORw==" })))
-            .with_body(r#"{"path":".claudeweb/uploads/pasted-1.png","fullPath":"C:\\x\\pasted-1.png"}"#)
+            .with_body(r#"{"path":".hangar/uploads/pasted-1.png","fullPath":"C:\\x\\pasted-1.png"}"#)
             .create_async()
             .await;
         let message = server
             .mock("POST", "/api/sessions/s%201/message")
             .match_body(mockito::Matcher::Json(serde_json::json!({
-                "text": "look", "images": [".claudeweb/uploads/pasted-1.png"]
+                "text": "look", "images": [".hangar/uploads/pasted-1.png"]
             })))
             .create_async()
             .await;
@@ -593,8 +593,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mkdir = server
             .mock("POST", "/api/fs/mkdir")
-            .match_body(mockito::Matcher::Json(serde_json::json!({ "path": "C:/work/.claudeweb/uploads" })))
-            .with_body(r#"{"path":"C:/work/.claudeweb/uploads"}"#)
+            .match_body(mockito::Matcher::Json(serde_json::json!({ "path": "C:/work/.hangar/uploads" })))
+            .with_body(r#"{"path":"C:/work/.hangar/uploads"}"#)
             .create_async()
             .await;
         let upload = server
@@ -603,7 +603,7 @@ mod tests {
                 mockito::Matcher::Regex("name=\"path\"".into()),
                 mockito::Matcher::Regex("filename=\"pasted.png\"".into()),
             ]))
-            .with_body(r#"{"paths":["C:/work/.claudeweb/uploads/pasted.png"]}"#)
+            .with_body(r#"{"paths":["C:/work/.hangar/uploads/pasted.png"]}"#)
             .create_async()
             .await;
         let create = server
@@ -619,8 +619,8 @@ mod tests {
             .create_async()
             .await;
         let client = Client::new(Credentials { base: Url::parse(&server.url()).unwrap(), token: None, local: false });
-        let path = client.upload_to_folder("C:/work/.claudeweb/uploads", "pasted.png", b"png").await.unwrap();
-        assert_eq!(path, "C:/work/.claudeweb/uploads/pasted.png");
+        let path = client.upload_to_folder("C:/work/.hangar/uploads", "pasted.png", b"png").await.unwrap();
+        assert_eq!(path, "C:/work/.hangar/uploads/pasted.png");
         let created = client
             .create_session(&NewSession { folder: "C:/work", project_id: Some("p1"), group_id: None, prompt: "look" })
             .await

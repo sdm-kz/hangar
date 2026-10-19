@@ -1,8 +1,8 @@
-// Per-session "postponed messages" pool. Persisted server-side (in `.claudeweb/postponed/<id>.json`
+// Per-session "postponed messages" pool. Persisted server-side (in `.hangar/postponed/<id>.json`
 // under the session's working directory) so a pool stashed while Claude is busy survives a reload AND
 // is shared across devices. Keyed by session id, so sessions that share a folder each keep their own
 // pool (a resume gets a fresh session id → empty). Only image *paths* are stored (the bytes live
-// server-side in `.claudeweb/uploads/`); never base64.
+// server-side in `.hangar/uploads/`); never base64.
 
 import { api } from "./api";
 

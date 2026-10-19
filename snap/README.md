@@ -141,7 +141,7 @@ The log (`…\logs`) records how long each overlay and editor took to come up.
   `POST /api/sessions/{id}/postponed/items`, which the server adds to the pool itself, under the lock
   its other writers take, rather than this app rewriting the whole pool and racing a browser's save.
 - A new session can't be handed a picture through `upload-image`, which needs a session, so the PNG
-  goes into `<folder>/.claudeweb/uploads` through the plain file API (`/api/fs/mkdir`,
+  goes into `<folder>/.hangar/uploads` through the plain file API (`/api/fs/mkdir`,
   `/api/fs/upload`) and its path into the first prompt (`POST /api/sessions`, `initialPrompt`), which
   Claude reads as the image it names. `projectId` and `groupId` on that request are the server's to
   settle: it links the folder and files the session, or refuses before launching anything.

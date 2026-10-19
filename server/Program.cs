@@ -373,7 +373,7 @@ internal static class Program
     }
 
     /// <summary>Where upload-image puts an image, under the session's working directory.</summary>
-    private const string UploadsFolder = ".claudeweb/uploads";
+    private const string UploadsFolder = SessionDataFolder.Uploads;
 
     /// <summary>How many images one message may paste. Each is its own bracketed paste and a moment of
     /// Claude Code reading it in; a screenshot tool sends one.</summary>
@@ -881,7 +881,8 @@ internal static class Program
         }
 
         // An image named in a message must be one upload-image wrote: a file in the session's
-        // .claudeweb/uploads/. Anything else would make the message endpoint a way to have Claude read
+        // .hangar/uploads/, or in .claudeweb/uploads/ from before the rename (a postponed message can
+        // still name one). Anything else would make the message endpoint a way to have Claude read
         // an arbitrary path — and /api/external carries only an API key, not the run of the disk. The
         // checks above are on the path's text, so a link (a symlink or junction, at the file or at the
         // uploads folder) could still point it elsewhere; upload-image never writes one, so none is
@@ -889,11 +890,12 @@ internal static class Program
         static string? UploadedImagePath(string workingDirectory, string rel)
         {
             var full = SessionFileBrowser.ResolveSafe(workingDirectory, rel);
-            var uploads = SessionFileBrowser.ResolveSafe(workingDirectory, UploadsFolder);
-            if (full is null || uploads is null) return null;
-            var inUploads = string.Equals(Path.GetDirectoryName(full), uploads,
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-            if (!inUploads || !AllowedImageExts.Contains(Path.GetExtension(full).TrimStart('.'))) return null;
+            if (full is null) return null;
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var uploads = new[] { UploadsFolder, SessionDataFolder.LegacyUploads }
+                .Select(folder => SessionFileBrowser.ResolveSafe(workingDirectory, folder))
+                .FirstOrDefault(folder => folder is not null && string.Equals(Path.GetDirectoryName(full), folder, comparison));
+            if (uploads is null || !AllowedImageExts.Contains(Path.GetExtension(full).TrimStart('.'))) return null;
             var file = new FileInfo(full);
             return file.Exists && file.LinkTarget is null && new DirectoryInfo(uploads).LinkTarget is null
                 ? full
@@ -1375,7 +1377,7 @@ internal static class Program
                 : Results.BadRequest(new { error = "invalid path" });
         });
 
-        // Save an image (e.g. pasted into the terminal) into .claudeweb/uploads/ under the working
+        // Save an image (e.g. pasted into the terminal) into .hangar/uploads/ under the working
         // dir, so its path can be handed to the Claude session. Body is base64 to keep JSON transport.
         app.MapPost("/api/sessions/{id}/fs/upload-image", (string id, ImageUploadRequest body, SessionManager mgr) =>
         {
@@ -1469,7 +1471,7 @@ internal static class Program
         });
 
         // Postponed messages: drafts stashed while Claude is busy, persisted server-side per session
-        // (in .claudeweb/postponed/<id>.json under the working dir, alongside the images they reference)
+        // (in .hangar/postponed/<id>.json under the working dir, alongside the images they reference)
         // so they survive a reload and are shared across devices. Keyed by session id, so sessions that
         // share a working directory each keep their own pool (a resume gets a fresh session id → empty).
         // Answered for a closed session as well as a live one (FolderOf, not Get): the pool outlives
@@ -1479,8 +1481,7 @@ internal static class Program
         {
             var dir = mgr.FolderOf(id);
             if (dir is null) return Results.NotFound();
-            var json = SessionFileBrowser.ReadTextSafe(dir, PostponedStore.RelPathFor(id));
-            return Results.Content(json ?? "[]", "application/json");
+            return Results.Content(PostponedStore.ReadJson(dir, id) ?? "[]", "application/json");
         });
 
         // Writable for a closed session too, for the same reason: discarding a message you are no
@@ -2010,7 +2011,7 @@ internal record PostponedAutoRequest(bool Enabled);
 internal record SessionUiRequest(Dictionary<string, System.Text.Json.JsonElement>? State, bool Quiet = false);
 internal record RenameRequest(string Name);
 /// <summary>Body for <c>POST /api/sessions/{id}/message</c>: the text, and any images to paste after
-/// it — each a path upload-image answered with, inside the session's <c>.claudeweb/uploads/</c>.</summary>
+/// it — each a path upload-image answered with, inside the session's <c>.hangar/uploads/</c>.</summary>
 internal record MessageRequest(string? Text, string[]? Images = null);
 /// <summary>Body for <c>POST /api/self/open</c>: the file(s) to open as tabs in the calling session's
 /// Files panel, named relative to its working directory (or absolutely, inside it). <c>Path</c> and

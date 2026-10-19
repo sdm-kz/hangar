@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
-using Hangar.Server.FileSystem;
 using Microsoft.Win32;
 
 namespace Hangar.Server.Sessions;
@@ -902,9 +901,9 @@ public sealed class ScheduleService : BackgroundService
     }
 
     /// <summary>
-    /// Stash an undeliverable message in the session's postponed pool, the same file the composer
-    /// under the terminal reads (<see cref="PostponedStore.RelPathFor"/>). Best-effort: a pool that
-    /// cannot be written is reported as a plain delivery failure.
+    /// Stash an undeliverable message in the session's postponed pool, the same one the composer
+    /// under the terminal reads (<see cref="PostponedStore.Append"/>). Best-effort: a pool that cannot
+    /// be written, or is full, is reported as a plain delivery failure.
     /// </summary>
     private bool Postpone(string sessionId, string text)
     {
@@ -912,26 +911,7 @@ public sealed class ScheduleService : BackgroundService
         {
             var dir = _sessions.FolderOf(sessionId);
             if (dir is null) return false;
-            var rel = PostponedStore.RelPathFor(sessionId);
-
-            var existing = SessionFileBrowser.ReadTextSafe(dir, rel);
-            using var doc = System.Text.Json.JsonDocument.Parse(
-                string.IsNullOrWhiteSpace(existing) ? "[]" : existing);
-            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Array) return false;
-
-            var messages = doc.RootElement.EnumerateArray().Select(e => e.Clone()).ToList();
-            var entry = System.Text.Json.JsonSerializer.SerializeToElement(new
-            {
-                id = Guid.NewGuid().ToString("n"),
-                text,
-                images = Array.Empty<object>(),
-                createdAt = DateTimeOffset.Now.ToUnixTimeMilliseconds(),
-            }, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
-            messages.Add(entry);
-
-            var json = System.Text.Json.JsonSerializer.Serialize(messages,
-                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
-            return SessionFileBrowser.WriteBytes(dir, rel, Encoding.UTF8.GetBytes(json)) is not null;
+            return PostponedStore.Append(dir, sessionId, text, []) == PostponedStore.AppendResult.Added;
         }
         catch (Exception ex)
         {

@@ -241,7 +241,7 @@ The web UI is a **session manager with a full terminal**:
   drag in a split diff stays in the column it started in — and opens a small card to say what
   should change. **Send now** (Ctrl+Enter) puts the comment straight into the session's terminal,
   with the file, the line numbers and the lines themselves. **Add to review** (Ctrl+Shift+Enter)
-  keeps it in the pull request's review file instead, `.claudeweb/reviews/<repo>-pr-<n>.md` in the
+  keeps it in the pull request's review file instead, `.hangar/reviews/<repo>-pr-<n>.md` in the
   session's folder, and a **Review** count appears in the header. That opens the file for a last
   read: it is plain Markdown and exactly what will be sent, so edit it freely, then **Send review**
   hands the whole of it to the session as one message and deletes the file. Lines on the old side
@@ -581,6 +581,12 @@ the whole thing off and go back to `deploy.ps1` only.
   `~/.claude.json` (it backs the file up once to `~/.claude.json.hangar-backup`, writes
   atomically, and only adds entries for folders not already present). Set it to `false` to disable
   and accept the prompt manually from the Claude Code app instead.
+- **`.hangar/` in a session's folder.** Images pasted into a session, its postponed messages and
+  pull-request reviews are kept under `.hangar/` in its working directory, where Claude can be
+  pointed at them. The folder ignores itself — the app leaves a `.gitignore` of `*` in it — so it
+  never shows up in `git status` and no repo has to list it. A `.claudeweb/` folder from before the
+  rename is still read: its postponed messages move across when the session is next opened, and its
+  images stay where the messages naming them expect them, until you delete the folder.
 - **Sessions survive an app restart.** Each session's pseudoconsole lives in its own detached
   `Hangar.PtyHost.exe`, so an in-app update, a `deploy.ps1`, the tray's **Stop server** or even a
   crash of the server leaves the session running — and closing the tray never touches a session at

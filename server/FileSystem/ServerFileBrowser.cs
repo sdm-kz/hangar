@@ -212,6 +212,7 @@ public static class ServerFileBrowser
         {
             var full = Path.GetFullPath(path);
             Directory.CreateDirectory(full);
+            SessionDataFolder.Claim(full); // the screenshot app makes <folder>/.hangar/uploads this way
             return full;
         }
         catch { return null; }

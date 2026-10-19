@@ -351,7 +351,7 @@ export const api = {
     return res.json();
   },
 
-  // ---- Postponed messages (server-backed per session, in .claudeweb/postponed/<id>.json) ----
+  // ---- Postponed messages (server-backed per session, in .hangar/postponed/<id>.json) ----
   // Stored server-side so the pool survives a reload and is shared across devices. Returns the raw
   // parsed JSON (an array); the caller validates the shape.
   getPostponed(sessionId: string): Promise<unknown> {
@@ -745,7 +745,7 @@ export const api = {
       body: JSON.stringify({ path, content, dir }),
     });
   },
-  // Save a pasted image under .claudeweb/uploads/ in the working dir; returns its path so we can
+  // Save a pasted image under .hangar/uploads/ in the working dir; returns its path so we can
   // hand it to the Claude session.
   uploadSessionImage(id: string, dataBase64: string, ext: string): Promise<{ path: string; fullPath: string }> {
     return request(`/api/sessions/${id}/fs/upload-image`, {

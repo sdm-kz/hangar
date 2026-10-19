@@ -511,7 +511,7 @@ async fn start_session(app: AppHandle, request: Request<'_>) -> Result<StartedSe
     // Before anything is written there: the upload creates the folders it needs, and a mistyped path
     // would otherwise come into being and have the session start in it.
     let folder = client.resolve_folder(&folder).await?;
-    let uploads = format!("{}/.claudeweb/uploads", folder.trim_end_matches(['/', '\\']));
+    let uploads = format!("{}/.hangar/uploads", folder.trim_end_matches(['/', '\\']));
     let name = format!("pasted-{}.png", chrono::Local::now().format("%Y%m%d-%H%M%S-%3f"));
     let image = client.upload_to_folder(&uploads, &name, &png).await?;
     let created = client

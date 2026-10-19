@@ -99,7 +99,8 @@ public static class SessionFileBrowser
         if (full is null) return null;
         var dir = Path.GetDirectoryName(full);
         if (dir is null) return null;
-        Directory.CreateDirectory(dir); // e.g. .claudeweb/uploads/ may not exist yet
+        Directory.CreateDirectory(dir); // e.g. .hangar/uploads/ may not exist yet
+        SessionDataFolder.Claim(dir);
         File.WriteAllBytes(full, bytes);
         return full;
     }
@@ -114,6 +115,7 @@ public static class SessionFileBrowser
         if (full is null) return null;
         if (full.Equals(Path.GetFullPath(root), StringComparison.OrdinalIgnoreCase)) return null; // no-op
         Directory.CreateDirectory(full);
+        SessionDataFolder.Claim(full);
         return RelOf(root, full);
     }
 

@@ -37,7 +37,7 @@ export interface ReviewContext {
  */
 export function reviewFilePath(repo: string | undefined, number: number): string {
   const owner = repo ? `${repo.replace(/[^\w.-]+/g, "-")}-` : "";
-  return `.claudeweb/reviews/${owner}pr-${number}.md`;
+  return `.hangar/reviews/${owner}pr-${number}.md`;
 }
 
 /** A code fence that the code inside it cannot close: one backtick longer than its longest run. */
