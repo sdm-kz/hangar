@@ -96,6 +96,29 @@ if (-not (Test-Path $targetSettings)) {
   Write-Host "    Preserved existing appsettings.json" -ForegroundColor Green
 }
 
+# A build staged for the in-app updater before this deploy is now older than what is installed. Left
+# there, it would be offered as an "update" and roll the app back (an app from before the updater
+# compared build times did exactly that). Removed, unless it is newer than the build just deployed.
+$staging = "C:\apps\hangar-updates"
+try {
+  $configured = (Get-Content $targetSettings -Raw | ConvertFrom-Json).Update.StagingPath
+  if ($configured) { $staging = $configured }
+} catch { }
+$payload = Join-Path $staging "payload"
+$stagedStamp = Join-Path $payload "build.json"
+if (Test-Path $stagedStamp) {
+  try {
+    $staged = Get-Content $stagedStamp -Raw | ConvertFrom-Json
+    $deployed = Get-Content (Join-Path $Target "build.json") -Raw | ConvertFrom-Json
+    if ([datetime]$staged.builtAtUtc -le [datetime]$deployed.builtAtUtc) {
+      Remove-Item -Recurse -Force $payload
+      Write-Host "    Removed the staged update $($staged.buildId): not newer than this deploy" -ForegroundColor Yellow
+    }
+  } catch {
+    Write-Host "    Could not compare the staged update with this deploy: $($_.Exception.Message)" -ForegroundColor Yellow
+  }
+}
+
 # --- 4) Launch the app so it's running after every deploy (unless -NoRestart) ----------------
 # Prefer the service when one is installed (whether or not it was running before); otherwise the
 # daemon exe. This also covers a deploy that started with the app stopped — it still comes back up.

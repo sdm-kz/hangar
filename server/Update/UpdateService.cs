@@ -78,9 +78,7 @@ public sealed class UpdateService : BackgroundService
         {
             lock (_gate)
             {
-                var available = _options.Enabled
-                    && _staged is not null
-                    && _staged.BuildId != _current?.BuildId;
+                var available = _options.Enabled && _staged?.IsNewerThan(_current) == true;
                 return new UpdateStatus(_options.Enabled, available, _current, _staged, _state, _error);
             }
         }
@@ -153,8 +151,11 @@ public sealed class UpdateService : BackgroundService
         }
         if (!changed) return;
 
-        if (staged is not null && staged.BuildId != _current?.BuildId)
+        if (staged is not null && staged.IsNewerThan(_current))
             _log.LogInformation("Update staged: {BuildId} (running {Current}).", staged.BuildId, _current?.BuildId ?? "unknown");
+        else if (staged is not null && staged.BuildId != _current?.BuildId)
+            _log.LogInformation("Staged build {BuildId} is older than the running {Current}; not offering it.",
+                staged.BuildId, _current?.BuildId ?? "unknown");
         Changed?.Invoke();
     }
 
@@ -169,6 +170,7 @@ public sealed class UpdateService : BackgroundService
             if (!_options.Enabled) return Fail("the updater is disabled (Update:Enabled=false)");
             if (_state == UpdateState.Applying) return Status; // already handed off — second click, same update
             if (_staged is null || _staged.BuildId == _current?.BuildId) return Fail("no update is staged");
+            if (!_staged.IsNewerThan(_current)) return Fail("the staged build is older than the one running");
             if (string.IsNullOrWhiteSpace(_installPath)) return Fail("could not work out the install folder");
             if (!File.Exists(Path.Combine(_installPath, ServerExe)))
                 return Fail($"'{_installPath}' is not a Hangar install (no {ServerExe}) — this looks like a dev run");
@@ -213,7 +215,7 @@ public sealed class UpdateService : BackgroundService
         _error = reason;
         var status = new UpdateStatus(
             _options.Enabled,
-            _staged is not null && _staged.BuildId != _current?.BuildId,
+            _staged?.IsNewerThan(_current) == true,
             _current, _staged, _state, _error);
         Task.Run(() => Changed?.Invoke());
         return status;

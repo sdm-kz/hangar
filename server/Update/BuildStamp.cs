@@ -39,8 +39,8 @@ public sealed record ReleaseNotes(string? Summary, IReadOnlyList<string>? Change
 
 /// <summary>
 /// Identity of one build, written by scripts\build.ps1 as build.json next to the exe. Two builds are
-/// the same iff their <see cref="BuildId"/> matches — that's the whole comparison the updater makes;
-/// the rest is for the UI to show ("built 5 minutes ago, commit a1b2c3d").
+/// the same iff their <see cref="BuildId"/> matches; which is newer is <see cref="IsNewerThan"/>. The
+/// rest is for the UI to show ("built 5 minutes ago, commit a1b2c3d").
 /// </summary>
 /// <param name="BuildId">Stable name for this build: UTC build timestamp + short commit.</param>
 /// <param name="Commit">Short commit hash the build came from; null outside a git checkout.</param>
@@ -55,6 +55,21 @@ public sealed record BuildStamp(
     ReleaseNotes? Notes = null)
 {
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// Whether this build is one to offer in place of <paramref name="running"/>: a different build,
+    /// made later. Only ever forward — a build staged before the one installed (left in the staging
+    /// folder when deploy.ps1 put a newer one in) is not an update, and installing it would quietly
+    /// roll the app back. A rollback is a deploy of the older commit. When either build's time is
+    /// unknown, a different build is still offered, as before the times were compared.
+    /// </summary>
+    public bool IsNewerThan(BuildStamp? running)
+    {
+        if (running is null) return true;
+        if (BuildId == running.BuildId) return false;
+        if (BuiltAtUtc is { } mine && running.BuiltAtUtc is { } theirs) return mine > theirs;
+        return true;
+    }
 
     /// <summary>The build.json inside <paramref name="folder"/>, or null when it's missing or unreadable.</summary>
     public static BuildStamp? Read(string? folder)
