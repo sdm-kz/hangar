@@ -140,6 +140,14 @@ public sealed class TokenStore
         return PasswordHasher.Verify(password, _passwordHash) ? NewToken() : null;
     }
 
+    /// <summary>
+    /// Whether <paramref name="password"/> is this node's password, without minting a browser token — for a
+    /// peer pairing with this node (see <c>NodePairing</c>). False whenever no password is set: an open node
+    /// does not pair.
+    /// </summary>
+    public bool CheckPassword(string? password) =>
+        !AuthDisabled && !_authUnusable && password is not null && PasswordHasher.Verify(password, _passwordHash);
+
     public bool IsValid(string? token) =>
         AuthDisabled || (token is not null && (_tokens.ContainsKey(token) || IsLocalToken(token)));
 

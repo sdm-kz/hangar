@@ -36,6 +36,10 @@
     <PackageReference Include="SshNet.Agent" Version="2026.0.0" />
     <!-- Web Push (VAPID) so the server can notify a subscribed browser/PWA even when its tab is closed. -->
     <PackageReference Include="WebPush" Version="1.0.13" />
+    <!-- /n/{id}/…: a paired node's API and sockets forwarded through this one (Nodes/NodeProxy.cs). -->
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+    <!-- DPAPI for the peer tokens in nodes.json (Nodes/PeerStore.cs). Windows only at run time. -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>

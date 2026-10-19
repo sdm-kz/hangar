@@ -1,8 +1,9 @@
-import { useContext, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useContext, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { filesUrl } from "@/lib/urlState";
 import { Button } from "@/components/ui/button";
-import { FolderTree, LogOut, MessagesSquare, PanelLeftClose, Plus, SquareTerminal } from "lucide-react";
+import { FolderTree, LogOut, MessagesSquare, Network, PanelLeftClose, Plus, SquareTerminal } from "lucide-react";
+import { NodesDialog } from "./NodesDialog";
 import { NotificationToggle } from "./NotificationToggle";
 import { SessionsProgressContext } from "./SessionsProgressMenu";
 import { ThemeToggle } from "./ThemeToggle";
@@ -49,6 +50,7 @@ export function AppSidebar({
 }) {
   // The Sessions count, while it shows, is what crowds the row -- see TabLabel.
   const crowded = useContext(SessionsProgressContext).active > 0;
+  const [nodesOpen, setNodesOpen] = useState(false);
   return (
     <div className="flex h-full flex-col bg-card">
       {/* App header sits above the tabs so the branding is always on top. */}
@@ -124,6 +126,16 @@ export function AppSidebar({
         >
           <LogOut className="size-4" />
         </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8 text-muted-foreground"
+          title="Nodes — other machines running Hangar"
+          onClick={() => setNodesOpen(true)}
+        >
+          <Network className="size-4" />
+        </Button>
+        {nodesOpen && <NodesDialog onClose={() => setNodesOpen(false)} />}
         <div className="ml-auto flex items-center gap-1">
           {update}
           <NotificationToggle />

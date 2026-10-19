@@ -269,6 +269,9 @@ internal static class Program
         // No console in the WinExe build — keep a diagnostic trail on disk.
         var logDir = LogDirectory();
         builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(logDir, "hangar.log")));
+        // YARP logs every request it forwards (/n/{id}/…) at Information, URL and all — and a URL can carry a
+        // preview ticket, a credential. Its warnings and errors are the part worth keeping.
+        builder.Logging.AddFilter("Yarp", LogLevel.Warning);
 
         var urls = builder.Configuration["Server:Urls"] ?? "http://0.0.0.0:5099";
         builder.WebHost.UseUrls(urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
@@ -359,6 +362,20 @@ internal static class Program
         builder.Services.AddSingleton<VapidKeyStore>();
         builder.Services.AddSingleton<PushSubscriptionStore>();
         builder.Services.AddHostedService<PushNotifier>();
+        // Other machines running Hangar (plans/multi-node.md): this node's identity, the peers it reaches and
+        // the tokens it issued to the ones that reach it, pairing, and /n/{id}/… — a peer's API through here.
+        var firstUrl = urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "";
+        builder.Services.AddSingleton(new Nodes.NodeOptions
+        {
+            Port = PortFromUrls(urls),
+            Scheme = firstUrl.StartsWith("https:", StringComparison.OrdinalIgnoreCase) ? "https" : "http",
+        });
+        builder.Services.AddSingleton<Nodes.NodeIdentityStore>();
+        builder.Services.AddSingleton<Nodes.PeerStore>();
+        builder.Services.AddSingleton<Nodes.PeerTokenStore>();
+        builder.Services.AddSingleton<Nodes.NodePairing>();
+        builder.Services.AddHttpForwarder();
+        builder.Services.AddSingleton<Nodes.NodeProxy>();
         builder.Services.ConfigureHttpJsonOptions(o =>
             o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
@@ -953,6 +970,9 @@ internal static class Program
         // Remote files tabs (SSH/SFTP) and pasting between panels — see Remote/RemoteEndpoints.cs.
         Remote.RemoteEndpoints.Map(app);
 
+        // This node, its peers, and /n/{id}/… — see Nodes/NodeEndpoints.cs.
+        Nodes.NodeEndpoints.Map(app);
+
         // ---- Session templates (named launch presets: project, folder, prompt template) ------------
         // Same shape as the projects above — every mutation answers with the whole list, so a client
         // replaces its state from the response rather than patching it.
@@ -1225,7 +1245,7 @@ internal static class Program
             // Appended as bytes rather than by decoding and re-encoding: the tag is pure ASCII, so
             // it lands correctly on the end of any UTF-8 document without this handler needing an
             // opinion about the text in front of it.
-            var tag = System.Text.Encoding.UTF8.GetBytes(Web.HtmlPreview.ScrollBridgeTag(ticket));
+            var tag = System.Text.Encoding.UTF8.GetBytes(Web.HtmlPreview.ScrollBridgeTag(path));
             var body = new byte[document.Length + tag.Length];
             document.CopyTo(body, 0);
             tag.CopyTo(body, document.Length);

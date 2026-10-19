@@ -185,6 +185,22 @@ The web UI is a **session manager with a full terminal**:
   Files panel, or the other way round, or between two SSH tabs, or within one host (where a copy is
   a native `cp -a`). The selection bar and Ctrl+C / Ctrl+X / Ctrl+V in either tree do the same. A
   paste never overwrites — a name already taken gets " (1)", as an upload does.
+- **Nodes (other machines running Hangar)** — the network button at the bottom of the sidebar opens
+  **Nodes**: this machine's name, colour and the address other nodes reach it at, the nodes it is
+  paired with, and the nodes allowed to reach it. **Pair** takes the other node's address and
+  password, once; the password is not kept — each side keeps a token the other minted instead (in
+  `nodes.json`, sealed with DPAPI on Windows; the tokens it issued are kept hashed in
+  `peers-in.json`). Pairing is both ways by default, so the other node lists this one too; untick
+  *Both ways* for a node that should be reachable but not see the others. Both nodes need a password
+  set — an open node refuses to pair. An `https://` node whose certificate the OS doesn't trust (a
+  self-signed one on a NAS) shows its fingerprint to confirm, the way an SSH host key does, and a
+  changed certificate later is refused until you trust the new one. *Forget* stops reaching a node
+  and tells it to drop its token; *Revoke* takes a node's way in away.
+
+  A paired node's whole API and its sockets are reachable through this one at `/n/<node id>/…`, with
+  this node's login — the groundwork for one sidebar over every machine (`plans/multi-node.md`); the
+  sidebar does not show other nodes' sessions yet. A paired node can do anything on this one that you
+  can, so pair only machines you would give the password to.
 - **GitHub pull requests** — a session whose folder is a GitHub repo gets a **PRs** button right
   after *Files*, and the repo's pull requests one click behind it: **Open** ones by default, with
   **Closed** (which includes merged) and **All** on the tabs beside it, and a box that filters the
@@ -860,11 +876,15 @@ and it survives a reopen; a worktree removed later quietly falls back to the ses
   once you clear `Auth:Password` after first launch. Serve over your trusted LAN; put it behind a
   reverse proxy with TLS if you expose it more widely.
 - Launched sessions run in Claude's normal permission mode — you approve actions from the app.
+- A **paired node's token** grants what a browser login does — a shell on this machine — except
+  managing this node's pairings, and it never reaches past this node (`/n/…` refuses a request that
+  came from another node). A peer's `401` reaches the browser as a `502`, so a node that revoked this
+  one doesn't sign you out here.
 
 ## Layout
 
 ```
-server/   .NET 10 daemon, the Minimal API host (Program.cs, Sessions/, Auth/, FileSystem/, Diagnostics/, Logging/, Update/)
+server/   .NET 10 daemon, the Minimal API host (Program.cs, Sessions/, Auth/, Nodes/, FileSystem/, Diagnostics/, Logging/, Update/)
 tray/     Windows tray icon — a client of the daemon's API (WinForms)
 ptyhost/  the per-session pty host that owns each pseudoconsole
 shared/   source compiled into two projects: Pty/ (daemon ↔ pty host), Contract/ (daemon ↔ tray)

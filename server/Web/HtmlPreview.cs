@@ -128,8 +128,13 @@ public static class HtmlPreview
     /// rewritten. A page carrying its own script-blocking CSP won't run it and loses scroll memory;
     /// nothing else about the preview is affected.
     /// </summary>
-    public static string ScrollBridgeTag(string ticket) =>
-        $"\n<script src=\"/api/preview/{ticket}/{ScrollBridgePath}\"></script>\n";
+    /// <remarks>
+    /// Relative to the document, not rooted at <c>/api/preview</c>: the same page is also served through another
+    /// node, under <c>/n/{id}/api/preview/…</c>, where a rooted path would ask this node for a ticket it never
+    /// minted. <paramref name="documentPath"/> is the page's path under the ticket, which sets how far up to go.
+    /// </remarks>
+    public static string ScrollBridgeTag(string documentPath) =>
+        $"\n<script src=\"{string.Concat(Enumerable.Repeat("../", documentPath.Count(c => c == '/')))}{ScrollBridgePath}\"></script>\n";
 
     /// <summary>
     /// Whether a document opens with a UTF-16 byte-order mark. Such a file is left alone entirely —

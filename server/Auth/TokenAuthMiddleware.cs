@@ -1,10 +1,14 @@
+using Hangar.Server.Nodes;
+
 namespace Hangar.Server.Auth;
 
 /// <summary>
-/// Gates /api/* and /hub/* behind a bearer token (Authorization header or ?access_token= for SignalR).
-/// The login endpoint and everything else (the SPA static files) pass through.
+/// Gates /api/* and /hub/* behind a bearer token (Authorization header or ?access_token= for SignalR) — a
+/// browser's, the tray's local one, or a paired node's peer token. The login endpoint and everything else
+/// (the SPA static files) pass through. <c>/n/*</c>, a peer's API through this node, checks its own: see
+/// <see cref="NodeProxy"/>.
 /// </summary>
-public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
+public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens, PeerTokenStore peerTokens)
 {
     public async Task Invoke(HttpContext ctx)
     {
@@ -18,6 +22,9 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
             || path.StartsWithSegments("/api/auth/config")
             // The VAPID public key is not secret and the browser needs it before it can subscribe.
             || path.StartsWithSegments("/api/push/config")
+            // Another node pairing with this one: its credential is this node's password, in the body,
+            // checked inside the endpoint (NodePairing.AcceptAsync).
+            || (path.Equals("/api/nodes/pair", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPost(ctx.Request.Method))
             || path.StartsWithSegments("/api/hooks")
             // Self-service endpoints for a launched session acting on itself (e.g. renaming). Same
             // deal as the hooks: no browser token, authenticated inside the endpoint by the
@@ -53,6 +60,31 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
         }
 
         var token = ExtractToken(ctx.Request);
+
+        // Another node, with the token this one issued it at pairing (see PeerTokenStore). Checked before the
+        // browser tokens so that it is marked as a peer however this node is configured: the proxy's hop
+        // guard and the node endpoints go by the mark.
+        if (peerTokens.Validate(token) is { } peer)
+        {
+            // A token minted for a pairing still in flight (no node bound yet) proves one thing — that the way
+            // back works — and is good for nothing else. Whoever answered at the address being paired with holds
+            // it, and the pairing may yet fail.
+            var pendingMisuse = peer.NodeId is null
+                && !(HttpMethods.IsGet(ctx.Request.Method) && path.Equals("/api/node", StringComparison.OrdinalIgnoreCase));
+            if (pendingMisuse || !PeerMayReach(ctx.Request))
+            {
+                ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await ctx.Response.WriteAsJsonAsync(new { error = "not available to another node" });
+                return;
+            }
+            ctx.Items[PeerItem] = peer;
+            // Revoking the token cuts this request too — a terminal relayed for a peer stays open for hours,
+            // and "revoked" has to mean now, not at its next reconnect.
+            using (peerTokens.RevokedToken(peer.Key).Register(ctx.Abort))
+                await next(ctx);
+            return;
+        }
+
         if (!tokens.IsValid(token))
         {
             ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -61,6 +93,24 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens)
         }
 
         await next(ctx);
+    }
+
+    private const string PeerItem = "Hangar.Peer";
+
+    /// <summary>The peer a request came from, when it authenticated with a peer token; null for anyone else.</summary>
+    public static InboundPeer? PeerOf(HttpContext ctx) => ctx.Items[PeerItem] as InboundPeer;
+
+    /// <summary>
+    /// What a peer token opens: everything a browser's does — which is a shell on this machine, the same trust
+    /// as the password it was paired with — except managing this node's pairings and identity. The one node
+    /// endpoint a peer calls is <c>unpair</c>, dropping its own token when it forgets this node.
+    /// </summary>
+    private static bool PeerMayReach(HttpRequest req)
+    {
+        if (req.Path.StartsWithSegments("/api/nodes"))
+            return HttpMethods.IsPost(req.Method) && req.Path.Equals("/api/nodes/unpair", StringComparison.OrdinalIgnoreCase);
+        if (req.Path.StartsWithSegments("/api/node")) return HttpMethods.IsGet(req.Method);
+        return true;
     }
 
     internal static string? ExtractToken(HttpRequest req)

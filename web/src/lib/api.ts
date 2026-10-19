@@ -1,4 +1,5 @@
 import type {
+  AllowedNode,
   BrowseResult,
   CreateSessionRequest,
   FileListing,
@@ -17,6 +18,10 @@ import type {
   GitHubPullList,
   GitWorktree,
   LinkProbe,
+  NodeInfo,
+  NodesOverview,
+  PeerNode,
+  PeerStatus,
   Project,
   PtyOrphan,
   RemoteConnection,
@@ -70,7 +75,8 @@ export type SchedulePatch = Partial<
 >;
 
 class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /** `body` is the error's JSON, for the few callers that read more than its `error`. */
+  constructor(public status: number, message: string, public body?: unknown) {
     super(message);
   }
 }
@@ -89,11 +95,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) {
     let msg = res.statusText;
+    let body: unknown;
     try {
-      const body = await res.json();
-      msg = body.error ?? msg;
+      body = await res.json();
+      msg = (body as { error?: string }).error ?? msg;
     } catch { /* ignore */ }
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, body);
   }
   if (res.status === 204 || res.headers.get("content-length") === "0")
     return undefined as T;
@@ -579,6 +586,42 @@ export const api = {
    */
   applyUpdate(): Promise<UpdateStatus> {
     return request("/api/update/apply", { method: "POST" });
+  },
+
+  // ---- Nodes: this machine's identity and the other machines it is paired with ----
+  nodes(): Promise<NodesOverview> {
+    return request("/api/nodes");
+  },
+  /** Rename, recolour or re-address this node. A field left out stays; "" clears the colour or address. */
+  updateSelfNode(patch: { name?: string; color?: string; url?: string }): Promise<NodeInfo> {
+    return request("/api/node", { method: "POST", body: JSON.stringify(patch) });
+  },
+  /**
+   * Pair with another node, using its password once. A 409 whose body carries `certificate` means its
+   * certificate needs a person to look at it: try again with that `fingerprint` to trust it.
+   */
+  addNode(req: { url: string; password: string; mutual: boolean; fingerprint?: string }): Promise<{
+    node: PeerNode;
+    mutual: "ok" | "unreachable" | "off";
+  }> {
+    return request("/api/nodes", { method: "POST", body: JSON.stringify(req) });
+  },
+  updateNode(id: string, patch: { name?: string; color?: string; url?: string; enabled?: boolean }): Promise<PeerNode> {
+    return request(`/api/nodes/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(patch) });
+  },
+  /** Stop reaching a node. `revoke` also takes away its way in here. */
+  forgetNode(id: string, revoke = false): Promise<void> {
+    return request(`/api/nodes/${encodeURIComponent(id)}${revoke ? "?revoke=true" : ""}`, { method: "DELETE" });
+  },
+  nodeStatus(id: string): Promise<PeerStatus> {
+    return request(`/api/nodes/${encodeURIComponent(id)}/status`);
+  },
+  /** Trust the certificate a node presents now, in place of the pinned one. */
+  trustNode(id: string, fingerprint: string): Promise<PeerNode> {
+    return request(`/api/nodes/${encodeURIComponent(id)}/trust`, { method: "POST", body: JSON.stringify({ fingerprint }) });
+  },
+  revokeAllowedNode(key: AllowedNode["key"]): Promise<void> {
+    return request(`/api/nodes/allowed/${encodeURIComponent(key)}`, { method: "DELETE" });
   },
 
   // ---- Web Push (background notifications) ----

@@ -661,3 +661,60 @@ export interface PullFolds {
   /** Paths whose state is the opposite of that baseline — the files folded or opened by hand. */
   except?: string[];
 }
+
+// ---- Nodes: other machines running Hangar (plans/multi-node.md) ----
+
+/** A node's identity, as `GET /api/node` answers it. */
+export interface NodeInfo {
+  id: string;
+  name: string;
+  color: string | null;
+  /** The address peers reach this node at; null when each pairing works it out from the request. */
+  url: string | null;
+  version: string | null;
+  os: "windows" | "linux" | "macos" | "other";
+  capabilities: string[];
+}
+
+/** A peer this node reaches. */
+export interface PeerNode {
+  id: string;
+  name: string;
+  url: string;
+  color: string | null;
+  /** The pinned certificate (a self-signed https peer); null for http, or a certificate the OS trusts. */
+  fingerprint: string | null;
+  enabled: boolean;
+  addedAt: string;
+}
+
+/** A node allowed to reach this one: a peer token this node issued. */
+export interface AllowedNode {
+  key: string;
+  nodeId: string;
+  name: string | null;
+  url: string | null;
+  issuedAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface NodesOverview {
+  self: NodeInfo;
+  peers: PeerNode[];
+  allowed: AllowedNode[];
+}
+
+/** What a peer's TLS handshake showed. */
+export interface CertificateSeen {
+  fingerprint: string | null;
+  subject: string | null;
+  /** Whether the OS trusts it on its own. */
+  valid: boolean;
+}
+
+export interface PeerStatus {
+  status: "online" | "offline" | "unauthorized" | "incompatible" | "certificate";
+  node: NodeInfo | null;
+  error: string | null;
+  certificate: CertificateSeen | null;
+}
