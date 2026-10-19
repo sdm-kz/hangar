@@ -2,10 +2,11 @@ import { useContext, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { filesUrl } from "@/lib/urlState";
 import { Button } from "@/components/ui/button";
-import { Bot, FolderTree, LogOut, MessagesSquare, PanelLeftClose, Plus, SquareTerminal } from "lucide-react";
+import { FolderTree, LogOut, MessagesSquare, PanelLeftClose, Plus, SquareTerminal } from "lucide-react";
 import { NotificationToggle } from "./NotificationToggle";
 import { SessionsProgressContext } from "./SessionsProgressMenu";
 import { ThemeToggle } from "./ThemeToggle";
+import logo from "@/assets/hangar-logo.png";
 
 export type SidebarTab = "sessions" | "files" | "shells";
 
@@ -52,9 +53,7 @@ export function AppSidebar({
     <div className="flex h-full flex-col bg-card">
       {/* App header sits above the tabs so the branding is always on top. */}
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
-        <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Bot className="size-4" />
-        </div>
+        <img src={logo} alt="" className="size-7 shrink-0 object-contain" />
         <span className="min-w-0 truncate font-semibold">Hangar</span>
         {/* New session lives here rather than in the session list: it applies to both tabs, and the
             header has room the list header doesn't. */}

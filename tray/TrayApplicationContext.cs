@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Drawing.Drawing2D;
 using System.Text;
 
 namespace Hangar.Tray;
@@ -36,8 +35,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext(DaemonConnection daemon)
     {
         _daemon = daemon;
-        _onlineIcon = CreateIcon(Color.FromArgb(217, 119, 87));
-        _offlineIcon = CreateIcon(Color.FromArgb(150, 150, 150));
+        _onlineIcon = LoadIcon("hangar.ico");
+        _offlineIcon = LoadIcon("hangar-offline.ico");
 
         var menu = new ContextMenuStrip();
         menu.Opening += (_, e) =>
@@ -419,27 +418,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         ExitThread();
     }
 
-    // A small disc with a white sunburst — terracotta while connected, grey while not. No icon asset to ship.
-    private static Icon CreateIcon(Color disc)
+    // The logo in colour while connected, grey while not (assets\, built by scripts\make-icons.py). The
+    // frame for the tray's own size: the taskbar's small icon, 16 px at 100% and more at higher scaling.
+    private static Icon LoadIcon(string name)
     {
-        using var bmp = new Bitmap(32, 32);
-        using (var g = Graphics.FromImage(bmp))
-        {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Color.Transparent);
-            using var bg = new SolidBrush(disc);
-            g.FillEllipse(bg, 1, 1, 30, 30);
-            using var pen = new Pen(Color.White, 2.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
-            const float cx = 16, cy = 16, r1 = 3.5f, r2 = 10f;
-            for (var i = 0; i < 8; i++)
-            {
-                var a = i * Math.PI / 4;
-                g.DrawLine(pen,
-                    (float)(cx + r1 * Math.Cos(a)), (float)(cy + r1 * Math.Sin(a)),
-                    (float)(cx + r2 * Math.Cos(a)), (float)(cy + r2 * Math.Sin(a)));
-            }
-        }
-        return Icon.FromHandle(bmp.GetHicon());
+        using var stream = typeof(TrayApplicationContext).Assembly.GetManifestResourceStream($"Hangar.Tray.{name}")
+            ?? throw new InvalidOperationException($"Missing embedded icon {name}.");
+        return new Icon(stream, SystemInformation.SmallIconSize);
     }
 
     protected override void Dispose(bool disposing)

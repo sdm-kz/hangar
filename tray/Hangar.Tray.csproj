@@ -17,7 +17,15 @@
     <Product>Hangar</Product>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- The exe's icon (Explorer, Task Manager, the header of the tray's notifications). -->
+    <ApplicationIcon>..\assets\hangar.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The tray icon itself, connected and not (built by scripts\make-icons.py). -->
+    <EmbeddedResource Include="..\assets\hangar.ico" LogicalName="Hangar.Tray.hangar.ico" />
+    <EmbeddedResource Include="..\assets\hangar-offline.ico" LogicalName="Hangar.Tray.hangar-offline.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- The session and project records, and the membership rules the running-sessions menu is built

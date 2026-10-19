@@ -27,10 +27,11 @@ import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
-import { Bot, Loader2, Menu, Plus } from "lucide-react";
+import { Loader2, Menu, Plus } from "lucide-react";
 import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { SessionsProgressContext, SessionsProgressMenu } from "@/components/SessionsProgressMenu";
 import { combineShellMarks, shellMark, useShellsSeen, type ShellActivity, type ShellMark } from "@/lib/shellActivity";
+import logo from "@/assets/hangar-logo.png";
 
 type AuthStatus = "loading" | "authed" | "anon";
 
@@ -1323,9 +1324,7 @@ function EmptyState({
         {update}
       </header>
       <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
-        <div className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-          <Bot className="size-7" />
-        </div>
+        <img src={logo} alt="" className="size-14 object-contain" />
         <div>
           <h2 className="text-lg font-semibold">No session selected</h2>
           <p className="text-sm text-muted-foreground">Start a Claude Code session in a working folder.</p>

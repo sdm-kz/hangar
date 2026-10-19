@@ -3,7 +3,8 @@ import { api, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Bot, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import logo from "@/assets/hangar-logo.png";
 
 export function Login({ onSuccess }: { onSuccess: () => void }) {
   const [password, setPassword] = useState("");
@@ -31,9 +32,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
         className="w-full max-w-sm space-y-6 rounded-xl border bg-card p-8 shadow-sm"
       >
         <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Bot className="size-6" />
-          </div>
+          <img src={logo} alt="" className="size-12 object-contain" />
           <h1 className="text-xl font-semibold">Hangar</h1>
           <p className="text-sm text-muted-foreground">Sign in to manage Claude Code sessions</p>
         </div>

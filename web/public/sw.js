@@ -27,7 +27,7 @@ self.addEventListener("push", (event) => {
     renotify: !!data.tag,
     data: { sessionId: data.sessionId || null },
     icon: "/icons/icon-192.png",
-    badge: "/icons/icon-192.png",
+    badge: "/icons/badge-96.png", // Android draws it from the alpha alone: a white silhouette
   };
 
   event.waitUntil(

@@ -1,7 +1,9 @@
 // Badge the browser-tab favicon with a status dot, so a backgrounded tab still tells you whether
-// Claude is working somewhere (green) or waiting on you (amber). The icon is the same robot emoji
-// declared in index.html, re-emitted as an SVG data URI with a circle drawn over its top-right
-// corner — no canvas, no image assets.
+// Claude is working somewhere (green) or waiting on you (amber). The icon is the logo index.html
+// names, inlined into an SVG data URI with a circle drawn over its top-right corner — no canvas. An
+// SVG used as an image may not fetch anything, hence the logo inlined rather than linked.
+
+import logo from "@/assets/hangar-favicon.png?inline";
 
 export type FaviconStatus = "idle" | "busy" | "waiting";
 
@@ -12,7 +14,7 @@ const DOT: Record<Exclude<FaviconStatus, "idle">, string> = {
 };
 
 function svg(status: FaviconStatus) {
-  // The badge carries a white ring so it stays legible against the robot at 16px, where the dot is
+  // The badge carries a white ring so it stays legible against the logo at 16px, where the dot is
   // only a few pixels across.
   const dot =
     status === "idle"
@@ -20,7 +22,7 @@ function svg(status: FaviconStatus) {
       : `<circle cx="74" cy="26" r="24" fill="${DOT[status]}" stroke="#fff" stroke-width="8"/>`;
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">` +
-    `<text y=".9em" font-size="90">\u{1F916}</text>${dot}</svg>`
+    `<image href="${logo}" width="100" height="100"/>${dot}</svg>`
   );
 }
 
