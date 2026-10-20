@@ -5,7 +5,7 @@
 // one message. The file is plain Markdown on purpose: it is what Claude is handed, so what the
 // reader edits in it is exactly what gets sent.
 
-import { api } from "./api";
+import type { Api } from "./api";
 
 /** The lines a comment is about. */
 export interface ReviewTarget {
@@ -114,7 +114,7 @@ export function commentCount(n: number): string {
 }
 
 /** The review as it is on disk, or "" when there is none yet. */
-export async function readReview(sessionId: string, path: string): Promise<string> {
+export async function readReview(api: Api, sessionId: string, path: string): Promise<string> {
   try {
     return await api.fetchSessionFileText(sessionId, path);
   } catch (e) {
@@ -124,12 +124,12 @@ export async function readReview(sessionId: string, path: string): Promise<strin
 }
 
 /** Put the review on disk, making its folder the first time. */
-export async function writeReview(sessionId: string, path: string, text: string): Promise<void> {
+export async function writeReview(api: Api, sessionId: string, path: string, text: string): Promise<void> {
   await api.createSessionFolder(sessionId, path.slice(0, path.lastIndexOf("/")));
   await api.writeSessionFile(sessionId, path, text);
 }
 
 /** Done with: the review has been sent, or thrown away. */
-export function deleteReview(sessionId: string, path: string): Promise<void> {
+export function deleteReview(api: Api, sessionId: string, path: string): Promise<void> {
   return api.deleteSessionFile(sessionId, path);
 }

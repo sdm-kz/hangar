@@ -10,7 +10,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { api, sessionFileUrl } from "@/lib/api";
 import { uploadImageFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -25,6 +24,7 @@ import {
   type PostponedMessage,
 } from "@/lib/postponed";
 import type { TerminalPaneHandle } from "./TerminalPane";
+import { useApi } from "@/lib/node";
 
 // Small delay between items in a "Send all" flush so Claude Code's TUI registers each as a distinct
 // queued message rather than merging back-to-back submits.
@@ -69,6 +69,7 @@ export function PostponedPool({
   // Whether auto-send is on, as the server reports it.
   autoSend?: boolean;
 }) {
+  const api = useApi();
   const [messages, setMessages] = useState<PostponedMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [draftImages, setDraftImages] = useState<PostponedImage[]>([]);
@@ -112,7 +113,7 @@ export function PostponedPool({
     setError(null);
     setAutoAsked(null);
     setOpen(false);
-    loadPostponed(sessionId).then((m) => { if (!cancelled) setMessages(m); }).catch(() => {});
+    loadPostponed(api, sessionId).then((m) => { if (!cancelled) setMessages(m); }).catch(() => {});
     return () => { cancelled = true; };
   }, [sessionId]);
 
@@ -142,7 +143,7 @@ export function PostponedPool({
     if (serverCount === messagesRef.current.length) return;
     let cancelled = false;
     const generation = generationRef.current;
-    loadPostponed(sessionId)
+    loadPostponed(api, sessionId)
       .then((m) => {
         if (cancelled || generation !== generationRef.current) return;
         // Emptied elsewhere: auto-send took the last one, or another device emptied the pool.
@@ -188,7 +189,7 @@ export function PostponedPool({
     (next: PostponedMessage[]) => {
       generationRef.current++;
       setMessages(next);
-      void savePostponed(sessionId, next);
+      void savePostponed(api, sessionId, next);
     },
     [sessionId]
   );
@@ -311,7 +312,7 @@ export function PostponedPool({
       if (!images.length) return;
       for (const file of images) {
         try {
-          const { path, fullPath } = await uploadImageFile(sessionId, file);
+          const { path, fullPath } = await uploadImageFile(api, sessionId, file);
           setDraftImages((prev) => [...prev, { path, fullPath }]);
           setError(null);
         } catch {
@@ -470,13 +471,13 @@ export function PostponedPool({
                       key={i}
                       type="button"
                       onClick={() =>
-                        setPreview({ src: sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
+                        setPreview({ src: api.sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
                       }
                       className="shrink-0"
                       title="Preview image"
                     >
                       <img
-                        src={sessionFileUrl(sessionId, img.path)}
+                        src={api.sessionFileUrl(sessionId, img.path)}
                         alt=""
                         className="size-9 cursor-zoom-in rounded border object-cover"
                         onError={(e) => {
@@ -536,12 +537,12 @@ export function PostponedPool({
                   <button
                     type="button"
                     onClick={() =>
-                      setPreview({ src: sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
+                      setPreview({ src: api.sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
                     }
                     title="Preview image"
                   >
                     <img
-                      src={sessionFileUrl(sessionId, img.path)}
+                      src={api.sessionFileUrl(sessionId, img.path)}
                       alt=""
                       className="size-12 cursor-zoom-in rounded border object-cover"
                       onError={(e) => {

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { Project, ProjectGroup, RemoteConnection, SessionTemplate } from "@/types";
-import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
 import { DEFAULT_PROJECT_ICON_NAME, GROUP_ICONS, groupIcon, projectIcon } from "@/lib/groupIcons";
 import { GroupAppearance, IconPicker } from "./GroupDialog";
@@ -42,6 +41,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 /** The settings popup's tabs, down its left edge. */
 type ProjectTab = "general" | "folders" | "repos" | "groups" | "templates" | "connections";
@@ -81,6 +81,7 @@ export function ProjectDialog({
   onSaved: (projects: Project[]) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const confirm = useConfirm();
   const [name, setName] = useState(project?.name ?? "");
   const [color, setColor] = useState<string | null>(project?.color ?? null);

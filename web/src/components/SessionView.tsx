@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FileEntry, GitStatus, Project, SessionInfo, SessionLink, SessionPull } from "@/types";
-import { api } from "@/lib/api";
 import { useConfirm } from "@/components/ui/confirm";
 import { patchUrlState, readUrlState, type TabName } from "@/lib/urlState";
 import {
@@ -106,6 +105,7 @@ import {
 } from "lucide-react";
 import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { writeToClipboard } from "@/lib/clipboard";
+import { sessionKey, useApi, useSessionKey } from "@/lib/node";
 
 // Wide enough for groups side by side — the width the app has always switched to its desktop
 // layout at. Narrower, the groups fold into a single strip and one of them is drawn.
@@ -130,7 +130,8 @@ function useWide(): boolean {
 function legacyLayout(sessionId: string, present: PaneRef[]): PaneLayout {
   const ui = loadSessionUi(sessionId);
   const url = readUrlState();
-  const view: TabName = (url.session === sessionId && url.tab) || ui.view || "terminal";
+  // `sessionId` is the session's key (lib/node.tsx), so the URL's session is compared as one too.
+  const view: TabName = (sessionKey(url.node, url.session ?? "") === sessionId && url.tab) || ui.view || "terminal";
   // The shells are fetched from the server and are not in `present` yet; a shell the session was
   // showing is kept in the layout until they arrive and say whether it is still there.
   const tabs = view === "shell" && ui.shell && !present.includes(shellRef(ui.shell)) ? [...present, shellRef(ui.shell)] : present;
@@ -213,7 +214,7 @@ function ClosedTerminal({
 }: {
   session: SessionInfo;
   onReopen: () => void;
-  onReopenWithOptions: () => void;
+  onReopenWithOptions?: () => void;
 }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
@@ -237,10 +238,12 @@ function ClosedTerminal({
         {/* The same relaunch, through the create dialog: the model, the permission mode and the
             prompt are all adjustable there before anything starts. Second, and quieter, because
             most reopens want the session back exactly as it was. */}
-        <Button variant="outline" onClick={onReopenWithOptions} className="gap-2">
-          <Pencil className="size-4" />
-          Reopen with options…
-        </Button>
+        {onReopenWithOptions && (
+          <Button variant="outline" onClick={onReopenWithOptions} className="gap-2">
+            <Pencil className="size-4" />
+            Reopen with options…
+          </Button>
+        )}
       </div>
       <p className="text-[11px] text-muted-foreground">
         Resumes{" "}
@@ -327,8 +330,11 @@ export function SessionView({
   onStopped: (session: SessionInfo) => void;
   /** Relaunch a closed session, resuming its conversation. Confirmed by the caller. */
   onReopen: () => void;
-  /** The same, through the create dialog, so the launch can be adjusted before it starts. */
-  onReopenWithOptions: () => void;
+  /**
+   * The same, through the create dialog, so the launch can be adjusted before it starts. Absent for a
+   * peer's session until the dialog can launch on another node (plans/multi-node.md phase 5).
+   */
+  onReopenWithOptions?: () => void;
   onRename: (id: string, name: string) => void;
   // Apply a rename detected in this session's terminal (Claude's /rename confirmation).
   onTerminalRename?: (id: string, name: string) => void;
@@ -342,6 +348,10 @@ export function SessionView({
   project?: Project | null;
   onProjectsChange?: (projects: Project[]) => void;
 }) {
+  const api = useApi();
+  // What the session's saved UI state and the other per-session stores know it by: the bare id on this
+  // node, node:id on a peer (lib/node.tsx).
+  const uiKey = useSessionKey(session.id);
   const confirm = useConfirm();
   // Closed: the session is a row and a folder, with no process behind either. Everything reading the
   // folder works as it always did; what needs something to talk to — the terminal, the watchdog,
@@ -352,7 +362,7 @@ export function SessionView({
   const [renaming, setRenaming] = useState(false);
   const wide = useWide();
   // The files this session has open. Each is a tab in whichever group of the pane holds it.
-  const { fileTabs, closeGuard, settleCloseGuard } = useFileTabs(session.id);
+  const { fileTabs, closeGuard, settleCloseGuard } = useFileTabs(uiKey);
   const [copiedPath, setCopiedPath] = useState(false);
   // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
   const [wdEnabled, setWdEnabled] = useState(session.watchdogEnabled);
@@ -367,9 +377,9 @@ export function SessionView({
   const shells = useShells({
     owner: { sessionId: session.id, workingDirectory: session.workingDirectory },
     shellsRev,
-    initialActive: () => loadSessionUi(session.id).shell ?? null,
+    initialActive: () => loadSessionUi(uiKey).shell ?? null,
     // A click is a choice worth remembering, and the bag is shared, so it follows to every device.
-    onActivate: (id) => saveSessionUi(session.id, { shell: id }),
+    onActivate: (id) => saveSessionUi(uiKey, { shell: id }),
     onError: (message) =>
       void confirm({
         title: "Could not open a shell",
@@ -382,18 +392,18 @@ export function SessionView({
   // The web pages pinned to this session — a Jira issue, a PR, a doc — as tabs beside the shells.
   // Unlike the shells there is no process behind them, so they live in the session's UI bag and the
   // hook is the whole of the feature's state.
-  const links = useSessionLinks(session.id);
+  const links = useSessionLinks(uiKey);
   // The add/edit dialog: null when closed, `{}` when adding, `{ edit }` when changing one.
   const [linkDialog, setLinkDialog] = useState<{ edit?: SessionLink } | null>(null);
 
   // The pull requests this session has open as tabs. Like the links they live in the session's UI
   // bag, so a review follows the session to every device; unlike them, what is drawn under the tab
   // is fetched from GitHub each time it is opened.
-  const pulls = useSessionPulls(session.id);
+  const pulls = useSessionPulls(uiKey);
 
   // Remote files tabs (SSH). Like the links, the list lives in the session's UI bag; the connection
   // behind each one is held by the server, in memory, under the tab's id.
-  const remotes = useSessionRemotes(session.id);
+  const remotes = useSessionRemotes(uiKey);
   const [remoteDialog, setRemoteDialog] = useState(false);
   const remoteTarget = useRef<string | null>(null);
 
@@ -413,8 +423,8 @@ export function SessionView({
     [pulls.pulls, fileTabs.tabs, shells.shells, links.links, remotes.remotes]
   );
 
-  const { layout, update, current, seedTick, seeded } = useSessionLayout(session.id, () =>
-    legacyLayout(session.id, present)
+  const { layout, update, current, seedTick, seeded } = useSessionLayout(uiKey, () =>
+    legacyLayout(uiKey, present)
   );
   const groups = groupsOf(layout.root);
 
@@ -608,7 +618,7 @@ export function SessionView({
         fileBrowserRef.current.revealFile(rel);
         return;
       }
-      saveSessionUi(session.id, { file: rel });
+      saveSessionUi(uiKey, { file: rel });
       void openFile(fileEntryFromPath(rel), false);
     },
     [session.id, openFile]
@@ -652,18 +662,18 @@ export function SessionView({
 
   // Leaving the session (this view is keyed by it) hands over whatever this browser still owes the
   // server, so the next device sees it.
-  useEffect(() => () => flushSessionUi(session.id), [session.id]);
+  useEffect(() => () => flushSessionUi(uiKey), [session.id]);
 
   // The saved state lives on the server, so opening a session fetches it: this device may never have
   // seen the session, or may have last seen it before another one moved things around.
   useEffect(() => {
-    void syncSessionUi(session.id, true);
+    void syncSessionUi(uiKey, true);
   }, [session.id]);
 
   // A revision on the session list higher than the one this browser holds means another browser
   // wrote — re-fetch (the tabs follow through their hooks' own subscriptions).
   useEffect(() => {
-    noteSessionUiRev(session.id, session.uiRev);
+    noteSessionUiRev(uiKey, session.uiRev);
   }, [session.id, session.uiRev]);
 
   // Which shell the saved state names is handled by useShells, which reconciles the remembered id
@@ -671,9 +681,9 @@ export function SessionView({
   // the bag must not write it back.
   useEffect(
     () =>
-      subscribeSessionUi(session.id, (seed) => {
+      subscribeSessionUi(uiKey, (seed) => {
         if (!seed) return;
-        const ui = loadSessionUi(session.id);
+        const ui = loadSessionUi(uiKey);
         if (ui.shell) shells.restore(ui.shell);
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -854,11 +864,11 @@ export function SessionView({
   // The worktree whose branch the header's badge names (see BranchBadge); "" = the session's own
   // folder. It is the session's, not this browser's, so it follows a pick made anywhere -- another
   // browser, or the session itself through /api/self/worktree.
-  const [gitRoot, setGitRoot] = useState(() => loadSessionUi(session.id).gitWorktree ?? "");
+  const [gitRoot, setGitRoot] = useState(() => loadSessionUi(uiKey).gitWorktree ?? "");
   useEffect(() => {
-    const read = () => setGitRoot(loadSessionUi(session.id).gitWorktree ?? "");
+    const read = () => setGitRoot(loadSessionUi(uiKey).gitWorktree ?? "");
     read();
-    return subscribeSessionUi(session.id, read);
+    return subscribeSessionUi(uiKey, read);
   }, [session.id]);
 
   // That worktree's status. Its folder isn't the one the session's watcher follows, so on top of the
@@ -892,7 +902,7 @@ export function SessionView({
   // asked to as soon as it is, so the move goes through that same path rather than around it.
   const [pendingChanges, setPendingChanges] = useState<string | null>(null);
   const openChanges = useCallback(() => {
-    saveSessionUi(session.id, { changes: true });
+    saveSessionUi(uiKey, { changes: true });
     if (fileBrowserRef.current) fileBrowserRef.current.showChanges(badgeRoot);
     else setPendingChanges(badgeRoot);
     update((l) => revealRef(l, FILES));

@@ -16,7 +16,6 @@ import type {
   GitHubPullFile,
   PullFolds,
 } from "@/types";
-import { api } from "@/lib/api";
 import { age } from "@/lib/age";
 import { useDismissable } from "@/lib/useDismissable";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionUi";
@@ -66,6 +65,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import { useApi, useSessionKey } from "@/lib/node";
 
 // Whether the file sidebar is showing, remembered per browser: it's a use of screen width, like the
 // Split view's divider, not something the session should carry to every device.
@@ -240,6 +240,8 @@ export function PullRequestView({
   /** The PR's real title, once GitHub has given it — the tab may be showing an older one. */
   onTitle?: (title: string) => void;
 }) {
+  const api = useApi();
+  const uiKey = useSessionKey(sessionId);
   // What identifies this review wherever it is remembered — its folds, its scroll offset. Repo and
   // number together, because #42 of one repo and #42 of another are two reviews.
   const review = reviewKey(repo, number);
@@ -267,7 +269,7 @@ export function PullRequestView({
   // Which files are folded away: what Collapse all / Expand all last said, plus the files toggled by
   // hand since. Everything else follows the size default, so a re-fetch doesn't undo what was folded.
   // Restored from the bag, so a review comes back where it was left — on this device and the others.
-  const [folds, setFolds] = useState<PullFolds>(() => readFolds(sessionId, review));
+  const [folds, setFolds] = useState<PullFolds>(() => readFolds(uiKey, review));
   const [descriptionOpen, setDescriptionOpen] = useState(false);
   // Files marked as read. Seeded from the review — the server holds the marks and does the comparing,
   // so a file the author has pushed over simply is not in the list — and kept here so a click shows
@@ -333,7 +335,7 @@ export function PullRequestView({
   const loadReview = useCallback(async () => {
     const seq = reviewSeqRef.current;
     try {
-      const text = await readReview(sessionId, reviewPath);
+      const text = await readReview(api, sessionId, reviewPath);
       if (seq === reviewSeqRef.current) setReviewText(text);
     } catch {
       /* the server is out of reach — what is on screen stands until the next reload */
@@ -465,7 +467,7 @@ export function PullRequestView({
   }, [sessionId, number, repo, commitSha, commitEpoch]);
 
   useEffect(
-    () => subscribeSessionUi(sessionId, (seed) => seed && setSeedEpoch((e) => e + 1)),
+    () => subscribeSessionUi(uiKey, (seed) => seed && setSeedEpoch((e) => e + 1)),
     [sessionId]
   );
 
@@ -473,7 +475,7 @@ export function PullRequestView({
   // browser's own unacknowledged writes back on top of the server's answer, so what comes out here
   // is the server's state with ours already in it.
   useEffect(() => {
-    if (seedEpoch > 0) setFolds(readFolds(sessionId, review));
+    if (seedEpoch > 0) setFolds(readFolds(uiKey, review));
   }, [sessionId, review, seedEpoch]);
 
   // Replay the remembered offset, but only once the files have stopped arriving: they are drawn as
@@ -495,7 +497,7 @@ export function PullRequestView({
       restoredRef.current = true;
       return;
     }
-    const target = loadSessionUi(sessionId).pullScroll?.[review] ?? 0;
+    const target = loadSessionUi(uiKey).pullScroll?.[review] ?? 0;
     if (!(target > 0)) {
       restoredRef.current = true;
       return;
@@ -537,8 +539,8 @@ export function PullRequestView({
       window.clearTimeout(saveScrollRef.current);
       saveScrollRef.current = window.setTimeout(
         () =>
-          saveSessionUi(sessionId, {
-            pullScroll: { ...loadSessionUi(sessionId).pullScroll, [review]: top },
+          saveSessionUi(uiKey, {
+            pullScroll: { ...loadSessionUi(uiKey).pullScroll, [review]: top },
           }),
         200
       );
@@ -682,7 +684,7 @@ export function PullRequestView({
         // way: left running it would land on the commit's files instead.
         wholeScrollRef.current = restoredRef.current
           ? scrollRef.current?.scrollTop ?? 0
-          : loadSessionUi(sessionId).pullScroll?.[review] ?? 0;
+          : loadSessionUi(uiKey).pullScroll?.[review] ?? 0;
         restoredRef.current = true;
       }
       inCommitRef.current = sha !== null;
@@ -758,12 +760,12 @@ export function PullRequestView({
         setCommitFolds(next);
         return;
       }
-      const all = capFolds({ ...loadSessionUi(sessionId).pullFolds, [review]: next }, review);
+      const all = capFolds({ ...loadSessionUi(uiKey).pullFolds, [review]: next }, review);
       // What is kept for this review may have been trimmed on the way into the budget, so the state
       // takes what was actually stored rather than what was asked for — otherwise the screen and the
       // bag would disagree until the next reload.
       setFolds(all[review] ?? next);
-      saveSessionUi(sessionId, { pullFolds: all });
+      saveSessionUi(uiKey, { pullFolds: all });
     },
     [sessionId, review]
   );
@@ -889,8 +891,8 @@ export function PullRequestView({
 
   const addComment = useCallback(
     async (t: ReviewTarget, body: string, ctx: ReviewContext) => {
-      const next = appendComment(await readReview(sessionId, reviewPath), commentBlock(t, body, ctx), ctx);
-      await writeReview(sessionId, reviewPath, next);
+      const next = appendComment(await readReview(api, sessionId, reviewPath), commentBlock(t, body, ctx), ctx);
+      await writeReview(api, sessionId, reviewPath, next);
       putReviewText(next);
     },
     [sessionId, reviewPath, putReviewText]
@@ -898,7 +900,7 @@ export function PullRequestView({
 
   const saveReview = useCallback(
     async (text: string) => {
-      await writeReview(sessionId, reviewPath, text);
+      await writeReview(api, sessionId, reviewPath, text);
       putReviewText(text);
     },
     [sessionId, reviewPath, putReviewText]
@@ -909,7 +911,7 @@ export function PullRequestView({
   // When it is not, the new version is taken in and the reader decides again.
   const reviewUnchanged = useCallback(
     async (expected: string) => {
-      const fresh = await readReview(sessionId, reviewPath);
+      const fresh = await readReview(api, sessionId, reviewPath);
       if (fresh === expected) return true;
       putReviewText(fresh);
       return false;
@@ -922,7 +924,7 @@ export function PullRequestView({
   const finishReview = useCallback(() => {
     putReviewText("");
     setReviewOpen(false);
-    deleteReview(sessionId, reviewPath).catch(() => void loadReview());
+    deleteReview(api, sessionId, reviewPath).catch(() => void loadReview());
   }, [sessionId, reviewPath, loadReview, putReviewText]);
 
   return (
@@ -1539,6 +1541,7 @@ function FileDiff({
   onToggle: () => void;
   register: (el: HTMLDivElement | null) => void;
 }) {
+  const api = useApi();
   // Parsing is the expensive part of drawing a file, so it waits until the file is actually open.
   const rawHunks = useMemo(() => (open && !file.binary ? parseUnifiedDiff(file.diff) : []), [open, file]);
 

@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type UIEvent } from "react";
-import { ApiError, api, previewFrameUrl, sessionFileUrl } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
@@ -14,6 +14,7 @@ import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import {
   announceRemoteChange,
   clearFileClip,
+  clipElsewhere,
   describeClip,
   getFileClip,
   hasTextSelection,
@@ -95,6 +96,7 @@ import {
   usePersistentWordWrap,
   usePersistentZoom,
 } from "./ZoomControls";
+import { sessionKey, useApi, useSessionKey } from "@/lib/node";
 
 // Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
 interface RowActions {
@@ -194,7 +196,7 @@ function ancestorDirs(path: string): string[] {
 // Every FileBrowser of a session browses the same root — the explorer, and each file tab on screen
 // in a group of its own. The root is saved in the session's bag, but local saves do not notify, so a
 // switch in one of them is announced here for the others to follow.
-const rootListeners = new Set<(sessionId: string, dir: string) => void>();
+const rootListeners = new Set<(sessionKey: string, dir: string) => void>();
 
 export interface FileBrowserHandle {
   revealFile: (path: string) => void;
@@ -230,6 +232,8 @@ export const FileBrowser = forwardRef<
   { sessionId, workingDirectory, gitFiles, tabs, previewOnly = false, previewPath, treeOnly: treeOnlyAsked = false, onRefresh, refreshToken = 0 },
   ref
 ) {
+  const api = useApi();
+  const uiKey = useSessionKey(sessionId);
   const { guardActiveEdits } = tabs;
   if (previewPath !== undefined) previewOnly = true;
   const selected = useMemo(
@@ -244,24 +248,24 @@ export const FileBrowser = forwardRef<
   const [searching, setSearching] = useState(false);
   // Whether the tree shows git changes (+ the history panel) instead of all files — remembered per
   // session so returning to it (or reloading) restores the changes/history view.
-  const [showChanges, setShowChanges] = useState(() => loadSessionUi(sessionId).changes ?? false);
+  const [showChanges, setShowChanges] = useState(() => loadSessionUi(uiKey).changes ?? false);
   // Or the commit history alone, in place of the tree — the history without having to go through
   // the changes view to reach it. The two views are exclusive; each button switches straight to its
   // own from the other.
-  const [showCommits, setShowCommits] = useState(() => loadSessionUi(sessionId).commits ?? false);
+  const [showCommits, setShowCommits] = useState(() => loadSessionUi(uiKey).commits ?? false);
   const toggleChanges = useCallback(() => {
     const next = !showChanges || showCommits;
     setShowChanges(next);
     setShowCommits(false);
     if (!next) setCommitSel(null); // back to the files drops the commit preview
-    saveSessionUi(sessionId, { changes: next, commits: false });
+    saveSessionUi(uiKey, { changes: next, commits: false });
   }, [sessionId, showChanges, showCommits]);
   const toggleCommits = useCallback(() => {
     const next = !showCommits;
     setShowCommits(next);
     if (next) setShowChanges(false);
     else setCommitSel(null);
-    saveSessionUi(sessionId, next ? { commits: true, changes: false } : { commits: false });
+    saveSessionUi(uiKey, next ? { commits: true, changes: false } : { commits: false });
   }, [sessionId, showCommits]);
   // The whole browser (Files tree, search, changes, preview) can be pointed at another root: either
   // another worktree of the session's repo, or a folder the user has linked to the session. "" = the
@@ -270,7 +274,7 @@ export const FileBrowser = forwardRef<
   const [worktrees, setWorktrees] = useState<GitWorktree[] | null>(null); // null = not loaded yet
   const [linked, setLinked] = useState<string[] | null>(null); // linked folders; null = not loaded yet
   // Restored per session (and across reloads); validated against both lists once they've loaded.
-  const [rootDir, setRootDir] = useState(() => loadSessionUi(sessionId).worktree ?? "");
+  const [rootDir, setRootDir] = useState(() => loadSessionUi(uiKey).worktree ?? "");
   const [altStatus, setAltStatus] = useState<GitStatus | null>(null);
   const isLinkedRoot = !!rootDir && (linked ?? []).some((f) => samePath(f, rootDir));
   // The roots the picker offers, in one list: worktrees first, then the folders linked by hand.
@@ -288,22 +292,22 @@ export const FileBrowser = forwardRef<
   const setRoot = useCallback(
     (dir: string) => {
       setRootDir(dir);
-      saveSessionUi(sessionId, { worktree: dir });
-      for (const cb of rootListeners) cb(sessionId, dir);
+      saveSessionUi(uiKey, { worktree: dir });
+      for (const cb of rootListeners) cb(uiKey, dir);
     },
-    [sessionId]
+    [uiKey]
   );
   useEffect(() => {
-    const cb = (id: string, dir: string) => id === sessionId && setRootDir(dir);
+    const cb = (key: string, dir: string) => key === uiKey && setRootDir(dir);
     rootListeners.add(cb);
     return () => void rootListeners.delete(cb);
-  }, [sessionId]);
+  }, [uiKey]);
 
   // Per session: restore its saved root and (re)load the repo's worktrees plus the linked folders. A
   // stale response landing after a quick session switch must be dropped — validating the restored
   // pick against another session's lists would wrongly wipe it.
   useEffect(() => {
-    setRootDir(loadSessionUi(sessionId).worktree ?? "");
+    setRootDir(loadSessionUi(uiKey).worktree ?? "");
     setAltStatus(null);
     setWorktrees(null);
     setLinked(null);
@@ -343,11 +347,11 @@ export const FileBrowser = forwardRef<
   }, [rootDir, isLinkedRoot, linked, sessionId, refreshToken]);
 
   // In the changes view, group changed files under collapsible folders instead of a flat list.
-  const [changesTree, setChangesTree] = useState(() => loadSessionUi(sessionId).changesTree ?? false);
+  const [changesTree, setChangesTree] = useState(() => loadSessionUi(uiKey).changesTree ?? false);
   const toggleChangesTree = useCallback(() => {
     setChangesTree((v) => {
       const next = !v;
-      saveSessionUi(sessionId, { changesTree: next });
+      saveSessionUi(uiKey, { changesTree: next });
       return next;
     });
   }, [sessionId]);
@@ -356,15 +360,15 @@ export const FileBrowser = forwardRef<
   // set of folders the user has opened; anything absent renders collapsed. Seed the Files tree with
   // the ancestors of the file being restored so it expands into view on load.
   const [filesExpanded, setFilesExpanded] = useState<Set<string>>(() => {
-    const ui = loadSessionUi(sessionId);
+    const ui = loadSessionUi(uiKey);
     const set = new Set(ui.filesExpanded ?? []);
     const u = readUrlState();
-    const reveal = (u.session === sessionId && u.file ? u.file : ui.file) || null;
+    const reveal = (sessionKey(u.node, u.session ?? "") === uiKey && u.file ? u.file : ui.file) || null;
     if (reveal) for (const d of ancestorDirs(reveal)) set.add(d);
     return set;
   });
   const [changesExpanded, setChangesExpanded] = useState<Set<string>>(
-    () => new Set(loadSessionUi(sessionId).changesExpanded ?? [])
+    () => new Set(loadSessionUi(uiKey).changesExpanded ?? [])
   );
   // Bumped when the copy the server holds for this session arrives, which is generally after this
   // panel has already read the local mirror — the effects that only run at mount re-run off it.
@@ -376,9 +380,9 @@ export const FileBrowser = forwardRef<
   // re-expand folders or jump the tree under whoever is using this one.
   useEffect(
     () =>
-      subscribeSessionUi(sessionId, (seed) => {
+      subscribeSessionUi(uiKey, (seed) => {
         if (!seed) return;
-        const ui = loadSessionUi(sessionId);
+        const ui = loadSessionUi(uiKey);
         setRootDir(ui.worktree ?? "");
         setShowChanges(ui.changes ?? false);
         setShowCommits(ui.commits ?? false);
@@ -402,7 +406,7 @@ export const FileBrowser = forwardRef<
       setFilesExpanded((s) => {
         const n = new Set(s);
         n.has(path) ? n.delete(path) : n.add(path);
-        saveSessionUi(sessionId, { filesExpanded: [...n] });
+        saveSessionUi(uiKey, { filesExpanded: [...n] });
         return n;
       });
     },
@@ -413,7 +417,7 @@ export const FileBrowser = forwardRef<
       setChangesExpanded((s) => {
         const n = new Set(s);
         n.has(path) ? n.delete(path) : n.add(path);
-        saveSessionUi(sessionId, { changesExpanded: [...n] });
+        saveSessionUi(uiKey, { changesExpanded: [...n] });
         return n;
       });
     },
@@ -425,7 +429,7 @@ export const FileBrowser = forwardRef<
       setFilesExpanded((s) => {
         const n = new Set(s);
         for (const d of ancestorDirs(path)) n.add(d);
-        saveSessionUi(sessionId, { filesExpanded: [...n] });
+        saveSessionUi(uiKey, { filesExpanded: [...n] });
         return n;
       });
     },
@@ -562,7 +566,7 @@ export const FileBrowser = forwardRef<
     (dir?: string) => {
       setShowChanges(true);
       setShowCommits(false);
-      saveSessionUi(sessionId, { changes: true, commits: false });
+      saveSessionUi(uiKey, { changes: true, commits: false });
       const target = dir ?? (isLinkedRoot ? "" : rootDir);
       if (target !== rootDir && !samePath(target, rootDir)) pickRoot(target);
     },
@@ -805,17 +809,23 @@ export const FileBrowser = forwardRef<
       if (items.length === 0 || (mode === "cut" && readOnly)) return;
       setFileClip({
         mode,
+        base: api.base,
         source: clipSide,
         label: folderName(rootDir || workingDirectory),
         items: items.map((i) => ({ path: i.path, name: i.path.split("/").pop() || i.path, isDir: i.isDir })),
       });
       mark.clear();
     },
-    [clipSubject, readOnly, clipSide, rootDir, workingDirectory, mark]
+    [api, clipSubject, readOnly, clipSide, rootDir, workingDirectory, mark]
   );
   const paste = useCallback(async () => {
     const c = getFileClip();
     if (!c || readOnly) return;
+    const elsewhere = clipElsewhere(c, api.base);
+    if (elsewhere) {
+      setDeleteError(elsewhere);
+      return;
+    }
     const move = c.mode === "cut";
     setPasting(true);
     setDeleteError(null);
@@ -832,7 +842,7 @@ export const FileBrowser = forwardRef<
       setPasting(false);
       onRefresh?.();
     }
-  }, [readOnly, clipSide, uploadDir, closeTabsUnder, onRefresh]);
+  }, [api, readOnly, clipSide, uploadDir, closeTabsUnder, onRefresh]);
 
   // Open the new-folder creator targeting a specific directory ("" = repo root).
   const newFolderIn = useCallback((dir: string) => {
@@ -890,7 +900,7 @@ export const FileBrowser = forwardRef<
   useEffect(() => {
     if (prevSession.current === sessionId) return;
     prevSession.current = sessionId;
-    const ui = loadSessionUi(sessionId);
+    const ui = loadSessionUi(uiKey);
     const nextFilesExpanded = new Set(ui.filesExpanded ?? []);
     // useFileTabs restores the tab list; expand the tree down to whatever it lands on.
     if (ui.file) for (const d of ancestorDirs(ui.file)) nextFilesExpanded.add(d);
@@ -941,11 +951,11 @@ export const FileBrowser = forwardRef<
   const expandAllChanges = useCallback(() => {
     const set = new Set(allChangeDirPaths);
     setChangesExpanded(set);
-    saveSessionUi(sessionId, { changesExpanded: [...set] });
+    saveSessionUi(uiKey, { changesExpanded: [...set] });
   }, [allChangeDirPaths, sessionId]);
   const collapseAllChanges = useCallback(() => {
     setChangesExpanded(new Set());
-    saveSessionUi(sessionId, { changesExpanded: [] });
+    saveSessionUi(uiKey, { changesExpanded: [] });
   }, [sessionId]);
 
   // Arrow-key walking of whichever tree the pane is showing. Landing on a file previews it (the
@@ -979,7 +989,7 @@ export const FileBrowser = forwardRef<
     if (searchActive) return;
     const box = treeScrollRef.current;
     if (!box) return;
-    const ui = loadSessionUi(sessionId);
+    const ui = loadSessionUi(uiKey);
     const target = (changesView ? ui.changesScroll : ui.filesScroll) ?? 0;
     if (!(target > 0)) {
       restoredScrollRef.current = true;
@@ -1019,7 +1029,7 @@ export const FileBrowser = forwardRef<
       const top = Math.round(e.currentTarget.scrollTop);
       window.clearTimeout(saveScrollRef.current);
       saveScrollRef.current = window.setTimeout(
-        () => saveSessionUi(sessionId, changesView ? { changesScroll: top } : { filesScroll: top }),
+        () => saveSessionUi(uiKey, changesView ? { changesScroll: top } : { filesScroll: top }),
         200
       );
     },
@@ -1825,6 +1835,7 @@ function TreeLevel({
   onSelectDir: (path: string) => void;
   actions: RowActions;
 }) {
+  const api = useApi();
   const [entries, setEntries] = useState<FileEntry[] | null>(null);
   const [error, setError] = useState(false);
 
@@ -2231,6 +2242,8 @@ function FilePreview({
   // Lets the parent read this preview's unsaved-edit state (and trigger a save) when closing a tab.
   guard?: React.MutableRefObject<PreviewGuard>;
 }) {
+  const api = useApi();
+  const uiKey = useSessionKey(sessionId);
   const [text, setText] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "toolarge">("idle");
   const [view, setView] = useState<"preview" | "diff">("preview");
@@ -2297,7 +2310,7 @@ function FilePreview({
   const rawUrl = useCallback(
     (download = false) => {
       if (!file) return "";
-      const url = sessionFileUrl(sessionId, file.path, download, dir);
+      const url = api.sessionFileUrl(sessionId, file.path, download, dir);
       // Cache-buster so URL-sourced previews (image, video, PDF, office) re-fetch on manual reload.
       return reload > 0 && !download ? `${url}&r=${reload}` : url;
     },
@@ -2532,7 +2545,7 @@ function FilePreview({
   const previewSrc = preview?.forPath === absPath ? preview : null;
   const frameSrc =
     previewSrc && !("failed" in previewSrc)
-      ? previewFrameUrl(previewSrc.ticket, previewSrc.name, `${contentRev}-${reload}`)
+      ? api.previewFrameUrl(previewSrc.ticket, previewSrc.name, `${contentRev}-${reload}`)
       : "";
 
   // --- Remembered scroll position, per open tab ------------------------------------------------
@@ -2561,12 +2574,12 @@ function FilePreview({
       const write = () => {
         pendingScrollRef.current = null;
         const rounded = Math.round(top);
-        const kept = { ...(loadSessionUi(sessionId).fileScroll ?? {}) };
+        const kept = { ...(loadSessionUi(uiKey).fileScroll ?? {}) };
         // Back at the top is the default, so drop the entry rather than storing a zero — one fewer
         // key in a map that is written in full on every change.
         if (rounded > 0) kept[path] = rounded;
         else delete kept[path];
-        saveSessionUi(sessionId, { fileScroll: kept });
+        saveSessionUi(uiKey, { fileScroll: kept });
       };
       pendingScrollRef.current = write;
       window.clearTimeout(saveScrollRef.current);
@@ -2583,7 +2596,7 @@ function FilePreview({
     const box = contentRef.current;
     if (!box) return;
     if (kind === "text" && (status !== "idle" || text === null)) return; // nothing rendered yet
-    const target = loadSessionUi(sessionId).fileScroll?.[file.path] ?? 0;
+    const target = loadSessionUi(uiKey).fileScroll?.[file.path] ?? 0;
     if (!(target > 0)) {
       scrollRestoredRef.current = true;
       return;
@@ -2628,7 +2641,7 @@ function FilePreview({
       if (msg.cwScrollReady) {
         if (placed) return;
         placed = true;
-        frame.postMessage({ cwScrollTo: loadSessionUi(sessionId).fileScroll?.[path] ?? 0 }, "*");
+        frame.postMessage({ cwScrollTo: loadSessionUi(uiKey).fileScroll?.[path] ?? 0 }, "*");
         scrollRestoredRef.current = true;
       } else if (typeof msg.cwScroll === "number") {
         rememberScroll(msg.cwScroll);
@@ -2748,7 +2761,8 @@ function FilePreview({
     });
   // Standalone full-page preview in its own browser tab; survives a refresh there. The URL is read
   // at click time: the app's deep-link params ride along, and they move without re-rendering this.
-  previewTools.push({
+  // That page reads this node's disk, so a peer's file doesn't get one (plans/multi-node.md §6).
+  if (!api.base) previewTools.push({
     id: "newtab",
     inline: (
       <Button asChild variant="outline" size="sm" className="h-7 w-7 px-0" title="Open in new browser tab">

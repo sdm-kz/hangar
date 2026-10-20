@@ -211,7 +211,7 @@ Why aggregate in the server rather than open one socket per node from the browse
 
 - **Push notifications.** A Web Push subscription is bound to one VAPID key, so a browser cannot
   subscribe to every node. The home node already sees remote sessions go *waiting* through the mesh,
-  so its `PushNotifier` fires for them too, and the notification deep-links to `?n=<node>&s=<id>`.
+  so its `PushNotifier` fires for them too, and the notification deep-links to `?node=<node>&session=<id>`.
   A phone subscribed on both A and B would otherwise get B's "waiting" twice (once from B, once
   from A via the mesh): every node tags its notifications `<nodeId>:<sessionId>`, so the second
   replaces the first (`sw.js` already collapses on `tag`), and the payload carries `nodeId`.
@@ -231,7 +231,7 @@ This is the bulk of the work, and it is mostly mechanical.
 **Identity.** `SessionInfo` gains `nodeId` (filled client-side from the snapshot it came in). Every
 map, set and React key that is keyed by session id becomes keyed by `nodeId:id` (`sessionKey()`),
 because two machines can in principle mint the same id and the UI must never confuse them. URL state:
-`?s=<id>` becomes `?n=<nodeId>&s=<id>`; a link without `n` means the home node, so existing bookmarks
+`?session=<id>` gains `&node=<nodeId>`; a link without `node` means the home node, so existing bookmarks
 keep working.
 
 **The client.** `api.ts`'s `request(path)` takes a base: `""` for the home node, `/n/{nodeId}` for a
@@ -241,6 +241,34 @@ peer. A `NodeContext` provides it, and `useApi()` returns the client bound to th
 `api.x(...)` to `const api = useApi(); api.x(...)` and need no node argument. The socket helpers
 (`sessionsStreamUrl`, `TerminalPane`'s `socketPath`, shells) prefix the same base. Cross-node things
 — the sidebar, search, new-session dialog — take the node explicitly.
+
+**As built (phase 3).**
+- `createApi(base)` / `apiFor(node)` in `lib/api.ts`; `NodeProvider`, `useApi()`, `sessionKey()`,
+  `useSessionKey()` in `lib/node.tsx`. A session of this node keeps its bare id as its key, so
+  everything stored before nodes still matches.
+- The per-session stores (`sessionUi`, the repo cache) are keyed by session key and find the node
+  from it; `postponed`, `prReview` and `upload` take the client.
+- App follows a peer's own `/hub/events` through `/n/{id}` while one of its sessions is open
+  (`lib/nodeStream.ts`), and acts on it — rename, reopen, fork, stop — through that node's client.
+  Phase 4's mesh replaces that socket.
+- A server file opened from a peer's session opens on that peer, and the standalone preview tab is
+  offered for this node's files only.
+- The app's file clipboard remembers the node a copy came from; pasting on another node is refused
+  until cross-node copy (phase 6).
+- "Reopen with options" is hidden for a peer's session until the dialog can launch there (phase 5).
+- `web/scripts/check-node-scope.mjs` runs in `npm run build` and fails the build when a file outside
+  its short list of this-node-only surfaces imports `api`, `apiFor`, the token or the URL helpers
+  (under any alias, as a namespace, dynamically), or builds a `fetch`/socket to "/…" by hand.
+- A peer's answers are data on this node's origin, so the client and the proxy hold them there:
+  - every path a peer's client builds is checked to stay under `/n/{id}` after the browser resolves
+    it — a peer's id with a `../` in it would otherwise reach this node's own API with its token;
+  - `?node=` is taken only when it is a node id;
+  - proxied responses get a script-less sandbox and no Referer, and anything that isn't plainly media,
+    text or a PDF is a download: their URLs carry this node's token in the query, which a page there
+    could read from its own address. Only the ticketed preview (no token in its URL) keeps scripts;
+  - a browser shows no PDF in a sandbox, so a peer's PDF is fetched and shown from a blob;
+  - a saved link tab must still be http(s) when it is restored — the session's UI bag is the peer's
+    to write.
 
 **The sidebar.** One heading per node above the projects, coloured, with a status dot and the
 machine's session count; collapsible like a project. The home node is first and marked as the one
@@ -302,7 +330,7 @@ Each phase ships on its own and leaves the app working.
 | 0 | **Node identity** | `node.json`, `GET /api/node`, name/colour/url in settings | server only |
 | 1 | **Pairing** | `POST /api/nodes/pair`, `nodes.json`, `peers-in.json`, peer tokens in `TokenAuthMiddleware`, https peers with TOFU pinning, Settings → Nodes (add, rename, forget, revoke, re-trust a cert) | `Auth/`, new `Nodes/`, a dialog |
 | 2 | **Proxy** | `/n/{id}/…` via YARP incl. WebSockets, hop guard, local-only exclusions, preview exemption, 401→502 | `Program.cs`, `Nodes/NodeProxy.cs` |
-| 3 | **Node-aware SPA** | `NodeContext`/`useApi`, `sessionKey`, `?n=`; a remote session opens and works fully by deep link | `api.ts`, `App.tsx`, `SessionView`, `TerminalPane`, views |
+| 3 | **Node-aware SPA** | `NodeContext`/`useApi`, `sessionKey`, `?node=`; a remote session opens and works fully by deep link | `api.ts`, `App.tsx`, `SessionView`, `TerminalPane`, views |
 | 4 | **Mesh & sidebar** | `NodeMesh`, `nodes[]` on `/hub/events`, node headings, offline state, search across nodes, tray submenus, push for remote sessions | `Nodes/NodeMesh.cs`, `SessionHub`, `PushNotifier`, sidebar, tray |
 | 5 | **Launch anywhere** | node picker in New session, per-node folder picker/recents/templates, per-node schedules list, per-node update button | `NewSessionDialog`, `FolderPicker`, `ScheduleDialog`, `UpdateButton` |
 | 6 | *Later* | cross-node projects (`folders: [{ node, path }]`), resume a conversation on another node (copy the transcript, map the folder), copy/paste files between nodes (reuse `FileTransfer`), share the peer list across the mesh, mDNS discovery, child sessions on another node from the `run-session` skill | — |

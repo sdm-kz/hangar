@@ -62,6 +62,9 @@ function DocxViewer({ url }: { url: string }) {
         await renderAsync(buffer, containerRef.current, undefined, {
           inWrapper: true,
           ignoreLastRenderedPageBreak: true,
+          // An altChunk is a piece of HTML the document carries, which docx-preview puts in an unsandboxed
+          // srcdoc frame — on this origin, script and all. A document is never trusted that far.
+          renderAltChunks: false,
         });
         if (ctrl.signal.aborted) return;
         // Make the rendered document's links work inside the viewer, and rebuild a table of contents
@@ -122,6 +125,10 @@ function XlsxViewer({ url }: { url: string }) {
         ]);
         if (ctrl.signal.aborted) return;
         const wb = XLSX.read(buffer, { type: "array" });
+        // A cell's `h` is HTML that sheet_to_html writes out unescaped, and some readers fill it from the
+        // file as it is. Without it the cell's text is escaped instead; rich text inside a cell is the cost.
+        for (const sheet of Object.values(wb.Sheets))
+          for (const [ref, cell] of Object.entries(sheet)) if (ref[0] !== "!") delete (cell as { h?: string }).h;
         const parsed = wb.SheetNames.map((name) => ({
           name,
           html: XLSX.utils.sheet_to_html(wb.Sheets[name], { id: "", editable: false }),

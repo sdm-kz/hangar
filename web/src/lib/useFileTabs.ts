@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FileEntry } from "@/types";
 import { patchUrlState, readUrlState } from "./urlState";
 import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "./sessionUi";
+import { sessionKey } from "./node";
 
 // A tab restored from a saved path knows nothing but the path, so the size reads as unknown rather
 // than zero — the preview header hides it instead of claiming "0 B".
@@ -31,7 +32,8 @@ export function restoreTabs(
 ): { tabs: FileEntry[]; active: string | null; preview: string | null } {
   const u = useUrl ? readUrlState() : {};
   const ui = loadSessionUi(sessionId);
-  const active = (useUrl && u.session === sessionId && u.file ? u.file : ui.file) || null;
+  // `sessionId` is the session's key (lib/node.tsx), so the URL's session is compared as one too.
+  const active = (useUrl && sessionKey(u.node, u.session ?? "") === sessionId && u.file ? u.file : ui.file) || null;
   const paths = ui.files && ui.files.length ? [...ui.files] : active ? [active] : [];
   if (active && !paths.includes(active)) paths.unshift(active);
   const preview = ui.preview && paths.includes(ui.preview) ? ui.preview : null;

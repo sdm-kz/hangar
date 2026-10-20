@@ -16,6 +16,7 @@ import type { PluggableList } from "unified";
 import { Loader2 } from "lucide-react";
 import { getTheme, subscribeTheme } from "@/lib/theme";
 import { mdAssetUrl } from "@/lib/mdAssets";
+import { useApi } from "@/lib/node";
 import { useHtml } from "@/lib/useHtml";
 import { TocPanel, type TocItem } from "./TocPanel";
 
@@ -51,10 +52,12 @@ export function Markdown({
 }: {
   text: string;
   docPath?: string;
-  /** Where a file the document references is fetched from; the server's file API by default. */
+  /** Where a file the document references is fetched from; the file API of the view's node by default. */
   assetUrl?: (path: string) => string;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const api = useApi();
+  const toUrl = assetUrl ?? api.serverFileUrl;
 
   // Restore the section named by the URL hash once the content is in the DOM. The layout keeps
   // shifting for a bit after that (mermaid diagrams and images pop in above the target), so
@@ -128,11 +131,11 @@ export function Markdown({
     () =>
       [
         rehypeRaw,
-        [rehypeAssetUrls, { docPath, assetUrl }],
+        [rehypeAssetUrls, { docPath, assetUrl: toUrl }],
         [rehypeSanitize, sanitizeSchema],
         rehypeHeadingIds,
       ] as PluggableList,
-    [docPath, assetUrl]
+    [docPath, toUrl]
   );
 
   return (
@@ -219,7 +222,7 @@ function slugify(text: string): string {
  * unknown URL protocol to the sanitizer, which would strip it before we ever got to see it. What
  * this produces is a same-origin relative URL, which sanitize is happy with.
  */
-function rehypeAssetUrls({ docPath, assetUrl }: { docPath?: string; assetUrl?: (path: string) => string }) {
+function rehypeAssetUrls({ docPath, assetUrl }: { docPath?: string; assetUrl: (path: string) => string }) {
   return (tree: Root) => {
     if (!docPath) return;
     const visit = (node: Root | RootContent) => {

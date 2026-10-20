@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ImagePlus, Inbox, Loader2, Send, X } from "lucide-react";
-import { sessionFileUrl } from "@/lib/api";
 import { uploadImageFile } from "@/lib/upload";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
 import type { PostponedImage } from "@/lib/postponed";
+import { useApi } from "@/lib/node";
 
 export interface ComposerDraft {
   text: string;
@@ -51,6 +51,7 @@ export function ComposerDialog({
   onPostpone: (draft: ComposerDraft) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [text, setText] = useState("");
   const [images, setImages] = useState<PostponedImage[]>([]);
   // Latched at open time: the parent drops its target as the dialog closes, and reading `editing`
@@ -77,7 +78,7 @@ export function ComposerDialog({
     async (files: File[]) => {
       for (const file of files.filter((f) => f.type.startsWith("image/"))) {
         try {
-          const { path, fullPath } = await uploadImageFile(sessionId, file);
+          const { path, fullPath } = await uploadImageFile(api, sessionId, file);
           setImages((prev) => [...prev, { path, fullPath }]);
           setError(null);
         } catch {
@@ -199,12 +200,12 @@ export function ComposerDialog({
                   <button
                     type="button"
                     onClick={() =>
-                      setPreview({ src: sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
+                      setPreview({ src: api.sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
                     }
                     title="Preview image"
                   >
                     <img
-                      src={sessionFileUrl(sessionId, img.path)}
+                      src={api.sessionFileUrl(sessionId, img.path)}
                       alt=""
                       className="size-12 cursor-zoom-in rounded border object-cover"
                       onError={(e) => {

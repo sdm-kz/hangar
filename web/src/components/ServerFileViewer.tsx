@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, previewFrameUrl, serverFileUrl } from "@/lib/api";
 import { fileExt, fileKind } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
 import { useHtml } from "@/lib/useHtml";
@@ -38,6 +37,8 @@ import {
 } from "lucide-react";
 import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { OverflowToolbar, type OverflowItem } from "./OverflowToolbar";
+import { useApi } from "@/lib/node";
+import type { Api } from "@/lib/api";
 
 /** How much of the header row the file name keeps before the controls start giving way. */
 const VIEWER_NAME_MIN = 96;
@@ -47,7 +48,8 @@ const MAX_TEXT_PREVIEW = 2_000_000; // 2 MB — matches the per-session browser'
 // Scroll position per file, per browser tab: lets the standalone preview tab (and a reopened file
 // in the app) come back where it was after a reload. sessionStorage keeps it tab-local and drops
 // it when the tab closes, so positions from different tabs never fight each other.
-const scrollKey = (p: string) => `hangar.previewScroll:${p}`;
+// Keyed by node too: the same path on two machines is two files. This node's keys are as they were.
+const scrollKey = (base: string, p: string) => `hangar.previewScroll:${base}${p}`;
 
 function baseName(p: string): string {
   const parts = p.split(/[/\\]+/).filter(Boolean);
@@ -73,13 +75,18 @@ export interface FileSource {
   newTab: boolean;
 }
 
-export const serverFileSource: FileSource = {
-  url: serverFileUrl,
-  text: (path) => api.fetchServerFileText(path),
-  write: (path, content) => api.fsWrite(path, content),
-  previewTicket: (path) => api.previewTicket(path),
-  newTab: true,
-};
+/** A node's own disk, through its file API. */
+export function serverFileSource(api: Api): FileSource {
+  return {
+    url: api.serverFileUrl,
+    text: (path) => api.fetchServerFileText(path),
+    write: (path, content) => api.fsWrite(path, content),
+    previewTicket: (path) => api.previewTicket(path),
+    // The standalone preview tab reads the disk of the node the page was loaded from; a peer's file
+    // isn't there to show.
+    newTab: !api.base,
+  };
+}
 
 /**
  * Main-area preview/editor for a file on the server machine (absolute path), opened from the sidebar
@@ -99,7 +106,7 @@ export function ServerFileViewer({
   onToggleSidebar,
   collapsed = false,
   onToggleCollapsed,
-  source = serverFileSource,
+  source: given,
 }: {
   path: string;
   /** Standalone preview tab only: link back into the app (see previewReturnUrl). */
@@ -112,8 +119,12 @@ export function ServerFileViewer({
   onToggleSidebar?: () => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  /** Where the file comes from; the disk of the view's node by default. */
   source?: FileSource;
 }) {
+  const api = useApi();
+  const ownDisk = useMemo(() => serverFileSource(api), [api]);
+  const source = given ?? ownDisk;
   const name = baseName(path);
   const kind = fileKind(name);
   const ext = fileExt(name);
@@ -188,7 +199,7 @@ export function ServerFileViewer({
   const previewSrc = preview?.forPath === path ? preview : null;
   const frameSrc =
     previewSrc && !("failed" in previewSrc)
-      ? previewFrameUrl(previewSrc.ticket, previewSrc.name, `${contentRev}-${reloadKey}`)
+      ? api.previewFrameUrl(previewSrc.ticket, previewSrc.name, `${contentRev}-${reloadKey}`)
       : "";
 
   // A section anchor in the URL hash belongs to the file it was clicked in: keep it across a
@@ -239,7 +250,7 @@ export function ServerFileViewer({
     if (isHtml && rendered) return;
     const el = scrollRef.current;
     if (!el) return;
-    const saved = Number(sessionStorage.getItem(scrollKey(path)));
+    const saved = Number(sessionStorage.getItem(scrollKey(api.base, path)));
     if (saved > 0) el.scrollTop = saved;
   }, [path, loading, editing, text, rendered, isMarkdown, isHtml]);
 
@@ -263,9 +274,9 @@ export function ServerFileViewer({
         if (msg.cwScrollReady) {
           if (placed) return;
           placed = true;
-          frame.postMessage({ cwScrollTo: Number(sessionStorage.getItem(scrollKey(path))) || 0 }, "*");
+          frame.postMessage({ cwScrollTo: Number(sessionStorage.getItem(scrollKey(api.base, path))) || 0 }, "*");
         } else if (typeof msg.cwScroll === "number") {
-          sessionStorage.setItem(scrollKey(path), String(Math.round(msg.cwScroll)));
+          sessionStorage.setItem(scrollKey(api.base, path), String(Math.round(msg.cwScroll)));
         }
       } catch {
         /* storage unavailable — position keeping is best-effort, same as the container above */
@@ -576,7 +587,7 @@ export function ServerFileViewer({
             // scrollTop to 0 — don't let that clobber the saved position.
             if (loading || editing) return;
             try {
-              sessionStorage.setItem(scrollKey(path), String(e.currentTarget.scrollTop));
+              sessionStorage.setItem(scrollKey(api.base, path), String(e.currentTarget.scrollTop));
             } catch {
               /* storage unavailable — position keeping is best-effort */
             }
@@ -624,7 +635,7 @@ export function ServerFileViewer({
             style={{ zoom, maxWidth: readingWidth ?? undefined }}
             className="prose prose-sm dark:prose-invert mx-auto max-w-none p-4"
           >
-            <Markdown text={text ?? ""} docPath={path} assetUrl={source === serverFileSource ? undefined : source.url} />
+            <Markdown text={text ?? ""} docPath={path} assetUrl={given ? source.url : undefined} />
           </div>
         ) : isHtml && rendered ? (
           // Render in a sandboxed iframe WITHOUT allow-same-origin: the document gets an opaque origin,

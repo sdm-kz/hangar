@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ShellInfo, ShellOption } from "@/types";
-import { api } from "@/lib/api";
 import { useDismissable } from "@/lib/useDismissable";
 import { cn } from "@/lib/utils";
 import { ChevronDown, Loader2, Plus, Server, SquareTerminal, Terminal, X } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 // Which shell a new tab opens with, remembered per browser. The server has a sensible default
 // (newest PowerShell present), but someone who works in WSL should get WSL on the next click
@@ -39,6 +39,7 @@ export function shellIcon(kind: string) {
  * plus the one a bare "+" should open. Shared by the strip's own menu and the split pane's "+" menu.
  */
 export function useShellOptions(wanted: boolean) {
+  const api = useApi();
   const [options, setOptions] = useState<ShellOption[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [serverDefault, setServerDefault] = useState<string | null>(null);
@@ -115,6 +116,7 @@ export function ShellTabStrip({
   // Overrides the default right-alignment — the folder view has nothing else in the row.
   className?: string;
 }) {
+  const api = useApi();
   const [menuOpen, setMenuOpen] = useState(false);
   const [options, setOptions] = useState<ShellOption[] | null>(null);
   const [optionsFailed, setOptionsFailed] = useState(false);

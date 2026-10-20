@@ -17,6 +17,12 @@ export interface ClipItem {
 
 export interface FileClip {
   mode: "copy" | "cut";
+  /**
+   * The node the items were copied on, as its API base ("" for the one this page came from). Paths and
+   * session ids only mean something there, and pasting across nodes is not supported yet — see
+   * {@link clipElsewhere}. Absent in a clip saved before nodes: this node's.
+   */
+  base?: string;
   source: TransferSide;
   /** What to call the source in a tooltip: the host, or the session's folder. */
   label: string;
@@ -68,6 +74,11 @@ export function setFileClip(clip: FileClip | null) {
 /** After a cut is pasted the items have moved; a second paste would find nothing. */
 export function clearFileClip() {
   publish(null);
+}
+
+/** Why `clip` can't be pasted into a panel on the node with API base `base`; null when it can. */
+export function clipElsewhere(clip: FileClip, base: string): string | null {
+  return (clip.base ?? "") === base ? null : "Those were copied on another machine. Copying between machines isn't supported yet.";
 }
 
 /** Whether two ends of a paste are the same panel's filesystem. */

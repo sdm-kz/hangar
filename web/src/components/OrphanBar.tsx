@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PtyOrphan } from "@/types";
-import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Unplug } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 /** How often to re-check. Orphans appear only on a detach or a lost session record, so rarely. */
 const POLL_MS = 20_000;
@@ -24,6 +24,7 @@ const POLL_MS = 20_000;
  * Renders nothing at all in the ordinary case where there are none.
  */
 export function OrphanBar() {
+  const api = useApi();
   const [orphans, setOrphans] = useState<PtyOrphan[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [stopping, setStopping] = useState(false);

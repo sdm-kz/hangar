@@ -4,7 +4,7 @@
 // pool (a resume gets a fresh session id → empty). Only image *paths* are stored (the bytes live
 // server-side in `.hangar/uploads/`); never base64.
 
-import { api } from "./api";
+import type { Api } from "./api";
 
 const LEGACY_PREFIX = "hangar.postponed."; // pre-server-storage browser key, migrated on first load
 const MAX = 100; // cap stashed messages per session so storage can't grow without bound
@@ -36,8 +36,8 @@ function readLegacy(sessionId: string): PostponedMessage[] {
   }
 }
 
-/** Load a session's stashed messages from the server (empty array on error/none). */
-export async function loadPostponed(sessionId: string): Promise<PostponedMessage[]> {
+/** Load a session's stashed messages from its node (empty array on error/none). */
+export async function loadPostponed(api: Api, sessionId: string): Promise<PostponedMessage[]> {
   let server: PostponedMessage[] = [];
   try {
     const raw = await api.getPostponed(sessionId);
@@ -48,10 +48,12 @@ export async function loadPostponed(sessionId: string): Promise<PostponedMessage
   if (server.length) return server;
 
   // One-time migration: push any browser-local pool up to the server, dropping the local copy ONLY
-  // once the server accepted it (so a missing endpoint / offline server can't lose the pool).
+  // once the server accepted it (so a missing endpoint / offline server can't lose the pool). Only for
+  // this node's sessions: the browser-local pool predates nodes, so it can only have been one of those.
+  if (api.base) return server;
   const legacy = readLegacy(sessionId);
   if (legacy.length) {
-    const saved = await savePostponed(sessionId, legacy);
+    const saved = await savePostponed(api, sessionId, legacy);
     if (saved) try { localStorage.removeItem(legacyKey(sessionId)); } catch { /* ignore */ }
     return legacy;
   }
@@ -60,7 +62,7 @@ export async function loadPostponed(sessionId: string): Promise<PostponedMessage
 
 /** Persist a session's stashed messages to the server. Returns true iff the server accepted the save;
  *  best-effort (drops the oldest past the cap) — a failed save is swallowed and reported as false. */
-export async function savePostponed(sessionId: string, msgs: PostponedMessage[]): Promise<boolean> {
+export async function savePostponed(api: Api, sessionId: string, msgs: PostponedMessage[]): Promise<boolean> {
   const bounded = msgs.length > MAX ? msgs.slice(msgs.length - MAX) : msgs;
   try {
     await api.putPostponed(sessionId, JSON.stringify(bounded));
@@ -71,8 +73,8 @@ export async function savePostponed(sessionId: string, msgs: PostponedMessage[])
 }
 
 /** Remove a session's stashed messages entirely. */
-export async function clearPostponed(sessionId: string): Promise<void> {
-  await savePostponed(sessionId, []);
+export async function clearPostponed(api: Api, sessionId: string): Promise<void> {
+  await savePostponed(api, sessionId, []);
 }
 
 /** Create a new stashed message with a unique id. */

@@ -1,11 +1,11 @@
 import { useCallback, useState } from "react";
 import { Check, ChevronDown, FolderGit2, GitBranch, Search } from "lucide-react";
-import { api } from "@/lib/api";
 import { syncSessionUi } from "@/lib/sessionUi";
 import { useDismissable } from "@/lib/useDismissable";
 import { badgeVariants } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { GitWorktree } from "@/types";
+import { useApi, useSessionKey } from "@/lib/node";
 
 function baseName(p: string): string {
   const parts = p.replace(/[\\/]+$/, "").split(/[\\/]/);
@@ -39,6 +39,8 @@ export function BranchBadge({
   worktree: string;
   onOpenChanges: () => void;
 }) {
+  const api = useApi();
+  const uiKey = useSessionKey(sessionId);
   const [open, setOpen] = useState(false);
   const [trees, setTrees] = useState<GitWorktree[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +64,7 @@ export function BranchBadge({
     try {
       await api.selectGitWorktree(sessionId, tree.isCurrent ? {} : { path: tree.path });
       // The pick is in the session's bag now; fetch it rather than wait for the list push to say so.
-      await syncSessionUi(sessionId);
+      await syncSessionUi(uiKey);
       close();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't switch the worktree");

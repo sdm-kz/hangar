@@ -107,7 +107,14 @@ export interface SessionLinks {
 function restore(sessionId: string): { links: SessionLink[]; active: string | null } {
   const ui = loadSessionUi(sessionId);
   const links = (Array.isArray(ui.links) ? ui.links : []).filter(
-    (l): l is SessionLink => !!l && typeof l.id === "string" && typeof l.url === "string"
+    (l): l is SessionLink =>
+      !!l &&
+      typeof l.id === "string" &&
+      typeof l.url === "string" &&
+      // The bag is written by whoever holds the session — a peer, for one of its own — so what is opened
+      // and framed from it is held to what a typed link is: http(s), nothing that runs here.
+      /^https?:\/\//i.test(l.url) &&
+      normalizeLinkUrl(l.url) !== null
   );
   const active = ui.link && links.some((l) => l.id === ui.link) ? ui.link : links[0]?.id ?? null;
   return { links, active };

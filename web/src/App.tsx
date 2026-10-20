@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
+import { api, apiFor, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
+import { NodeProvider, sessionKey } from "@/lib/node";
+import { useNodeSnapshot } from "@/lib/nodeStream";
 import { presetFromSession, type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState, SSH_SHELLS } from "@/lib/urlState";
@@ -80,6 +82,9 @@ export function App() {
   const [listTab, setListTab] = useState<SessionListTab>("sessions"); // Sessions vs Recent list
   // Server file open in the main area, restored from the URL so a refresh comes back to it.
   const [openFile, setOpenFile] = useState<string | null>(() => readUrlState().open ?? null);
+  // The node `openFile` is on: a peer's, when it was opened from one of that node's sessions. Only this
+  // node's files go into the URL — `open` has no node of its own to say which disk it means.
+  const [openFileNode, setOpenFileNode] = useState<string | null>(null);
   // Shells filling the main area: a folder's (opened from the Files tree or the Shells tab), or the
   // SSH connections. Restored from the URL like openFile is, and mutually exclusive with it — each
   // takes the main area from the other. `focus` is a tab to bring forward, picked in the Shells tab.
@@ -92,6 +97,14 @@ export function App() {
   const focusSeq = useRef(0);
   const [sshDialog, setSshDialog] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
+  // The node `activeId` is on: null for this one, a peer's id for a session reached through it
+  // (plans/multi-node.md). Every way of picking one of this node's sessions puts it back to null.
+  const [activeNode, setActiveNode] = useState<string | null>(() => readUrlState().node ?? null);
+  const activeNodeRef = useRef(activeNode);
+  activeNodeRef.current = activeNode;
+  // The selection as this node's own lists see it: a peer's session isn't one of their rows, even when
+  // its id happens to match one.
+  const homeActiveId = activeNode ? null : activeId;
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
   // Override for the dialog's "continue conversation" default; undefined = the dialog's own default.
@@ -105,6 +118,8 @@ export function App() {
   const [newFromId, setNewFromId] = useState<string | null>(null);
   // Id of the session the fork popup is open for (it asks for a name, then branches its conversation).
   const [forkFromId, setForkFromId] = useState<string | null>(null);
+  // ...and its node: a fork stays on the parent's node, where its conversation's transcript is.
+  const [forkFromNode, setForkFromNode] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentSession[]>([]);
   // Projects (server-backed groupings of folders). Owned here rather than by the sidebar because the
   // sidebar is mounted twice — desktop column and mobile drawer — and both have to show the same set.
@@ -201,6 +216,8 @@ export function App() {
     // a session stopped from its own tab stays where it was instead of throwing the main area back
     // to the empty state. Auto-selecting one is still wrong, though: landing on a dead session with
     // nothing running in it is not where anyone wants to arrive, so that falls to the first live one.
+    // A peer's session is not in this list, and isn't this list's to correct.
+    if (activeNodeRef.current) return;
     setActiveId((cur) =>
       cur && list.some((s) => s.id === cur)
         ? cur
@@ -232,12 +249,17 @@ export function App() {
   // Mirror the active session into the URL so a refresh/shared link restores it. On a real switch
   // (not the initial restore) also drop `file` — a lingering deep-link file belongs to the previous
   // session and would otherwise open in the new one; its own tabs still restore from sessionUi.
-  const urlSessionRef = useRef(activeId);
+  const urlSessionRef = useRef(sessionKey(activeNode, activeId ?? ""));
   useEffect(() => {
-    const switched = urlSessionRef.current !== activeId;
-    urlSessionRef.current = activeId;
-    patchUrlState({ session: activeId ?? undefined, ...(switched && { file: undefined }) });
-  }, [activeId]);
+    const key = sessionKey(activeNode, activeId ?? "");
+    const switched = urlSessionRef.current !== key;
+    urlSessionRef.current = key;
+    patchUrlState({
+      node: activeNode ?? undefined,
+      session: activeId ?? undefined,
+      ...(switched && { file: undefined }),
+    });
+  }, [activeId, activeNode]);
 
   // Mirror the sidebar tab so a refresh (or a new-tab deep link) restores the Files view.
   useEffect(() => {
@@ -247,8 +269,8 @@ export function App() {
   // Mirror the server file open in the main area, so a refresh reopens it (and keeps it highlighted
   // in the Files tree). Per-tab state, hence the URL rather than localStorage.
   useEffect(() => {
-    patchUrlState({ open: openFile ?? undefined });
-  }, [openFile]);
+    patchUrlState({ open: (!openFileNode && openFile) || undefined });
+  }, [openFile, openFileNode]);
 
   // Same for a folder's shells (or the SSH ones), so a refresh comes back to the shell that was open.
   const shellParam = shellView ? ("folder" in shellView.target ? shellView.target.folder : SSH_SHELLS) : undefined;
@@ -257,10 +279,7 @@ export function App() {
   }, [shellParam]);
 
   // Reflect the active session in the page title so browser tabs are tellable apart.
-  useEffect(() => {
-    const name = sessions.find((s) => s.id === activeId)?.name;
-    document.title = name ? `${name} - Hangar` : "Hangar";
-  }, [activeId, sessions]);
+  // (`active`, below, is whichever node's session is open.)
 
   // Sessions that finished something you haven't seen yet — the gap the green pulse leaves behind
   // when it simply stops. Owned here, beside the sets it is derived from, because the sidebar is
@@ -280,7 +299,7 @@ export function App() {
     failedIds,
     // A file or a folder's shells take the main area from the session pane without touching the
     // selection, so `activeId` alone would clear the mark of a session you never actually saw.
-    shownSessionId: openFile || shellView || terminalShownId !== activeId ? null : activeId,
+    shownSessionId: openFile || shellView || terminalShownId !== homeActiveId ? null : homeActiveId,
     streamUp,
   });
   // One bag for the sets, so the sidebar takes a single prop instead of five parallel ones.
@@ -296,20 +315,6 @@ export function App() {
     [busyIds, waitingIds, compactingIds, failedIds, doneIds, activityDetail]
   );
 
-  // The shells' marks: which finished commands this browser has looked at, and from that what each
-  // session's shells together have to say on its sidebar row.
-  const { seen: shellsSeen, markSeen: markShellSeen } = useShellsSeen(shellActivity);
-  const shellMarks = useMemo(() => {
-    const bySession = new Map<string, (ShellMark | null)[]>();
-    for (const [id, a] of Object.entries(shellActivity ?? {}))
-      if (a.sessionId) bySession.set(a.sessionId, [...(bySession.get(a.sessionId) ?? []), shellMark(a, shellsSeen[id])]);
-    const out = new Map<string, ShellMark>();
-    for (const [sid, marks] of bySession) {
-      const m = combineShellMarks(marks);
-      if (m) out.set(sid, m);
-    }
-    return out;
-  }, [shellActivity, shellsSeen]);
   // Every shell there is, for the Shells tab and the count on it.
   const allShells = useAllShells(shellsRev, auth === "authed");
 
@@ -573,6 +578,7 @@ export function App() {
     const onMessage = (e: MessageEvent) => {
       if (e.data?.type === "open-session" && typeof e.data.sessionId === "string") {
         window.focus();
+        setActiveNode(null);
         setActiveId(e.data.sessionId);
         clearMainArea();
       }
@@ -632,20 +638,70 @@ export function App() {
   // A closed session is a view like any other — the folder it worked in outlives the process, and
   // that is what the Files tree, the diff and the reviews are reading. Only the terminal is missing,
   // and SessionView puts the Reopen button where it would have been.
-  const active = sessions.find((s) => s.id === activeId) ?? null;
+  // A peer's session comes from that node's own stream; this node's from the list above.
+  const remote = useNodeSnapshot(auth === "authed" ? activeNode : null);
+  const remoteActivityIds = useMemo(
+    () => ({
+      busy: remote.busy,
+      waiting: remote.waiting,
+      compacting: remote.compacting,
+      failed: remote.failed,
+      // "Done but not seen" is this browser's reading of this node's stream; a peer's waits for the mesh.
+      done: NO_IDS,
+      detail: remote.activity,
+    }),
+    [remote.busy, remote.waiting, remote.compacting, remote.failed, remote.activity]
+  );
+  // The shells' marks: which finished commands this browser has looked at, and from that what each
+  // session's shells together have to say on its sidebar row.
+  const { seen: shellsSeen, markSeen: markShellSeen } = useShellsSeen(
+    shellActivity,
+    activeNode,
+    remote.shellActivity
+  );
+  const shellMarks = useMemo(() => {
+    const bySession = new Map<string, (ShellMark | null)[]>();
+    for (const [id, a] of Object.entries(shellActivity ?? {}))
+      if (a.sessionId) bySession.set(a.sessionId, [...(bySession.get(a.sessionId) ?? []), shellMark(a, shellsSeen[id])]);
+    const out = new Map<string, ShellMark>();
+    for (const [sid, marks] of bySession) {
+      const m = combineShellMarks(marks);
+      if (m) out.set(sid, m);
+    }
+    return out;
+  }, [shellActivity, shellsSeen]);
+  // A peer's shells, as its open session's view knows them: by their own ids, kept here under node:id.
+  const peerShellsSeen = useMemo(() => {
+    if (!activeNode) return shellsSeen;
+    const prefix = `${activeNode}:`;
+    return Object.fromEntries(
+      Object.entries(shellsSeen).flatMap(([k, v]) => (k.startsWith(prefix) ? [[k.slice(prefix.length), v]] : []))
+    );
+  }, [activeNode, shellsSeen]);
+  const markPeerShellSeen = useCallback(
+    (id: string, endedAt: number) => markShellSeen(sessionKey(activeNode, id), endedAt),
+    [activeNode, markShellSeen]
+  );
+  const viewSessions = activeNode ? remote.sessions : sessions;
+  const viewActivityIds = activeNode ? remoteActivityIds : activityIds;
+  const active = viewSessions.find((s) => s.id === activeId) ?? null;
+  useEffect(() => {
+    document.title = active?.name ? `${active.name} - Hangar` : "Hangar";
+  }, [active?.name]);
   // The open session's own mark, for its Terminal tab -- the same reading as its row's corner, and
   // like the row, none for a closed session. Its branch's activity stays in the sidebar: the tab is
   // this session's terminal, not its forks'.
-  const activeActivity = active && active.state !== "Restorable" ? sessionActivity(active, activityIds) : null;
+  const activeActivity = active && active.state !== "Restorable" ? sessionActivity(active, viewActivityIds) : null;
   const activeActivityLabel = activeActivity
-    ? (activityDetailOf(activeActivity, active!.id, activityIds) ?? ACTIVITY_MARK[activeActivity].label)
+    ? (activityDetailOf(activeActivity, active!.id, viewActivityIds) ?? ACTIVITY_MARK[activeActivity].label)
     : undefined;
   // The session the fork popup is open for, and — for the active session's header link — the one it
   // was forked from. Both resolved from the live list, so they stay current (or drop to null once the
   // session is gone).
-  const forkFrom = sessions.find((s) => s.id === forkFromId) ?? null;
+  const forkSessions = forkFromNode ? remote.sessions : sessions;
+  const forkFrom = forkSessions.find((s) => s.id === forkFromId) ?? null;
   const activeParent = active?.parentSessionId
-    ? sessions.find((s) => s.id === active.parentSessionId) ?? null
+    ? viewSessions.find((s) => s.id === active.parentSessionId) ?? null
     : null;
 
   function openNew(preset: RecentSession | null = null) {
@@ -685,6 +741,7 @@ export function App() {
   // opened from the Files tree and neither survives the other, or a session being selected.
   const clearMainArea = useCallback(() => {
     setOpenFile(null);
+    setOpenFileNode(null);
     setShellView(null);
   }, []);
 
@@ -692,6 +749,7 @@ export function App() {
   // out of the way — the alert is asking you to look at that session, not at a file you left open.
   const openFromNotification = useCallback(
     (id: string) => {
+      setActiveNode(null);
       setActiveId(id);
       clearMainArea();
     },
@@ -701,6 +759,15 @@ export function App() {
   // Open a server file (from the Files tab) in the main content area; close the mobile drawer.
   const openServerFile = useCallback((path: string) => {
     setShellView(null);
+    setOpenFileNode(null);
+    setOpenFile(path);
+    setSidebarOpen(false);
+  }, []);
+
+  // The same from a session's view: the file is on that session's node.
+  const openSessionServerFile = useCallback((path: string) => {
+    setShellView(null);
+    setOpenFileNode(activeNodeRef.current);
     setOpenFile(path);
     setSidebarOpen(false);
   }, []);
@@ -761,6 +828,7 @@ export function App() {
   // so the popup keeps seeing the session as the live stream updates it.
   const forkSession = useCallback((s: SessionInfo) => {
     setForkFromId(s.id);
+    setForkFromNode(s.nodeId ?? null);
     setSidebarOpen(false);
   }, []);
 
@@ -784,6 +852,7 @@ export function App() {
 
   // Selecting a session takes over the main area, so drop whatever was filling it.
   const selectSession = useCallback((id: string) => {
+    setActiveNode(null);
     setActiveId(id);
     clearMainArea();
   }, [clearMainArea]);
@@ -794,7 +863,7 @@ export function App() {
       ...totalProgress,
       sessions,
       activityIds,
-      activeId,
+      activeId: homeActiveId,
       // From the phone's drawer too, where picking a session puts the drawer away as a row does.
       onSelect: (id: string) => {
         selectSession(id);
@@ -802,7 +871,7 @@ export function App() {
       },
       onMarkSeen: markSeen,
     }),
-    [totalProgress, sessions, activityIds, activeId, selectSession, markSeen]
+    [totalProgress, sessions, activityIds, homeActiveId, selectSession, markSeen]
   );
 
   // A shell picked in the Shells tab, brought forward wherever it lives: its session's tab bar, its
@@ -811,6 +880,7 @@ export function App() {
     (s: ShellInfo) => {
       const focus = { id: s.id, n: ++focusSeq.current };
       if (s.sessionId) {
+        setActiveNode(null);
         setActiveId(s.sessionId);
         clearMainArea();
         setRevealShell({ sessionId: s.sessionId, focus });
@@ -852,6 +922,7 @@ export function App() {
     // Idempotent add: the live stream may already have pushed this new session before the create
     // response returns, so drop any existing copy of its id before appending to avoid a duplicate row.
     setSessions((prev) => [...prev.filter((x) => x.id !== s.id && x.id !== replaced), s]);
+    setActiveNode(null);
     setActiveId(s.id);
     clearMainArea(); // the new session takes over the main area, like selecting one does
     // Launching can start from the Files tab or the Recent list; pull both sidebar levels back to the
@@ -919,7 +990,8 @@ export function App() {
     }
     await api.deleteSession(id).catch(() => {});
     setSessions((prev) => prev.filter((s) => s.id !== id));
-    setActiveId((cur) => (cur === id ? null : cur));
+    // This node's session only: a peer's open one with the same id stays open.
+    setActiveId((cur) => (cur === id && !activeNodeRef.current ? null : cur));
     loadRecents(); // the server saved the removed session as a preset — show it in the Recent tab
   }
 
@@ -962,6 +1034,7 @@ export function App() {
     // Drop the old Restorable entry AND any copy of the new session the live stream may have already
     // pushed (the push can beat this response), so the reopened session appears exactly once.
     setSessions((prev) => [...prev.filter((s) => s.id !== id && s.id !== created.id), created]);
+    setActiveNode(null);
     setActiveId(created.id);
     setSidebarOpen(false);
   }
@@ -973,7 +1046,7 @@ export function App() {
     const set = new Set(ids);
     await Promise.all(ids.map((id) => api.deleteSession(id).catch(() => {})));
     setSessions((prev) => prev.filter((s) => !set.has(s.id)));
-    setActiveId((cur) => (cur && set.has(cur) ? null : cur));
+    setActiveId((cur) => (cur && set.has(cur) && !activeNodeRef.current ? null : cur));
     loadRecents(); // each removed session is saved as a preset server-side; refresh the Recent tab
   }
 
@@ -986,10 +1059,49 @@ export function App() {
     await api.renameSession(id, trimmed).catch(() => {});
   }
 
+  // ---- A peer's open session: the same actions, through that node (see lib/nodeStream) ----
+
+  async function onRestoreRemote(id: string) {
+    const node = activeNode;
+    const s = remote.sessions.find((x) => x.id === id);
+    if (!node || !s) return;
+    const ok = await confirm({
+      title: "Reopen session?",
+      description: (
+        <>
+          Relaunch <span className="font-medium text-foreground">{s.name}</span> on its node and resume{" "}
+          {s.resumeExact ? "this exact conversation." : "the folder\u2019s most recent conversation."}
+        </>
+      ),
+      confirmLabel: "Reopen",
+    });
+    if (!ok) return;
+    const created = await apiFor(node).restoreSession(id).catch(() => null);
+    // Somewhere else by now: the reopened session turns up on its node's stream, not in this view.
+    if (!created || activeNodeRef.current !== node) return;
+    remote.patchSession(created);
+    setActiveId(created.id);
+  }
+
+  async function onRenameRemote(id: string, name: string) {
+    const trimmed = name.trim();
+    if (!trimmed || !activeNode) return;
+    remote.updateSession(id, { name: trimmed });
+    await apiFor(activeNode).renameSession(id, trimmed).catch(() => {});
+  }
+
+  function onForkedRemote(s: SessionInfo) {
+    remote.patchSession(s);
+    setActiveNode(forkFromNode);
+    setActiveId(s.id);
+    clearMainArea();
+  }
+
   async function onLogout() {
     await api.logout();
     setAuth("anon");
     setSessions([]);
+    setActiveNode(null);
     setActiveId(null);
   }
 
@@ -1012,9 +1124,13 @@ export function App() {
       sessions={sessions}
       shellActivity={shellActivity}
       shellsSeen={shellsSeen}
-      shown={shellView ? shellView.target : active && !openFile ? { sessionId: active.id } : null}
+      shown={shellView ? shellView.target : active && !activeNode && !openFile ? { sessionId: active.id } : null}
       defaultFolder={
-        shellView && "folder" in shellView.target ? shellView.target.folder : active && !openFile ? active.workingDirectory : undefined
+        shellView && "folder" in shellView.target
+          ? shellView.target.folder
+          : active && !activeNode && !openFile
+            ? active.workingDirectory
+            : undefined
       }
       onOpen={openShell}
       onOpenFolder={openFolderShell}
@@ -1052,7 +1168,7 @@ export function App() {
                 draftIds={draftIds}
                 shellMarks={shellMarks}
                 onMarkSeen={markSeen}
-                activeId={activeId}
+                activeId={homeActiveId}
                 onSelect={selectSession}
                 onNewInFolder={newSessionInFolder}
                 onRevealFolder={revealFolderInFiles}
@@ -1078,7 +1194,7 @@ export function App() {
             }
             files={
               <FilesSidebar
-                openPath={openFile}
+                openPath={openFileNode ? null : openFile}
                 revealDir={revealDir}
                 revealToken={revealDirToken}
                 onOpenFile={openServerFile}
@@ -1122,7 +1238,7 @@ export function App() {
                     draftIds={draftIds}
                     shellMarks={shellMarks}
                     onMarkSeen={markSeen}
-                    activeId={activeId}
+                    activeId={homeActiveId}
                     onSelect={(id) => {
                       selectSession(id);
                       setSidebarOpen(false);
@@ -1151,7 +1267,7 @@ export function App() {
                 }
                 files={
                   <FilesSidebar
-                    openPath={openFile}
+                    openPath={openFileNode ? null : openFile}
                     revealDir={revealDir}
                     revealToken={revealDirToken}
                     onOpenFile={openServerFile}
@@ -1168,14 +1284,19 @@ export function App() {
 
         <main className="min-w-0 flex-1">
             {openFile ? (
-              <ServerFileViewer
-                path={openFile}
-                onClose={() => setOpenFile(null)}
-                onReveal={revealInFiles}
-                onToggleSidebar={() => setSidebarOpen(true)}
-                collapsed={collapsed}
-                onToggleCollapsed={toggleCollapsed}
-              />
+              <NodeProvider node={openFileNode}>
+                <ServerFileViewer
+                  // A file on another node's disk; remounted rather than re-pointed when that changes.
+                  key={openFileNode ?? ""}
+                  path={openFile}
+                  onClose={() => setOpenFile(null)}
+                  // The Files tree is this node's disk: nothing to reveal a peer's file in.
+                  onReveal={openFileNode ? undefined : revealInFiles}
+                  onToggleSidebar={() => setSidebarOpen(true)}
+                  collapsed={collapsed}
+                  onToggleCollapsed={toggleCollapsed}
+                />
+              </NodeProvider>
             ) : shellView ? (
               <ShellView
                 target={shellView.target}
@@ -1190,6 +1311,49 @@ export function App() {
                 onToggleSidebar={() => setSidebarOpen(true)}
                 collapsed={collapsed}
                 onToggleCollapsed={toggleCollapsed}
+              />
+            ) : active && activeNode ? (
+              // A peer's session: the same view, inside its node, so every call in it goes there.
+              <NodeProvider node={activeNode}>
+                <SessionView
+                  key={sessionKey(activeNode, active.id)}
+                  session={active}
+                  busy={remote.busy.has(active.id) || remote.compacting.has(active.id)}
+                  activity={activeActivity}
+                  activityLabel={activeActivityLabel}
+                  parent={activeParent}
+                  shellsRev={remote.shellsRev}
+                  shellActivity={remote.shellActivity}
+                  shellsSeen={peerShellsSeen}
+                  onShellSeen={markPeerShellSeen}
+                  onFork={forkSession}
+                  onSelectSession={(id) => {
+                    setActiveId(id);
+                    clearMainArea();
+                  }}
+                  onToggleSidebar={() => setSidebarOpen(true)}
+                  collapsed={collapsed}
+                  onToggleCollapsed={toggleCollapsed}
+                  onStopped={remote.patchSession}
+                  onReopen={() => void onRestoreRemote(active.id)}
+                  onRename={(id, name) => void onRenameRemote(id, name)}
+                  onTerminalRename={(id, name) => remote.updateSession(id, { name })}
+                  onTerminalColor={(id, color) => remote.updateSession(id, { color })}
+                  onOpenServerFile={openSessionServerFile}
+                  project={projectForDir(active.workingDirectory, remote.projects)}
+                  onProjectsChange={remote.setProjects}
+                />
+              </NodeProvider>
+            ) : activeNode ? (
+              <NodeUnavailable
+                loading={!remote.loaded && !remote.error}
+                error={remote.error}
+                missing={remote.loaded}
+                onBack={() => {
+                  setActiveNode(null);
+                  setActiveId(null);
+                }}
+                onOpenSidebar={() => setSidebarOpen(true)}
               />
             ) : active ? (
               <SessionView
@@ -1222,7 +1386,7 @@ export function App() {
                 onRename={onRename}
                 onTerminalRename={onTerminalRename}
                 onTerminalColor={onTerminalColor}
-                onOpenServerFile={openServerFile}
+                onOpenServerFile={openSessionServerFile}
                 project={projectForDir(active.workingDirectory, projects)}
                 onProjectsChange={setProjects}
               />
@@ -1253,7 +1417,7 @@ export function App() {
           <SessionSearchDialog
             sessions={sessions}
             recents={recents}
-            activeId={activeId}
+            activeId={homeActiveId}
             // Opening a session from search also pulls the list back to the Sessions tab (so the row
             // just picked is the one shown selected) and closes the mobile drawer.
             onSelect={(id) => {
@@ -1267,12 +1431,14 @@ export function App() {
         )}
 
         {forkFrom && (
-          <ForkSessionDialog
-            parent={forkFrom}
-            sessions={sessions}
-            onForked={onCreated}
-            onClose={() => setForkFromId(null)}
-          />
+          <NodeProvider node={forkFromNode}>
+            <ForkSessionDialog
+              parent={forkFrom}
+              sessions={forkSessions}
+              onForked={forkFromNode ? onForkedRemote : onCreated}
+              onClose={() => setForkFromId(null)}
+            />
+          </NodeProvider>
         )}
 
         <NewSessionDialog
@@ -1294,6 +1460,61 @@ export function App() {
         />
       </div>
     </SessionsProgressContext.Provider>
+  );
+}
+
+const NO_IDS = new Set<string>();
+
+/** What the proxy's answers mean to someone holding a link to a peer's session. */
+const UNAVAILABLE: Record<string, string> = {
+  "unknown node": "This node isn't paired with that one (any more) — see Nodes at the bottom of the sidebar.",
+  "node offline": "It isn't answering. The link works again as soon as it is back.",
+  "node unauthorized": "It no longer accepts this node. Pair them again under Nodes.",
+  "node certificate changed": "It presents a different certificate from the one trusted. Check it under Nodes.",
+};
+
+/** Where a peer's session would be, while it can't be shown: still loading, unreachable, or gone. */
+function NodeUnavailable({
+  loading,
+  error,
+  missing,
+  onBack,
+  onOpenSidebar,
+}: {
+  loading: boolean;
+  error: string | null;
+  missing: boolean;
+  onBack: () => void;
+  onOpenSidebar: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col">
+      <header className="flex items-center gap-2 border-b px-3 py-2.5 md:hidden">
+        <Button variant="ghost" size="icon" onClick={onOpenSidebar}>
+          <Menu className="size-5" />
+        </Button>
+        <span className="font-semibold">Hangar</span>
+      </header>
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
+        {loading ? (
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
+        ) : (
+          <div>
+            <h2 className="text-lg font-semibold">{error ? "That node can't be reached" : "No such session"}</h2>
+            <p className="text-sm text-muted-foreground">
+              {error
+                ? (UNAVAILABLE[error] ?? `${error[0].toUpperCase()}${error.slice(1)}.`)
+                : missing
+                  ? "The node is there, but it has no session by that id any more."
+                  : null}
+            </p>
+          </div>
+        )}
+        <Button variant="outline" onClick={onBack}>
+          Back to this node
+        </Button>
+      </div>
+    </div>
   );
 }
 

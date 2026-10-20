@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { Project } from "@/types";
-import { api } from "@/lib/api";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
 import { DEFAULT_GROUP_ICON_NAME, GROUP_ICONS, groupIcon } from "@/lib/groupIcons";
 import { Button } from "@/components/ui/button";
@@ -16,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { Ban, Loader2, Plus } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 /**
  * The icon grid, for a project or a virtual folder. "No icon" is a real choice — it draws the
@@ -144,6 +144,7 @@ export function GroupDialog({
   onCreated: (groupId: string) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [name, setName] = useState("");
   const [color, setColor] = useState<string | null>(null);
   const [icon, setIcon] = useState<string | null>(null);

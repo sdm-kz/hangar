@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "@/lib/api";
 import type { GitCommit, GitCommitDetail, GitCommitFile, GitFileContent, GitRefs } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
@@ -20,6 +19,7 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 // A commit picked from the history — previewed on the right. With `path` set it targets one file
 // (a diff); without, the whole commit (its details + file list).
@@ -71,6 +71,7 @@ export function GitHistory({
   onSelect: (sel: CommitSelection) => void;
   fill?: boolean;
 }) {
+  const api = useApi();
   const [unfolded, setUnfolded] = useState(() => localStorage.getItem(OPEN_KEY) === "1");
   const open = fill || unfolded;
   const [commits, setCommits] = useState<GitCommit[] | null>(null);
@@ -526,6 +527,7 @@ function CommitRow({
   onSelectCommit: () => void;
   onSelectFile: (f: GitCommitFile) => void;
 }) {
+  const api = useApi();
   const [expanded, setExpanded] = useState(false);
   const [files, setFiles] = useState<GitCommitFile[] | null>(null);
   const [error, setError] = useState(false);
@@ -685,6 +687,7 @@ export function CommitDetailPreview({
   onSelectFile: (sel: CommitSelection) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [detail, setDetail] = useState<GitCommitDetail | null>(null);
   const [error, setError] = useState(false);
   const reqRef = useRef(0);
@@ -803,6 +806,7 @@ export function CommitFilePreview({
   // Reveal this file in the working-tree Files pane (null when it no longer exists there).
   onOpenInTree?: (path: string) => void;
 }) {
+  const api = useApi();
   const [view, setView] = useState<"diff" | "full">("diff");
   const [diff, setDiff] = useState<string | null>(null);
   const [full, setFull] = useState<GitFileContent | null>(null);

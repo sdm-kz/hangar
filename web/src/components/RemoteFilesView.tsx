@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { RemoteEntry, SessionRemote, TransferSide } from "@/types";
-import { api, ApiError, remoteFileUrl } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
@@ -8,6 +8,7 @@ import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useM
 import {
   announceRemoteChange,
   clearFileClip,
+  clipElsewhere,
   describeClip,
   getFileClip,
   hasTextSelection,
@@ -57,6 +58,7 @@ import {
   Upload,
   Video,
 } from "lucide-react";
+import { useApi, useSessionKey } from "@/lib/node";
 
 // Toolbar geometry, as in the sidebar's Files tree: 28px buttons with a 2px gap, and the folder name
 // keeps at least this much of the row.
@@ -150,6 +152,8 @@ function formatSize(n: number): string {
  * another folder here, into another SSH tab, or into the session's own Files panel — and back.
  */
 export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remote: SessionRemote }) {
+  const api = useApi();
+  const uiKey = useSessionKey(sessionId);
   const tab = remote.id;
   const confirm = useConfirm();
   // `manual`: the person pressed Disconnect, so the reconnect prompt must not reconnect by itself.
@@ -159,7 +163,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     manual?: boolean;
   }>({ state: "checking" });
   const [home, setHome] = useState("/");
-  const where = useMemo(() => loadRemoteWhere(sessionId, tab), [sessionId, tab]);
+  const where = useMemo(() => loadRemoteWhere(uiKey, tab), [sessionId, tab]);
   // The folder the tree is rooted at, and the one the toolbar acts on.
   const [root, setRoot] = useState<string | null>(where.cwd ?? null);
   const [selectedDir, setSelectedDir] = useState<string | null>(where.cwd ?? null);
@@ -286,11 +290,11 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
       // A root that is gone (deleted since, or a start folder that never existed) falls back home.
       if (r === "failed" && root !== home) setRoot((cur) => (cur === root ? home : cur));
     });
-    saveRemoteWhere(sessionId, tab, { cwd: root });
+    saveRemoteWhere(uiKey, tab, { cwd: root });
   }, [connected, root, home, listDir, sessionId, tab]);
 
   useEffect(() => {
-    saveRemoteWhere(sessionId, tab, { file: openFile ?? undefined });
+    saveRemoteWhere(uiKey, tab, { file: openFile ?? undefined });
   }, [openFile, sessionId, tab]);
 
   /** Re-list every open folder (or just the ones given) — after a change, or the refresh button. */
@@ -379,6 +383,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
       if (items.length === 0) return;
       setFileClip({
         mode,
+        base: api.base,
         source: side,
         label,
         items: items.map((i) => ({ path: i.path, name: baseName(i.path), isDir: i.isDir })),
@@ -386,12 +391,17 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
       setNotice(`${mode === "cut" ? "Cut" : "Copied"} ${items.length === 1 ? baseName(items[0].path) : `${items.length} items`} — paste into any file panel.`);
       mark.clear();
     },
-    [subject, side, label, mark]
+    [api, subject, side, label, mark]
   );
 
   const paste = useCallback(async () => {
     const c = getFileClip();
     if (!c || !target) return;
+    const elsewhere = clipElsewhere(c, api.base);
+    if (elsewhere) {
+      setError(elsewhere);
+      return;
+    }
     const move = c.mode === "cut";
     setBusy(`${move ? "Moving" : "Copying"} ${c.items.length === 1 ? c.items[0].name : `${c.items.length} items`}…`);
     setError(null);
@@ -516,7 +526,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     // side would need a shell the host may not offer.
     for (const f of files) {
       const a = document.createElement("a");
-      a.href = remoteFileUrl(tab, f.path, true);
+      a.href = api.remoteFileUrl(tab, f.path, true);
       a.download = baseName(f.path);
       document.body.appendChild(a);
       a.click();
@@ -582,7 +592,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
 
   const source = useMemo<FileSource>(
     () => ({
-      url: (p, dl) => remoteFileUrl(tab, p, dl),
+      url: (p, dl) => api.remoteFileUrl(tab, p, dl),
       text: (p) => api.remoteFileText(tab, p),
       write: (p, c) => api.remoteWrite(tab, p, c),
       newTab: false,
@@ -839,7 +849,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
                   onStartRename: setRenaming,
                   onCancelRename: () => setRenaming(null),
                   onDelete: (p, isDir) => void removeOne(p, isDir),
-                  downloadUrl: (p) => remoteFileUrl(tab, p, true),
+                  downloadUrl: (p) => api.remoteFileUrl(tab, p, true),
                 }}
               />
             ))

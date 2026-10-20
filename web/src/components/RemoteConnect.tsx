@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Project, RemoteAuth, RemoteConnection, RemoteConnectResult, SshConfigInfo } from "@/types";
-import { api } from "@/lib/api";
 import { connectionTarget, mintRemoteId } from "@/lib/sessionRemotes";
 import { cn } from "@/lib/utils";
 import {
@@ -16,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, KeyRound, Loader2, Server, ShieldAlert, ShieldQuestion } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 /** A connection with nothing filled in yet. */
 export function blankConnection(): RemoteConnection {
@@ -23,21 +23,27 @@ export function blankConnection(): RemoteConnection {
 }
 
 // The server's ~/.ssh/config hosts and key files, fetched once per page: they change about as often
-// as someone edits the file, and the dialogs that offer them open many times.
-let sshConfigCache: Promise<SshConfigInfo> | null = null;
+// as someone edits the file, and the dialogs that offer them open many times. One per node: each has
+// its own ~/.ssh.
+const sshConfigCache = new Map<string, Promise<SshConfigInfo>>();
 export function useSshConfig(): SshConfigInfo | null {
+  const api = useApi();
   const [info, setInfo] = useState<SshConfigInfo | null>(null);
   useEffect(() => {
     let alive = true;
-    sshConfigCache ??= api.sshConfig().catch((e) => {
-      sshConfigCache = null; // try again next time
-      throw e;
-    });
-    sshConfigCache.then((i) => alive && setInfo(i)).catch(() => alive && setInfo({ hosts: [], keys: [], sshDir: "" }));
+    let pending = sshConfigCache.get(api.base);
+    if (!pending) {
+      pending = api.sshConfig().catch((e) => {
+        sshConfigCache.delete(api.base); // try again next time
+        throw e;
+      });
+      sshConfigCache.set(api.base, pending);
+    }
+    pending.then((i) => alive && setInfo(i)).catch(() => alive && setInfo({ hosts: [], keys: [], sshDir: "" }));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [api]);
   return info;
 }
 
@@ -210,6 +216,7 @@ export function RemoteConnectionFields({
  * reconnect one after a restart, so the two can never disagree about what a result means.
  */
 export function useRemoteConnector(tabId: string) {
+  const api = useApi();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RemoteConnectResult | null>(null);
 
@@ -394,6 +401,7 @@ export function RemoteConnectDialog({
   onConnected: (tabId: string, connection: RemoteConnection) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [tabId] = useState(mintRemoteId);
   const saved = project?.connections ?? [];
   const [draft, setDraft] = useState<RemoteConnection>(() => (saved[0] ? { ...saved[0] } : blankConnection()));

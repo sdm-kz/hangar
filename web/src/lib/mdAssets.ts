@@ -4,8 +4,6 @@
 // the server's filesystem, next to the .md. Rewriting the src to the raw-file API, resolved against
 // the document's own absolute path, is what makes those images show up.
 
-import { serverFileUrl } from "@/lib/api";
-
 /**
  * True for a src the browser can already fetch on its own: an absolute URL (http:, https:, data:,
  * blob:) or a protocol-relative one. The scheme needs two or more characters on purpose, so a
@@ -44,7 +42,8 @@ function joinPath(dir: string, rel: string): string {
 export function mdAssetUrl(
   src: string,
   docPath: string,
-  toUrl: (path: string) => string = serverFileUrl
+  // The file API of the node the document is on (Markdown passes its view's, or the caller's own).
+  toUrl: (path: string) => string
 ): string | null {
   if (!src || src.startsWith("#") || isFetchable(src)) return null;
   let path = src;

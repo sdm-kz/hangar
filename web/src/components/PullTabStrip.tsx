@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GitHubPull, SessionPull, SessionRepo } from "@/types";
-import { api } from "@/lib/api";
 import { age } from "@/lib/age";
 import { pullKey, pullTabLabel } from "@/lib/sessionPulls";
 import { useSessionRepos } from "@/lib/sessionRepos";
@@ -19,6 +18,7 @@ import {
   Search,
   X,
 } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 /** Which pull requests the picker is listing. Open is the default — it is what a session is for. */
 type PullState = "open" | "closed" | "all";
@@ -80,6 +80,7 @@ export function PullPicker({
   openSignal?: number;
   onOpen: (pull: SessionPull) => void;
 }) {
+  const api = useApi();
   const [menuOpen, setMenuOpen] = useState(false);
   const [state, setState] = useState<PullState>("open");
   const [listings, setListings] = useState<Record<string, Listing>>({});

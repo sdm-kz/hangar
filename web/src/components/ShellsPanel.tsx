@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SessionInfo, ShellInfo } from "@/types";
-import { api } from "@/lib/api";
 import { dirKey } from "@/lib/sessionOrder";
 import { folderName } from "@/lib/recentFolders";
 import { shellMark, shellMarkLabel, type ShellActivity } from "@/lib/shellActivity";
@@ -20,6 +19,7 @@ import { Bot, Folder, Loader2, Plus, Server, TerminalSquare, X } from "lucide-re
 import { ActivityMark } from "./ActivityMark";
 import { FolderPicker } from "./FolderPicker";
 import { shellIcon, shellTabLabel, useShellOptions } from "./ShellTabStrip";
+import { useApi } from "@/lib/node";
 
 /**
  * Every open shell on the server — the sessions', the folders' and the SSH connections — re-read
@@ -27,6 +27,7 @@ import { shellIcon, shellTabLabel, useShellOptions } from "./ShellTabStrip";
  * last list rather than emptying the tab over a blip.
  */
 export function useAllShells(shellsRev: number, enabled: boolean): ShellInfo[] | null {
+  const api = useApi();
   const [shells, setShells] = useState<ShellInfo[] | null>(null);
   useEffect(() => {
     // Signed out (or not yet known to be signed in), there is nothing to ask for but a 401.
@@ -107,6 +108,7 @@ export function ShellsPanel({
   onSelectSession: (id: string) => void;
   onNewSsh: () => void;
 }) {
+  const api = useApi();
   const confirm = useConfirm();
   const [newOpen, setNewOpen] = useState(false);
 
@@ -380,6 +382,7 @@ function NewShellDialog({
   onOpened: (shell: ShellInfo) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [dir, setDir] = useState(defaultFolder);
   const options = useShellOptions(true);
   const [shell, setShell] = useState<string | null>(null);

@@ -134,7 +134,7 @@ public sealed class NodeProxy
         ForwarderError error;
         using (client.Cut.Token.Register(ctx.Abort))
         {
-            var transformer = new Transformer(rest, peerToken, _identity.Current.Id);
+            var transformer = new Transformer(rest, peerToken, _identity.Current.Id, isPreview);
             error = await _forwarder.SendAsync(ctx, peer.Url, client.Invoker, RequestConfig, transformer);
         }
         if (error == ForwarderError.None || client.Cut.IsCancellationRequested) return;
@@ -216,7 +216,7 @@ public sealed class NodeProxy
     }
 
     /// <summary>The per-request rewrite: the path under the peer, the credentials, and the hop mark.</summary>
-    private sealed class Transformer(PathString rest, string peerToken, string selfId) : HttpTransformer
+    private sealed class Transformer(PathString rest, string peerToken, string selfId, bool isPreview) : HttpTransformer
     {
         public override async ValueTask TransformRequestAsync(HttpContext ctx, HttpRequestMessage proxyRequest,
             string destinationPrefix, CancellationToken ct)
@@ -263,7 +263,7 @@ public sealed class NodeProxy
                 return false;
             }
             var copy = await base.TransformResponseAsync(ctx, proxyResponse, ct);
-            Confine(ctx.Response.Headers);
+            Confine(ctx.Response, isPreview);
             return copy;
         }
 
@@ -272,17 +272,36 @@ public sealed class NodeProxy
         /// local response that could run script there is made safe by the endpoint that serves it (the HTML
         /// preview's sandbox, the raw file endpoints' nosniff); a peer's is only as safe as the peer, and a
         /// compromised one would otherwise have a page here that reads the token and owns this node too. So
-        /// every proxied response gets the preview's sandbox — an opaque origin, whatever the peer sent — and
-        /// nothing that would outlive the response on this origin (a cookie, a service worker's scope, a wipe).
-        /// The API's own callers are unaffected: fetch, XHR, sockets, images and downloads ignore all of it.
+        /// every proxied response is put in a sandbox — an opaque origin, whatever the peer sent — and loses
+        /// what would outlive it on this origin (a cookie, a service worker's scope, a wipe).
+        ///
+        /// Only the ticketed preview may run script in it. Every other URL a browser opens here (a file's raw
+        /// bytes, say) carries this node's token in its query, which a page can read from its own address or
+        /// send on as a Referer — so those get no script, no Referer, and nothing rendered as a document at
+        /// all: what isn't plainly media or text is a download. The API's own callers are unaffected: fetch,
+        /// XHR, sockets, images and media ignore all of it.
         /// </summary>
-        private static void Confine(IHeaderDictionary headers)
+        private static void Confine(HttpResponse response, bool isPreview)
         {
-            headers.ContentSecurityPolicy = "sandbox allow-scripts allow-forms allow-popups allow-modals";
+            var headers = response.Headers;
+            headers.ContentSecurityPolicy = isPreview ? "sandbox allow-scripts allow-forms allow-popups allow-modals" : "sandbox";
             headers.XContentTypeOptions = "nosniff";
+            headers["Referrer-Policy"] = "no-referrer";
             headers.Remove("Set-Cookie");
             headers.Remove("Service-Worker-Allowed");
             headers.Remove("Clear-Site-Data");
+            if (!isPreview && response.StatusCode != StatusCodes.Status101SwitchingProtocols && !Inert(response.ContentType))
+                headers.ContentDisposition = "attachment";
+        }
+
+        /// <summary>Whether a browser opening this type shows it without parsing it as a document.</summary>
+        private static bool Inert(string? contentType)
+        {
+            if (string.IsNullOrEmpty(contentType)) return false;
+            var type = contentType.Split(';', 2)[0].Trim().ToLowerInvariant();
+            return type is "application/pdf" or "application/json" or "text/plain"
+                || type.StartsWith("audio/") || type.StartsWith("video/")
+                || (type.StartsWith("image/") && !type.Contains("svg"));
         }
     }
 }

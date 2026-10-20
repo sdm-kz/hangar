@@ -7,13 +7,13 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { findFilePaths } from "@/lib/terminalLinks";
 import "@xterm/xterm/css/xterm.css";
-import { getToken } from "@/lib/api";
 import { getTheme, subscribeTheme, type Theme } from "@/lib/theme";
 import { writeToClipboard } from "@/lib/clipboard";
 import { uploadImageFile } from "@/lib/upload";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "@/components/ZoomControls";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useApi } from "@/lib/node";
 
 // The terminal zooms by font size rather than CSS `zoom`: the grid is measured from the font, so a
 // larger font means fewer, bigger cells (and a PTY resize), where scaling the box would just blow up
@@ -296,6 +296,7 @@ export const TerminalPane = forwardRef<
   },
   ref
 ) {
+  const api = useApi();
   const path = socketPath ?? `/hub/sessions/${sessionId}/terminal`;
   const hostRef = useRef<HTMLDivElement>(null);
   // Read by the paste handler rather than closed over by the terminal's effect: it flips as focus
@@ -565,10 +566,8 @@ export const TerminalPane = forwardRef<
       /* container not measured yet */
     }
 
-    const token = getToken() ?? "";
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}://${location.host}${path}?access_token=${encodeURIComponent(token)}`;
-    const ws = new WebSocket(url);
+    // On the session's own node: through /n/{id} for a peer's (see lib/node.tsx).
+    const ws = new WebSocket(api.socketUrl(path));
     ws.binaryType = "arraybuffer";
     // Set by the cleanup below so a close we caused (unmount, session switch, our own re-attach)
     // isn't mistaken for a drop and answered with yet another reconnect.
@@ -892,7 +891,7 @@ export const TerminalPane = forwardRef<
       const file = item.getAsFile();
       if (!file) return;
       try {
-        const { fullPath } = await uploadImageFile(sessionId, file);
+        const { fullPath } = await uploadImageFile(api, sessionId, file);
         if (ws.readyState === WebSocket.OPEN)
           ws.send(new TextEncoder().encode(`\x1b[200~${fullPath}\x1b[201~`));
       } catch {

@@ -2,6 +2,11 @@ export type SessionState = "Running" | "Exited" | "Failed" | "Restorable";
 
 export interface SessionInfo {
   id: string;
+  /**
+   * The node the session is on, filled in by the client from the stream it came in on: absent (or null)
+   * for the node this page was loaded from, a node id for a peer's. Not sent by the server.
+   */
+  nodeId?: string | null;
   name: string;
   workingDirectory: string;
   remoteControl: boolean;

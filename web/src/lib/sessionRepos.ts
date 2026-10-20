@@ -12,7 +12,7 @@
 // draws four of them, and linking a repo in one has to show in the others.
 import { useCallback, useEffect, useState } from "react";
 import type { SessionRepo } from "@/types";
-import { api } from "./api";
+import { apiForKey, splitSessionKey, useApi, useSessionKey } from "./node";
 
 interface Entry {
   repos: SessionRepo[];
@@ -62,8 +62,9 @@ function refresh(sessionId: string, force: boolean) {
 
   const write = claim(sessionId);
   put(sessionId, { repos: held?.repos ?? [], loading: true, error: null }, write);
-  const done = api
-    .githubRepos(sessionId)
+  // Keyed by session KEY (lib/node.tsx), so a peer's session asks its own node.
+  const done = apiForKey(sessionId)
+    .githubRepos(splitSessionKey(sessionId).id)
     .then((repos) => put(sessionId, { repos, loading: false, error: null }, write))
     .catch((e) =>
       put(
@@ -117,15 +118,18 @@ export interface SessionRepos extends Entry {
 
 /** The repos a session can review, kept in step across every picker showing them. */
 export function useSessionRepos(sessionId: string): SessionRepos {
-  const [entry, setEntry] = useState<Entry>(() => cache.get(sessionId) ?? PENDING);
+  const api = useApi();
+  // The cache's key: the same id on two nodes is two sessions.
+  const key = useSessionKey(sessionId);
+  const [entry, setEntry] = useState<Entry>(() => cache.get(key) ?? PENDING);
 
   useEffect(() => {
-    const seen = () => setEntry(cache.get(sessionId) ?? PENDING);
+    const seen = () => setEntry(cache.get(key) ?? PENDING);
     seen();
-    const stop = watch(sessionId, seen);
-    refresh(sessionId, false);
+    const stop = watch(key, seen);
+    refresh(key, false);
     return stop;
-  }, [sessionId]);
+  }, [key]);
 
   const link = useCallback(
     async (repo: string) => {
@@ -134,28 +138,28 @@ export function useSessionRepos(sessionId: string): SessionRepos {
         return { error: "That is not a repository — give it as owner/name, or paste its GitHub URL." };
       }
       try {
-        put(sessionId, { repos: await api.githubLinkRepo(sessionId, clean), loading: false, error: null });
+        put(key, { repos: await api.githubLinkRepo(sessionId, clean), loading: false, error: null });
         return { name: clean };
       } catch (e) {
         // The list itself is still good — only the attempt failed, so what is shown stays put.
         return { error: e instanceof Error ? e.message : "Could not link that repository." };
       }
     },
-    [sessionId]
+    [api, sessionId, key]
   );
 
   const unlink = useCallback(
     async (repo: string) => {
       try {
-        put(sessionId, { repos: await api.githubUnlinkRepo(sessionId, repo), loading: false, error: null });
+        put(key, { repos: await api.githubUnlinkRepo(sessionId, repo), loading: false, error: null });
       } catch {
-        refresh(sessionId, true);
+        refresh(key, true);
       }
     },
-    [sessionId]
+    [api, sessionId, key]
   );
 
-  const reload = useCallback(() => refresh(sessionId, true), [sessionId]);
+  const reload = useCallback(() => refresh(key, true), [key]);
 
   return { ...entry, link, unlink, reload };
 }

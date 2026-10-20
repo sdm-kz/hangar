@@ -116,8 +116,15 @@ function readSeen(): Record<string, number> {
  * Which finished commands this browser has seen, per shell: the endedAt of the last one looked at.
  * Kept in localStorage and shared between the browser's tabs, like the sessions' "done" marks. Ids
  * of shells that are gone are pruned once the hub has said which are live: null until it has.
+ *
+ * A peer's shells are kept under `node:id` (lib/node's sessionKey), pruned against `peerActivity` — that
+ * node's own say — while it is the one being looked at, and left alone otherwise.
  */
-export function useShellsSeen(activity: Record<string, ShellActivity> | null) {
+export function useShellsSeen(
+  activity: Record<string, ShellActivity> | null,
+  peer: string | null = null,
+  peerActivity: Record<string, ShellActivity> | null = null
+) {
   const [seen, setSeen] = useState<Record<string, number>>(readSeen);
 
   useEffect(() => {
@@ -144,12 +151,17 @@ export function useShellsSeen(activity: Record<string, ShellActivity> | null) {
   // Forget shells that have closed. Only ever drops ids the hub no longer lists, so a snapshot that is
   // still on its way can cost a mark at most, never bring one back that was dismissed.
   useEffect(() => {
-    if (!activity) return;
+    if (!activity && !(peer && peerActivity)) return;
+    const live = (key: string) => {
+      const at = key.indexOf(":");
+      if (at < 0) return !activity || key in activity;
+      return !(peer && peerActivity && key.slice(0, at) === peer) || key.slice(at + 1) in peerActivity;
+    };
     setSeen((s) => {
-      const ids = Object.keys(s).filter((id) => id in activity);
+      const ids = Object.keys(s).filter(live);
       return ids.length === Object.keys(s).length ? s : write(Object.fromEntries(ids.map((id) => [id, s[id]])));
     });
-  }, [activity, write]);
+  }, [activity, peer, peerActivity, write]);
 
   return { seen, markSeen };
 }

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import type { Project, SessionTemplate } from "@/types";
-import { api } from "@/lib/api";
 import { hasInputToken, templateFolderChoices } from "@/lib/templates";
 import { sortedByName } from "@/lib/projects";
 import { FolderPicker, FolderChips } from "./FolderPicker";
@@ -20,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { useConfirm } from "@/components/ui/confirm";
 import { ChevronDown, ChevronRight, Loader2, Save, Trash2 } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 /**
  * The editor for a session template — the thing a Templates-tab launch is made from: a project, a
@@ -49,6 +49,7 @@ export function TemplateDialog({
   onSaved: (templates: SessionTemplate[]) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const confirm = useConfirm();
   const [name, setName] = useState(template?.name ?? "");
   const [description, setDescription] = useState(template?.description ?? "");

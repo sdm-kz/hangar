@@ -9,7 +9,11 @@
 // Writes go into the mirror at once and to the server on a short debounce; the server answers with
 // the merged bag, which is what the mirror then holds. Other browsers learn about the change from
 // SessionInfo.uiRev on the session list and re-fetch (see noteSessionUiRev).
-import { api } from "./api";
+//
+// Every `id` here is a session KEY (lib/node.tsx: sessionKey) — the bare id for a session of this node,
+// node:id for one on a peer — so two machines' sessions never share an entry, and the server written to
+// is the one the session lives on.
+import { apiForKey, splitSessionKey } from "./node";
 import type { PullFolds, SessionLink, SessionPull, SessionRemote } from "@/types";
 import type { TabName } from "./urlState";
 
@@ -181,7 +185,7 @@ async function flush(id: string) {
   pending.delete(id);
   try {
     const quiet = Object.keys(patch).every((f) => QUIET_FIELDS.has(f as keyof SessionUi));
-    const res = await api.patchSessionUi(id, patch as Record<string, unknown>, quiet);
+    const res = await apiForKey(id).patchSessionUi(splitSessionKey(id).id, patch as Record<string, unknown>, quiet);
     // The answer is the whole merged bag, so adopting it also picks up whatever another browser
     // changed in the meantime — anything still queued here is layered back on top.
     adopt(id, res.state as SessionUi, res.rev, false);
@@ -205,7 +209,7 @@ export function flushSessionUi(id: string) {
  */
 export async function syncSessionUi(id: string, seed = false) {
   try {
-    const res = await api.getSessionUi(id);
+    const res = await apiForKey(id).getSessionUi(splitSessionKey(id).id);
     // A session the server has nothing for yet keeps whatever this browser remembers, and hands it
     // over on the next write — the same "this browser still holds it" handover the pins do.
     if (res.rev > 0) adopt(id, res.state as SessionUi, res.rev, seed);

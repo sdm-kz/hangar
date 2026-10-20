@@ -11,7 +11,7 @@
 // every socket, and a reconciliation must not be mistaken for a preference worth saving.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RemoteConnection, ShellInfo } from "@/types";
-import { api } from "./api";
+import { useApi } from "./node";
 
 export interface ShellsHandle {
   shells: ShellInfo[];
@@ -61,6 +61,7 @@ export function useShells({
   onActivate?: (id: string) => void;
   onError?: (message: string) => void;
 }): ShellsHandle {
+  const api = useApi();
   const sessionId = "sessionId" in owner ? owner.sessionId : undefined;
   const folder = "folder" in owner ? owner.folder : undefined;
   // Where a new shell opens. For a folder that is the folder itself; for a session, the folder it

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import type { LinkProbe, SessionLink } from "@/types";
-import { api } from "@/lib/api";
 import { defaultLinkTitle, linkHost, MAX_LINKS, normalizeLinkUrl, suggestLinkTitle } from "@/lib/sessionLinks";
 import {
   Dialog,
@@ -16,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LinkIcon } from "./LinkIcon";
 import { AlertTriangle, Globe, Loader2, SquareArrowOutUpRight } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 // How long after the last keystroke the URL is looked at. Long enough that typing a URL out by hand
 // doesn't fire a request per character, short enough that a paste feels immediate.
@@ -45,6 +45,7 @@ export function LinkDialog({
   onSave: (link: Omit<SessionLink, "id">) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [url, setUrl] = useState(edit?.url ?? "");
   const [title, setTitle] = useState(edit?.title ?? "");
   const [embed, setEmbed] = useState(edit?.embed ?? true);

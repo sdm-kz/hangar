@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, Inbox, Loader2, Trash2 } from "lucide-react";
-import { sessionFileUrl } from "@/lib/api";
 import { writeToClipboard } from "@/lib/clipboard";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
 import { loadPostponed, savePostponed, type PostponedMessage } from "@/lib/postponed";
+import { useApi } from "@/lib/node";
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || "image";
 
@@ -44,6 +44,7 @@ export function PostponedDialog({
   live: boolean;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [messages, setMessages] = useState<PostponedMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -51,7 +52,7 @@ export function PostponedDialog({
 
   useEffect(() => {
     let cancelled = false;
-    loadPostponed(sessionId)
+    loadPostponed(api, sessionId)
       .then((m) => !cancelled && setMessages(m))
       .catch(() => !cancelled && setMessages([]));
     return () => {
@@ -72,7 +73,7 @@ export function PostponedDialog({
     setError(null);
     // Put the pool back as it was if the save did not land, rather than leaving the dialog showing a
     // deletion the file never took.
-    if (!(await savePostponed(sessionId, next))) {
+    if (!(await savePostponed(api, sessionId, next))) {
       setMessages(before);
       setError("Could not save — the message is still there.");
     }
@@ -152,14 +153,14 @@ export function PostponedDialog({
                           type="button"
                           onClick={() =>
                             setPreview({
-                              src: sessionFileUrl(sessionId, img.path),
+                              src: api.sessionFileUrl(sessionId, img.path),
                               name: baseName(img.path),
                             })
                           }
                           title="Preview image"
                         >
                           <img
-                            src={sessionFileUrl(sessionId, img.path)}
+                            src={api.sessionFileUrl(sessionId, img.path)}
                             alt=""
                             className="size-12 cursor-zoom-in rounded border object-cover"
                             // The bytes live beside the pool in the working directory, and a folder

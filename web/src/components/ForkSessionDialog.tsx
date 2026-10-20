@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, ApiError } from "@/lib/api";
+import { ApiError } from "@/lib/api";
+import { useApi } from "@/lib/node";
 import type { SessionInfo } from "@/types";
 import {
   Dialog,
@@ -51,6 +52,7 @@ export function ForkSessionDialog({
   onForked: (s: SessionInfo) => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [name, setName] = useState(() => suggestName(parent, sessions));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

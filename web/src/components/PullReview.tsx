@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileText, Inbox, Loader2, MessageSquarePlus, Send, Trash2 } from "lucide-react";
-import { api } from "@/lib/api";
 import { commentCount, countComments, type ReviewTarget } from "@/lib/prReview";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useApi } from "@/lib/node";
 
 /** Where a floating thing goes on screen: just under the end of the selection it is about. */
 export interface Spot {
@@ -292,6 +292,7 @@ export function ReviewDialog({
   onDone: () => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [draft, setDraft] = useState(text);
   // The version of the file the draft was started from — what "edited" is measured against, and
   // what is checked against the file before anything replaces or deletes it.

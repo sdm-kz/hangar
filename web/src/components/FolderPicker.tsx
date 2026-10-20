@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api } from "@/lib/api";
 import type { BrowseResult } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -7,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { sameFolder } from "@/lib/projects";
 import { folderName } from "@/lib/recentFolders";
 import { ArrowUp, Folder, HardDrive, Loader2 } from "lucide-react";
+import { useApi } from "@/lib/node";
 
 /**
  * Filesystem folder picker with type-to-navigate autocomplete and keyboard navigation.
@@ -23,6 +23,7 @@ export function FolderPicker({
   value: string;
   onChange: (path: string) => void;
 }) {
+  const api = useApi();
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<BrowseResult | null>(null);
   const [loading, setLoading] = useState(false);

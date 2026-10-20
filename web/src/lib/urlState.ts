@@ -21,6 +21,9 @@ export type PanelName = "sessions" | "files" | "shells";
 export const SSH_SHELLS = "@ssh";
 
 export interface UrlState {
+  /** The node `session` is on (plans/multi-node.md): absent for the one this page was loaded from, so a
+   *  link from before nodes still means what it meant. */
+  node?: string;
   session?: string;
   tab?: TabName;
   file?: string;
@@ -83,9 +86,11 @@ export function filesUrl(): string {
  * belong to the previously-open session, and `open`, since the session — not a server file — takes
  * over the main area.
  */
-export function sessionUrl(id: string): string {
+export function sessionUrl(id: string, node?: string | null): string {
   const p = new URLSearchParams(window.location.search);
   p.set("session", id);
+  if (node) p.set("node", node);
+  else p.delete("node");
   // A session's layout is its own (saved with it), so no tab of the one being left rides along.
   p.delete("tab");
   p.delete("file");
@@ -100,6 +105,8 @@ export function readUrlState(): UrlState {
   const tab = p.get("tab");
   const panel = p.get("panel");
   return {
+    // A node id is letters and digits (the server's NodePairing.IsNodeId); anything else in a link is no node.
+    node: /^[A-Za-z0-9]{1,64}$/.test(p.get("node") ?? "") ? p.get("node")! : undefined,
     session: p.get("session") || undefined,
     tab:
       tab === "files" ||
@@ -128,6 +135,7 @@ export function patchUrlState(patch: UrlState): void {
     if (val) p.set(key, val);
     else p.delete(key);
   };
+  if ("node" in patch) apply("node", patch.node);
   if ("session" in patch) apply("session", patch.session);
   if ("tab" in patch) apply("tab", patch.tab);
   if ("file" in patch) apply("file", patch.file);
