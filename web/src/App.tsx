@@ -256,15 +256,11 @@ export function App() {
     // Keep a valid current selection (e.g. restored from the URL) — a closed session included: it
     // opens on its files and its diff, with the terminal replaced by the button that reopens it, so
     // a session stopped from its own tab stays where it was instead of throwing the main area back
-    // to the empty state. Auto-selecting one is still wrong, though: landing on a dead session with
-    // nothing running in it is not where anyone wants to arrive, so that falls to the first live one.
+    // to the empty state. Nothing is picked on anyone's behalf: the app opened on its bare address,
+    // or a selection that has gone away, leaves the main area empty until a session is chosen.
     // A peer's session is not in this list, and isn't this list's to correct.
     if (activeNodeRef.current) return;
-    setActiveId((cur) =>
-      cur && list.some((s) => s.id === cur)
-        ? cur
-        : list.find((s) => s.state !== "Restorable")?.id ?? null
-    );
+    setActiveId((cur) => (cur && list.some((s) => s.id === cur) ? cur : null));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -1326,8 +1322,8 @@ export function App() {
 
   /**
    * The open session was among those just removed (on the node it is on): let it go. A peer's goes back to
-   * this node — whose list then picks a session to show, as it does after removing one of its own —
-   * rather than leaving "no such session" on that node where the view was.
+   * this node, with nothing selected — as after removing one of its own — rather than leaving "no such
+   * session" on that node where the view was.
    */
   function leaveRemoved(ids: Set<string>) {
     const cur = activeIdRef.current;
@@ -1904,7 +1900,9 @@ function EmptyState({
         <img src={logo} alt="" className="size-14 object-contain" />
         <div>
           <h2 className="text-lg font-semibold">No session selected</h2>
-          <p className="text-sm text-muted-foreground">Start a Claude Code session in a working folder.</p>
+          <p className="text-sm text-muted-foreground">
+            Pick one from the sessions list, or start a new one in a working folder.
+          </p>
         </div>
         <Button onClick={onNew}>
           <Plus className="size-4" /> New session
