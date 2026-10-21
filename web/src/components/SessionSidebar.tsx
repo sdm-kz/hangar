@@ -350,6 +350,20 @@ function withActivity(
   return sessions.filter((s) => keep.has(s.id));
 }
 
+/** The sessions the filter leaves drawn — the tree's rows, and so what a heading over them counts. */
+function filterSessions(
+  filter: SessionFilter,
+  sessions: SessionInfo[],
+  ids: ActivityIds,
+  keepId: string | null
+): SessionInfo[] {
+  return filter === "active"
+    ? sessions.filter((s) => s.state === "Running")
+    : filter === "activity"
+      ? withActivity(sessions, ids, keepId)
+      : sessions;
+}
+
 /**
  * Props that stop a drag from starting inside a menu.
  *
@@ -1775,12 +1789,7 @@ export function SessionSidebar({
   // Sessions shown after applying the filter ("active" = running only, "activity" = carrying a mark).
   // Recents aren't filtered (they're presets, not live sessions).
   const visibleSessions = useMemo(
-    () =>
-      filter === "active"
-        ? sessions.filter((s) => s.state === "Running")
-        : filter === "activity"
-          ? withActivity(sessions, activityIds, activeId)
-          : sessions,
+    () => filterSessions(filter, sessions, activityIds, activeId),
     [filter, sessions, activityIds, activeId]
   );
   // The toolbar's counts are over every machine listed: its filters apply to all of them.
@@ -3221,7 +3230,7 @@ export function SessionSidebar({
               color={self?.color ?? null}
               here={!!self}
               status="online"
-              count={sessions.length}
+              count={visibleSessions.length}
               collapsed={collapsedNodes.has(SELF_NODE)}
               onToggle={() => toggleNode(SELF_NODE)}
               activity={folderActivity(sessions, activityIds)}
@@ -3259,7 +3268,7 @@ export function SessionSidebar({
                     status={peer.status}
                     error={peer.error}
                     lastSeen={peer.lastSeen}
-                    count={tree.sessions.length}
+                    count={filterSessions(filter, tree.sessions, tree.activityIds, tree.activeId).length}
                     collapsed={!open}
                     onToggle={() => toggleNode(peer.id)}
                     activity={folderActivity(tree.sessions, tree.activityIds)}
