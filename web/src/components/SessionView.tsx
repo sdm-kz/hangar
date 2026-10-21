@@ -873,9 +873,11 @@ export function SessionView({
 
   // That worktree's status. Its folder isn't the one the session's watcher follows, so on top of the
   // refreshes the session's own folder triggers it is polled, slowly, while the session runs.
+  // A refresh keeps the last answer on screen until the new one lands: cleared on each one, the badge
+  // fell back to the session's own folder in between, and flipped branch every time a file changed.
   const [rootGit, setRootGit] = useState<GitStatus | null>(null);
+  useEffect(() => setRootGit(null), [session.id, gitRoot]);
   useEffect(() => {
-    setRootGit(null);
     if (!gitRoot) return;
     let stopped = false;
     const load = () =>
