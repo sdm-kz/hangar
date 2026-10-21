@@ -96,6 +96,13 @@ public sealed class NodeProxy
                 await Fail(ctx, StatusCodes.Status401Unauthorized, "unauthorized");
                 return;
             }
+            // The same rule as this node's own sockets (TokenAuthMiddleware): the peer takes this node's word
+            // for it, since what it sees is a peer token.
+            if (ctx.WebSockets.IsWebSocketRequest && !SocketOrigin.Allowed(ctx.Request))
+            {
+                await Fail(ctx, StatusCodes.Status403Forbidden, "not from this node's page");
+                return;
+            }
         }
         if (ctx.Request.Headers.ContainsKey(ViaHeader))
         {

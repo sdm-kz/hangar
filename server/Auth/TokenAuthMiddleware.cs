@@ -92,6 +92,16 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens,
             return;
         }
 
+        // A socket is a shell or the whole session list, opened with the token in its URL: only from this
+        // node's own page (see SocketOrigin). Not asked of a peer above — a socket a node relays carries the
+        // browser's Origin, which that node has already held to its own.
+        if (ctx.WebSockets.IsWebSocketRequest && !SocketOrigin.Allowed(ctx.Request))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await ctx.Response.WriteAsJsonAsync(new { error = "not from this node's page" });
+            return;
+        }
+
         await next(ctx);
     }
 

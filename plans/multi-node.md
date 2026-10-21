@@ -287,6 +287,11 @@ peer. A `NodeContext` provides it, and `useApi()` returns the client bound to th
   - a browser shows no PDF in a sandbox, so a peer's PDF is fetched and shown from a blob;
   - a saved link tab must still be http(s) when it is restored — the session's UI bag is the peer's
     to write.
+- A socket (`/hub/*`, and a peer's through `/n/…/hub/*`) is taken only from this node's own page
+  (`Auth/SocketOrigin.cs`): its token rides in the URL, so a page that came by one could otherwise open
+  shells from anywhere. No `Origin` (tray, mesh, scripts) passes. Behind a reverse proxy, `X-Forwarded-Host`
+  counts as this node's host. A peer doesn't check a socket relayed to it: the relaying node did. The Vite dev
+  proxy presents the backend's origin, so nothing on this machine is let through for being local.
 
 **As built (phase 4), SPA.**
 - `lib/nodeStream.ts` is now `usePeers()`, fed from `nodes` on this node's stream. The phase-3 per-peer socket

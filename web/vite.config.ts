@@ -15,7 +15,14 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": { target: backend, changeOrigin: true },
-      "/hub": { target: backend, changeOrigin: true, ws: true },
+      "/hub": {
+        target: backend,
+        changeOrigin: true,
+        ws: true,
+        // The backend takes a socket only from its own page (server/Auth/SocketOrigin.cs). Through this proxy
+        // the page is the dev server's, so its sockets say they come from the backend it stands in front of.
+        configure: (proxy) => proxy.on("proxyReqWs", (req) => req.setHeader("origin", new URL(backend).origin)),
+      },
     },
   },
   // Production build lands in the .NET server's wwwroot.
