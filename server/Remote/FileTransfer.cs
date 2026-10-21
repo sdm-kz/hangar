@@ -206,7 +206,7 @@ internal static class FileTransfer
                 if (from.IsDir(src) && Covers(from.Identity(src), to.Identity(folder)))
                     throw new RemoteException("A folder cannot be copied into itself.");
 
-                var target = Unique(to, folder, from.NameOf(src));
+                var target = Unique(to, folder, PlainName(from.NameOf(src)));
                 if (same && move && from.TryMove(src, target))
                 {
                     done.Add(target);
@@ -218,8 +218,10 @@ internal static class FileTransfer
                     continue;
                 }
                 CopyTree(from, src, to, target, 0);
-                if (move) from.Delete(src);
+                // It is there now, whether or not the original can be taken away: the panel has to know
+                // where it went, and a second paste must not make another.
                 done.Add(target);
+                if (move) from.Delete(src);
             }
             catch (Exception ex)
             {
@@ -243,12 +245,25 @@ internal static class FileTransfer
         {
             to.Mkdir(dst);
             foreach (var name in from.ListNames(src))
-                CopyTree(from, from.Join(src, name), to, to.Join(dst, name), depth + 1);
+                CopyTree(from, from.Join(src, PlainName(name)), to, to.Join(dst, PlainName(name)), depth + 1);
             return;
         }
         using var input = from.OpenRead(src);
         using var output = to.Create(dst);
         input.CopyTo(output, 256 * 1024);
+    }
+
+    /// <summary>
+    /// A name as the source gave it, held to being one: a listing comes from the other end — another machine,
+    /// another host — and a name like <c>../../.git/hooks/pre-commit</c> would otherwise be joined onto the
+    /// target and land outside the folder it was pasted into (anywhere in the target's root).
+    /// </summary>
+    private static string PlainName(string name)
+    {
+        if (string.IsNullOrEmpty(name) || name is "." or ".." || name.IndexOfAny(['/', '\\']) >= 0
+            || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            throw new RemoteException($"\"{name}\" isn't a name a file can have here.");
+        return name;
     }
 
     private static string Unique(IFileSide side, string dir, string name)

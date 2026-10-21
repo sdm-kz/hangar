@@ -395,7 +395,33 @@ Each phase ships on its own and leaves the app working.
 | 3 | **Node-aware SPA** | `NodeContext`/`useApi`, `sessionKey`, `?node=`; a remote session opens and works fully by deep link | `api.ts`, `App.tsx`, `SessionView`, `TerminalPane`, views |
 | 4 | **Mesh & sidebar** | `NodeMesh`, `nodes[]` on `/hub/events`, node headings, offline state, search across nodes, tray submenus, push for remote sessions | `Nodes/NodeMesh.cs`, `SessionHub`, `PushNotifier`, sidebar, tray |
 | 5 | **Launch anywhere** | node picker in New session, per-node folder picker/recents/templates, per-node schedules list, per-node update button | `NewSessionDialog`, `FolderPicker`, `ScheduleDialog`, `UpdateButton` |
-| 6 | *Later* | cross-node projects (`folders: [{ node, path }]`), resume a conversation on another node (copy the transcript, map the folder), copy/paste files between nodes (reuse `FileTransfer`), share the peer list across the mesh, mDNS discovery, child sessions on another node from the `run-session` skill | — |
+| 6 | *Later* | cross-node projects (`folders: [{ node, path }]`), resume a conversation on another node (copy the transcript, map the folder), ~~copy/paste files between nodes~~ (done), share the peer list across the mesh, mDNS discovery, child sessions on another node from the `run-session` skill | — |
+
+**As built (phase 6, first part).**
+- Copy/paste between machines, by the paste's own path (`POST /api/transfer`).
+  - The node the panel is on runs the paste, and reads the source through its pairing with the node the
+    files were copied on (`Nodes/PeerFileSide.cs`, an `IFileSide` over the peer's session `fs/list`,
+    `fs/raw` and `fs/delete`). The peer's own root rules hold.
+  - Nothing is ever written to another machine through it. A request whose target names another node is
+    refused, so a paste into a peer's panel goes to that peer's `/api/transfer`.
+  - The clipboard names the source node by id (`clipSourceFor`, with this node's own id from
+    `lib/node.tsx` `homeNodeId()`). So the node the paste runs on must be paired with the source; mutual
+    pairing is.
+  - A session's files only. An SSH tab's connection belongs to the node it was opened on.
+  - `fs/list?all=true` brings hidden entries along, so a copied folder keeps its `.git` and dotfiles. The
+    answer says `includesHidden`. A peer on an older build, which ignores the flag, is refused rather than
+    copied from, since a move would otherwise delete what the copy left out.
+  - One hop: a paste asked for by another node reads back from that node only, never from a third.
+  - Every name a listing gives is checked to be one plain name (`FileTransfer.PlainName`) before it is
+    joined onto the target. A peer naming an entry `../../.git/hooks/x` can't write outside the folder
+    the paste went into.
+- `scripts/stage-update-remote.sh <ssh host>` builds a Linux/macOS node's update on a machine with the
+  SDKs and stages it in that node's own staging folder over ssh, with notes as `stage-update.ps1` writes
+  them.
+  - The rid is read from the node, and a mismatch is refused.
+  - Like `stage-update.ps1`, it won't drop commits the node's build has.
+  - On a Mac it signs the binaries.
+- A link naming this node by its own id opens here, as if it named no node.
 
 Phase 3 is the one to do carefully: after it, anything in the SPA that forgot the node silently talks
 to the home node instead. A grep-able rule helps — no bare `api.` import inside node-scoped

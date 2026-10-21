@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, apiFor, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
-import { NodeProvider, sessionKey, splitSessionKey } from "@/lib/node";
+import { NodeProvider, sessionKey, setHomeNodeId, splitSessionKey } from "@/lib/node";
 import {
   EMPTY_SNAPSHOT,
   liveSnap,
@@ -121,6 +121,17 @@ export function App() {
   // The selection as this node's own lists see it: a peer's session isn't one of their rows, even when
   // its id happens to match one.
   const homeActiveId = activeNode ? null : activeId;
+  // Tell the rest of the page this node's id, for what it says to other nodes about this one.
+  useEffect(() => setHomeNodeId(selfNode?.id ?? null), [selfNode]);
+  // A link naming this node by its own id (one copied from a peer's page, where this node is a peer) is a
+  // link to one of this node's sessions: it opens here, as if it named no node at all.
+  useEffect(() => {
+    if (!selfNode || activeNode !== selfNode.id) return;
+    // Not a switch to another session — the same one, named the way this node names it — so the URL keeps
+    // whatever else the link said (the file to open in it).
+    urlSessionRef.current = activeIdRef.current ?? "";
+    setActiveNode(null);
+  }, [selfNode, activeNode]);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
   // Override for the dialog's "continue conversation" default; undefined = the dialog's own default.

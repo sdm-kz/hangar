@@ -39,7 +39,11 @@ public static class SessionFileBrowser
         return full is not null && File.Exists(full) ? RelOf(root, full) : null;
     }
 
-    public static FileListing? List(string root, string? rel)
+    /// <param name="includeHidden">
+    /// Hidden and system entries too — a dotfile on Linux and macOS, <c>.git</c> on Windows. Left out of what a
+    /// person browses; a copy of a folder between machines asks for them, so it keeps what a copy on one does.
+    /// </param>
+    public static FileListing? List(string root, string? rel, bool includeHidden = false)
     {
         var full = ResolveSafe(root, rel);
         if (full is null || !Directory.Exists(full)) return null;
@@ -49,12 +53,12 @@ public static class SessionFileBrowser
         {
             foreach (var d in Directory.EnumerateDirectories(full))
             {
-                if (IsHidden(d)) continue;
+                if (!includeHidden && IsHidden(d)) continue;
                 entries.Add(new FileEntry(Path.GetFileName(d), RelOf(root, d), true, 0));
             }
             foreach (var f in Directory.EnumerateFiles(full))
             {
-                if (IsHidden(f)) continue;
+                if (!includeHidden && IsHidden(f)) continue;
                 long size = 0;
                 try { size = new FileInfo(f).Length; } catch { }
                 entries.Add(new FileEntry(Path.GetFileName(f), RelOf(root, f), false, size));

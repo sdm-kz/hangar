@@ -14,7 +14,7 @@ import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import {
   announceRemoteChange,
   clearFileClip,
-  clipElsewhere,
+  clipSourceFor,
   describeClip,
   getFileClip,
   hasTextSelection,
@@ -821,18 +821,19 @@ export const FileBrowser = forwardRef<
   const paste = useCallback(async () => {
     const c = getFileClip();
     if (!c || readOnly) return;
-    const elsewhere = clipElsewhere(c, api.base);
-    if (elsewhere) {
-      setDeleteError(elsewhere);
+    const from = clipSourceFor(c, api.base);
+    if ("error" in from) {
+      setDeleteError(from.error);
       return;
     }
     const move = c.mode === "cut";
     setPasting(true);
     setDeleteError(null);
     try {
-      const r = await api.transfer(c.source, c.items.map((i) => i.path), clipSide, uploadDir, move);
+      const r = await api.transfer(from.source, c.items.map((i) => i.path), clipSide, uploadDir, move);
       if (move && r.errors.length === 0) clearFileClip();
-      if (move && sameSide(c.source, clipSide)) closeTabsUnder(c.items.map((i) => i.path));
+      // Same side means the same node too: a peer's session can't be told from one here by its id alone.
+      if (move && (c.base ?? "") === api.base && sameSide(c.source, clipSide)) closeTabsUnder(c.items.map((i) => i.path));
       if (move && c.source.kind === "remote")
         announceRemoteChange(c.source.tab, c.items.map((i) => i.path).filter((p) => !r.errors.some((x) => x.path === p)));
       if (r.errors.length) setDeleteError(r.errors.map((x) => `${x.path.split("/").pop()}: ${x.error}`).join(" · "));

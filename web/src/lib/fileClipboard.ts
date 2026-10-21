@@ -8,6 +8,7 @@
 // means something to the server it was copied from.
 import { useEffect, useState } from "react";
 import type { TransferSide } from "@/types";
+import { homeNodeId, nodeOfBase } from "./node";
 
 export interface ClipItem {
   path: string;
@@ -19,8 +20,8 @@ export interface FileClip {
   mode: "copy" | "cut";
   /**
    * The node the items were copied on, as its API base ("" for the one this page came from). Paths and
-   * session ids only mean something there, and pasting across nodes is not supported yet — see
-   * {@link clipElsewhere}. Absent in a clip saved before nodes: this node's.
+   * session ids only mean something there: a paste on another node names it — see {@link clipSourceFor}.
+   * Absent in a clip saved before nodes: this node's.
    */
   base?: string;
   source: TransferSide;
@@ -76,9 +77,25 @@ export function clearFileClip() {
   publish(null);
 }
 
-/** Why `clip` can't be pasted into a panel on the node with API base `base`; null when it can. */
-export function clipElsewhere(clip: FileClip, base: string): string | null {
-  return (clip.base ?? "") === base ? null : "Those were copied on another machine. Copying between machines isn't supported yet.";
+/**
+ * The source of a paste as the node with API base `base` — the one the panel is on — has to be told it: as
+ * copied, when that is where the files are; with the node they are on, when they were copied on another
+ * (plans/multi-node.md, phase 6). That node reads them through its pairing with the other, so it must be
+ * paired with it — the server says so when it isn't. Or why it can't be pasted there at all.
+ */
+export function clipSourceFor(clip: FileClip, base: string): { source: TransferSide } | { error: string } {
+  const from = clip.base ?? "";
+  if (from === base) return { source: clip.source };
+  if (clip.source.kind !== "session")
+    return { error: "Those are on an SSH connection of another machine. Paste them on that machine." };
+  // A peer reads them from the node they are on with its own pairing — never from a third on this one's
+  // say-so (one hop, as everywhere between nodes; the server refuses it too).
+  if (from && base)
+    return { error: "Those were copied on another paired machine. Paste them on this machine, or on that one." };
+  // Named by id, as the node the paste runs on knows it: this page's own node by its id, a peer by its.
+  const node = nodeOfBase(from) ?? homeNodeId();
+  if (!node) return { error: "This machine's id isn't known yet. Try again in a moment." };
+  return { source: { ...clip.source, node } };
 }
 
 /** Whether two ends of a paste are the same panel's filesystem. */

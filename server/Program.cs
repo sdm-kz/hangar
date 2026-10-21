@@ -1359,14 +1359,17 @@ internal static class Program
         //      being able to read what a session left behind — its files, its diff, its reviews —
         //      is most of what you want from one you have finished with. Writes come along for the
         //      ride deliberately; the same reasoning the postponed pool already runs on. ----
-        app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, string? dir, SessionManager mgr, LinkedFolderStore links) =>
+        app.MapGet("/api/sessions/{id}/fs/list", (string id, string? path, string? dir, bool? all, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
             var root = BrowseRoot(info, dir, links);
             if (root is null) return Results.BadRequest(new { error = "invalid root" });
-            var listing = SessionFileBrowser.List(root, path);
-            return listing is null ? Results.NotFound() : Results.Ok(listing);
+            // ?all=true: hidden entries too, for a copy of a folder from another machine (Nodes/PeerFileSide) —
+            // and the answer says so, since a build from before this ignores the flag and leaves them out.
+            var listing = SessionFileBrowser.List(root, path, all == true);
+            if (listing is null) return Results.NotFound();
+            return all == true ? Results.Ok(new { listing.Path, listing.Entries, includesHidden = true }) : Results.Ok(listing);
         });
 
         app.MapGet("/api/sessions/{id}/fs/raw", (string id, string path, bool? download, string? dir, SessionManager mgr, LinkedFolderStore links, HttpContext http) =>

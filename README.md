@@ -537,6 +537,13 @@ PowerShell's prompt hook, as on Windows; zsh, fish and sh tabs open without it.
 A macOS build made on another OS comes out unsigned, which Apple silicon refuses to run;
 `install-unix.sh` removes the quarantine flag and signs both binaries ad hoc when it installs them.
 
+A machine with no .NET SDK or Node of its own — a NAS, say — is updated from one that has them:
+`scripts/stage-update-remote.sh <ssh host>` builds for it here (`linux-x64` unless a rid follows the
+host), copies the payload into that machine's staging folder over ssh, and its Update button does the
+rest. `--notes whats-new.md` carries a "what's new" in `stage-update.ps1`'s format; without it, the
+commit subjects since the build installed there. Paired with another node, its Update button is also
+on its heading there (see `plans/multi-node.md`).
+
 ## Checking what the server runs as
 
 Sessions that won't authenticate, a `claude` that "isn't installed", folders that come up empty: these
@@ -891,5 +898,6 @@ shared/   source compiled into two projects: Pty/ (daemon ↔ pty host), Contrac
 web/      React + Vite + TS + Tailwind + shadcn/ui launcher UI
 scripts/  dev.ps1, run.ps1, build.ps1, register-autostart.ps1, install-service.ps1, uninstall-service.ps1,
           stage-update.ps1 + apply-update.ps1 (the two halves of the in-app updater);
-          build.sh, install-unix.sh, stage-update.sh + apply-update.sh (the same, for Linux and macOS)
+          build.sh, install-unix.sh, stage-update.sh + apply-update.sh (the same, for Linux and macOS);
+          stage-update-remote.sh (stage a Linux/macOS build on another machine over ssh)
 ```

@@ -6,8 +6,12 @@ namespace Hangar.Server.Remote;
 internal record RemotePathRequest(string? Path);
 internal record RemoteRenameRequest(string? Path, string? NewName);
 internal record RemoteWriteRequest(string? Path, string? Content);
-/// <summary>One end of a paste: <c>Kind</c> "remote" names a <c>Tab</c>; "session" a session and its root.</summary>
-internal record TransferSideRequest(string? Kind, string? Tab = null, string? SessionId = null, string? Dir = null);
+/// <summary>
+/// One end of a paste: <c>Kind</c> "remote" names a <c>Tab</c>; "session" a session and its root — on the
+/// node named by <c>Node</c>, when that is a paired one rather than this (see <see cref="Nodes.PeerFileSide"/>).
+/// </summary>
+internal record TransferSideRequest(string? Kind, string? Tab = null, string? SessionId = null, string? Dir = null,
+    string? Node = null);
 internal record TransferRequest(TransferSideRequest? From, List<string>? Paths, TransferSideRequest? To, string? Folder, bool Move = false);
 
 /// <summary>
@@ -113,17 +117,47 @@ internal static class RemoteEndpoints
         // Paste: copy or move between any two panels — a remote tab, or a session's own files. See
         // FileTransfer. Runs to completion in the request, which is the progress indicator the panel
         // shows; a paste of a large tree takes as long as the bytes take.
-        app.MapPost("/api/transfer", (TransferRequest body, RemoteManager remotes, SessionManager mgr, LinkedFolderStore links) =>
+        app.MapPost("/api/transfer", (TransferRequest body, RemoteManager remotes, SessionManager mgr, LinkedFolderStore links,
+            Nodes.PeerStore peers, Nodes.NodeIdentityStore identity, HttpContext ctx) =>
             Guard(() =>
             {
                 if (body.Paths is not { Count: > 0 }) return Results.BadRequest(new { error = "nothing to paste" });
                 if (body.Folder is null) return Results.BadRequest(new { error = "no target folder" });
-                var from = Side(body.From, write: body.Move, remotes, mgr, links);
+                // The paste lands here: the files may come from another machine, but are written on this one.
+                if (Elsewhere(body.To, identity))
+                    return Results.BadRequest(new { error = "Files are pasted on the machine the panel is on." });
+                // One hop, as everywhere between nodes (NodeProxy): asked by another node, this one reads back from
+                // that node only — never on to a third, with its own token for it, on that node's say-so.
+                if (Elsewhere(body.From, identity) && Auth.TokenAuthMiddleware.PeerOf(ctx) is { } caller
+                    && body.From!.Node != caller.NodeId)
+                    return Results.BadRequest(new { error = "Those are on a third machine. Paste them on one paired with both." });
+                var from = Elsewhere(body.From, identity)
+                    ? PeerSide(body.From!, peers, ctx.RequestAborted)
+                    : Side(body.From, write: body.Move, remotes, mgr, links);
+                using var ownFrom = from as IDisposable;
                 var to = Side(body.To, write: true, remotes, mgr, links);
-                using var holdFrom = body.From is { Kind: "remote", Tab: { } a } ? remotes.Hold(a) : null;
+                using var holdFrom = body.From is { Kind: "remote", Tab: { } a } && !Elsewhere(body.From, identity) ? remotes.Hold(a) : null;
                 using var holdTo = body.To is { Kind: "remote", Tab: { } b } ? remotes.Hold(b) : null;
                 return Results.Ok(FileTransfer.Run(from, body.Paths, to, body.Folder, body.Move));
             }));
+    }
+
+    /// <summary>Whether a side of a paste is on another node than this one.</summary>
+    private static bool Elsewhere(TransferSideRequest? s, Nodes.NodeIdentityStore identity) =>
+        !string.IsNullOrEmpty(s?.Node) && s.Node != identity.Current.Id;
+
+    /// <summary>
+    /// A session's files on a paired node — the only thing on another node a paste can come from. An SSH tab's
+    /// connection is held by the node it was opened on, and isn't something to reach through it.
+    /// </summary>
+    private static IFileSide PeerSide(TransferSideRequest s, Nodes.PeerStore peers, CancellationToken ct)
+    {
+        if (s.Kind != "session" || s.SessionId is null)
+            throw new RemoteException("From another machine, only a session's files can be pasted.");
+        if (peers.Get(s.Node!) is not { Enabled: true } peer)
+            throw new RemoteException("This machine isn't paired with the one those were copied on.");
+        var token = peers.TokenFor(peer.Id) ?? throw new RemoteException($"This machine's token for {peer.Name} can't be read; pair it again.");
+        return new Nodes.PeerFileSide(peer, token, s.SessionId, s.Dir, ct);
     }
 
     private static IFileSide Side(TransferSideRequest? s, bool write, RemoteManager remotes, SessionManager mgr, LinkedFolderStore links)

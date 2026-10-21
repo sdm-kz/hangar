@@ -32,6 +32,24 @@ export function sessionKey(nodeId: string | null | undefined, id: string): strin
   return nodeId ? `${nodeId}:${id}` : id;
 }
 
+// This node's own id, as its stream names it — set by App. A view only ever needs null for "this one"; the
+// id is for telling another node about this one (a paste there of files copied here, say).
+let homeId: string | null = null;
+
+export function setHomeNodeId(id: string | null) {
+  homeId = id;
+}
+
+/** This node's own id, once its stream has said; null before then. */
+export function homeNodeId(): string | null {
+  return homeId;
+}
+
+/** The node an API client's base names: null for this one (""), the id in "/n/{id}" for a peer. */
+export function nodeOfBase(base: string): string | null {
+  return base.startsWith("/n/") ? base.slice(3) : null;
+}
+
 /** The node and the id a {@link sessionKey} was made from. Neither ever contains a colon. */
 export function splitSessionKey(key: string): { node: string | null; id: string } {
   const at = key.indexOf(":");

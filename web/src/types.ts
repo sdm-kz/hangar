@@ -324,7 +324,8 @@ export interface SshConfigInfo {
 /** One end of a paste: a remote tab, or one of a session's roots (`dir` as the Files panel uses it). */
 export type TransferSide =
   | { kind: "remote"; tab: string }
-  | { kind: "session"; sessionId: string; dir?: string };
+  // `node`: the node the session is on, when it isn't the one the paste is sent to (a copy between machines).
+  | { kind: "session"; sessionId: string; dir?: string; node?: string };
 
 export interface TransferResult {
   paths: string[];

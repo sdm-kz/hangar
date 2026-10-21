@@ -8,7 +8,7 @@ import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useM
 import {
   announceRemoteChange,
   clearFileClip,
-  clipElsewhere,
+  clipSourceFor,
   describeClip,
   getFileClip,
   hasTextSelection,
@@ -397,23 +397,23 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
   const paste = useCallback(async () => {
     const c = getFileClip();
     if (!c || !target) return;
-    const elsewhere = clipElsewhere(c, api.base);
-    if (elsewhere) {
-      setError(elsewhere);
+    const from = clipSourceFor(c, api.base);
+    if ("error" in from) {
+      setError(from.error);
       return;
     }
     const move = c.mode === "cut";
     setBusy(`${move ? "Moving" : "Copying"} ${c.items.length === 1 ? c.items[0].name : `${c.items.length} items`}…`);
     setError(null);
     try {
-      const r = await api.transfer(c.source, c.items.map((i) => i.path), side, target, move);
+      const r = await api.transfer(from.source, c.items.map((i) => i.path), side, target, move);
       if (move && r.errors.length === 0) clearFileClip();
       if (r.errors.length) setError(r.errors.map((x) => `${baseName(x.path)}: ${x.error}`).join(" · "));
       else setNotice(`${move ? "Moved" : "Pasted"} ${r.paths.length === 1 ? baseName(r.paths[0]) : `${r.paths.length} items`} into ${baseName(target)}.`);
       setExpanded((s) => new Set(s).add(target));
       const dirs: (string | null)[] = [target];
       const moved = move ? c.items.map((i) => i.path).filter((p) => !r.errors.some((x) => x.path === p)) : [];
-      if (move && sameSide(c.source, side)) {
+      if (move && (c.base ?? "") === api.base && sameSide(c.source, side)) {
         dirs.push(...c.items.map((i) => parentOf(i.path)));
         setOpenFile((f) => (f && moved.some((p) => isUnder(f, p)) ? null : f));
       }
