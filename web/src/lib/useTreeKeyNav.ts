@@ -92,6 +92,9 @@ export function useTreeKeyNav(opts: {
     (e: KeyboardEvent<HTMLElement>) => {
       const container = containerRef.current;
       if (!container || e.altKey || e.ctrlKey || e.metaKey) return;
+      // Only keys pressed in the list itself. A dialog opened from a row is portalled out of it in the DOM,
+      // but React still bubbles its events through here — and Enter on its button must stay its own.
+      if (!container.contains(e.target as Node)) return;
       // Never steal keys from a rename field (or any other input) living inside a row.
       const target = e.target as HTMLElement;
       if (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;

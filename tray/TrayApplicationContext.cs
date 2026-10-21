@@ -110,15 +110,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _hadDaemon = view.Instance is not null;
     }
 
-    private void OpenUi(string? sessionId = null)
+    /// <param name="node">The peer the session is on; null for one of this machine's.</param>
+    private void OpenUi(string? sessionId = null, string? node = null)
     {
         if (_daemon.View is not { Connected: true, Instance: { } instance })
         {
             Balloon("Hangar server is not running", "Right-click the tray icon for options.");
             return;
         }
-        var url = instance.OpenUrl;
-        Browser.Open(sessionId is null ? url : $"{url.TrimEnd('/')}/?session={Uri.EscapeDataString(sessionId)}");
+        var url = instance.OpenUrl.TrimEnd('/');
+        Browser.Open(sessionId is null ? instance.OpenUrl
+            : node is null ? $"{url}/?session={Uri.EscapeDataString(sessionId)}"
+            : $"{url}/?node={Uri.EscapeDataString(node)}&session={Uri.EscapeDataString(sessionId)}");
     }
 
     private void RebuildMenu(ContextMenuStrip menu)
@@ -175,6 +178,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             menu.Items.Add(recent);
         }
 
+        AddPeers(menu, view.Peers ?? []);
+
         AddOrphansItem(menu, view.Orphans);
 
         menu.Items.Add(new ToolStripSeparator());
@@ -212,6 +217,38 @@ internal sealed class TrayApplicationContext : ApplicationContext
             menu.Items.Add(project);
         }
     }
+
+    /// <summary>
+    /// The other machines this one is paired with, a submenu each: what is running there, grouped by folder the
+    /// way this machine's own list is — though not by project, which are that machine's to fetch — and opened
+    /// here, through this node. One that isn't answering still gets its line, saying so.
+    /// </summary>
+    private void AddPeers(ContextMenuStrip menu, IReadOnlyList<PeerView> peers)
+    {
+        if (peers.Count == 0) return;
+        menu.Items.Add(new ToolStripSeparator());
+        foreach (var peer in peers)
+        {
+            if (peer.Status != "online")
+            {
+                menu.Items.Add(new ToolStripMenuItem($"{peer.Name} — {peer.Status}") { Enabled = false });
+                continue;
+            }
+            var running = peer.Sessions.Where(s => s.State == SessionState.Running).ToArray();
+            var item = new ToolStripMenuItem($"{peer.Name} — {running.Length} running");
+            if (running.Length == 0)
+                item.DropDownItems.Add(new ToolStripMenuItem("No running sessions") { Enabled = false });
+            foreach (var group in SessionTree.Menu(running, []))
+                foreach (var row in group.Rows)
+                    item.DropDownItems.Add(row.Session is { } s
+                        ? PeerSessionItem(peer.Id, s, row.Text)
+                        : new ToolStripMenuItem(row.Text) { Enabled = false });
+            menu.Items.Add(item);
+        }
+    }
+
+    private ToolStripMenuItem PeerSessionItem(string node, SessionInfo s, string text) =>
+        new(text, null, (_, _) => OpenUi(s.Id, node)) { ToolTipText = s.WorkingDirectory };
 
     /// <summary>
     /// One line of the running list. A row with no session is a folder heading — it names a group

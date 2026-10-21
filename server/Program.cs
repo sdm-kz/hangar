@@ -376,6 +376,10 @@ internal static class Program
         builder.Services.AddSingleton<Nodes.NodePairing>();
         builder.Services.AddHttpForwarder();
         builder.Services.AddSingleton<Nodes.NodeProxy>();
+        // Every peer's live picture, followed from here so the browser, the tray and the push notifier get it
+        // off this node's own /hub/events.
+        builder.Services.AddSingleton<Nodes.NodeMesh>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<Nodes.NodeMesh>());
         builder.Services.ConfigureHttpJsonOptions(o =>
             o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
@@ -484,8 +488,16 @@ internal static class Program
             if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = StatusCodes.Status400BadRequest; return; }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             using var life = SocketLifetime(ctx, lifetime);
-            // ?client=tray marks a status client: connected all logon, but only drawing on demand.
-            await hub.ServeAsync(ws, ctx.Request.Query["client"] == "tray", life.Token);
+            // ?client=tray marks a status client: connected all logon, but only drawing on demand. ?client=peer is
+            // another node's mesh, which is the same until it asks for more. Whatever came in on a peer token —
+            // the mesh, or a browser through a node's proxy — gets this node's own sessions only.
+            var kind = ctx.Request.Query["client"].ToString() switch
+            {
+                "tray" => SessionHub.ClientKind.Indicator,
+                "peer" => SessionHub.ClientKind.Peer,
+                _ => SessionHub.ClientKind.Browser,
+            };
+            await hub.ServeAsync(ws, kind, TokenAuthMiddleware.PeerOf(ctx) is not null, life.Token);
         });
 
         // Live terminal stream for a session. Under /hub so the existing TokenAuthMiddleware guards

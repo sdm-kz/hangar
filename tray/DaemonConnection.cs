@@ -17,10 +17,18 @@ internal sealed record DaemonView(
     bool Connected,
     IReadOnlyCollection<SessionInfo> Sessions,
     IReadOnlyList<Project> Projects,
-    IReadOnlyCollection<PtyOrphanInfo> Orphans)
+    IReadOnlyCollection<PtyOrphanInfo> Orphans,
+    IReadOnlyList<PeerView>? Peers = null)
 {
     public static readonly DaemonView Offline = new(null, false, [], [], []);
 }
+
+/// <summary>
+/// Another machine the daemon is paired with, as its <c>/hub/events</c> passes it on (plans/multi-node.md §5).
+/// </summary>
+/// <param name="Status"><c>online</c>, or why not: <c>offline</c>, <c>connecting</c>, <c>unauthorized</c>…</param>
+/// <param name="Sessions">Its sessions; empty unless it is online.</param>
+internal sealed record PeerView(string Id, string Name, string Status, IReadOnlyCollection<SessionInfo> Sessions);
 
 /// <summary>
 /// The tray's link to the daemon. Finds it through its <see cref="DaemonInstance"/> file, holds the
@@ -190,7 +198,7 @@ internal sealed class DaemonConnection(int port) : IDisposable
                 fetchedAt = now;
             }
 
-            Publish(new DaemonView(instance, true, sessions, projects, orphans));
+            Publish(new DaemonView(instance, true, sessions, projects, orphans, Peers(snapshot)));
         }
     }
 
@@ -241,6 +249,31 @@ internal sealed class DaemonConnection(int port) : IDisposable
         }
     }
 
+    /// <summary>The peers in a snapshot, with whatever sessions each one's own snapshot lists.</summary>
+    private static List<PeerView> Peers(HubSnapshot snapshot)
+    {
+        var peers = new List<PeerView>();
+        foreach (var node in snapshot.Nodes ?? [])
+        {
+            if (string.IsNullOrEmpty(node.Id)) continue;
+            List<SessionInfo> sessions = [];
+            if (node.Snapshot is { ValueKind: JsonValueKind.Object } snap)
+            {
+                // A peer's build may differ from this one: a snapshot that doesn't read leaves its node empty, not the menu.
+                try
+                {
+                    // A missing field deserializes as null rather than failing, and the menu would trip over it.
+                    sessions = (snap.Deserialize<HubSnapshot>(Json)?.Sessions ?? [])
+                        .Where(s => s is not null && !string.IsNullOrEmpty(s.Id) && s.Name is not null && s.WorkingDirectory is not null)
+                        .ToList();
+                }
+                catch (JsonException) { }
+            }
+            peers.Add(new PeerView(node.Id, node.Name ?? node.Id, node.Status ?? "offline", sessions));
+        }
+        return peers;
+    }
+
     /// <summary>What about the session list can change which projects and orphans matter.</summary>
     private static string Signature(IEnumerable<SessionInfo> sessions) =>
         string.Join('|', sessions.Select(s => $"{s.Id}:{s.State}:{s.GroupId}").Order(StringComparer.Ordinal));
@@ -269,7 +302,9 @@ internal sealed class DaemonConnection(int port) : IDisposable
     }
 
     /// <summary>The parts of a <c>/hub/events</c> snapshot the tray uses; the rest is ignored.</summary>
-    private sealed record HubSnapshot(List<SessionInfo>? Sessions, HubUpdate? Update);
+    private sealed record HubSnapshot(List<SessionInfo>? Sessions, HubUpdate? Update, List<HubNode>? Nodes = null);
+
+    private sealed record HubNode(string? Id, string? Name, string? Status, JsonElement? Snapshot);
 
     private sealed record HubUpdate(UpdateState? State);
 

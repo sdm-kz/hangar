@@ -124,6 +124,8 @@ const ATTACH_SETTLE_MS = 5000;
  * per browser so a refresh (or a PWA being killed in the background) doesn't quietly lose the ones
  * you hadn't got to yet.
  */
+const everyId = () => true;
+
 export function useDoneSessions({
   sessions,
   busyIds,
@@ -132,6 +134,7 @@ export function useDoneSessions({
   failedIds,
   shownSessionId,
   streamUp,
+  isListed = everyId,
 }: {
   sessions: SessionInfo[];
   busyIds: Set<string>;
@@ -153,6 +156,13 @@ export function useDoneSessions({
    * what says whether a session leaving the working set can be read as "finished" — see below.
    */
   streamUp: boolean;
+  /**
+   * Whether a session's machine is in `sessions` at all right now. A peer that is away, or not heard of yet
+   * (the page has loaded before the stream named the peers), has none of its sessions in the list — which
+   * says nothing about them: their ticks are kept, and none is added for a session that only seems to have
+   * stopped working because its machine went quiet. Every id, by default.
+   */
+  isListed?: (id: string) => boolean;
 }): { done: Set<string>; markSeen: (ids: Iterable<string>) => void } {
   const [done, setDone] = useState<Set<string>>(loadDone);
   // The working set as of the previous frame. A turn has finished when an id drops out of it, which
@@ -200,7 +210,7 @@ export function useDoneSessions({
           // is the thing to show there, and it outranks this one anyway. Nor is stopping because the
           // turn errored out: a green tick on a session that hit its rate limit is a lie, and the
           // red mark it gets instead is the one you want to see.
-          if (!working.has(id) && !waitingIds.has(id) && !failedIds.has(id) && !justAttached(id))
+          if (!working.has(id) && !waitingIds.has(id) && !failedIds.has(id) && !justAttached(id) && isListed(id))
             next.add(id);
         }
       }
@@ -210,12 +220,12 @@ export function useDoneSessions({
         // Prune sessions that have exited or been closed since — but only against a list we
         // actually have. Before the first fetch lands `sessions` is empty, and pruning against it
         // would throw away everything restored from storage.
-        else if (sessions.length > 0 && !sessions.some((s) => s.id === id && s.state === "Running"))
+        else if (sessions.length > 0 && isListed(id) && !sessions.some((s) => s.id === id && s.state === "Running"))
           next.delete(id);
       }
       return sameSet(next, cur) ? cur : next;
     });
-  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, streamUp]);
+  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, streamUp, isListed]);
 
   useEffect(() => {
     saveDone(done);

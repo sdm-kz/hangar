@@ -5,21 +5,13 @@ import type { ActivityDetail } from "./sessionActivity";
 import type { ShellActivity } from "./shellActivity";
 
 /**
- * A peer's live picture, as its own /hub/events tells it through this node (/n/{id}/hub/events) — what
- * App needs to show one of that node's sessions: the session itself as it changes, what it is doing,
- * and the node's projects.
- *
- * One socket per peer being looked at, opened by the browser. It is the phase-3 way to it: phase 4's
- * server-side mesh (plans/multi-node.md §5) puts every peer's snapshot on this node's own stream, and
- * this hook is then fed from there instead.
+ * Every peer's live picture, as this node's own /hub/events carries it (plans/multi-node.md §5): the
+ * server's NodeMesh follows each peer's stream and passes its snapshot on whole, in `nodes`. What App needs
+ * to list a peer's sessions, show one of them, and act on it: the sessions as they change, what they are
+ * doing, and the node's projects — which, like on this node's own stream, travel as a revision and are
+ * read through the node's client when it moves.
  */
 export interface NodeSnapshot {
-  /** The node this is the picture of. */
-  node: string | null;
-  /** Whether a snapshot has arrived since this node was asked for. */
-  loaded: boolean;
-  /** Why the node can't be reached, when it can't: "unknown node", "node offline", "node unauthorized"… */
-  error: string | null;
   sessions: SessionInfo[];
   busy: Set<string>;
   waiting: Set<string>;
@@ -32,10 +24,50 @@ export interface NodeSnapshot {
   projects: Project[];
 }
 
-/** The fields of a /hub/events message this reads. The same snapshot the home stream parses in App. */
+/** A peer: who it is, whether it can be reached, and — while it can — its snapshot. */
+export interface PeerNode {
+  id: string;
+  name: string;
+  color: string | null;
+  /** "online", "connecting", or why it can't be reached: "offline", "unauthorized", "incompatible", "certificate". */
+  status: string;
+  /** The mesh's words for why, when it isn't online. */
+  error: string | null;
+  version: string | null;
+  os: string | null;
+  /** When it was last heard from, once it has gone quiet; null while online. */
+  lastSeen: string | null;
+  /**
+   * Its snapshot — the last one heard, while it is away: a session of it left open stays on screen through
+   * a blip rather than being torn down with its terminal. Anything that counts or alerts reads {@link liveSnap}.
+   */
+  snap: NodeSnapshot | null;
+}
+
+/** This node, as its stream names it. */
+export interface SelfNode {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
+/** A peer as /hub/events carries it. */
+export interface MeshNodeMessage {
+  id: string;
+  name: string;
+  color?: string | null;
+  status: string;
+  error?: string | null;
+  version?: string | null;
+  os?: string | null;
+  lastSeen?: string | null;
+  snapshot?: HubMessage | null;
+}
+
+/** The fields of a /hub/events message a peer's snapshot is read for. The same snapshot App parses for this node. */
 interface HubMessage {
-  sessions: SessionInfo[];
-  busy: string[];
+  sessions?: SessionInfo[];
+  busy?: string[];
   waiting?: string[];
   compacting?: string[];
   failed?: string[];
@@ -46,10 +78,7 @@ interface HubMessage {
   shells?: Record<string, ShellActivity>;
 }
 
-const EMPTY: NodeSnapshot = {
-  node: null,
-  loaded: false,
-  error: null,
+export const EMPTY_SNAPSHOT: NodeSnapshot = {
   sessions: [],
   busy: new Set(),
   waiting: new Set(),
@@ -62,122 +91,195 @@ const EMPTY: NodeSnapshot = {
   projects: [],
 };
 
-// Silence longer than this on a socket the server keeps alive every few seconds means it is dead.
-const STALE_MS = 15000;
+/** A peer's snapshot while it is online — null while it is away, when what it last said is out of date. */
+export function liveSnap(peer: PeerNode): NodeSnapshot | null {
+  return peer.status === "online" ? peer.snap : null;
+}
 
-export function useNodeSnapshot(nodeId: string | null) {
-  const [snap, setSnap] = useState<NodeSnapshot>(EMPTY);
-  const projectsRev = useRef<number | null>(null);
+/** What a peer that isn't online means for someone holding a link to one of its sessions — the proxy's words. */
+export function peerError(peer: PeerNode | undefined): string | null {
+  if (!peer) return "unknown node";
+  switch (peer.status) {
+    case "online":
+    case "connecting":
+      return null;
+    case "unauthorized":
+      return "node unauthorized";
+    case "certificate":
+      return "node certificate changed";
+    case "incompatible":
+      return "node incompatible";
+    default:
+      return "node offline";
+  }
+}
 
+function parse(nodeId: string, msg: HubMessage, prev: NodeSnapshot | null): NodeSnapshot {
+  const shells = msg.shells ?? {};
+  return {
+    // Which node each session is on travels with it from here on (plans/multi-node.md §6).
+    sessions: [...(msg.sessions ?? [])]
+      .map((x) => ({ ...x, nodeId }))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    busy: new Set(msg.busy ?? []),
+    waiting: new Set(msg.waiting ?? []),
+    compacting: new Set(msg.compacting ?? []),
+    failed: new Set(msg.failed ?? []),
+    drafts: new Set(msg.drafts ?? []),
+    activity: msg.activity ?? {},
+    shellsRev: msg.shellsRev ?? 0,
+    shellActivity:
+      prev?.shellActivity && JSON.stringify(prev.shellActivity) === JSON.stringify(shells) ? prev.shellActivity : shells,
+    projects: prev?.projects ?? [],
+  };
+}
+
+/**
+ * The peers, kept current from the `nodes` of this node's stream (`ingest`). A peer whose snapshot didn't
+ * change keeps the same objects, so nothing drawn from it redraws; one that did is parsed afresh, and its
+ * projects are re-read when their revision moved.
+ */
+export function usePeers() {
+  const [peers, setPeers] = useState<PeerNode[]>([]);
+  // Whether a frame has said who the peers are — until then, a node not among them isn't "unknown" yet.
+  const [known, setKnown] = useState(false);
+  // The list as last set, for the next change to start from. Every change goes through `commit`, computed
+  // here rather than in a state updater: reading a frame records what it read, which an updater (run twice
+  // over in development) must not do.
+  const current = useRef<PeerNode[]>([]);
+  const commit = useCallback((next: PeerNode[]) => {
+    current.current = next;
+    setPeers(next);
+  }, []);
+  const raw = useRef(new Map<string, string>());
+  const projectsRev = useRef(new Map<string, number>());
+  const alive = useRef(true);
   useEffect(() => {
-    setSnap({ ...EMPTY, node: nodeId });
-    projectsRev.current = null;
-    if (!nodeId) return;
-    const api = apiFor(nodeId);
-    let closed = false;
-    let ws: WebSocket | null = null;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    let lastFrame = Date.now();
-    let delay = 1000;
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
-    const loadProjects = () =>
-      api.getProjects().then(
-        (projects) => !closed && setSnap((s) => ({ ...s, projects })),
+  const loadProjects = useCallback((id: string) => {
+    apiFor(id)
+      .getProjects()
+      .then(
+        (projects) => {
+          if (!alive.current) return;
+          commit(current.current.map((p) => (p.id === id && p.snap ? { ...p, snap: { ...p.snap, projects } } : p)));
+        },
         () => {}
       );
+  }, [commit]);
 
-    // A socket that fails says nothing about why — the proxy's answer (unknown node, offline, not
-    // accepted) only comes back on a plain request. Asked once per failure, and only for the words. A
-    // node that answers that and still won't keep a socket is said so too, rather than left loading.
-    const explain = () =>
-      api.listSessions().then(
-        () => !closed && setSnap((s) => ({ ...s, error: "the node answers, but its live updates don't get through" })),
-        (e) => !closed && setSnap((s) => ({ ...s, error: (e instanceof Error && e.message) || "node offline" }))
-      );
+  const ingest = useCallback(
+    (nodes: MeshNodeMessage[] | undefined) => {
+      setKnown(true);
+      const list = Array.isArray(nodes) ? nodes : [];
+      const reload: string[] = [];
+      const cur = current.current;
+      const next = list
+        .filter((n) => n && typeof n.id === "string" && /^[A-Za-z0-9]{1,64}$/.test(n.id))
+        .map((n): PeerNode => {
+          const before = cur.find((p) => p.id === n.id);
+          let snap: NodeSnapshot | null = null;
+          if (n.status === "online" && n.snapshot && typeof n.snapshot === "object") {
+            const text = JSON.stringify(n.snapshot);
+            snap = before?.snap && raw.current.get(n.id) === text ? before.snap : parse(n.id, n.snapshot, before?.snap ?? null);
+            raw.current.set(n.id, text);
+            const rev = n.snapshot.projectsRev ?? 0;
+            if (projectsRev.current.get(n.id) !== rev || !before?.snap) {
+              projectsRev.current.set(n.id, rev);
+              reload.push(n.id);
+            }
+          } else {
+            // Kept as it was; a fresh one replaces it when the peer is back, and its projects are re-read then.
+            snap = before?.snap ?? null;
+            raw.current.delete(n.id);
+            projectsRev.current.delete(n.id);
+          }
+          const peer: PeerNode = {
+            id: n.id,
+            name: n.name || n.id,
+            color: n.color ?? null,
+            status: n.status,
+            error: n.error ?? null,
+            version: n.version ?? null,
+            os: n.os ?? null,
+            lastSeen: n.lastSeen ?? null,
+            snap,
+          };
+          return before && samePeer(before, peer) ? before : peer;
+        });
+      if (next.length !== cur.length || next.some((p, i) => p !== cur[i])) commit(next);
+      for (const id of reload) loadProjects(id);
+    },
+    [commit, loadProjects]
+  );
 
-    const connect = () => {
-      ws = new WebSocket(api.sessionsStreamUrl());
-      lastFrame = Date.now();
-      ws.onmessage = (e) => {
-        lastFrame = Date.now();
-        delay = 1000;
-        let msg: HubMessage;
-        try {
-          msg = JSON.parse(e.data) as HubMessage;
-        } catch {
-          return;
-        }
-        const shells = msg.shells ?? {};
-        setSnap((s) => ({
-          ...s,
-          loaded: true,
-          error: null,
-          // Which node each session is on travels with it from here on (plans/multi-node.md §6).
-          sessions: [...msg.sessions]
-            .map((x) => ({ ...x, nodeId }))
-            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-          busy: new Set(msg.busy),
-          waiting: new Set(msg.waiting ?? []),
-          compacting: new Set(msg.compacting ?? []),
-          failed: new Set(msg.failed ?? []),
-          drafts: new Set(msg.drafts ?? []),
-          activity: msg.activity ?? {},
-          shellsRev: msg.shellsRev ?? 0,
-          shellActivity: s.shellActivity && JSON.stringify(s.shellActivity) === JSON.stringify(shells) ? s.shellActivity : shells,
-        }));
-        // The projects travel as a revision, like on this node's own stream: a move is the cue to re-read.
-        const rev = msg.projectsRev ?? 0;
-        if (projectsRev.current !== rev) {
-          projectsRev.current = rev;
-          void loadProjects();
-        }
-      };
-      ws.onclose = () => {
-        if (closed) return;
-        void explain();
-        retry = setTimeout(connect, delay);
-        delay = Math.min(delay * 2, 15000);
-      };
-      ws.onerror = () => ws?.close();
-    };
-    connect();
-
-    // A half-open socket never fires onclose; silence is the only sign.
-    const watchdog = setInterval(() => {
-      if (ws?.readyState === WebSocket.OPEN && Date.now() - lastFrame > STALE_MS) ws.close();
-    }, 5000);
-
-    return () => {
-      closed = true;
-      clearInterval(watchdog);
-      if (retry) clearTimeout(retry);
-      ws?.close();
-    };
-  }, [nodeId]);
+  // An action's answer patched in is optimistic, like on this node's own list: forgetting the frame it was
+  // patched over makes the peer's next one — keep-alive or not — the truth again, so a call that failed
+  // doesn't leave its result on screen.
+  const patch = useCallback(
+    (nodeId: string, change: (snap: NodeSnapshot) => NodeSnapshot) => {
+      raw.current.delete(nodeId);
+      commit(current.current.map((p) => (p.id === nodeId && p.snap ? { ...p, snap: change(p.snap) } : p)));
+    },
+    [commit]
+  );
 
   /** Take a session's row as an action on it answered, without waiting for the stream's next frame. */
   const patchSession = useCallback(
-    (info: SessionInfo) =>
-      setSnap((s) => ({
+    (nodeId: string, info: SessionInfo) =>
+      patch(nodeId, (s) => ({
         ...s,
         sessions: s.sessions.some((x) => x.id === info.id)
           ? s.sessions.map((x) => (x.id === info.id ? { ...info, nodeId } : x))
           : [{ ...info, nodeId }, ...s.sessions],
       })),
-    [nodeId]
+    [patch]
   );
 
   /** Change a session's row in place (a rename typed in its terminal, say). */
   const updateSession = useCallback(
-    (id: string, change: Partial<SessionInfo>) =>
-      setSnap((s) => ({ ...s, sessions: s.sessions.map((x) => (x.id === id ? { ...x, ...change } : x)) })),
-    []
+    (nodeId: string, id: string, change: Partial<SessionInfo>) =>
+      patch(nodeId, (s) => ({ ...s, sessions: s.sessions.map((x) => (x.id === id ? { ...x, ...change } : x)) })),
+    [patch]
   );
 
-  const setProjects = useCallback((projects: Project[]) => setSnap((s) => ({ ...s, projects })), []);
+  /** Drop sessions from a node's list as their removal answered. */
+  const dropSessions = useCallback(
+    (nodeId: string, ids: string[]) =>
+      patch(nodeId, (s) => ({ ...s, sessions: s.sessions.filter((x) => !ids.includes(x.id)) })),
+    [patch]
+  );
 
-  // The render right after the node changes still holds the last one's state, until the effect above
-  // has run; it is nothing of this node's.
-  const current = snap.node === nodeId ? snap : { ...EMPTY, node: nodeId };
-  return { ...current, patchSession, updateSession, setProjects };
+  const setProjects = useCallback(
+    (nodeId: string, projects: Project[]) => patch(nodeId, (s) => ({ ...s, projects })),
+    [patch]
+  );
+
+  /** Forget everything — signed out. */
+  const reset = useCallback(() => {
+    raw.current.clear();
+    projectsRev.current.clear();
+    commit([]);
+    setKnown(false);
+  }, [commit]);
+
+  return { peers, known, ingest, patchSession, updateSession, dropSessions, setProjects, reset };
+}
+
+function samePeer(a: PeerNode, b: PeerNode): boolean {
+  return (
+    a.snap === b.snap &&
+    a.name === b.name &&
+    a.color === b.color &&
+    a.status === b.status &&
+    a.error === b.error &&
+    a.version === b.version &&
+    a.os === b.os &&
+    a.lastSeen === b.lastSeen
+  );
 }

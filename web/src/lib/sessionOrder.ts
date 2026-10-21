@@ -57,23 +57,32 @@ export async function migratePinnedSessions(pin: (id: string) => Promise<void>):
   return ids.length > 0;
 }
 
-export function loadSessionOrder(): SessionOrder {
+/** Where a node's order is kept: this node's under the key it always had, a peer's beside it. */
+function orderKey(node: string | null): string {
+  return node ? `${ORDER_KEY}:${node}` : ORDER_KEY;
+}
+
+export function loadSessionOrder(node: string | null = null): SessionOrder {
   try {
-    const raw = localStorage.getItem(ORDER_KEY);
+    const raw = localStorage.getItem(orderKey(node));
     return raw ? (JSON.parse(raw) as SessionOrder) : {};
   } catch {
     return {};
   }
 }
 
-export function saveSessionOrder(order: SessionOrder, alive: ReadonlySet<string>): SessionOrder {
+export function saveSessionOrder(
+  order: SessionOrder,
+  alive: ReadonlySet<string>,
+  node: string | null = null
+): SessionOrder {
   const kept: SessionOrder = {};
   for (const [dir, ids] of Object.entries(order)) {
     const live = ids.filter((id) => alive.has(id));
     if (live.length) kept[dir] = live;
   }
   try {
-    localStorage.setItem(ORDER_KEY, JSON.stringify(kept));
+    localStorage.setItem(orderKey(node), JSON.stringify(kept));
   } catch {
     /* storage disabled — preference is best-effort */
   }

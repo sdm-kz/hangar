@@ -81,9 +81,13 @@ function SectionLabel({ children, count }: { children: ReactNode; count: number 
  * explained by the highlighting. Activating a hit opens the session — a closed one included, on its
  * files, with the button that reopens it where the terminal would be — or, for a recent preset,
  * opens the New Session dialog prefilled from it. Either way the popup closes.
+ *
+ * The sessions are every machine's: a peer's carry their `nodeId`, are found by its name too, and say
+ * which machine they are on. Each session's `id` here is its sessionKey, which is what `onSelect` gets.
  */
 export function SessionSearchDialog({
   sessions,
+  nodeNames,
   recents,
   activeId,
   onSelect,
@@ -91,6 +95,8 @@ export function SessionSearchDialog({
   onClose,
 }: {
   sessions: SessionInfo[];
+  /** The peers' names, by node id. */
+  nodeNames?: Record<string, string>;
   recents: RecentSession[];
   activeId: string | null;
   onSelect: (id: string) => void;
@@ -103,8 +109,11 @@ export function SessionSearchDialog({
 
   const tokens = useMemo(() => tokenize(query), [query]);
   const sessionHits = useMemo(
-    () => sessions.filter((s) => matches(tokens, [s.name, s.workingDirectory])),
-    [sessions, tokens]
+    () =>
+      sessions.filter((s) =>
+        matches(tokens, [s.name, s.workingDirectory, s.nodeId ? nodeNames?.[s.nodeId] : null])
+      ),
+    [sessions, nodeNames, tokens]
   );
   const recentHits = useMemo(
     () =>
@@ -240,6 +249,12 @@ export function SessionSearchDialog({
                       )}
                     </div>
                     <span className="truncate pl-3.5 font-mono text-[10px] text-muted-foreground">
+                      {s.nodeId && (
+                        <>
+                          <Highlight text={nodeNames?.[s.nodeId] ?? "another machine"} tokens={tokens} />
+                          {" · "}
+                        </>
+                      )}
                       <Highlight text={s.workingDirectory} tokens={tokens} />
                     </span>
                   </div>

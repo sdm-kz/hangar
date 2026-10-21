@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, apiFor, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
-import { NodeProvider, sessionKey } from "@/lib/node";
-import { useNodeSnapshot } from "@/lib/nodeStream";
+import { NodeProvider, sessionKey, splitSessionKey } from "@/lib/node";
+import {
+  EMPTY_SNAPSHOT,
+  liveSnap,
+  peerError,
+  usePeers,
+  type MeshNodeMessage,
+  type SelfNode,
+} from "@/lib/nodeStream";
 import { presetFromSession, type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState, SSH_SHELLS } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
-import { failureLine, useDoneSessions, type ActivityDetail } from "@/lib/sessionActivity";
+import { failureLine, useDoneSessions, type ActivityDetail, type ActivityIds } from "@/lib/sessionActivity";
 import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
 import { projectForDir } from "@/lib/projects";
 import type { Project, RemoteConnection, SessionInfo, ShellInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
-import { SessionSidebar, type SessionListTab, folderProgress } from "@/components/SessionSidebar";
+import { SessionSidebar, type PeerSidebar, type SessionListTab, folderProgress } from "@/components/SessionSidebar";
 import { ACTIVITY_MARK, activityDetail as activityDetailOf, sessionActivity } from "@/components/ActivityMark";
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
@@ -63,6 +70,11 @@ export function App() {
   // server. Only the sessions with something to say are in here.
   const [activityDetail, setActivityDetail] = useState<Record<string, ActivityDetail>>({});
   const [streamUp, setStreamUp] = useState(false); // is the live session stream connected?
+  // This node as its stream names it, and every peer's live picture riding the same stream: the server's
+  // NodeMesh follows each peer and passes its snapshot on (plans/multi-node.md §5).
+  const [selfNode, setSelfNode] = useState<SelfNode | null>(null);
+  const mesh = usePeers();
+  const ingestPeers = mesh.ingest;
   // The updater's view of itself, from the hub snapshot (or the poll below when it's down).
   const [update, setUpdate] = useState<UpdateStatus | null>(null);
   // Revision of the server's shell set, pushed on the events hub. The open session watches it to
@@ -102,6 +114,8 @@ export function App() {
   const [activeNode, setActiveNode] = useState<string | null>(() => readUrlState().node ?? null);
   const activeNodeRef = useRef(activeNode);
   activeNodeRef.current = activeNode;
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
   // The selection as this node's own lists see it: a peer's session isn't one of their rows, even when
   // its id happens to match one.
   const homeActiveId = activeNode ? null : activeId;
@@ -287,21 +301,70 @@ export function App() {
   // Which session's terminal is on screen, as its view reports it. Selecting a session is not the
   // same as looking at its terminal: on its pull request or a file, the terminal is a tab away, and a
   // turn that finished there has not been seen.
-  const [terminalShownId, setTerminalShownId] = useState<string | null>(null);
-  const onTerminalShown = useCallback((id: string, shown: boolean) => {
-    setTerminalShownId((cur) => (shown ? id : cur === id ? null : cur));
+  // Held as a sessionKey: a peer's session view reports it too.
+  const [terminalShownKey, setTerminalShownKey] = useState<string | null>(null);
+  const onTerminalShown = useCallback((key: string, shown: boolean) => {
+    setTerminalShownKey((cur) => (shown ? key : cur === key ? null : cur));
   }, []);
-  const { done: doneIds, markSeen } = useDoneSessions({
-    sessions,
-    busyIds,
-    waitingIds,
-    compactingIds,
-    failedIds,
+  const onPeerTerminalShown = useCallback(
+    (id: string, shown: boolean) => onTerminalShown(sessionKey(activeNode, id), shown),
+    [activeNode, onTerminalShown]
+  );
+  const activeKey = activeId ? sessionKey(activeNode, activeId) : null;
+
+  // Every machine's sessions as one list, each under its sessionKey (a session of this node keeps its
+  // bare id) — what the finished ticks, the alerts, the favicon and the sessions-progress menu are worked
+  // out over, so a peer's session ticks, alerts and counts like one of this node's.
+  const everywhere = useMemo(() => {
+    const out = {
+      sessions: [...sessions],
+      busy: new Set(busyIds),
+      waiting: new Set(waitingIds),
+      compacting: new Set(compactingIds),
+      failed: new Set(failedIds),
+      detail: { ...activityDetail } as Record<string, ActivityDetail>,
+      // The machines whose sessions are in it: "" for this one, and every peer online.
+      nodes: new Set([""]),
+    };
+    for (const p of mesh.peers) {
+      const snap = liveSnap(p);
+      if (!snap) continue;
+      out.nodes.add(p.id);
+      const key = (id: string) => sessionKey(p.id, id);
+      for (const s of snap.sessions) out.sessions.push({ ...s, id: key(s.id) });
+      for (const id of snap.busy) out.busy.add(key(id));
+      for (const id of snap.waiting) out.waiting.add(key(id));
+      for (const id of snap.compacting) out.compacting.add(key(id));
+      for (const id of snap.failed) out.failed.add(key(id));
+      for (const [id, d] of Object.entries(snap.activity)) out.detail[key(id)] = d;
+    }
+    return out;
+  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, activityDetail, mesh.peers]);
+
+  // A session's machine is in `everywhere` — this one always; a peer once the stream has named the peers and
+  // it is online.
+  const peersKnown = mesh.known;
+  const isListed = useCallback(
+    (key: string) => {
+      const { node } = splitSessionKey(key);
+      return node === null || (peersKnown && everywhere.nodes.has(node));
+    },
+    [peersKnown, everywhere]
+  );
+  const { done: doneKeys, markSeen } = useDoneSessions({
+    sessions: everywhere.sessions,
+    busyIds: everywhere.busy,
+    waitingIds: everywhere.waiting,
+    compactingIds: everywhere.compacting,
+    failedIds: everywhere.failed,
     // A file or a folder's shells take the main area from the session pane without touching the
     // selection, so `activeId` alone would clear the mark of a session you never actually saw.
-    shownSessionId: openFile || shellView || terminalShownId !== homeActiveId ? null : homeActiveId,
+    shownSessionId: openFile || shellView || terminalShownKey !== activeKey ? null : activeKey,
     streamUp,
+    isListed,
   });
+  // This node's ticks are the keys without a node in them.
+  const doneIds = useMemo(() => new Set([...doneKeys].filter((k) => !k.includes(":"))), [doneKeys]);
   // One bag for the sets, so the sidebar takes a single prop instead of five parallel ones.
   const activityIds = useMemo(
     () => ({
@@ -318,10 +381,46 @@ export function App() {
   // Every shell there is, for the Shells tab and the count on it.
   const allShells = useAllShells(shellsRev, auth === "authed");
 
+  // The same bag over every machine, keyed as `everywhere` is.
+  const everywhereIds = useMemo(
+    () => ({
+      busy: everywhere.busy,
+      waiting: everywhere.waiting,
+      compacting: everywhere.compacting,
+      failed: everywhere.failed,
+      done: doneKeys,
+      detail: everywhere.detail,
+    }),
+    [everywhere, doneKeys]
+  );
+
+  // Each peer's bag, by node id, in its own ids — what its tree in the sidebar and its open session read.
+  const peerActivity = useMemo(() => {
+    const map = new Map<string, ActivityIds>();
+    for (const p of mesh.peers) {
+      const snap = liveSnap(p);
+      if (!snap) continue;
+      const prefix = `${p.id}:`;
+      map.set(p.id, {
+        busy: snap.busy,
+        waiting: snap.waiting,
+        compacting: snap.compacting,
+        failed: snap.failed,
+        done: new Set([...doneKeys].flatMap((k) => (k.startsWith(prefix) ? [k.slice(prefix.length)] : []))),
+        detail: snap.activity,
+      });
+    }
+    return map;
+  }, [mesh.peers, doneKeys]);
+
   // How much of everything running has finished — the count the headings carry, taken over the whole
-  // list. It rides the Sessions tab, which is where it stays readable with the list scrolled away
-  // from the work, or the sidebar showing Files.
-  const totalProgress = useMemo(() => folderProgress(sessions, activityIds), [sessions, activityIds]);
+  // list, every machine's. It rides the Sessions tab, which is where it stays readable with the list
+  // scrolled away from the work, or the sidebar showing Files.
+  const totalProgress = useMemo(
+    () => folderProgress(everywhere.sessions, everywhereIds),
+    [everywhere, everywhereIds]
+  );
+  const nodeNames = useMemo(() => Object.fromEntries(mesh.peers.map((p) => [p.id, p.name])), [mesh.peers]);
 
   // Badge the favicon with the busiest state across *all* sessions, so a backgrounded tab shows at a
   // glance that something is happening. Waiting-on-you (amber) outranks working (green) here — unlike
@@ -329,10 +428,9 @@ export function App() {
   // Compacting counts as busy here: a manual /compact runs from an idle prompt, so the hook-derived
   // busy set is empty throughout and the tab would otherwise claim nothing is happening.
   useEffect(() => {
-    setFaviconStatus(
-      waitingIds.size > 0 ? "waiting" : busyIds.size > 0 || compactingIds.size > 0 ? "busy" : "idle"
-    );
-  }, [busyIds, waitingIds, compactingIds]);
+    const { waiting, busy, compacting } = everywhere;
+    setFaviconStatus(waiting.size > 0 ? "waiting" : busy.size > 0 || compacting.size > 0 ? "busy" : "idle");
+  }, [everywhere]);
 
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
   // (new/renamed/exited sessions, Claude going active/idle, watchdog status), so the UI stays current
@@ -367,8 +465,20 @@ export function App() {
             shellsRev?: number;
             projectsRev?: number;
             shells?: Record<string, ShellActivity>;
+            node?: SelfNode;
+            nodes?: MeshNodeMessage[];
           };
           applySessions(msg.sessions);
+          // Who this node is, and its peers as the mesh holds them. A server from before nodes sends
+          // neither, which reads as "no peers".
+          const me = msg.node;
+          if (me?.id)
+            setSelfNode((cur) =>
+              cur && cur.id === me.id && cur.name === me.name && cur.color === (me.color ?? null)
+                ? cur
+                : { id: me.id, name: me.name, color: me.color ?? null }
+            );
+          ingestPeers(msg.nodes);
           setBusyIds(new Set(msg.busy));
           setWaitingIds(new Set(msg.waiting ?? []));
           setCompactingIds(new Set(msg.compacting ?? []));
@@ -408,7 +518,7 @@ export function App() {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [auth, applySessions]);
+  }, [auth, applySessions, ingestPeers]);
 
   // Liveness watchdog: a WebSocket can go half-open (e.g. after a server restart) without ever firing
   // onclose, which leaves streamUp stuck true and the UI silently stale — updates then only arrive on a
@@ -497,79 +607,90 @@ export function App() {
   // Raise a browser (OS) notification when a session newly flips to "attention" (the watchdog gave
   // up auto-recovering it). Compare against the previous poll so we only notify on the transition,
   // and seed on first run so pre-existing attention states don't alert on page load.
-  const wdStatusRef = useRef<Map<string, string> | null>(null);
+  //
+  // Over every machine's sessions, keyed as `everywhere` is. A peer is seeded the way the page is: what it
+  // already had going when it came online (or when this page first heard of it) isn't news.
+  //
+  // None before the stream has said which node this is: the tag carries it (see alertTag), and an alert
+  // tagged without it wouldn't replace the push about the same thing on this device.
+  const wdStatusRef = useRef<{ status: Map<string, string>; nodes: Set<string> } | null>(null);
   useEffect(() => {
-    if (auth !== "authed") return;
+    if (auth !== "authed" || !selfNode) return;
     const prev = wdStatusRef.current;
-    const next = new Map(sessions.map((s) => [s.id, s.watchdogStatus]));
-    wdStatusRef.current = next;
+    wdStatusRef.current = {
+      status: new Map(everywhere.sessions.map((s) => [s.id, s.watchdogStatus])),
+      nodes: everywhere.nodes,
+    };
     if (prev === null) return; // first run: seed only, don't fire for already-stuck sessions
 
-    const newlyStuck = sessions.filter(
-      (s) => s.watchdogStatus === "attention" && prev.get(s.id) !== "attention"
+    const newlyStuck = everywhere.sessions.filter(
+      (s) => s.watchdogStatus === "attention" && prev.status.get(s.id) !== "attention" && wasListed(s.id, prev.nodes)
     );
     osNotify(
       newlyStuck.map((s) => ({
         id: s.id,
-        title: `${s.name} — needs attention`,
+        title: `${alertName(s)} — needs attention`,
         body: "Claude stopped recovering after repeated API errors.",
-        tag: `watchdog-${s.id}`,
+        tag: alertTag("watchdog", s.id),
       })),
       openFromNotification
     );
-  }, [sessions, auth]);
+  }, [everywhere, auth, selfNode]);
 
   // Notify when a session newly starts waiting on a prompt (idle -> waiting), mirroring the watchdog
   // "attention" alert. Compare against the previous set so we only fire on the transition, and seed
   // on first run so a session already waiting at page load doesn't alert.
-  const prevWaitingRef = useRef<Set<string> | null>(null);
+  const prevWaitingRef = useRef<{ ids: Set<string>; nodes: Set<string> } | null>(null);
   useEffect(() => {
-    if (auth !== "authed") return;
+    if (auth !== "authed" || !selfNode) return;
     const prev = prevWaitingRef.current;
-    prevWaitingRef.current = new Set(waitingIds);
+    prevWaitingRef.current = { ids: new Set(everywhere.waiting), nodes: everywhere.nodes };
     if (prev === null) return; // first run: seed only
 
-    const newly = [...waitingIds].filter((id) => !prev.has(id));
+    const newly = [...everywhere.waiting].filter((key) => !prev.ids.has(key) && wasListed(key, prev.nodes));
     osNotify(
-      newly.map((id) => ({
-        id,
-        title: `${sessions.find((x) => x.id === id)?.name ?? "Session"} — Claude needs your input`,
-        // What it is blocked on, when the permission hook said — "Wants to run Bash: git push
-        // --force" is a decision you can take from the notification itself.
-        body: activityDetail[id]?.waitingOn ?? "Waiting on a prompt.",
-        tag: `waiting-${id}`,
-      })),
+      newly.map((key) => {
+        const s = everywhere.sessions.find((x) => x.id === key);
+        return {
+          id: key,
+          title: `${s ? alertName(s) : "Session"} — Claude needs your input`,
+          // What it is blocked on, when the permission hook said — "Wants to run Bash: git push
+          // --force" is a decision you can take from the notification itself.
+          body: everywhere.detail[key]?.waitingOn ?? "Waiting on a prompt.",
+          tag: alertTag("waiting", key),
+        };
+      }),
       openFromNotification
     );
-  }, [waitingIds, sessions, activityDetail, auth]);
+  }, [everywhere, auth, selfNode]);
 
   // Notify when a turn newly ends on an API error rather than on an answer. It is the one ending
   // that looks exactly like nothing happening — the session goes quiet and stays quiet — so it is
   // also the one worth saying out loud; everything else you find by looking.
-  const prevFailedRef = useRef<Set<string> | null>(null);
+  const prevFailedRef = useRef<{ ids: Set<string>; nodes: Set<string> } | null>(null);
   useEffect(() => {
-    if (auth !== "authed") return;
+    if (auth !== "authed" || !selfNode) return;
     const prev = prevFailedRef.current;
-    prevFailedRef.current = new Set(failedIds);
+    prevFailedRef.current = { ids: new Set(everywhere.failed), nodes: everywhere.nodes };
     if (prev === null) return; // first run: seed only
 
     // A session the watchdog is minding is about to retry the error by itself, so an alert here would
     // be about a problem already in hand — it has its own for when it gives up. Same rule as the push
     // notifier's, so the phone and the tab agree about which failures are worth interrupting you for.
-    const newly = [...failedIds]
-      .filter((id) => !prev.has(id))
-      .map((id) => sessions.find((s) => s.id === id))
+    const newly = [...everywhere.failed]
+      .filter((key) => !prev.ids.has(key) && wasListed(key, prev.nodes))
+      .map((key) => everywhere.sessions.find((s) => s.id === key))
       .filter((s): s is SessionInfo => s !== undefined && !s.watchdogEnabled);
     osNotify(
       newly.map((s) => ({
         id: s.id,
-        title: `${s.name} — Claude stopped early`,
-        body: failureLine(activityDetail[s.id]),
-        tag: `failed-${s.id}`,
+        title: `${alertName(s)} — Claude stopped early`,
+        body: failureLine(everywhere.detail[s.id]),
+        tag: alertTag("failed", s.id),
       })),
       openFromNotification
     );
-  }, [failedIds, sessions, activityDetail, auth]);
+  }, [everywhere, auth, selfNode]);
 
   // When a push notification is tapped while a window is already open, the service worker posts the
   // session id here so we can jump to it (the cold-open case is handled by readUrlState's ?session=).
@@ -578,7 +699,9 @@ export function App() {
     const onMessage = (e: MessageEvent) => {
       if (e.data?.type === "open-session" && typeof e.data.sessionId === "string") {
         window.focus();
-        setActiveNode(null);
+        // A peer's session, when this node relayed the alert for it (see sw.js); taken only as a node id.
+        const node = typeof e.data.node === "string" && /^[A-Za-z0-9]{1,64}$/.test(e.data.node) ? e.data.node : null;
+        setActiveNode(node);
         setActiveId(e.data.sessionId);
         clearMainArea();
       }
@@ -638,20 +761,16 @@ export function App() {
   // A closed session is a view like any other — the folder it worked in outlives the process, and
   // that is what the Files tree, the diff and the reviews are reading. Only the terminal is missing,
   // and SessionView puts the Reopen button where it would have been.
-  // A peer's session comes from that node's own stream; this node's from the list above.
-  const remote = useNodeSnapshot(auth === "authed" ? activeNode : null);
-  const remoteActivityIds = useMemo(
-    () => ({
-      busy: remote.busy,
-      waiting: remote.waiting,
-      compacting: remote.compacting,
-      failed: remote.failed,
-      // "Done but not seen" is this browser's reading of this node's stream; a peer's waits for the mesh.
-      done: NO_IDS,
-      detail: remote.activity,
-    }),
-    [remote.busy, remote.waiting, remote.compacting, remote.failed, remote.activity]
-  );
+  // A peer's session comes from that node's snapshot on this node's own stream; this node's from the list above.
+  const activePeer = activeNode ? mesh.peers.find((p) => p.id === activeNode) : undefined;
+  // Its last snapshot while it is away, so an open session isn't torn down by a blip.
+  const remote = {
+    ...(activePeer?.snap ?? EMPTY_SNAPSHOT),
+    loaded: !!activePeer?.snap,
+    // Until the stream has said who the peers are, a node not among them isn't "unknown" yet.
+    error: activeNode && mesh.known ? peerError(activePeer) : null,
+  };
+  const remoteActivityIds = (activeNode && peerActivity.get(activeNode)) || NO_ACTIVITY;
   // The shells' marks: which finished commands this browser has looked at, and from that what each
   // session's shells together have to say on its sidebar row.
   const { seen: shellsSeen, markSeen: markShellSeen } = useShellsSeen(
@@ -659,17 +778,19 @@ export function App() {
     activeNode,
     remote.shellActivity
   );
-  const shellMarks = useMemo(() => {
-    const bySession = new Map<string, (ShellMark | null)[]>();
-    for (const [id, a] of Object.entries(shellActivity ?? {}))
-      if (a.sessionId) bySession.set(a.sessionId, [...(bySession.get(a.sessionId) ?? []), shellMark(a, shellsSeen[id])]);
-    const out = new Map<string, ShellMark>();
-    for (const [sid, marks] of bySession) {
-      const m = combineShellMarks(marks);
-      if (m) out.set(sid, m);
-    }
-    return out;
-  }, [shellActivity, shellsSeen]);
+  const shellMarks = useMemo(() => marksBySession(shellActivity, (id) => shellsSeen[id]), [shellActivity, shellsSeen]);
+  // The same for each peer's rows: its shells' activity off its snapshot, what was seen of them kept here
+  // under node:id.
+  const peerShellMarks = useMemo(
+    () =>
+      new Map(
+        mesh.peers.map((p) => [
+          p.id,
+          marksBySession(p.snap?.shellActivity ?? null, (id) => shellsSeen[sessionKey(p.id, id)]),
+        ])
+      ),
+    [mesh.peers, shellsSeen]
+  );
   // A peer's shells, as its open session's view knows them: by their own ids, kept here under node:id.
   const peerShellsSeen = useMemo(() => {
     if (!activeNode) return shellsSeen;
@@ -698,7 +819,7 @@ export function App() {
   // The session the fork popup is open for, and — for the active session's header link — the one it
   // was forked from. Both resolved from the live list, so they stay current (or drop to null once the
   // session is gone).
-  const forkSessions = forkFromNode ? remote.sessions : sessions;
+  const forkSessions = forkFromNode ? sessionsOf(forkFromNode) : sessions;
   const forkFrom = forkSessions.find((s) => s.id === forkFromId) ?? null;
   const activeParent = active?.parentSessionId
     ? viewSessions.find((s) => s.id === active.parentSessionId) ?? null
@@ -747,14 +868,33 @@ export function App() {
 
   // Where a notification's click lands: the session it was about, with whatever had the main area
   // out of the way — the alert is asking you to look at that session, not at a file you left open.
+  // Given the session's key: the alerts are raised over every machine's.
   const openFromNotification = useCallback(
-    (id: string) => {
-      setActiveNode(null);
+    (key: string) => {
+      const { node, id } = splitSessionKey(key);
+      setActiveNode(node);
       setActiveId(id);
       clearMainArea();
     },
     [clearMainArea]
   );
+
+  // A notification's tag: by node as well as session, the same as the server's push (PushNotifier), so the
+  // one a phone gets from the server and the one this tab raises are the same notification.
+  function alertTag(kind: string, key: string): string {
+    const { node, id } = splitSessionKey(key);
+    return `${kind}-${node ?? selfNode!.id}:${id}`;
+  }
+  // A peer's session says which machine it is on.
+  function alertName(s: SessionInfo): string {
+    const { node } = splitSessionKey(s.id);
+    return node ? `${nodeNames[node] ?? "Another machine"} · ${s.name}` : s.name;
+  }
+
+  /** A node's sessions: this one's list, or a peer's off the mesh (none while it can't be reached). */
+  function sessionsOf(node: string | null): SessionInfo[] {
+    return node ? (mesh.peers.find((p) => p.id === node)?.snap?.sessions ?? []) : sessions;
+  }
 
   // Open a server file (from the Files tab) in the main content area; close the mobile drawer.
   const openServerFile = useCallback((path: string) => {
@@ -851,27 +991,30 @@ export function App() {
   }, []);
 
   // Selecting a session takes over the main area, so drop whatever was filling it.
-  const selectSession = useCallback((id: string) => {
-    setActiveNode(null);
+  const selectSession = useCallback((id: string, node: string | null = null) => {
+    setActiveNode(node);
     setActiveId(id);
     clearMainArea();
   }, [clearMainArea]);
 
-  // The running-sessions fraction and the sessions behind it, for its dropdown wherever it is worn.
+  // The running-sessions fraction and the sessions behind it, for its dropdown wherever it is worn —
+  // every machine's, under their keys.
   const sessionsProgress = useMemo(
     () => ({
       ...totalProgress,
-      sessions,
-      activityIds,
-      activeId: homeActiveId,
+      sessions: everywhere.sessions,
+      nodeNames,
+      activityIds: everywhereIds,
+      activeId: activeKey,
       // From the phone's drawer too, where picking a session puts the drawer away as a row does.
-      onSelect: (id: string) => {
-        selectSession(id);
+      onSelect: (key: string) => {
+        const { node, id } = splitSessionKey(key);
+        selectSession(id, node);
         setSidebarOpen(false);
       },
       onMarkSeen: markSeen,
     }),
-    [totalProgress, sessions, activityIds, homeActiveId, selectSession, markSeen]
+    [totalProgress, everywhere, nodeNames, everywhereIds, activeKey, selectSession, markSeen]
   );
 
   // A shell picked in the Shells tab, brought forward wherever it lives: its session's tab bar, its
@@ -940,8 +1083,8 @@ export function App() {
    * place in the list. Taking it out of the list altogether is `onRemove` below, from the same menu,
    * once it is sitting there closed.
    */
-  async function onStop(id: string) {
-    const s = sessions.find((x) => x.id === id);
+  async function onStop(id: string, node: string | null = null) {
+    const s = sessionsOf(node).find((x) => x.id === id);
     if (!s || s.state === "Restorable") return;
     // Only a live process is worth asking about. A session that has already exited loses nothing
     // here — the row stays, and Reopen is one click away — so the click is the whole decision.
@@ -959,19 +1102,20 @@ export function App() {
       });
       if (!ok) return;
     }
-    const stopped = await api.stopSession(id).catch(() => null);
+    const stopped = await attempt(() => apiFor(node).stopSession(id));
     // Only on success. Drawing the row as closed after a failed call would be a lie with claude still
     // running behind it, and the row would then offer a Reopen that does nothing. On failure the list
     // is left as it is; the stream and the poll both carry the truth within a few seconds.
     if (!stopped) return;
     // Otherwise take the server's own row straight away rather than waiting for the hub's next frame,
     // so it settles the moment the dialog goes.
-    setSessions((prev) => prev.map((x) => (x.id === id ? stopped : x)));
+    if (node) mesh.patchSession(node, stopped);
+    else setSessions((prev) => prev.map((x) => (x.id === id ? stopped : x)));
   }
 
   /** Remove a session from the list for good. It lands in the Recent tab as a launch preset. */
-  async function onRemove(id: string) {
-    const s = sessions.find((x) => x.id === id);
+  async function onRemove(id: string, node: string | null = null) {
+    const s = sessionsOf(node).find((x) => x.id === id);
     // A session still running has to be stopped to be removed, and that is worth asking about; an
     // already-closed row is cheap to undo from the Recent tab, so it just goes.
     if (s?.state === "Running") {
@@ -988,11 +1132,13 @@ export function App() {
       });
       if (!ok) return;
     }
-    await api.deleteSession(id).catch(() => {});
-    setSessions((prev) => prev.filter((s) => s.id !== id));
-    // This node's session only: a peer's open one with the same id stays open.
-    setActiveId((cur) => (cur === id && !activeNodeRef.current ? null : cur));
-    loadRecents(); // the server saved the removed session as a preset — show it in the Recent tab
+    await attempt(() => apiFor(node).deleteSession(id));
+    if (node) mesh.dropSessions(node, [id]);
+    else setSessions((prev) => prev.filter((s) => s.id !== id));
+    // That node's session only: another node's open one with the same id stays open.
+    if (activeNodeRef.current === node) leaveRemoved(new Set([id]));
+    // The server saved the removed session as a preset — show it in the Recent tab (this node's).
+    if (!node) loadRecents();
   }
 
   // Drag-to-reorder the recent presets. These are server-backed, so persist the new order there.
@@ -1008,13 +1154,14 @@ export function App() {
   // Reopen a Restorable session: it relaunches (resuming its conversation) and returns a fresh live
   // session. Uses --resume <id> for the exact conversation when we captured Claude's session id,
   // otherwise --continue (the folder's most recent).
-  async function onRestore(id: string) {
-    const s = sessions.find((x) => x.id === id);
+  async function onRestore(id: string, node: string | null = null) {
+    const s = sessionsOf(node).find((x) => x.id === id);
     const ok = await confirm({
       title: "Reopen session?",
       description: (
         <>
-          Relaunch <span className="font-medium text-foreground">{s?.name}</span> and resume{" "}
+          Relaunch <span className="font-medium text-foreground">{s?.name}</span>
+          {node && " on its node"} and resume{" "}
           {s?.resumeExact ? (
             <>
               this exact conversation (<span className="font-mono">--resume</span>).
@@ -1029,78 +1176,95 @@ export function App() {
       confirmLabel: "Reopen",
     });
     if (!ok) return;
-    const created = await api.restoreSession(id).catch(() => null);
+    const created = await attempt(() => apiFor(node).restoreSession(id));
     if (!created) return;
     // Drop the old Restorable entry AND any copy of the new session the live stream may have already
     // pushed (the push can beat this response), so the reopened session appears exactly once.
-    setSessions((prev) => [...prev.filter((s) => s.id !== id && s.id !== created.id), created]);
-    setActiveNode(null);
+    if (node) {
+      mesh.dropSessions(node, [id]);
+      mesh.patchSession(node, created);
+    } else setSessions((prev) => [...prev.filter((s) => s.id !== id && s.id !== created.id), created]);
+    // Node and id together: wherever the view has gone meanwhile, this is a session it can show.
+    setActiveNode(node);
     setActiveId(created.id);
     setSidebarOpen(false);
   }
 
   // Bulk-remove sessions (from a folder group's remove popup). The popup is the confirmation, so we
   // just delete each and prune local state. deleteSession stops running processes and forgets the rest.
-  async function onRemoveSessions(ids: string[]) {
+  async function onRemoveSessions(ids: string[], node: string | null = null) {
     if (ids.length === 0) return;
     const set = new Set(ids);
-    await Promise.all(ids.map((id) => api.deleteSession(id).catch(() => {})));
-    setSessions((prev) => prev.filter((s) => !set.has(s.id)));
-    setActiveId((cur) => (cur && set.has(cur) && !activeNodeRef.current ? null : cur));
-    loadRecents(); // each removed session is saved as a preset server-side; refresh the Recent tab
+    const client = apiFor(node);
+    await Promise.all(ids.map((id) => attempt(() => client.deleteSession(id))));
+    if (node) mesh.dropSessions(node, ids);
+    else setSessions((prev) => prev.filter((s) => !set.has(s.id)));
+    if (activeNodeRef.current === node) leaveRemoved(set);
+    if (!node) loadRecents(); // each removed session is saved as a preset server-side; refresh the Recent tab
   }
 
   // Rename a session from the sidebar or the details header. Optimistically update the name, then
   // persist; the server also injects `/rename` into the live terminal so Claude renames itself too.
-  async function onRename(id: string, name: string) {
+  async function onRename(id: string, name: string, node: string | null = null) {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name: trimmed } : s)));
-    await api.renameSession(id, trimmed).catch(() => {});
+    if (node) mesh.updateSession(node, id, { name: trimmed });
+    else setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, name: trimmed } : s)));
+    await attempt(() => apiFor(node).renameSession(id, trimmed));
   }
 
-  // ---- A peer's open session: the same actions, through that node (see lib/nodeStream) ----
-
-  async function onRestoreRemote(id: string) {
-    const node = activeNode;
-    const s = remote.sessions.find((x) => x.id === id);
-    if (!node || !s) return;
-    const ok = await confirm({
-      title: "Reopen session?",
-      description: (
-        <>
-          Relaunch <span className="font-medium text-foreground">{s.name}</span> on its node and resume{" "}
-          {s.resumeExact ? "this exact conversation." : "the folder\u2019s most recent conversation."}
-        </>
-      ),
-      confirmLabel: "Reopen",
-    });
-    if (!ok) return;
-    const created = await apiFor(node).restoreSession(id).catch(() => null);
-    // Somewhere else by now: the reopened session turns up on its node's stream, not in this view.
-    if (!created || activeNodeRef.current !== node) return;
-    remote.patchSession(created);
-    setActiveId(created.id);
+  /**
+   * The open session was among those just removed (on the node it is on): let it go. A peer's goes back to
+   * this node — whose list then picks a session to show, as it does after removing one of its own —
+   * rather than leaving "no such session" on that node where the view was.
+   */
+  function leaveRemoved(ids: Set<string>) {
+    const cur = activeIdRef.current;
+    if (!cur || !ids.has(cur)) return;
+    setActiveNode(null);
+    setActiveId(null);
   }
 
-  async function onRenameRemote(id: string, name: string) {
-    const trimmed = name.trim();
-    if (!trimmed || !activeNode) return;
-    remote.updateSession(id, { name: trimmed });
-    await apiFor(activeNode).renameSession(id, trimmed).catch(() => {});
-  }
-
+  // A fork of a peer's session, made on that node.
   function onForkedRemote(s: SessionInfo) {
-    remote.patchSession(s);
+    if (forkFromNode) mesh.patchSession(forkFromNode, s);
     setActiveNode(forkFromNode);
     setActiveId(s.id);
     clearMainArea();
   }
 
+  // Each peer's tree in the sidebar, with the actions above bound to its node. `onPicked` is what else
+  // picking a session does where the sidebar is mounted — the phone's drawer goes away.
+  const peerSidebars = (onPicked?: () => void): PeerSidebar[] =>
+    mesh.peers.map((p) => ({
+      peer: p,
+      // Nothing while it is away: its tree isn't drawn then, and the toolbar's counts are of what is live.
+      sessions: liveSnap(p)?.sessions ?? [],
+      activityIds: peerActivity.get(p.id) ?? NO_ACTIVITY,
+      draftIds: p.snap?.drafts,
+      shellMarks: peerShellMarks.get(p.id),
+      onMarkSeen: (ids) => markSeen([...ids].map((id) => sessionKey(p.id, id))),
+      activeId: activeNode === p.id ? activeId : null,
+      onSelect: (id) => {
+        selectSession(id, p.id);
+        onPicked?.();
+      },
+      onStop: (id) => void onStop(id, p.id),
+      onRemove: (id) => void onRemove(id, p.id),
+      onFork: forkSession,
+      onRestore: (id) => void onRestore(id, p.id),
+      onRename: (id, name) => void onRename(id, name, p.id),
+      onRemoveSessions: (ids) => void onRemoveSessions(ids, p.id),
+      projects: p.snap?.projects ?? [],
+      onProjectsChange: (projects) => mesh.setProjects(p.id, projects),
+    }));
+
   async function onLogout() {
     await api.logout();
     setAuth("anon");
     setSessions([]);
+    mesh.reset();
+    setSelfNode(null);
     setActiveNode(null);
     setActiveId(null);
   }
@@ -1170,6 +1334,8 @@ export function App() {
                 onMarkSeen={markSeen}
                 activeId={homeActiveId}
                 onSelect={selectSession}
+                self={selfNode}
+                peers={peerSidebars()}
                 onNewInFolder={newSessionInFolder}
                 onRevealFolder={revealFolderInFiles}
                 onNewInProject={newSessionInProject}
@@ -1243,6 +1409,8 @@ export function App() {
                       selectSession(id);
                       setSidebarOpen(false);
                     }}
+                    self={selfNode}
+                    peers={peerSidebars(() => setSidebarOpen(false))}
                     onNewInFolder={newSessionInFolder}
                     onRevealFolder={revealFolderInFiles}
                     onNewInProject={newSessionInProject}
@@ -1321,6 +1489,7 @@ export function App() {
                   busy={remote.busy.has(active.id) || remote.compacting.has(active.id)}
                   activity={activeActivity}
                   activityLabel={activeActivityLabel}
+                  onTerminalShown={onPeerTerminalShown}
                   parent={activeParent}
                   shellsRev={remote.shellsRev}
                   shellActivity={remote.shellActivity}
@@ -1334,14 +1503,14 @@ export function App() {
                   onToggleSidebar={() => setSidebarOpen(true)}
                   collapsed={collapsed}
                   onToggleCollapsed={toggleCollapsed}
-                  onStopped={remote.patchSession}
-                  onReopen={() => void onRestoreRemote(active.id)}
-                  onRename={(id, name) => void onRenameRemote(id, name)}
-                  onTerminalRename={(id, name) => remote.updateSession(id, { name })}
-                  onTerminalColor={(id, color) => remote.updateSession(id, { color })}
+                  onStopped={(info) => mesh.patchSession(activeNode, info)}
+                  onReopen={() => void onRestore(active.id, activeNode)}
+                  onRename={(id, name) => void onRename(id, name, activeNode)}
+                  onTerminalRename={(id, name) => mesh.updateSession(activeNode, id, { name })}
+                  onTerminalColor={(id, color) => mesh.updateSession(activeNode, id, { color })}
                   onOpenServerFile={openSessionServerFile}
                   project={projectForDir(active.workingDirectory, remote.projects)}
-                  onProjectsChange={remote.setProjects}
+                  onProjectsChange={(projects) => mesh.setProjects(activeNode, projects)}
                 />
               </NodeProvider>
             ) : activeNode ? (
@@ -1415,14 +1584,16 @@ export function App() {
 
         {searching && (
           <SessionSearchDialog
-            sessions={sessions}
+            sessions={everywhere.sessions}
+            nodeNames={nodeNames}
             recents={recents}
-            activeId={homeActiveId}
+            activeId={activeKey}
             // Opening a session from search also pulls the list back to the Sessions tab (so the row
             // just picked is the one shown selected) and closes the mobile drawer.
-            onSelect={(id) => {
+            onSelect={(key) => {
+              const { node, id } = splitSessionKey(key);
               setListTab("sessions");
-              selectSession(id);
+              selectSession(id, node);
               setSidebarOpen(false);
             }}
             onReuse={reuseRecent}
@@ -1464,6 +1635,47 @@ export function App() {
 }
 
 const NO_IDS = new Set<string>();
+
+/** A call that may fail, before or after it has a promise to fail with: null either way. */
+async function attempt<T>(call: () => Promise<T>): Promise<T | null> {
+  try {
+    return await call();
+  } catch {
+    return null;
+  }
+}
+const NO_ACTIVITY: ActivityIds = {
+  busy: NO_IDS,
+  waiting: NO_IDS,
+  compacting: NO_IDS,
+  failed: NO_IDS,
+  done: NO_IDS,
+  detail: {},
+};
+
+/**
+ * Whether a session's machine was listed at the last look — "" for this one, which always is. A peer that
+ * has only just come online brings everything it already had going, and none of that is a transition.
+ */
+function wasListed(key: string, nodes: Set<string>): boolean {
+  return nodes.has(splitSessionKey(key).node ?? "");
+}
+
+/** What each session's shells together have to say on its row, from their activity and what was seen of it. */
+function marksBySession(
+  activity: Record<string, ShellActivity> | null,
+  seenOf: (shellId: string) => number | undefined
+): Map<string, ShellMark> {
+  const bySession = new Map<string, (ShellMark | null)[]>();
+  for (const [id, a] of Object.entries(activity ?? {}))
+    if (a.sessionId) bySession.set(a.sessionId, [...(bySession.get(a.sessionId) ?? []), shellMark(a, seenOf(id))]);
+  const out = new Map<string, ShellMark>();
+  for (const [sid, marks] of bySession) {
+    const m = combineShellMarks(marks);
+    if (m) out.set(sid, m);
+  }
+  return out;
+}
 
 /** What the proxy's answers mean to someone holding a link to a peer's session. */
 const UNAVAILABLE: Record<string, string> = {

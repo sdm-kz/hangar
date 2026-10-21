@@ -11,11 +11,16 @@ import type { SessionInfo } from "@/types";
  * How much of everything running has finished -- the Sessions tab's fraction -- and what it was
  * counted from, so the fraction can open onto the sessions behind it. Provided once by the app so
  * the Sessions tab and every view's "Show sidebar" button can carry it without threading props.
+ *
+ * Over every machine listed: a peer's sessions are in `sessions` under their sessionKey as `id`, with
+ * the sets in `activityIds` keyed the same way, and `onSelect` / `onMarkSeen` take those keys.
  */
 export interface SessionsProgress {
   done: number;
   active: number;
   sessions: SessionInfo[];
+  /** The peers' names, by node id, for a peer's session to say where it is. */
+  nodeNames?: Record<string, string>;
   activityIds: ActivityIds | null;
   activeId: string | null;
   onSelect: (id: string) => void;
@@ -59,7 +64,8 @@ function baseName(p: string): string {
  * what it lines up under -- the button, or the whole tab row where the tab sits mid-sidebar.
  */
 export function SessionsProgressMenu({ triggerClassName }: { triggerClassName?: string }) {
-  const { done, active, sessions, activityIds, activeId, onSelect, onMarkSeen } = useContext(SessionsProgressContext);
+  const { done, active, sessions, nodeNames, activityIds, activeId, onSelect, onMarkSeen } =
+    useContext(SessionsProgressContext);
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   const ref = useDismissable<HTMLDivElement>(open, close);
@@ -160,7 +166,11 @@ export function SessionsProgressMenu({ triggerClassName }: { triggerClassName?: 
                           <span className="flex items-baseline gap-2">
                             <span className="min-w-0 flex-1 truncate">{s.name}</span>
                             <span className="max-w-[40%] shrink-0 truncate font-mono text-[11px] text-muted-foreground">
-                              {s.id === activeId ? "this session" : baseName(s.workingDirectory)}
+                              {s.id === activeId
+                                ? "this session"
+                                : s.nodeId
+                                  ? `${nodeNames?.[s.nodeId] ?? "another machine"} · ${baseName(s.workingDirectory)}`
+                                  : baseName(s.workingDirectory)}
                             </span>
                           </span>
                           {detail && (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Project, ProjectGroup, SessionInfo } from "@/types";
 import { sessionColor } from "@/lib/sessionColors";
 import { forkDescendants, forkTree, parentOf, type ForkNode } from "@/lib/sessionTree";
@@ -14,7 +14,8 @@ import {
   type ProjectSection,
 } from "@/lib/projects";
 import { groupIcon } from "@/lib/groupIcons";
-import { api } from "@/lib/api";
+import { NodeProvider, useApi } from "@/lib/node";
+import type { PeerNode, SelfNode } from "@/lib/nodeStream";
 import { ProjectDialog } from "./ProjectDialog";
 import { GroupDialog } from "./GroupDialog";
 import { useConfirm } from "@/components/ui/confirm";
@@ -97,6 +98,7 @@ import {
   ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
+  Monitor,
 } from "lucide-react";
 
 // The two lists the session sidebar can show: live sessions, or recent launch presets.
@@ -1359,17 +1361,25 @@ function useFolderDrag(onDropFolder: (dir: string, projectId: string | null) => 
 // Which folder groups are collapsed is a per-browser preference, remembered across refreshes (like
 // the grouped-vs-flat toggle). Stored as the list of collapsed dir paths; anything absent is expanded.
 const COLLAPSED_KEY = "hangar.sessionsCollapsedGroups";
-function loadCollapsed(): Set<string> {
+/**
+ * Where a per-browser view preference is kept for a node: this node's under the key it always had, so
+ * nothing stored before nodes is lost, and a peer's beside it — two machines' folders can share a path.
+ */
+function nodeStoreKey(key: string, node: string | null): string {
+  return node ? `${key}:${node}` : key;
+}
+
+function loadCollapsed(node: string | null = null): Set<string> {
   try {
-    const raw = localStorage.getItem(COLLAPSED_KEY);
+    const raw = localStorage.getItem(nodeStoreKey(COLLAPSED_KEY, node));
     return new Set(raw ? (JSON.parse(raw) as string[]) : []);
   } catch {
     return new Set();
   }
 }
-function saveCollapsed(set: Set<string>) {
+function saveCollapsed(set: Set<string>, node: string | null = null) {
   try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...set]));
+    localStorage.setItem(nodeStoreKey(COLLAPSED_KEY, node), JSON.stringify([...set]));
   } catch {
     /* storage disabled — preference is best-effort */
   }
@@ -1378,17 +1388,17 @@ function saveCollapsed(set: Set<string>) {
 // Which projects are folded away, by project id — the same kind of per-browser preference as the
 // folder collapse above, in its own key so the two can't collide (a project id is not a path).
 const COLLAPSED_PROJECTS_KEY = "hangar.collapsedProjects";
-function loadCollapsedProjects(): Set<string> {
+function loadCollapsedProjects(node: string | null = null): Set<string> {
   try {
-    const raw = localStorage.getItem(COLLAPSED_PROJECTS_KEY);
+    const raw = localStorage.getItem(nodeStoreKey(COLLAPSED_PROJECTS_KEY, node));
     return new Set(raw ? (JSON.parse(raw) as string[]) : []);
   } catch {
     return new Set();
   }
 }
-function saveCollapsedProjects(set: Set<string>) {
+function saveCollapsedProjects(set: Set<string>, node: string | null = null) {
   try {
-    localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...set]));
+    localStorage.setItem(nodeStoreKey(COLLAPSED_PROJECTS_KEY, node), JSON.stringify([...set]));
   } catch {
     /* storage disabled — preference is best-effort */
   }
@@ -1437,6 +1447,8 @@ const COLLAPSED_FORKS_KEY = "hangar.collapsedForks";
  * first one only.
  */
 const navKey = {
+  /** A machine's heading, once there is more than one: "" for this one. */
+  node: (id: string) => `node:${id}`,
   project: (id: string) => `project:${id}`,
   /** A folder header or a virtual folder: both fold out of the same set, keyed the same way. */
   fold: (key: string) => `fold:${key}`,
@@ -1448,23 +1460,88 @@ function parseNavKey(key: string): { kind: string; id: string } {
   return { kind: key.slice(0, at), id: key.slice(at + 1) };
 }
 
-function loadCollapsedForks(): Set<string> {
+function loadCollapsedForks(node: string | null = null): Set<string> {
   try {
-    const raw = localStorage.getItem(COLLAPSED_FORKS_KEY);
+    const raw = localStorage.getItem(nodeStoreKey(COLLAPSED_FORKS_KEY, node));
     return new Set(raw ? (JSON.parse(raw) as string[]) : []);
   } catch {
     return new Set();
   }
 }
-function saveCollapsedForks(set: Set<string>) {
+function saveCollapsedForks(set: Set<string>, node: string | null = null) {
   try {
-    localStorage.setItem(COLLAPSED_FORKS_KEY, JSON.stringify([...set]));
+    localStorage.setItem(nodeStoreKey(COLLAPSED_FORKS_KEY, node), JSON.stringify([...set]));
   } catch {
     /* storage disabled — preference is best-effort */
   }
 }
 
+// Which machines' headings are folded, by node id ("" for this one). Per-browser, like the rest.
+const COLLAPSED_NODES_KEY = "hangar.collapsedNodes";
+const SELF_NODE = "";
+function loadCollapsedNodes(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_NODES_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveCollapsedNodes(set: Set<string>) {
+  try {
+    localStorage.setItem(COLLAPSED_NODES_KEY, JSON.stringify([...set]));
+  } catch {
+    /* storage disabled — preference is best-effort */
+  }
+}
+
+/**
+ * One peer's tree in the sidebar (plans/multi-node.md §6): the node, what its tree is drawn from, and
+ * App's actions bound to that node. What can't be done to a peer from here yet — start a session there,
+ * schedule one, show its folder in this machine's Files tree — is simply not offered.
+ */
+export interface PeerSidebar {
+  peer: PeerNode;
+  sessions: SessionInfo[];
+  activityIds: ActivityIds;
+  draftIds?: ReadonlySet<string>;
+  shellMarks?: ReadonlyMap<string, ShellMark>;
+  onMarkSeen: (ids: Iterable<string>) => void;
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  onStop: (id: string) => void;
+  onRemove: (id: string) => void;
+  onFork: (s: SessionInfo) => void;
+  onRestore: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onRemoveSessions: (ids: string[]) => void;
+  projects: Project[];
+  onProjectsChange: (projects: Project[]) => void;
+}
+
+/** A row of the keyboard tree that belongs to a peer's tree, handed back to it. */
+type NavRoute = { toggle: (key: string) => void; activate: (key: string) => void };
+
+/**
+ * What a peer's tree, drawn inside this node's sidebar, takes from the sidebar it sits in: the view the
+ * toolbar picked, how deep its rows sit (under the node heading), and where to register for its keys.
+ */
+interface Embedded {
+  grouped: boolean;
+  filter: SessionFilter;
+  depth: number;
+  routes: Map<string, NavRoute>;
+}
+
+const NO_PEERS: PeerSidebar[] = [];
+const NO_RECENTS: RecentSession[] = [];
+const noop = () => {};
+
 export function SessionSidebar({
+  node = null,
+  embedded,
+  self = null,
+  peers = NO_PEERS,
   sessions,
   activityIds,
   draftIds,
@@ -1493,6 +1570,14 @@ export function SessionSidebar({
   projects,
   onProjectsChange,
 }: {
+  /** The node this tree is of: null for this one. */
+  node?: string | null;
+  /** Set on a peer's tree, drawn by this one under the peer's heading — see Embedded. */
+  embedded?: Embedded;
+  /** This node, for its heading once there are others to tell it from. */
+  self?: SelfNode | null;
+  /** The other machines, a tree each under a heading of its own. None: the list is what it always was. */
+  peers?: PeerSidebar[];
   sessions: SessionInfo[];
   // Who is busy / waiting on you / compacting / finished-but-unseen, in one bag — see ActivityIds.
   activityIds: ActivityIds;
@@ -1506,15 +1591,15 @@ export function SessionSidebar({
   onMarkSeen: (ids: Iterable<string>) => void;
   activeId: string | null;
   onSelect: (id: string) => void;
-  onNewInFolder: (dir: string) => void; // start a session in a folder (hover action on group headers)
-  onRevealFolder: (dir: string) => void; // show a folder in the whole-server Files tree
+  onNewInFolder?: (dir: string) => void; // start a session in a folder (hover action on group headers)
+  onRevealFolder?: (dir: string) => void; // show a folder in the whole-server Files tree
   // Start a session in a project: the create dialog opens with its linked folders offered as picks.
-  onNewInProject: (project: Project) => void;
+  onNewInProject?: (project: Project) => void;
   // End a running session's process, leaving the row in the list as a closed session.
   onStop: (id: string) => void;
   // Take a session out of the list for good; it lands in the Recent tab as a launch preset.
   onRemove: (id: string) => void;
-  onClone: (s: SessionInfo) => void;
+  onClone?: (s: SessionInfo) => void;
   onFork: (s: SessionInfo) => void; // branch this session's conversation into a new one
   onRestore: (id: string) => void;
   onRename: (id: string, name: string) => void;
@@ -1531,7 +1616,7 @@ export function SessionSidebar({
   // App like the search one above, and for the same reason: this component is mounted twice. Called
   // with a session to pre-fill a schedule that continues that conversation, or with nothing to open
   // the list.
-  onSchedules: (target?: { conversationId: string; name: string }) => void;
+  onSchedules?: (target?: { conversationId: string; name: string }) => void;
   // Sessions/Recent list tab. Owned by App so creating a session can pull the sidebar back to the
   // list, and so the desktop sidebar and the mobile drawer stay on the same tab.
   tab: SessionListTab;
@@ -1544,8 +1629,12 @@ export function SessionSidebar({
 }) {
   const setTab = onTabChange;
   const confirm = useConfirm();
-  const [grouped, setGrouped] = useState<boolean>(loadGrouped);
-  const [filter, setFilter] = useState<SessionFilter>(loadFilter);
+  const api = useApi();
+  // A peer's tree shows the list the way this node's toolbar says to.
+  const [ownGrouped, setGrouped] = useState<boolean>(loadGrouped);
+  const [ownFilter, setFilter] = useState<SessionFilter>(loadFilter);
+  const grouped = embedded?.grouped ?? ownGrouped;
+  const filter = embedded?.filter ?? ownFilter;
   const [editingId, setEditingId] = useState<string | null>(null);
   // Folder whose bulk-remove popup is open (its normalized dirKey), or null.
   const [removeDir, setRemoveDir] = useState<string | null>(null);
@@ -1554,14 +1643,23 @@ export function SessionSidebar({
   // a row that has since changed -- or outliving one that has gone.
   const [postponedId, setPostponedId] = useState<string | null>(null);
   const { collapsed, toggle: toggleGroup, setAll: setAllGroups } = useCollapsedSet(
-    loadCollapsed,
-    saveCollapsed
+    () => loadCollapsed(node),
+    (set) => saveCollapsed(set, node)
   );
   const {
     collapsed: collapsedProjects,
     toggle: toggleProject,
     setAll: setAllProjects,
-  } = useCollapsedSet(loadCollapsedProjects, saveCollapsedProjects);
+  } = useCollapsedSet(
+    () => loadCollapsedProjects(node),
+    (set) => saveCollapsedProjects(set, node)
+  );
+  // The machines' headings, when there are other machines to head.
+  const {
+    collapsed: collapsedNodes,
+    toggle: toggleNode,
+    setAll: setAllNodes,
+  } = useCollapsedSet(loadCollapsedNodes, saveCollapsedNodes);
   // Whose settings popup is open, by id — an id rather than the project itself, so the popup keeps
   // showing the live folder list as it is edited (linking a folder returns a new project object; a
   // captured one would go stale the moment the first change landed). A null id is the
@@ -1576,10 +1674,10 @@ export function SessionSidebar({
     null
   );
   // Sessions whose forks are folded away (by session id).
-  const [collapsedForks, setCollapsedForks] = useState<Set<string>>(loadCollapsedForks);
+  const [collapsedForks, setCollapsedForks] = useState<Set<string>>(() => loadCollapsedForks(node));
   // The manual row order the user dragged into place (per folder). Per-browser, like the collapse
   // state above — unlike a pin, an arrangement really is this browser's view of the list.
-  const [order, setOrder] = useState<SessionOrder>(loadSessionOrder);
+  const [order, setOrder] = useState<SessionOrder>(() => loadSessionOrder(node));
 
   const aliveIds = () => new Set(sessions.map((s) => s.id));
 
@@ -1599,7 +1697,7 @@ export function SessionSidebar({
   // Drop of a dragged row: rewrite that folder's order from what is on screen, so every row in it
   // gets an explicit place. A session created later isn't in the list and lands back on top.
   const reorderFolder = (list: string, from: number, to: number, ids: string[]) =>
-    setOrder((prev) => saveSessionOrder({ ...prev, [list]: move(ids, from, to) }, aliveIds()));
+    setOrder((prev) => saveSessionOrder({ ...prev, [list]: move(ids, from, to) }, aliveIds(), node));
 
   const toggleForks = (id: string) =>
     setCollapsedForks((prev) => {
@@ -1610,7 +1708,7 @@ export function SessionSidebar({
       // state for every session it has ever seen.
       const alive = new Set(sessions.map((s) => s.id));
       for (const kept of next) if (!alive.has(kept)) next.delete(kept);
-      saveCollapsedForks(next);
+      saveCollapsedForks(next, node);
       return next;
     });
 
@@ -1625,16 +1723,44 @@ export function SessionSidebar({
    * Unlike the file trees, arrowing onto a row does *not* open it: a session is a terminal to attach
    * to, not a file to preview, so stepping past one has to be free. Enter is the thing that opens.
    */
+  const toggleNav = (key: string) => {
+    const { kind, id } = parseNavKey(key);
+    if (kind === "project") toggleProject(id);
+    else if (kind === "fold") toggleGroup(id);
+    else if (kind === "session") toggleForks(id);
+    else if (kind === "node") toggleNode(id);
+  };
+  const activateNav = (key: string) => onSelect(parseNavKey(key).id);
+  // A peer's rows sit in this list too, under its heading, and their keys say whose they are (navRow):
+  // those go back to the peer's tree, which is the one that knows what its keys mean.
+  const navRoutes = useRef(new Map<string, NavRoute>());
+  const route = (key: string, run: (r: NavRoute, rest: string) => void, own: (key: string) => void) => {
+    if (!key.startsWith("@")) return own(key);
+    const bar = key.indexOf("|");
+    const target = navRoutes.current.get(key.slice(1, bar));
+    if (target) run(target, key.slice(bar + 1));
+  };
   const treeKeys = useTreeKeyNav({
     containerRef: treeRef,
-    onToggleDir: (key) => {
-      const { kind, id } = parseNavKey(key);
-      if (kind === "project") toggleProject(id);
-      else if (kind === "fold") toggleGroup(id);
-      else if (kind === "session") toggleForks(id);
-    },
-    onActivateFile: (key) => onSelect(parseNavKey(key).id),
+    onToggleDir: (key) => route(key, (r, rest) => r.toggle(rest), toggleNav),
+    onActivateFile: (key) => route(key, (r, rest) => r.activate(rest), activateNav),
   });
+  // ...and this is the peer's tree answering for them.
+  const ownNav = useRef<NavRoute>({ toggle: toggleNav, activate: activateNav });
+  ownNav.current = { toggle: toggleNav, activate: activateNav };
+  const routes = embedded?.routes;
+  useEffect(() => {
+    if (!routes || !node) return;
+    routes.set(node, { toggle: (k) => ownNav.current.toggle(k), activate: (k) => ownNav.current.activate(k) });
+    return () => void routes.delete(node);
+  }, [routes, node]);
+
+  // A row's key and depth in the keyboard tree. With other machines listed, every tree sits one level in,
+  // under its node's heading; a peer's keys carry its id, so the routing above can find its way back.
+  const navPrefix = embedded && node ? `@${node}|` : "";
+  const depthBase = embedded?.depth ?? (peers.length > 0 ? 1 : 0);
+  const navRow = (opts: Parameters<typeof navRowProps>[0]) =>
+    navRowProps({ ...opts, path: navPrefix + opts.path, depth: opts.depth + depthBase });
 
   // Sessions shown after applying the filter ("active" = running only, "activity" = carrying a mark).
   // Recents aren't filtered (they're presets, not live sessions).
@@ -1647,8 +1773,16 @@ export function SessionSidebar({
           : sessions,
     [filter, sessions, activityIds, activeId]
   );
-  const activeCount = sessions.filter((s) => s.state === "Running").length;
-  const activityCount = sessions.filter((s) => hasMark(s, activityIds)).length;
+  // The toolbar's counts are over every machine listed: its filters apply to all of them.
+  const peerCount = peers.reduce((n, p) => n + p.sessions.length, 0);
+  const allCount = sessions.length + peerCount;
+  const activeCount = [sessions, ...peers.map((p) => p.sessions)].reduce(
+    (n, list) => n + list.filter((s) => s.state === "Running").length,
+    0
+  );
+  const activityCount =
+    sessions.filter((s) => hasMark(s, activityIds)).length +
+    peers.reduce((n, p) => n + p.sessions.filter((s) => hasMark(s, p.activityIds)).length, 0);
   // Any filter but "all" hides what has nothing to show under it: empty projects, empty boxes.
   const narrowed = filter !== "all";
   /**
@@ -1838,15 +1972,23 @@ export function SessionSidebar({
         : [];
   // Everything on screen that folds out of the folder set — the folder headers (grouped view only)
   // and the virtual folders (both views).
-  const foldableKeys = [...visibleDirs, ...virtualKeys];
-  const canFoldAll = foldableKeys.length > 0 || projectKeys.length > 0;
+  // With other machines listed, the machines' headings fold too — and under a folded one nothing is on
+  // screen to wait on, this machine's headings included. A peer's own folders keep their state: the
+  // button reaches its heading, not into it.
+  const nodeKeys = tab === "sessions" && peers.length > 0 ? [SELF_NODE, ...peers.map((p) => p.peer.id)] : [];
+  const homeHidden = nodeKeys.length > 0 && collapsedNodes.has(SELF_NODE);
+  const foldableKeys = homeHidden ? [] : [...visibleDirs, ...virtualKeys];
+  const shownProjectKeys = homeHidden ? [] : projectKeys;
+  const canFoldAll = foldableKeys.length > 0 || shownProjectKeys.length > 0 || nodeKeys.length > 0;
   const allCollapsed =
     canFoldAll &&
     foldableKeys.every((k) => collapsed.has(k)) &&
-    projectKeys.every((k) => collapsedProjects.has(k));
+    shownProjectKeys.every((k) => collapsedProjects.has(k)) &&
+    nodeKeys.every((k) => collapsedNodes.has(k));
   const toggleAllGroups = () => {
     setAllGroups(foldableKeys, !allCollapsed);
-    setAllProjects(projectKeys, !allCollapsed);
+    setAllProjects(shownProjectKeys, !allCollapsed);
+    setAllNodes(nodeKeys, !allCollapsed);
   };
 
   const editingProject = editing?.id ? projects.find((p) => p.id === editing.id) ?? null : null;
@@ -2242,7 +2384,7 @@ export function SessionSidebar({
     // Every tick this row can clear: its own, and on a parent, each one in the branch under it -- a
     // tick in the corner that came from a fork is one the row has to be able to answer for too.
     const seenIds = [...(activity === "done" ? [s.id] : []), ...(nested?.doneIds ?? [])];
-    const openInNewTab = () => window.open(sessionUrl(s.id), "_blank", "noopener");
+    const openInNewTab = () => window.open(sessionUrl(s.id, node), "_blank", "noopener");
     // Enough of a step that a fork reads as sitting under its parent at a glance, but capped after
     // a few levels: a fork of a fork of a fork would otherwise squeeze the name out of a narrow
     // sidebar entirely (it can be dragged down to 220px).
@@ -2264,7 +2406,7 @@ export function SessionSidebar({
         // A session with forks folds like a directory but is still a session Enter opens, hence
         // `expandable` rather than `isDir`. `current` is where the arrows resume from when focus
         // has yet to land anywhere in the list.
-        {...navRowProps({
+        {...navRow({
           path: navKey.session(s.id),
           expandable: hasChildren,
           open: hasChildren && hiddenCount === 0,
@@ -2525,15 +2667,17 @@ export function SessionSidebar({
                   const p = projectForDir(s.workingDirectory, projects);
                   if (p) setNewGroupFor({ projectId: p.id, sessionId: s.id });
                 }}
-                onRevealFolder={() => onRevealFolder(s.workingDirectory)}
+                onRevealFolder={onRevealFolder ? () => onRevealFolder(s.workingDirectory) : undefined}
                 onTogglePin={() => togglePin(s.id, !pinned.has(s.id))}
                 onRename={() => setEditingId(s.id)}
-                onClone={() => onClone(s)}
+                onClone={onClone ? () => onClone(s) : undefined}
                 onFork={() => onFork(s)}
                 onSchedule={
-                  s.claudeSessionId
-                    ? () => onSchedules({ conversationId: s.claudeSessionId!, name: s.name })
-                    : null
+                  !onSchedules
+                    ? undefined
+                    : s.claudeSessionId
+                      ? () => onSchedules({ conversationId: s.claudeSessionId!, name: s.name })
+                      : null
                 }
                 onRestore={() => onRestore(s.id)}
                 onStop={() => onStop(s.id)}
@@ -2634,7 +2778,7 @@ export function SessionSidebar({
           activeCount={folderProgress(vg.items, activityIds).active}
           onMarkSeen={() => onMarkSeen(doneIn(vg.items))}
           // A virtual folder only ever hangs off a project heading, so it always sits at depth 1.
-          navProps={navRowProps({
+          navProps={navRow({
             path: navKey.fold(vg.key),
             isDir: true,
             open: !isCollapsed,
@@ -2650,7 +2794,7 @@ export function SessionSidebar({
   // headers, virtual folders and sessions under it.
   const projectNavRow = (project: Project | null) => {
     const key = project?.id ?? "";
-    return navRowProps({
+    return navRow({
       path: navKey.project(key),
       isDir: true,
       open: !collapsedProjects.has(key),
@@ -2679,7 +2823,7 @@ export function SessionSidebar({
           count={g.count}
           collapsed={isCollapsed}
           onToggle={() => toggleGroup(g.dir)}
-          onNewSession={() => onNewInFolder(g.dir)}
+          onNewSession={onNewInFolder ? () => onNewInFolder(g.dir) : undefined}
           onRemove={() => setRemoveDir(g.key)}
           activity={folderActivity(g.items, activityIds)}
           doneCount={doneIn(g.items).length}
@@ -2690,7 +2834,7 @@ export function SessionSidebar({
           onMoveToProject={(id) => void moveFolderToProject(g.dir, id)}
           onNewProject={() => setEditing({ id: null, folder: g.dir })}
           dragProps={folderDnd.folderProps(g.dir)}
-          navProps={navRowProps({
+          navProps={navRow({
             path: navKey.fold(g.dir),
             isDir: true,
             open: !isCollapsed,
@@ -2730,7 +2874,7 @@ export function SessionSidebar({
 
   // The toolbar's actions, in the order they give way to the "more" menu: from the end.
   const tools: ToolAction[] = [];
-  if (sessions.length > 0 || recents.length > 0)
+  if (allCount > 0 || recents.length > 0)
     tools.push({
       id: "search",
       label: "Search sessions and recents",
@@ -2738,7 +2882,7 @@ export function SessionSidebar({
       icon: <Search className="size-3.5" />,
       onClick: onSearch,
     });
-  if (tab === "sessions" && sessions.length > 0) {
+  if (tab === "sessions" && allCount > 0) {
     tools.push({
       id: "activity",
       label: "Only sessions with activity",
@@ -2762,7 +2906,7 @@ export function SessionSidebar({
       pressed: filter === "active",
     });
   }
-  if ((tab === "sessions" && sessions.length > 0) || (tab === "recent" && recents.length > 0))
+  if ((tab === "sessions" && allCount > 0) || (tab === "recent" && recents.length > 0))
     tools.push({
       id: "group",
       label: "Group by folder",
@@ -2784,13 +2928,15 @@ export function SessionSidebar({
       label: "Schedules",
       title: "Schedules — run a template on a clock",
       icon: <CalendarClock className="size-3.5" />,
-      onClick: () => onSchedules(),
+      onClick: () => onSchedules?.(),
     });
   }
   if (canFoldAll)
     tools.push({
       id: "fold",
-      label: `${allCollapsed ? "Expand" : "Collapse"} all ${foldableKeys.length > 0 ? "folders and projects" : "projects"}`,
+      label: `${allCollapsed ? "Expand" : "Collapse"} all ${
+        nodeKeys.length > 0 ? "machines" : foldableKeys.length > 0 ? "folders and projects" : "projects"
+      }`,
       icon: allCollapsed ? <ChevronsUpDown className="size-3.5" /> : <ChevronsDownUp className="size-3.5" />,
       onClick: toggleAllGroups,
     });
@@ -2809,7 +2955,7 @@ export function SessionSidebar({
     return () => ro.disconnect();
   }, []);
   const [toolsShown, setToolsShown] = useState(Infinity);
-  const fitKey = `${toolbarWidth}|${tools.map((t) => t.id).join()}|${sessions.length}|${recents.length}`;
+  const fitKey = `${toolbarWidth}|${tools.map((t) => t.id).join()}|${allCount}|${recents.length}`;
   const fitKeyRef = useRef(fitKey);
   useLayoutEffect(() => {
     if (fitKeyRef.current !== fitKey) {
@@ -2829,13 +2975,182 @@ export function SessionSidebar({
   const inlineTools = tools.slice(0, toolsShown);
   const overflowTools = tools.slice(inlineTools.length);
 
+  // What the list holds: the tree, under its project headings.
+  const treeBody = (
+    <>
+      {sessions.length === 0 ? (
+        <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
+      ) : visibleSessions.length === 0 ? (
+        <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+          {filter === "activity" ? "Nothing going on right now" : "No running sessions"}
+        </p>
+      ) : null}
+      {grouped ? (
+        projects.length > 0 ? (
+          <ProjectSections
+            sections={shown(sessionSections)}
+            collapsed={collapsedProjects}
+            onToggle={toggleProject}
+            onSettings={(p) => setEditing({ id: p.id })}
+            onNewSession={onNewInProject}
+            dnd={folderDnd}
+            sessionDrop={sectionSessionDrop}
+            before={renderVirtualGroups}
+            navRow={projectNavRow}
+            renderItems={(gs, project) =>
+              // A project that is just one folder draws its sessions itself: the folder header
+              // would only repeat the heading right above it.
+              mergesFolderHeader(project, gs.map((g) => g.dir), shownGroups(project).length > 0)
+                // No folder header of their own: the rows hang straight off the project heading,
+                // so in the keyboard tree they are at its child level, not a header's.
+                ? renderGroupRows(gs[0], "pl-0", 1)
+                : gs.map(renderFolderGroup)
+            }
+            countOf={(gs, project) =>
+              gs.reduce((n, g) => n + g.count, 0) +
+              shownGroups(project).reduce((n, g) => n + g.count, 0)
+            }
+            activityOf={(gs, project) =>
+              folderActivity(
+                [...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)],
+                activityIds
+              )
+            }
+            doneOf={(gs, project) =>
+              doneIn([...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)])
+            }
+            activeOf={(gs, project) =>
+              folderProgress(
+                [...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)],
+                activityIds
+              ).active
+            }
+            onMarkSeen={onMarkSeen}
+            postponedOf={(gs, project) =>
+              folderPostponed([
+                ...gs.flatMap((g) => g.items),
+                ...shownGroups(project).flatMap((g) => g.items),
+              ])
+            }
+          />
+        ) : (
+          // No projects yet: the list is exactly what it always was, headings and all.
+          <div className="space-y-2">{groups.map(renderFolderGroup)}</div>
+        )
+      ) : projects.length > 0 ? (
+        // Flat list, under project headings: the sessions themselves, with no folder groups in
+        // between — the whole point of the flat view is not to have them. Rows are dragged into
+        // order within their section, the same as inside a folder group upstairs; what a row can't
+        // do here is change project, because a project holds folders, not sessions.
+        <ProjectSections
+          sections={shown(flatSections)}
+          collapsed={collapsedProjects}
+          onToggle={toggleProject}
+          onSettings={(p) => setEditing({ id: p.id })}
+          onNewSession={onNewInProject}
+          sessionDrop={sectionSessionDrop}
+          before={renderVirtualGroups}
+          navRow={projectNavRow}
+          renderItems={(ss, project) => renderFlatSection(project, ss)}
+          // No folder header stands between a project and its rows here, so they sit at the
+          // project's own child level — level with the virtual folders beside them, which is what
+          // puts a row's fork chevron in the same column as a box's. (They used to carry a folder
+          // group's indent as well, which lined them up with the grouped view at the cost of
+          // looking like they hung off a header that isn't there.)
+          // 5px, not 6: a row carries a 1px transparent border (it turns solid when selected)
+          // and a header does not, so the row needs one pixel less to put its chevron in the
+          // same column as a virtual folder's.
+          // No row gap, for the reason renderGroupRows gives: the rings are inside the rows and
+          // the borders alone are what stands between two of them.
+          bodyClassName="pl-[15px]"
+          countOf={(ss, project) =>
+            ss.length + shownGroups(project).reduce((n, g) => n + g.count, 0)
+          }
+          activityOf={(ss, project) =>
+            folderActivity([...ss, ...shownGroups(project).flatMap((g) => g.items)], activityIds)
+          }
+          postponedOf={(ss, project) =>
+            folderPostponed([...ss, ...shownGroups(project).flatMap((g) => g.items)])
+          }
+          doneOf={(ss, project) => doneIn([...ss, ...shownGroups(project).flatMap((g) => g.items)])}
+          activeOf={(ss, project) =>
+            folderProgress([...ss, ...shownGroups(project).flatMap((g) => g.items)], activityIds).active
+          }
+          onMarkSeen={onMarkSeen}
+        />
+      ) : (
+        // Plain flat list: no projects to head it, but the same one arrangeable list underneath —
+        // pins float to the top, and everything else keeps the place it was dragged to.
+        <div>{renderFlatSection(null, visibleSessions)}</div>
+      )}
+    </>
+  );
+
+  // The popups the tree opens, resolved from its own list — a peer's tree draws its own.
+  const dialogs = (
+    <>
+      {/* Resolved from the live list on every render; a project deleted from another tab simply
+          stops rendering its popup rather than editing something that is no longer there. */}
+      {editing && (editing.id === null || editingProject) && (
+        <ProjectDialog
+          project={editingProject}
+          projects={projects}
+          initialFolders={editing.folder ? [editing.folder] : undefined}
+          initialGroup={editing.group}
+          onSaved={onProjectsChange}
+          onClose={() => setEditing(null)}
+        />
+      )}
+
+      {/* Resolved from the live list on every render, like the project popup above. */}
+      {newGroupFor && projects.some((p) => p.id === newGroupFor.projectId) && (
+        <GroupDialog
+          project={projects.find((p) => p.id === newGroupFor.projectId)!}
+          onSaved={onProjectsChange}
+          onCreated={(groupId) => void moveSessionToGroup(newGroupFor.sessionId, groupId)}
+          onClose={() => setNewGroupFor(null)}
+        />
+      )}
+
+      {/* Resolved from the live list, like the popups above: a session that leaves the list while its
+          stash is open takes the dialog with it rather than leaving one nothing can answer. */}
+      {postponedId && sessions.some((s) => s.id === postponedId) && (
+        <PostponedDialog
+          sessionId={postponedId}
+          sessionName={sessions.find((s) => s.id === postponedId)!.name}
+          live={sessions.find((s) => s.id === postponedId)!.state === "Running"}
+          onClose={() => setPostponedId(null)}
+        />
+      )}
+
+      {removeDir && (
+        <FolderRemoveDialog
+          dir={removeDir}
+          sessions={sessions.filter((s) => dirKey(s.workingDirectory) === removeDir)}
+          onRemove={(ids) => {
+            onRemoveSessions(ids);
+            setRemoveDir(null);
+          }}
+          onClose={() => setRemoveDir(null)}
+        />
+      )}
+    </>
+  );
+
+  if (embedded) return (
+    <>
+      {treeBody}
+      {dialogs}
+    </>
+  );
+
   return (
     <div className="flex h-full flex-col bg-card">
       {/* Tab switcher: active sessions vs. reusable recent presets, then the list's actions. The tab
           labels keep their width; actions that don't fit beside them move into a "more" menu, the
           ones at the end of the list first, rather than squeezing the labels down to their counts. */}
       <div ref={toolbarRef} className="flex items-center gap-0.5 p-2">
-        <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")} count={sessions.length}>
+        <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")} count={allCount}>
           Sessions
         </TabButton>
         <TabButton active={tab === "recent"} onClick={() => setTab("recent")} count={recents.length}>
@@ -2886,110 +3201,75 @@ export function SessionSidebar({
         // container itself must not draw a ring around everything when it takes focus.
         className="flex-1 overflow-auto pb-2 pl-2 pr-1 outline-none"
       >
-        {sessions.length === 0 ? (
-          <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
-        ) : visibleSessions.length === 0 ? (
-          <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-            {filter === "activity" ? "Nothing going on right now" : "No running sessions"}
-          </p>
-        ) : null}
-        {grouped ? (
-          projects.length > 0 ? (
-            <ProjectSections
-              sections={shown(sessionSections)}
-              collapsed={collapsedProjects}
-              onToggle={toggleProject}
-              onSettings={(p) => setEditing({ id: p.id })}
-              onNewSession={onNewInProject}
-              dnd={folderDnd}
-              sessionDrop={sectionSessionDrop}
-              before={renderVirtualGroups}
-              navRow={projectNavRow}
-              renderItems={(gs, project) =>
-                // A project that is just one folder draws its sessions itself: the folder header
-                // would only repeat the heading right above it.
-                mergesFolderHeader(project, gs.map((g) => g.dir), shownGroups(project).length > 0)
-                  // No folder header of their own: the rows hang straight off the project heading,
-                  // so in the keyboard tree they are at its child level, not a header's.
-                  ? renderGroupRows(gs[0], "pl-0", 1)
-                  : gs.map(renderFolderGroup)
-              }
-              countOf={(gs, project) =>
-                gs.reduce((n, g) => n + g.count, 0) +
-                shownGroups(project).reduce((n, g) => n + g.count, 0)
-              }
-              activityOf={(gs, project) =>
-                folderActivity(
-                  [...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)],
-                  activityIds
-                )
-              }
-              doneOf={(gs, project) =>
-                doneIn([...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)])
-              }
-              activeOf={(gs, project) =>
-                folderProgress(
-                  [...gs.flatMap((g) => g.items), ...shownGroups(project).flatMap((g) => g.items)],
-                  activityIds
-                ).active
-              }
-              onMarkSeen={onMarkSeen}
-              postponedOf={(gs, project) =>
-                folderPostponed([
-                  ...gs.flatMap((g) => g.items),
-                  ...shownGroups(project).flatMap((g) => g.items),
-                ])
-              }
-            />
-          ) : (
-            // No projects yet: the list is exactly what it always was, headings and all.
-            <div className="space-y-2">{groups.map(renderFolderGroup)}</div>
-          )
-        ) : projects.length > 0 ? (
-          // Flat list, under project headings: the sessions themselves, with no folder groups in
-          // between — the whole point of the flat view is not to have them. Rows are dragged into
-          // order within their section, the same as inside a folder group upstairs; what a row can't
-          // do here is change project, because a project holds folders, not sessions.
-          <ProjectSections
-            sections={shown(flatSections)}
-            collapsed={collapsedProjects}
-            onToggle={toggleProject}
-            onSettings={(p) => setEditing({ id: p.id })}
-            onNewSession={onNewInProject}
-            sessionDrop={sectionSessionDrop}
-            before={renderVirtualGroups}
-            navRow={projectNavRow}
-            renderItems={(ss, project) => renderFlatSection(project, ss)}
-            // No folder header stands between a project and its rows here, so they sit at the
-            // project's own child level — level with the virtual folders beside them, which is what
-            // puts a row's fork chevron in the same column as a box's. (They used to carry a folder
-            // group's indent as well, which lined them up with the grouped view at the cost of
-            // looking like they hung off a header that isn't there.)
-            // 5px, not 6: a row carries a 1px transparent border (it turns solid when selected)
-            // and a header does not, so the row needs one pixel less to put its chevron in the
-            // same column as a virtual folder's.
-            // No row gap, for the reason renderGroupRows gives: the rings are inside the rows and
-            // the borders alone are what stands between two of them.
-            bodyClassName="pl-[15px]"
-            countOf={(ss, project) =>
-              ss.length + shownGroups(project).reduce((n, g) => n + g.count, 0)
-            }
-            activityOf={(ss, project) =>
-              folderActivity([...ss, ...shownGroups(project).flatMap((g) => g.items)], activityIds)
-            }
-            postponedOf={(ss, project) =>
-              folderPostponed([...ss, ...shownGroups(project).flatMap((g) => g.items)])
-            }
-            doneOf={(ss, project) => doneIn([...ss, ...shownGroups(project).flatMap((g) => g.items)])}
-            activeOf={(ss, project) =>
-              folderProgress([...ss, ...shownGroups(project).flatMap((g) => g.items)], activityIds).active
-            }
-            onMarkSeen={onMarkSeen}
-          />
+        {peers.length === 0 ? (
+          treeBody
         ) : (
-          // Plain flat list: no projects to head it, but the same one arrangeable list underneath —
-          // pins float to the top, and everything else keeps the place it was dragged to.
-          <div>{renderFlatSection(null, visibleSessions)}</div>
+          <>
+            <NodeHeading
+              name={self?.name ?? "This machine"}
+              color={self?.color ?? null}
+              here={!!self}
+              status="online"
+              count={sessions.length}
+              collapsed={collapsedNodes.has(SELF_NODE)}
+              onToggle={() => toggleNode(SELF_NODE)}
+              activity={folderActivity(sessions, activityIds)}
+              doneCount={doneIn(sessions).length}
+              activeCount={folderProgress(sessions, activityIds).active}
+              onMarkSeen={() => onMarkSeen(doneIn(sessions))}
+              navProps={navRowProps({
+                path: navKey.node(SELF_NODE),
+                isDir: true,
+                open: !collapsedNodes.has(SELF_NODE),
+                depth: 0,
+              })}
+            />
+            {!collapsedNodes.has(SELF_NODE) && treeBody}
+            {peers.map(({ peer, ...tree }) => {
+              // Nothing to unfold while it is away: its tree is drawn only while it is online.
+              const open = !collapsedNodes.has(peer.id) && peer.status === "online";
+              const done = tree.sessions.filter(
+                (x) => x.state !== "Restorable" && tree.activityIds.done.has(x.id)
+              );
+              return (
+                <Fragment key={peer.id}>
+                  <NodeHeading
+                    name={peer.name}
+                    color={peer.color}
+                    status={peer.status}
+                    error={peer.error}
+                    lastSeen={peer.lastSeen}
+                    count={tree.sessions.length}
+                    collapsed={!open}
+                    onToggle={() => toggleNode(peer.id)}
+                    activity={folderActivity(tree.sessions, tree.activityIds)}
+                    doneCount={done.length}
+                    activeCount={folderProgress(tree.sessions, tree.activityIds).active}
+                    onMarkSeen={() => tree.onMarkSeen(done.map((x) => x.id))}
+                    navProps={navRowProps({ path: navKey.node(peer.id), isDir: true, open, depth: 0 })}
+                  />
+                  {open && peer.snap && (
+                    // The peer's tree is this same component, inside the peer's node: every call in it
+                    // goes there, and its stored view state is kept apart from this node's.
+                    <NodeProvider node={peer.id}>
+                      <SessionSidebar
+                        {...tree}
+                        node={peer.id}
+                        embedded={{ grouped, filter, depth: 1, routes: navRoutes.current }}
+                        recents={NO_RECENTS}
+                        onReuse={noop}
+                        onRemoveRecent={noop}
+                        onReorderRecent={noop}
+                        onSearch={noop}
+                        tab="sessions"
+                        onTabChange={noop}
+                      />
+                    </NodeProvider>
+                  )}
+                </Fragment>
+              );
+            })}
+          </>
         )}
       </div>
       )}
@@ -2998,51 +3278,109 @@ export function SessionSidebar({
           are none, which is nearly always. */}
       <OrphanBar />
 
-      {/* Resolved from the live list on every render; a project deleted from another tab simply
-          stops rendering its popup rather than editing something that is no longer there. */}
-      {editing && (editing.id === null || editingProject) && (
-        <ProjectDialog
-          project={editingProject}
-          projects={projects}
-          initialFolders={editing.folder ? [editing.folder] : undefined}
-          initialGroup={editing.group}
-          onSaved={onProjectsChange}
-          onClose={() => setEditing(null)}
-        />
-      )}
+      {dialogs}
+    </div>
+  );
+}
 
-      {/* Resolved from the live list on every render, like the project popup above. */}
-      {newGroupFor && projects.some((p) => p.id === newGroupFor.projectId) && (
-        <GroupDialog
-          project={projects.find((p) => p.id === newGroupFor.projectId)!}
-          onSaved={onProjectsChange}
-          onCreated={(groupId) => void moveSessionToGroup(newGroupFor.sessionId, groupId)}
-          onClose={() => setNewGroupFor(null)}
-        />
-      )}
-
-      {/* Resolved from the live list, like the popups above: a session that leaves the list while its
-          stash is open takes the dialog with it rather than leaving one nothing can answer. */}
-      {postponedId && sessions.some((s) => s.id === postponedId) && (
-        <PostponedDialog
-          sessionId={postponedId}
-          sessionName={sessions.find((s) => s.id === postponedId)!.name}
-          live={sessions.find((s) => s.id === postponedId)!.state === "Running"}
-          onClose={() => setPostponedId(null)}
-        />
-      )}
-
-      {removeDir && (
-        <FolderRemoveDialog
-          dir={removeDir}
-          sessions={sessions.filter((s) => dirKey(s.workingDirectory) === removeDir)}
-          onRemove={(ids) => {
-            onRemoveSessions(ids);
-            setRemoveDir(null);
-          }}
-          onClose={() => setRemoveDir(null)}
-        />
-      )}
+/**
+ * A machine's heading over its tree (plans/multi-node.md §6): its colour, whether it can be reached, and
+ * what its sessions are up to, folding like a project's. One that can't be reached keeps its heading and
+ * says since when — its sessions aren't gone, the link to them is.
+ */
+function NodeHeading({
+  name,
+  color,
+  here = false,
+  status,
+  error,
+  lastSeen,
+  count,
+  collapsed,
+  onToggle,
+  activity,
+  doneCount,
+  activeCount,
+  onMarkSeen,
+  navProps,
+}: {
+  name: string;
+  color: string | null;
+  /** This machine — the one the page came from. */
+  here?: boolean;
+  status: string;
+  error?: string | null;
+  lastSeen?: string | null;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  activity: Activity | null;
+  doneCount: number;
+  activeCount: number;
+  onMarkSeen: () => void;
+  navProps: Record<string, unknown>;
+}) {
+  const online = status === "online";
+  const tint = sessionColor(color);
+  const when = recentWhen(lastSeen);
+  const state =
+    status === "connecting"
+      ? "connecting…"
+      : status === "offline"
+        ? when
+          ? `offline · seen ${when === "now" ? "just now" : /^\d+[mhd]$/.test(when) ? `${when} ago` : when}`
+          : "offline"
+        : status === "unauthorized"
+          ? "no longer accepts this machine"
+          : status === "certificate"
+            ? "certificate changed"
+            : status === "incompatible"
+              ? "incompatible build"
+              : status;
+  return (
+    <div
+      {...navProps}
+      className="group/ph mt-1 flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground first:mt-0"
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        title={online ? name : `${name}: ${error ?? state}`}
+        className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-foreground"
+      >
+        {collapsed ? (
+          <ChevronRight className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronDown className="size-3.5 shrink-0" />
+        )}
+        <span className="relative inline-flex shrink-0">
+          <Monitor className="size-3.5" style={tint ? { color: tint } : undefined} />
+          <HeadingActivityMark activity={online ? activity : null} />
+        </span>
+        <span
+          className={cn(
+            "flex min-w-0 overflow-hidden text-xs font-semibold uppercase tracking-wide",
+            online ? "text-foreground" : "text-muted-foreground"
+          )}
+        >
+          <MiddleTruncated text={name} />
+        </span>
+        {online ? (
+          <span className="shrink-0 font-mono text-xs tabular-nums">({count})</span>
+        ) : (
+          <span
+            className={cn(
+              "truncate text-[11px]",
+              status === "connecting" || status === "offline" ? "italic" : "text-amber-600 dark:text-amber-500"
+            )}
+          >
+            {state}
+          </span>
+        )}
+        {here && <span className="shrink-0 text-[10px] text-muted-foreground">· this machine</span>}
+      </button>
+      {online && <HeadingProgress done={doneCount} active={activeCount} />}
+      {online && <MarkSeenButton count={doneCount} onMarkSeen={onMarkSeen} reveal="ph" />}
     </div>
   );
 }
@@ -3096,17 +3434,19 @@ function RowActionsMenu({
   groupId: string | null;
   onMoveToGroup: (groupId: string | null) => void;
   onNewGroup: () => void;
-  onRevealFolder: () => void;
+  /** Absent where the folder isn't on this machine's disk — a peer's session. */
+  onRevealFolder?: () => void;
   onTogglePin: () => void;
   onRename: () => void;
-  onClone: () => void;
+  /** Absent where a session can't be started from here — a peer's, until the node picker (phase 5). */
+  onClone?: () => void;
   onFork: () => void;
   /**
    * Start a schedule that keeps sending to this conversation. Null when there is nothing to schedule
    * against yet — a schedule outlives a reboot by holding Claude's conversation id, and a session too
    * young to have reported one has no handle to hold.
    */
-  onSchedule: (() => void) | null;
+  onSchedule?: (() => void) | null;
   onRestore: () => void;
   onStop: () => void;
   onRemove: () => void;
@@ -3304,7 +3644,7 @@ function RowActionsMenu({
                 ? item("Unpin", <PinOff className="size-3.5" />, onTogglePin)
                 : item("Pin to top", <Pin className="size-3.5" />, onTogglePin)}
               {item("Rename", <Pencil className="size-3.5" />, onRename)}
-              {item("Clone", <Copy className="size-3.5" />, onClone)}
+              {onClone && item("Clone", <Copy className="size-3.5" />, onClone)}
               {/* Always listed, greyed until it can run. Forking needs Claude's own conversation id,
                   which the app learns from the session's first hook event -- so a session resumed
                   with --continue (which never says which conversation it landed on) has none until
@@ -3319,7 +3659,7 @@ function RowActionsMenu({
               )}
               {/* Same handle as a fork: both wait on the conversation id, which is why they appear
                   together -- and why they grey out and come back together too. */}
-              {item(
+              {onSchedule !== undefined && item(
                 "Schedule…",
                 <CalendarClock className="size-3.5" />,
                 onSchedule ?? (() => {}),
@@ -3336,7 +3676,7 @@ function RowActionsMenu({
               {/* Heads the folder half of the menu: the row names a session, and this is how you get
                   from it to the folder behind it — in the Files tree, which lists every drive and is
                   not somewhere you would want to walk down to a deep path by hand. */}
-              {item("Show folder in Files", <FolderSearch className="size-3.5" />, onRevealFolder)}
+              {onRevealFolder && item("Show folder in Files", <FolderSearch className="size-3.5" />, onRevealFolder)}
 
               {/* Both lists live one level in. Inline, a dozen projects turned the menu into a
                   scrolling column that buried Close session below the fold; behind a row that says

@@ -25,7 +25,8 @@ self.addEventListener("push", (event) => {
     // Replace an existing notification with the same tag rather than stacking a duplicate. This also
     // collapses against the in-page Notification (which uses the same tag) on the same device.
     renotify: !!data.tag,
-    data: { sessionId: data.sessionId || null },
+    // `node` is set only on an alert this node relayed for a peer's session (plans/multi-node.md §5).
+    data: { sessionId: data.sessionId || null, node: data.node || null },
     icon: "/icons/icon-192.png",
     badge: "/icons/badge-96.png", // Android draws it from the alpha alone: a white silhouette
   };
@@ -46,6 +47,7 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const sessionId = event.notification.data && event.notification.data.sessionId;
+  const nodeId = event.notification.data && event.notification.data.node;
 
   event.waitUntil(
     (async () => {
@@ -54,11 +56,15 @@ self.addEventListener("notificationclick", (event) => {
       const client = wins[0];
       if (client) {
         await client.focus();
-        if (sessionId) client.postMessage({ type: "open-session", sessionId });
+        if (sessionId) client.postMessage({ type: "open-session", sessionId, node: nodeId || null });
         return;
       }
       // No window open: launch to a URL carrying the session so the SPA can select it on boot.
-      const url = sessionId ? `/?session=${encodeURIComponent(sessionId)}` : "/";
+      const url = !sessionId
+        ? "/"
+        : nodeId
+          ? `/?node=${encodeURIComponent(nodeId)}&session=${encodeURIComponent(sessionId)}`
+          : `/?session=${encodeURIComponent(sessionId)}`;
       await self.clients.openWindow(url);
     })()
   );

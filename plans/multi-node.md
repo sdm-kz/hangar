@@ -222,6 +222,24 @@ Why aggregate in the server rather than open one socket per node from the browse
 
 Peers do not mesh further: B's snapshot as seen by A contains only B's own sessions.
 
+**As built (phase 4).**
+- `Nodes/NodeMesh.cs` holds one link per enabled peer, keyed by its address, pinned certificate and token, so a
+  re-pair or a re-trust reconnects it. Before each connect it probes `GET /api/node` (`NodePairing.ProbeAsync`):
+  that is where the status words and the version come from, since a failed socket says nothing about why.
+  Backoff 1 s → 20 s; 15 s of silence is a dead socket.
+- A snapshot is kept as a `JsonElement` and passed on verbatim. Keep-alives (same bytes) are dropped, so they
+  don't cause a re-broadcast. A snapshot carrying `nodes`/`node` of its own has them stripped, so an older
+  peer can't add a hop.
+- `SessionHub` keeps two pictures: this node's own, sent to anything that came in on a peer token (the mesh,
+  or a browser through `/n/…`), and the whole one with `node` + `nodes[]`, sent to browsers and the tray.
+  `?client=peer` is slow like the tray until it sends `fast`. The mesh says `fast` while a browser is
+  connected here.
+- `PushNotifier` reads the same transitions out of each peer's snapshot, seeded per peer when it comes online.
+  Tags are `kind-<node>:<session>` for every alert, this node's own too. A relayed alert's payload carries
+  `node`, and `sw.js` opens `?node=…&session=…` with it.
+- The tray lists each peer as a submenu of its running sessions, grouped by folder. It doesn't group by
+  project: a peer's projects aren't on the stream. An unreachable peer gets a line saying why.
+
 ---
 
 ## 6. The SPA: every session belongs to a node
@@ -269,6 +287,21 @@ peer. A `NodeContext` provides it, and `useApi()` returns the client bound to th
   - a browser shows no PDF in a sandbox, so a peer's PDF is fetched and shown from a blob;
   - a saved link tab must still be http(s) when it is restored — the session's UI bag is the peer's
     to write.
+
+**As built (phase 4), SPA.**
+- `lib/nodeStream.ts` is now `usePeers()`, fed from `nodes` on this node's stream. The phase-3 per-peer socket
+  is gone. A peer that stops being online keeps its last snapshot, so its open session survives a blip.
+  Anything that counts or alerts reads `liveSnap()`, which is null while the peer is away.
+- App works the finished ticks, the in-page alerts, the favicon, the sessions-progress menu and search out
+  over every machine's sessions, keyed by `sessionKey`. A peer that has only just come online doesn't alert
+  for what it already had going.
+- The sidebar draws a heading per machine once there are peers. With none, it looks as it did before.
+- A peer's tree is the same `SessionSidebar`, embedded inside the peer's `NodeProvider`. Its collapse, order
+  and fork state are stored under keys suffixed with the node. Its keyboard-tree keys carry the node id, so
+  the outer list routes ←/→/Enter back to it.
+- A peer's rows offer what works there today: stop, remove, reopen, rename, fork, pin, projects and groups.
+  Clone, schedule and "show in Files" are left out until phase 5.
+- Still this node's only: the Recent tab, "New project" on the toolbar, and schedules.
 
 **The sidebar.** One heading per node above the projects, coloured, with a status dot and the
 machine's session count; collapsible like a project. The home node is first and marked as the one

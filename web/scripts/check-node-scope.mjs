@@ -24,7 +24,6 @@ const THIS_NODE_ONLY = new Set([
   "components/NodesDialog.tsx",
   "components/PreviewApp.tsx", // the standalone preview tab reads this machine's disk; never offered for a peer's file
   "components/ScheduleDialog.tsx", // this node's schedules until phase 5
-  "components/SessionSidebar.tsx", // this node's sessions until the node headings (phase 4)
   "components/UpdateButton.tsx",
   "lib/migrateRecents.ts",
   "lib/node.tsx", // where useApi() gets the client of the node it is told
