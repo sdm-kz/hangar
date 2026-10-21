@@ -20,11 +20,8 @@ const THIS_NODE_ONLY = new Set([
   "App.tsx", // picks the node itself: this one's api for its own, apiFor(node) for a peer's
   "components/FilesSidebar.tsx", // the sidebar's Files tab: this machine's disk
   "components/Login.tsx",
-  "components/NewSessionDialog.tsx", // launches here until the node picker (phase 5)
   "components/NodesDialog.tsx",
   "components/PreviewApp.tsx", // the standalone preview tab reads this machine's disk; never offered for a peer's file
-  "components/ScheduleDialog.tsx", // this node's schedules until phase 5
-  "components/UpdateButton.tsx",
   "lib/migrateRecents.ts",
   "lib/node.tsx", // where useApi() gets the client of the node it is told
   "lib/nodeStream.ts", // follows the node it is told

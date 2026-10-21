@@ -118,6 +118,10 @@ public sealed record EnvironmentReport(
         catch { return new FileProbe(path, true, false); }
     }
 
+    /// <summary>Whether a session could launch here: <c>claude</c> is where a launch would look for it.</summary>
+    public static bool ClaudeFound(string claudeExecutable) =>
+        FindExecutable(ClaudeExecutableResolver.Resolve(claudeExecutable).FileName) is not null;
+
     /// <summary>A rooted path that exists, or a bare name found on PATH the way a shell would look for it.</summary>
     private static string? FindExecutable(string name)
     {

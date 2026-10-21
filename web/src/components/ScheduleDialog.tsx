@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ScheduleEntry, ScheduleMode, SessionInfo, SessionTemplate } from "@/types";
-import { api, type SchedulePatch } from "@/lib/api";
+import type { SchedulePatch } from "@/lib/api";
+import { useApi } from "@/lib/node";
+import { NodePicker, type LaunchNode } from "./NodePicker";
 import { cn } from "@/lib/utils";
 import {
   CRON_PRESETS,
@@ -50,17 +52,29 @@ import {
  * The list is the point of the feature as much as the firing is. A schedule that has quietly stopped
  * — a machine that was off, an autologin broken by a policy change — looks exactly like one with
  * nothing to do, so every row leads with when it last ran and when it runs next.
+ *
+ * A schedule runs on the machine that stores it — its clock, its claude login — so with other machines
+ * paired there is one list per machine, picked at the top, and the dialog sits inside the picked one's
+ * NodeProvider (plans/multi-node.md §7). A machine with an overdue schedule says so on its button: one
+ * machine's broken autologin must not hide behind another's green.
  */
 export function ScheduleDialog({
   sessions,
   /** Pre-fill a new schedule that continues this session's conversation (the row's ⋯ menu). */
   initialTarget,
   onClose,
+  nodes = [],
+  node = null,
+  onNodeChange,
 }: {
   sessions: SessionInfo[];
   initialTarget?: { conversationId: string; name: string } | null;
   onClose: () => void;
+  nodes?: LaunchNode[];
+  node?: string | null;
+  onNodeChange?: (node: string | null) => void;
 }) {
+  const api = useApi();
   const [entries, setEntries] = useState<ScheduleEntry[] | null>(null);
   // Fetched here rather than threaded down, exactly as the New Session dialog fetches them: they are
   // only wanted while this is open, and the sidebar that opens it has no use for them otherwise.
@@ -85,10 +99,15 @@ export function ScheduleDialog({
     setEntries(list);
     setTemplates(ts);
     setLoaded(true);
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     let live = true;
+    // Another machine's list: nothing of the last one's stays on screen while it loads.
+    setEntries(null);
+    setTemplates([]);
+    setLoaded(false);
+    setError(null);
     reload().catch((e) => {
       if (!live) return;
       setError(e instanceof Error ? e.message : "Could not load schedules");
@@ -115,6 +134,9 @@ export function ScheduleDialog({
               : "Templates run on a clock, whether or not anyone is at the machine."}
           </DialogDescription>
         </DialogHeader>
+
+        {/* Which machine's list — not while editing: a schedule being edited is that machine's. */}
+        {!editing && <NodePicker nodes={nodes} value={node} onChange={(id) => onNodeChange?.(id)} />}
 
         {error && <p className="text-sm text-red-500">{error}</p>}
 
@@ -171,6 +193,7 @@ function ScheduleList({
   onNew: () => void;
   onClose: () => void;
 }) {
+  const api = useApi();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [ran, setRan] = useState<string | null>(null);
 
@@ -369,6 +392,7 @@ function ScheduleEditor({
   onSaved: (list: ScheduleEntry[]) => void;
   onCancel: () => void;
 }) {
+  const api = useApi();
   const confirm = useConfirm();
   const s = entry?.schedule ?? null;
 

@@ -344,6 +344,30 @@ mark per node, since one machine's broken autologin must not hide behind another
 `claude --version` and whether Remote Control is available so the picker can grey out a node that
 cannot launch.
 
+**As built (phase 5).**
+- `components/NodePicker.tsx`: one button per machine, this one first. It is drawn only once there are peers.
+  A peer that isn't online, or whose `claude` isn't found, is greyed with the reason.
+- `GET /api/node` says `canLaunch`, meaning `claude` is found where a launch would look. That is a PATH
+  lookup, not `claude --version`, and says nothing about Remote Control. The mesh carries it from each
+  probe.
+- New session sits in the picked machine's `NodeProvider`: the folder picker, recents, templates, project
+  chips and the launch itself all go there. It opens on the machine it was started from:
+  - the "+" on a machine's heading, a peer's project or folder;
+  - Clone;
+  - Reopen with options (now offered on a peer's session).
+
+  Picking another machine clears what came from the first one's disk. The name, the command and the launch
+  options carry over. A restorable entry is replaced only when the launch stays on its machine.
+- Templates are the picked machine's, not every machine's under headings. Picking a machine already
+  scopes the list, and a template launches where it is stored.
+- Schedules: the dialog shows one machine's list, picked at the top, inside that machine's
+  `NodeProvider`. A machine with an overdue schedule has a warning on its button, asked of each machine
+  once when the dialog opens. "Schedule…" on a peer's row opens that machine's list.
+- Updates: a peer's heading carries its own update button when its snapshot says a build is staged. It
+  applies through `/n/{id}/api/update/apply`. There is no overlay: the heading goes offline and comes back.
+- New session, Schedules and the update button no longer use this node's `api` directly. The node-scope
+  check now covers them.
+
 ---
 
 ## 8. Things that are per node and must look per node

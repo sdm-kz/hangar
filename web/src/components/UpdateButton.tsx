@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { ArrowUpCircle, GitCommitHorizontal, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowUpCircle, GitCommitHorizontal, Loader2, RefreshCw } from "lucide-react";
 import type { BuildStamp, UpdateStatus } from "@/types";
-import { api } from "@/lib/api";
+import { useApi } from "@/lib/node";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,15 +18,23 @@ import {
  * plus the full-screen overlay that covers the restart. A build staged by `scripts\stage-update.ps1`
  * reaches the UI on the /hub/events snapshot; clicking through stops this build, installs the staged
  * one and brings the running sessions back. See {@link UpdatingOverlay} for what happens after the click.
+ *
+ * A peer's, on its heading in the sidebar, is the same button inside that node's NodeProvider: each node
+ * updates itself, from its own staged build and with its own "what's new" (plans/multi-node.md §8). There
+ * is no overlay for one — this page isn't going anywhere; the heading goes offline and comes back.
  */
 export function UpdateButton({
   status,
   onApplying,
+  nodeName,
 }: {
   status: UpdateStatus | null;
   /** The apply request went through: the server is going down and the overlay should take over. */
-  onApplying: (targetBuildId: string) => void;
+  onApplying?: (targetBuildId: string) => void;
+  /** A peer's name: the button is that machine's, drawn small on its heading. */
+  nodeName?: string;
 }) {
+  const api = useApi();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +48,8 @@ export function UpdateButton({
     try {
       await api.applyUpdate();
       setOpen(false);
-      onApplying(status.staged!.buildId);
+      setBusy(false);
+      onApplying?.(status.staged!.buildId);
     } catch (e) {
       // The server is still ours — it refused before handing off (nothing staged any more, a dev run
       // with no install folder). Say why and leave the dialog up.
@@ -51,24 +60,55 @@ export function UpdateButton({
 
   return (
     <>
-      {/* Filled, in a colour no other button wears, so a waiting build gets noticed. */}
-      <Button
-        size="sm"
-        className="h-7 shrink-0 gap-1.5 bg-sky-600 px-2.5 text-white hover:bg-sky-600/90 dark:bg-sky-500 dark:hover:bg-sky-500/90"
-        title={`Update available — ${describe(status.staged)}`}
-        onClick={() => setOpen(true)}
-      >
-        <ArrowUpCircle className="size-4" />
-        Update
-      </Button>
+      {nodeName && status.state === "Applying" ? (
+        // Installing over there: nothing to click until the heading goes offline and comes back.
+        <Loader2
+          className="size-3.5 shrink-0 animate-spin text-sky-600 dark:text-sky-500"
+          aria-label={`${nodeName}: updating`}
+        />
+      ) : nodeName ? (
+        // On a heading: the same colour, at the heading's size — amber when the last try failed.
+        <button
+          type="button"
+          className={cn(
+            "shrink-0",
+            status.state === "Failed"
+              ? "text-amber-600 hover:text-amber-500 dark:text-amber-500"
+              : "text-sky-600 hover:text-sky-500 dark:text-sky-500"
+          )}
+          title={
+            status.state === "Failed"
+              ? `${nodeName}: the last update failed${status.error ? ` (${status.error})` : ""} — try again`
+              : `${nodeName}: update available — ${describe(status.staged)}`
+          }
+          aria-label={`Update ${nodeName}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(true);
+          }}
+        >
+          {status.state === "Failed" ? <AlertTriangle className="size-3.5" /> : <ArrowUpCircle className="size-3.5" />}
+        </button>
+      ) : (
+        // Filled, in a colour no other button wears, so a waiting build gets noticed.
+        <Button
+          size="sm"
+          className="h-7 shrink-0 gap-1.5 bg-sky-600 px-2.5 text-white hover:bg-sky-600/90 dark:bg-sky-500 dark:hover:bg-sky-500/90"
+          title={`Update available — ${describe(status.staged)}`}
+          onClick={() => setOpen(true)}
+        >
+          <ArrowUpCircle className="size-4" />
+          Update
+        </Button>
+      )}
 
       <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Update Hangar</DialogTitle>
+            <DialogTitle>{nodeName ? `Update ${nodeName}` : "Update Hangar"}</DialogTitle>
             <DialogDescription>
-              The app restarts to install this build. It takes a few seconds, and the sessions running
-              right now are resumed automatically once it's back.
+              {nodeName ? "That machine's app" : "The app"} restarts to install this build. It takes a few
+              seconds, and the sessions running right now are resumed automatically once it's back.
             </DialogDescription>
           </DialogHeader>
 
@@ -111,6 +151,7 @@ export function UpdateButton({
  * build, which would otherwise look like a success and leave the user on the same version wondering.
  */
 export function UpdatingOverlay({ targetBuildId }: { targetBuildId: string }) {
+  const api = useApi();
   // "slow" after a while: the update is taking longer than a restart should, so offer a way out
   // rather than spinning forever behind an overlay the user can't dismiss.
   const [slow, setSlow] = useState(false);

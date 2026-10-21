@@ -58,6 +58,7 @@ import { Button } from "@/components/ui/button";
 import { ToolbarMore, type ToolAction } from "./ToolbarMore";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { OrphanBar } from "./OrphanBar";
+import { UpdateButton } from "./UpdateButton";
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import { navRowProps, useTreeKeyNav } from "@/lib/useTreeKeyNav";
@@ -1515,6 +1516,12 @@ export interface PeerSidebar {
   onRestore: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onRemoveSessions: (ids: string[]) => void;
+  onNewInFolder?: (dir: string) => void;
+  onNewInProject?: (project: Project) => void;
+  onClone?: (s: SessionInfo) => void;
+  onSchedules?: (target?: { conversationId: string; name: string }) => void;
+  /** Start a session on this machine — the "+" on its heading. */
+  onNew?: () => void;
   projects: Project[];
   onProjectsChange: (projects: Project[]) => void;
 }
@@ -1542,6 +1549,7 @@ export function SessionSidebar({
   embedded,
   self = null,
   peers = NO_PEERS,
+  onNewHere,
   sessions,
   activityIds,
   draftIds,
@@ -1578,6 +1586,8 @@ export function SessionSidebar({
   self?: SelfNode | null;
   /** The other machines, a tree each under a heading of its own. None: the list is what it always was. */
   peers?: PeerSidebar[];
+  /** Start a session on this machine — the "+" on its heading, once there are headings. */
+  onNewHere?: () => void;
   sessions: SessionInfo[];
   // Who is busy / waiting on you / compacting / finished-but-unseen, in one bag — see ActivityIds.
   activityIds: ActivityIds;
@@ -3206,6 +3216,7 @@ export function SessionSidebar({
         ) : (
           <>
             <NodeHeading
+              onNew={onNewHere}
               name={self?.name ?? "This machine"}
               color={self?.color ?? null}
               here={!!self}
@@ -3225,7 +3236,7 @@ export function SessionSidebar({
               })}
             />
             {!collapsedNodes.has(SELF_NODE) && treeBody}
-            {peers.map(({ peer, ...tree }) => {
+            {peers.map(({ peer, onNew, ...tree }) => {
               // Nothing to unfold while it is away: its tree is drawn only while it is online.
               const open = !collapsedNodes.has(peer.id) && peer.status === "online";
               const done = tree.sessions.filter(
@@ -3234,6 +3245,15 @@ export function SessionSidebar({
               return (
                 <Fragment key={peer.id}>
                   <NodeHeading
+                    onNew={peer.status === "online" && peer.canLaunch !== false ? onNew : undefined}
+                    extra={
+                      // Its updater: each machine updates itself, from its own staged build.
+                      peer.status === "online" && peer.snap?.update ? (
+                        <NodeProvider node={peer.id}>
+                          <UpdateButton status={peer.snap.update} nodeName={peer.name} />
+                        </NodeProvider>
+                      ) : null
+                    }
                     name={peer.name}
                     color={peer.color}
                     status={peer.status}
@@ -3289,6 +3309,8 @@ export function SessionSidebar({
  * says since when — its sessions aren't gone, the link to them is.
  */
 function NodeHeading({
+  onNew,
+  extra,
   name,
   color,
   here = false,
@@ -3319,6 +3341,10 @@ function NodeHeading({
   activeCount: number;
   onMarkSeen: () => void;
   navProps: Record<string, unknown>;
+  /** Start a session on this machine. */
+  onNew?: () => void;
+  /** More of its own at the heading's end — a peer's update button. */
+  extra?: ReactNode;
 }) {
   const online = status === "online";
   const tint = sessionColor(color);
@@ -3381,6 +3407,20 @@ function NodeHeading({
       </button>
       {online && <HeadingProgress done={doneCount} active={activeCount} />}
       {online && <MarkSeenButton count={doneCount} onMarkSeen={onMarkSeen} reveal="ph" />}
+      {extra}
+      {onNew && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onNew();
+          }}
+          title={`New session on ${name}`}
+          className="hidden shrink-0 hover:text-foreground group-hover/ph:inline-flex [@media(hover:none)]:inline-flex"
+        >
+          <Plus className="size-3.5" />
+        </button>
+      )}
     </div>
   );
 }

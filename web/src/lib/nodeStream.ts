@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Project, SessionInfo } from "@/types";
+import type { BuildStamp, Project, SessionInfo, UpdateStatus } from "@/types";
 import { apiFor } from "./api";
 import type { ActivityDetail } from "./sessionActivity";
 import type { ShellActivity } from "./shellActivity";
@@ -22,6 +22,8 @@ export interface NodeSnapshot {
   shellsRev: number;
   shellActivity: Record<string, ShellActivity> | null;
   projects: Project[];
+  /** Its updater, for the update button on its heading. */
+  update: UpdateStatus | null;
 }
 
 /** A peer: who it is, whether it can be reached, and — while it can — its snapshot. */
@@ -37,6 +39,8 @@ export interface PeerNode {
   os: string | null;
   /** When it was last heard from, once it has gone quiet; null while online. */
   lastSeen: string | null;
+  /** Whether a session can be started there (its claude is found); null when it didn't say. */
+  canLaunch: boolean | null;
   /**
    * Its snapshot — the last one heard, while it is away: a session of it left open stays on screen through
    * a blip rather than being torn down with its terminal. Anything that counts or alerts reads {@link liveSnap}.
@@ -61,6 +65,7 @@ export interface MeshNodeMessage {
   version?: string | null;
   os?: string | null;
   lastSeen?: string | null;
+  canLaunch?: boolean | null;
   snapshot?: HubMessage | null;
 }
 
@@ -76,6 +81,7 @@ interface HubMessage {
   shellsRev?: number;
   projectsRev?: number;
   shells?: Record<string, ShellActivity>;
+  update?: unknown;
 }
 
 export const EMPTY_SNAPSHOT: NodeSnapshot = {
@@ -89,6 +95,7 @@ export const EMPTY_SNAPSHOT: NodeSnapshot = {
   shellsRev: 0,
   shellActivity: null,
   projects: [],
+  update: null,
 };
 
 /** A peer's snapshot while it is online — null while it is away, when what it last said is out of date. */
@@ -131,6 +138,46 @@ function parse(nodeId: string, msg: HubMessage, prev: NodeSnapshot | null): Node
     shellActivity:
       prev?.shellActivity && JSON.stringify(prev.shellActivity) === JSON.stringify(shells) ? prev.shellActivity : shells,
     projects: prev?.projects ?? [],
+    update: updateStatus(msg.update),
+  };
+}
+
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
+/**
+ * A peer's updater, as its update button may read it. The dialog walks the release notes as a list, and a
+ * peer whose snapshot says otherwise — a different build, or one that has gone wrong — must not take this
+ * page down with it: whatever isn't the shape it should be is dropped.
+ */
+function updateStatus(raw: unknown): UpdateStatus | null {
+  if (!raw || typeof raw !== "object") return null;
+  const u = raw as Record<string, unknown>;
+  const stamp = (v: unknown): BuildStamp | null => {
+    if (!v || typeof v !== "object") return null;
+    const b = v as Record<string, unknown>;
+    if (typeof b.buildId !== "string") return null;
+    const n = b.notes && typeof b.notes === "object" ? (b.notes as Record<string, unknown>) : null;
+    return {
+      buildId: b.buildId,
+      commit: str(b.commit),
+      branch: str(b.branch),
+      builtAtUtc: str(b.builtAtUtc),
+      notes: n
+        ? {
+            summary: str(n.summary),
+            changes: Array.isArray(n.changes) ? n.changes.filter((c): c is string => typeof c === "string") : null,
+            since: str(n.since),
+          }
+        : null,
+    };
+  };
+  return {
+    enabled: u.enabled === true,
+    available: u.available === true,
+    current: stamp(u.current),
+    staged: stamp(u.staged),
+    state: u.state === "Applying" || u.state === "Failed" ? u.state : "Idle",
+    error: str(u.error),
   };
 }
 
@@ -208,6 +255,7 @@ export function usePeers() {
             version: n.version ?? null,
             os: n.os ?? null,
             lastSeen: n.lastSeen ?? null,
+            canLaunch: typeof n.canLaunch === "boolean" ? n.canLaunch : null,
             snap,
           };
           return before && samePeer(before, peer) ? before : peer;
@@ -280,6 +328,7 @@ function samePeer(a: PeerNode, b: PeerNode): boolean {
     a.error === b.error &&
     a.version === b.version &&
     a.os === b.os &&
-    a.lastSeen === b.lastSeen
+    a.lastSeen === b.lastSeen &&
+    a.canLaunch === b.canLaunch
   );
 }

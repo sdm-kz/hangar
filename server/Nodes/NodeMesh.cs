@@ -14,6 +14,7 @@ namespace Hangar.Server.Nodes;
 /// </param>
 /// <param name="LastSeen">When the last frame came from it — set once it stops being online, null while it is.</param>
 /// <param name="Snapshot">Its own <c>/hub/events</c> message, verbatim; null unless online.</param>
+/// <param name="CanLaunch">Whether a session can be started there — its <c>claude</c> is found; null when unknown.</param>
 public sealed record MeshNode(
     string Id,
     string Name,
@@ -23,7 +24,8 @@ public sealed record MeshNode(
     string? Version,
     string? Os,
     DateTimeOffset? LastSeen,
-    JsonElement? Snapshot);
+    JsonElement? Snapshot,
+    bool? CanLaunch);
 
 /// <summary>
 /// The live picture of every peer, held here so the browser, the tray and the push notifier read it off this
@@ -75,7 +77,7 @@ public sealed class NodeMesh : BackgroundService
             if (!peer.Enabled) continue;
             var state = _links.TryGetValue(peer.Id, out var link) ? link.State : null;
             list.Add(new MeshNode(peer.Id, peer.Name, peer.Color, state?.Status ?? "connecting", state?.Error,
-                state?.Version, state?.Os, state?.LastSeen, state?.Snapshot));
+                state?.Version, state?.Os, state?.LastSeen, state?.Snapshot, state?.CanLaunch));
         }
         return list;
     }
@@ -149,7 +151,7 @@ public sealed class NodeMesh : BackgroundService
     }
 
     private sealed record LinkState(string Status, string? Error, string? Version, string? Os, DateTimeOffset? LastSeen,
-        JsonElement? Snapshot);
+        JsonElement? Snapshot, bool? CanLaunch = null);
 
     /// <summary>The connection to one peer, for as long as its address, certificate and token stay as they were.</summary>
     private sealed class Link(NodeMesh mesh, OutboundPeer peer, string signature)
@@ -158,6 +160,7 @@ public sealed class NodeMesh : BackgroundService
         private readonly SemaphoreSlim _sending = new(1, 1);
         private ClientWebSocket? _socket;
         private string? _lastRaw;
+        private bool? _canLaunch;
         private DateTimeOffset? _lastFrame;
 
         public string Signature { get; } = signature;
@@ -217,7 +220,7 @@ public sealed class NodeMesh : BackgroundService
         {
             _lastRaw = null;
             var lastSeen = _lastFrame ?? State?.LastSeen;
-            Set(new LinkState(status, error, version ?? State?.Version, os ?? State?.Os, lastSeen, null));
+            Set(new LinkState(status, error, version ?? State?.Version, os ?? State?.Os, lastSeen, null, State?.CanLaunch));
         }
 
         private async Task RunAsync(CancellationToken ct)
@@ -234,6 +237,7 @@ public sealed class NodeMesh : BackgroundService
                     }
                     else
                     {
+                        _canLaunch = probe.Node?.CanLaunch;
                         var (version, os) = (probe.Node?.Version, probe.Node?.Os);
                         if (await FollowAsync(version, os, ct)) delay = TimeSpan.FromSeconds(1);
                     }
@@ -318,7 +322,7 @@ public sealed class NodeMesh : BackgroundService
                 if (Parse(raw) is not { } snapshot) continue;
                 _lastRaw = raw;
                 gotOne = true;
-                Set(new LinkState("online", null, version, os, null, snapshot));
+                Set(new LinkState("online", null, version, os, null, snapshot, _canLaunch));
             }
             return gotOne;
         }

@@ -32,6 +32,8 @@ import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
 import { ForkSessionDialog } from "@/components/ForkSessionDialog";
 import { ScheduleDialog } from "@/components/ScheduleDialog";
+import type { LaunchNode } from "@/components/NodePicker";
+import { isOverdue } from "@/lib/schedules";
 import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
@@ -130,6 +132,10 @@ export function App() {
   // Restorable session the create dialog was opened from (see reopenAsNew): once the replacement
   // launches, that stale entry is forgotten so the same conversation isn't listed twice.
   const [newFromId, setNewFromId] = useState<string | null>(null);
+  // The machine the create dialog launches on (null: this one) — where it was opened from, until another
+  // is picked in it. The project and the restorable entry above are of the machine they came from.
+  const [newNode, setNewNode] = useState<string | null>(null);
+  const [newOrigin, setNewOrigin] = useState<string | null>(null);
   // Id of the session the fork popup is open for (it asks for a name, then branches its conversation).
   const [forkFromId, setForkFromId] = useState<string | null>(null);
   // ...and its node: a fork stays on the parent's node, where its conversation's transcript is.
@@ -144,8 +150,9 @@ export function App() {
   // The schedules popup. Owned here for the same reason the search one is: the sidebar is mounted
   // twice (desktop column + mobile drawer), so a dialog it owned would exist twice over. A non-null
   // `target` opens it straight on a new schedule that continues that conversation.
+  // ...and the machine whose schedules it shows (null: this one).
   const [scheduling, setScheduling] = useState<
-    { target: { conversationId: string; name: string } | null } | null
+    { target: { conversationId: string; name: string } | null; node: string | null } | null
   >(null);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(
@@ -825,7 +832,14 @@ export function App() {
     ? viewSessions.find((s) => s.id === active.parentSessionId) ?? null
     : null;
 
-  function openNew(preset: RecentSession | null = null) {
+  /** Open the create dialog on a machine (null: this one) — the one whatever it was opened from is on. */
+  const openOn = (node: string | null) => {
+    setNewNode(node);
+    setNewOrigin(node);
+  };
+
+  function openNew(preset: RecentSession | null = null, node: string | null = null) {
+    openOn(node);
     setNewPreset(preset);
     setNewProjectId(null);
     setNewDefaultContinue(undefined);
@@ -834,7 +848,8 @@ export function App() {
 
   // "+" on a project heading. No preset: a project isn't a launch preset, it's a set of folders to
   // choose between — the dialog fills the folder in itself when there is only one to choose.
-  const newSessionInProject = useCallback((project: Project) => {
+  const newSessionInProject = useCallback((project: Project, node: string | null = null) => {
+    openOn(node);
     setNewPreset(null);
     setNewProjectId(project.id);
     setNewDefaultContinue(false); // starting fresh, not resuming whatever ran there last
@@ -851,6 +866,8 @@ export function App() {
   // the model/prompt/permissions can be adjusted first. The preset carries its conversation id, so the
   // dialog's "continue" resumes that exact conversation; the stale entry is forgotten once it starts.
   const reopenAsNew = useCallback((s: SessionInfo, preset: RecentSession) => {
+    openOn(s.nodeId ?? null);
+    setNewProjectId(null);
     setNewPreset(preset);
     setNewDefaultContinue(undefined);
     setNewFromId(s.id);
@@ -889,6 +906,68 @@ export function App() {
   function alertName(s: SessionInfo): string {
     const { node } = splitSessionKey(s.id);
     return node ? `${nodeNames[node] ?? "Another machine"} · ${s.name}` : s.name;
+  }
+
+  /**
+   * The machines something can be started on, this one first: a peer only while it is online and has a
+   * claude to start (plans/multi-node.md §7). Just this one when there are no peers, and the pickers hide.
+   */
+  const launchNodes = useMemo<LaunchNode[]>(
+    () => [
+      { id: null, name: selfNode?.name ?? "This machine", color: selfNode?.color ?? null, unavailable: null },
+      ...mesh.peers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        unavailable:
+          p.status !== "online"
+            ? p.status === "connecting"
+              ? "connecting…"
+              : "not reachable right now"
+            : p.canLaunch === false
+              ? "claude isn't found there"
+              : null,
+      })),
+    ],
+    [selfNode, mesh.peers]
+  );
+
+  // Which machines have a schedule overdue, asked of each once the schedules popup opens: the one the
+  // popup shows says so in its list, but one machine's broken autologin must not hide behind another's
+  // green while it shows the other.
+  const [overdueNodes, setOverdueNodes] = useState<Set<string>>(() => new Set());
+  const schedulesOpen = !!scheduling;
+  // The machines to ask: asked again when one comes online with the popup open (just after the page
+  // loads, say). None to ask on a single machine, whose popup shows its one list anyway.
+  const onlinePeers = mesh.peers.filter((p) => p.status === "online").map((p) => p.id).join(",");
+  useEffect(() => {
+    if (!schedulesOpen || !onlinePeers) return;
+    let gone = false;
+    const ids = [null, ...onlinePeers.split(",")];
+    void Promise.all(
+      ids.map((id) =>
+        attempt(() => apiFor(id).getSchedules()).then((list) => (list?.some(isOverdue) ? [id ?? ""] : []))
+      )
+    ).then((found) => !gone && setOverdueNodes(new Set(found.flat())));
+    return () => {
+      gone = true;
+    };
+  }, [schedulesOpen, onlinePeers]);
+  const scheduleNodes = useMemo(
+    () =>
+      launchNodes.map((n) => ({
+        ...n,
+        // Its schedules can be read and fixed whether or not its claude is found — only a machine that
+        // can't be reached has none to show.
+        unavailable: n.id && mesh.peers.find((p) => p.id === n.id)?.status !== "online" ? n.unavailable : null,
+        warning: overdueNodes.has(n.id ?? "") ? "a schedule is overdue" : null,
+      })),
+    [launchNodes, overdueNodes, mesh.peers]
+  );
+
+  /** A node's projects: this one's, or a peer's off the mesh. */
+  function projectsOf(node: string | null): Project[] {
+    return node ? (mesh.peers.find((p) => p.id === node)?.snap?.projects ?? []) : projects;
   }
 
   /** A node's sessions: this one's list, or a peer's off the mesh (none while it can't be reached). */
@@ -949,6 +1028,8 @@ export function App() {
   // Clone a session: open the create dialog prefilled with its settings (the one-time initial prompt
   // can't be recovered, so it starts empty) for the user to adjust before launching.
   const cloneSession = useCallback((s: SessionInfo) => {
+    openOn(s.nodeId ?? null);
+    setNewProjectId(null);
     setNewPreset({
       workingDirectory: s.workingDirectory,
       name: s.name,
@@ -974,7 +1055,8 @@ export function App() {
 
   // Start a new session in a folder picked from the Files tab: open the create dialog prefilled with
   // that working directory (defaults for everything else).
-  const newSessionInFolder = useCallback((path: string) => {
+  const newSessionInFolder = useCallback((path: string, node: string | null = null) => {
+    openOn(node);
     setNewProjectId(null);
     setNewPreset({
       workingDirectory: path,
@@ -1057,15 +1139,21 @@ export function App() {
     if (next) setRecents(next.sessions);
   }
 
-  function onCreated(s: SessionInfo) {
-    // Reopened a Restorable entry through the dialog: the new session took its place, so forget it.
-    const replaced = newFromId;
+  /** A session launched on `node` (null: this one) — from the create dialog, or a fork of one of this node's. */
+  function onCreated(s: SessionInfo, node: string | null = null) {
+    // Reopened a Restorable entry through the dialog: the new session took its place, so forget it — on
+    // the machine it is on, and only if the new one went there too (one launched elsewhere took nothing's
+    // place: the conversation it would resume is on the first machine).
+    const replaced = newOrigin === node ? newFromId : null;
     setNewFromId(null);
-    if (replaced) api.deleteSession(replaced).catch(() => {});
+    if (replaced) void attempt(() => apiFor(node).deleteSession(replaced));
     // Idempotent add: the live stream may already have pushed this new session before the create
     // response returns, so drop any existing copy of its id before appending to avoid a duplicate row.
-    setSessions((prev) => [...prev.filter((x) => x.id !== s.id && x.id !== replaced), s]);
-    setActiveNode(null);
+    if (node) {
+      if (replaced) mesh.dropSessions(node, [replaced]);
+      mesh.patchSession(node, s);
+    } else setSessions((prev) => [...prev.filter((x) => x.id !== s.id && x.id !== replaced), s]);
+    setActiveNode(node);
     setActiveId(s.id);
     clearMainArea(); // the new session takes over the main area, like selecting one does
     // Launching can start from the Files tab or the Recent list; pull both sidebar levels back to the
@@ -1073,7 +1161,7 @@ export function App() {
     setSidebarTab("sessions");
     setListTab("sessions");
     setSidebarOpen(false);
-    loadRecents(); // the dialog just saved this launch as a recent preset (server-side)
+    if (!node) loadRecents(); // the dialog just saved this launch as a recent preset (server-side)
   }
 
   /**
@@ -1255,6 +1343,14 @@ export function App() {
       onRestore: (id) => void onRestore(id, p.id),
       onRename: (id, name) => void onRename(id, name, p.id),
       onRemoveSessions: (ids) => void onRemoveSessions(ids, p.id),
+      onNewInFolder: (dir) => newSessionInFolder(dir, p.id),
+      onNewInProject: (project) => newSessionInProject(project, p.id),
+      onClone: cloneSession,
+      onSchedules: (target) => setScheduling({ target: target ?? null, node: p.id }),
+      onNew: () => {
+        openNew(null, p.id);
+        onPicked?.();
+      },
       projects: p.snap?.projects ?? [],
       onProjectsChange: (projects) => mesh.setProjects(p.id, projects),
     }));
@@ -1336,6 +1432,7 @@ export function App() {
                 onSelect={selectSession}
                 self={selfNode}
                 peers={peerSidebars()}
+                onNewHere={() => openNew()}
                 onNewInFolder={newSessionInFolder}
                 onRevealFolder={revealFolderInFiles}
                 onNewInProject={newSessionInProject}
@@ -1351,7 +1448,7 @@ export function App() {
                 onRemoveRecent={removeRecent}
                 onReorderRecent={reorderRecents}
                 onSearch={() => setSearching(true)}
-                onSchedules={(target) => setScheduling({ target: target ?? null })}
+                onSchedules={(target) => setScheduling({ target: target ?? null, node: null })}
                 tab={listTab}
                 onTabChange={setListTab}
                 projects={projects}
@@ -1411,6 +1508,10 @@ export function App() {
                     }}
                     self={selfNode}
                     peers={peerSidebars(() => setSidebarOpen(false))}
+                    onNewHere={() => {
+                      openNew();
+                      setSidebarOpen(false);
+                    }}
                     onNewInFolder={newSessionInFolder}
                     onRevealFolder={revealFolderInFiles}
                     onNewInProject={newSessionInProject}
@@ -1426,7 +1527,7 @@ export function App() {
                     onRemoveRecent={removeRecent}
                     onReorderRecent={reorderRecents}
                     onSearch={() => setSearching(true)}
-                    onSchedules={(target) => setScheduling({ target: target ?? null })}
+                    onSchedules={(target) => setScheduling({ target: target ?? null, node: null })}
                     tab={listTab}
                     onTabChange={setListTab}
                     projects={projects}
@@ -1505,6 +1606,7 @@ export function App() {
                   onToggleCollapsed={toggleCollapsed}
                   onStopped={(info) => mesh.patchSession(activeNode, info)}
                   onReopen={() => void onRestore(active.id, activeNode)}
+                  onReopenWithOptions={() => reopenAsNew(active, presetFromSession(active))}
                   onRename={(id, name) => void onRename(id, name, activeNode)}
                   onTerminalRename={(id, name) => mesh.updateSession(activeNode, id, { name })}
                   onTerminalColor={(id, color) => mesh.updateSession(activeNode, id, { color })}
@@ -1575,11 +1677,19 @@ export function App() {
         )}
 
         {scheduling && (
-          <ScheduleDialog
-            sessions={sessions}
-            initialTarget={scheduling.target}
-            onClose={() => setScheduling(null)}
-          />
+          // The picked machine's schedules: everything in the dialog goes there.
+          <NodeProvider node={scheduling.node}>
+            <ScheduleDialog
+              key={scheduling.node ?? ""}
+              sessions={sessionsOf(scheduling.node)}
+              initialTarget={scheduling.target}
+              onClose={() => setScheduling(null)}
+              nodes={scheduleNodes}
+              node={scheduling.node}
+              // A target is a conversation on the machine it was picked on.
+              onNodeChange={(node) => setScheduling({ target: null, node })}
+            />
+          </NodeProvider>
         )}
 
         {searching && (
@@ -1606,29 +1716,37 @@ export function App() {
             <ForkSessionDialog
               parent={forkFrom}
               sessions={forkSessions}
-              onForked={forkFromNode ? onForkedRemote : onCreated}
+              onForked={forkFromNode ? onForkedRemote : (s) => onCreated(s, null)}
               onClose={() => setForkFromId(null)}
             />
           </NodeProvider>
         )}
 
-        <NewSessionDialog
-          open={newOpen}
-          onOpenChange={(o) => {
-            setNewOpen(o);
-            if (!o) {
-              setNewPreset(null); // clear preset so the next plain "New session" starts fresh
-              setNewProjectId(null);
-              setNewDefaultContinue(undefined);
-              setNewFromId(null); // dismissed without launching — keep the Restorable entry as it is
-            }
-          }}
-          onCreated={onCreated}
-          preset={newPreset}
-          project={projects.find((p) => p.id === newProjectId) ?? null}
-          projects={projects}
-          defaultContinue={newDefaultContinue}
-        />
+        {/* Inside the picked machine: its folder picker, recents and templates, and the launch itself. */}
+        <NodeProvider node={newNode}>
+          <NewSessionDialog
+            open={newOpen}
+            onOpenChange={(o) => {
+              setNewOpen(o);
+              if (!o) {
+                setNewPreset(null); // clear preset so the next plain "New session" starts fresh
+                setNewProjectId(null);
+                setNewDefaultContinue(undefined);
+                setNewFromId(null); // dismissed without launching — keep the Restorable entry as it is
+              }
+            }}
+            onCreated={(s) => onCreated(s, newNode)}
+            preset={newPreset}
+            // A project is the machine's it was opened from; another machine has its own.
+            project={newNode === newOrigin ? projectsOf(newNode).find((p) => p.id === newProjectId) ?? null : null}
+            projects={projectsOf(newNode)}
+            defaultContinue={newDefaultContinue}
+            nodes={launchNodes}
+            node={newNode}
+            origin={newOrigin}
+            onNodeChange={setNewNode}
+          />
+        </NodeProvider>
       </div>
     </SessionsProgressContext.Provider>
   );

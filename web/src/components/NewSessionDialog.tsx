@@ -1,5 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { api, ApiError } from "@/lib/api";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ApiError } from "@/lib/api";
+import { useApi } from "@/lib/node";
+import { NodePicker, type LaunchNode } from "./NodePicker";
 import { folderName } from "@/lib/recentFolders";
 import { cn } from "@/lib/utils";
 import { ProjectGlyph } from "./ProjectGlyph";
@@ -49,7 +51,20 @@ export function NewSessionDialog({
   project,
   projects,
   defaultContinue,
+  nodes = [],
+  node = null,
+  origin = null,
+  onNodeChange,
 }: {
+  /**
+   * The machines it can launch on, this one first (plans/multi-node.md §7). The dialog sits inside the
+   * picked one's NodeProvider: its folder picker, recents, templates and the launch itself all go there.
+   */
+  nodes?: LaunchNode[];
+  node?: string | null;
+  /** The machine it was opened from, whose the preset, the project and their conversation are. */
+  origin?: string | null;
+  onNodeChange?: (node: string | null) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: (s: SessionInfo) => void;
@@ -66,6 +81,7 @@ export function NewSessionDialog({
   /** Overrides the "continue conversation" default (normally on for presets, off otherwise). */
   defaultContinue?: boolean;
 }) {
+  const api = useApi();
   const [tab, setTab] = useState<Tab>("new");
 
   // ---- the hand-made session (the "New" tab) --------------------------------------------------
@@ -101,7 +117,8 @@ export function NewSessionDialog({
   // The exact conversation "continue" will resume, when the server has stamped one onto this preset.
   // Tied to the folder: point the form somewhere else and the id no longer applies, so we fall back to
   // plain --continue (the folder's most recent conversation).
-  const presetId = stored?.claudeSessionId ?? preset?.claudeSessionId ?? null;
+  // ...and only on the machine it was opened from: that conversation is in that machine's transcripts.
+  const presetId = node === origin ? (stored?.claudeSessionId ?? preset?.claudeSessionId ?? null) : null;
   const resumeId = presetId && preset?.workingDirectory === dir.trim() ? presetId : null;
 
   const allProjects = projects ?? (project ? [project] : []);
@@ -111,19 +128,59 @@ export function NewSessionDialog({
   // opened from.
   const templateProject = allProjects.find((p) => p.id === template?.projectId) ?? null;
 
-  // Refresh the recent-folders list each time the dialog opens, and prefill from a preset if given.
+  // Refresh the recent-folders list each time the dialog opens — and each time another machine is picked:
+  // the folders, like the templates below, are that machine's.
   useEffect(() => {
     if (!open) return;
+    let gone = false;
     api
       .getRecents()
       .then((r) => {
+        if (gone) return;
         setRecents(r.folders);
         setStored(preset ? r.sessions.find((s) => sameRecent(s, preset)) ?? null : null);
       })
       .catch(() => {});
     // Templates are read fresh too: they are edited from here and from the project settings, so the
     // list a browser opened an hour ago is not necessarily the list on the server.
-    api.getTemplates().then(setTemplates).catch(() => {});
+    api
+      .getTemplates()
+      .then((list) => !gone && setTemplates(list))
+      .catch(() => {});
+    return () => {
+      gone = true;
+    };
+  }, [open, api, preset]);
+
+  /**
+   * What is filled in from a machine's disk — a folder, its recents, its templates. It belongs to the machine
+   * it came from (`filledFor`): opened on another one, or switched to another, the dialog starts those over.
+   */
+  const filledFor = useRef(node);
+  const nodeNow = useRef(node);
+  nodeNow.current = node;
+  const clearMachine = () => {
+    setDir("");
+    setTDir("");
+    setRecents([]);
+    setTemplates([]);
+    setTemplateId(null);
+    setStored(null);
+  };
+  // Read when the dialog opens, not followed: the project goes away when another machine is picked, and a
+  // peer's project objects are replaced whenever its projects are re-read — neither is a reason to fill
+  // the form in again over what has been chosen since.
+  const projectNow = useRef(project);
+  projectNow.current = project;
+
+  // Prefill from a preset if given.
+  useEffect(() => {
+    if (!open) return;
+    if (filledFor.current !== nodeNow.current) {
+      clearMachine();
+      filledFor.current = nodeNow.current;
+    }
+    const project = projectNow.current;
     setError(null);
     setStored(null); // until the refresh above lands
     // Reusing a preset is a "New" tab errand by definition — it *is* a filled-in form.
@@ -156,7 +213,8 @@ export function NewSessionDialog({
       setName(preset.name);
       setCommand(preset.command);
     }
-  }, [open, preset, project, defaultContinue]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, preset, defaultContinue]);
 
   /** Picking a template fills the launch in from it; the fields below stay editable for this run. */
   const pickTemplate = (t: SessionTemplate) => {
@@ -176,8 +234,28 @@ export function NewSessionDialog({
     setShowOptions(!t.workingDirectory.trim());
   };
 
+  /**
+   * Another machine: what was filled in from this one's disk — a folder, a recent, a template — means
+   * nothing there and goes. The name, the start command and the launch options carry over.
+   */
+  const pickNode = (id: string | null) => {
+    if (id === node || busy) return;
+    onNodeChange?.(id);
+    clearMachine();
+    filledFor.current = id;
+    setError(null);
+    // Continuing means a conversation on the machine it was opened from; anywhere else there is none to
+    // continue — and --continue there would pick up whatever last ran in a folder of the same name.
+    setContinueSession(id === origin ? (defaultContinue ?? !!preset) : false);
+  };
+  const picked = nodes.find((n) => n.id === node);
+
   async function create() {
     const fromTemplate = tab === "templates";
+    if (picked?.unavailable) {
+      setError(`${picked.name}: ${picked.unavailable}`);
+      return;
+    }
     if (fromTemplate && !template) {
       setError("Pick a template");
       return;
@@ -265,6 +343,8 @@ export function NewSessionDialog({
               )}
             </DialogDescription>
           </DialogHeader>
+
+          <NodePicker nodes={nodes} value={node} onChange={pickNode} disabled={busy} />
 
           {/* Set up by hand, or from a template. The same row as the sidebar's Sessions/Recent tabs. */}
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-muted/50 p-1">

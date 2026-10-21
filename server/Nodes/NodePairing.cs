@@ -30,7 +30,9 @@ public sealed record NodeInfo(
     string? Url,
     string? Version,
     string Os,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    // Whether a session can launch there (claude is found). Null from a build that doesn't say.
+    bool? CanLaunch = null);
 
 /// <summary>The answer to <c>POST /api/nodes/pair</c>.</summary>
 /// <param name="Mutual">"ok" (the caller is now a peer of this node too), "unreachable" (couldn't call it back), or "off".</param>
@@ -64,6 +66,7 @@ public sealed class NodePairing(
     PeerTokenStore inbound,
     TokenStore tokens,
     NodeOptions options,
+    Sessions.SessionManagerOptions sessionOptions,
     ILogger<NodePairing> log)
 {
     public const string Capability = "node-v1";
@@ -87,7 +90,8 @@ public sealed class NodePairing(
     {
         var me = identity.Current;
         var os = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : OperatingSystem.IsLinux() ? "linux" : "other";
-        return new NodeInfo(me.Id, me.Name, me.Color, me.Url, version, os, [Capability]);
+        return new NodeInfo(me.Id, me.Name, me.Color, me.Url, version, os, [Capability],
+            Diagnostics.EnvironmentReport.ClaudeFound(sessionOptions.ClaudeExecutable));
     }
 
     // ---- The side a person adds a node from -----------------------------------------------------------
