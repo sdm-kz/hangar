@@ -3067,12 +3067,17 @@ export function SessionSidebar({
   const overflowTools = tools.slice(inlineTools.length);
 
   // What the list holds: the tree, under its project headings.
+  // Under a machine's heading an empty tree is one quiet line in the list, not a page-sized placard.
+  const emptyNote = cn(
+    "px-2 text-xs text-muted-foreground",
+    embedded || peers.length > 0 ? "py-1" : "py-6 text-center"
+  );
   const treeBody = (
     <>
       {sessions.length === 0 ? (
-        <p className="px-2 py-6 text-center text-xs text-muted-foreground">No sessions yet</p>
+        <p className={emptyNote}>No sessions yet</p>
       ) : visibleSessions.length === 0 ? (
-        <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+        <p className={emptyNote}>
           {filter === "activity" ? "Nothing going on right now" : "No running sessions"}
         </p>
       ) : null}
