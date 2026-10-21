@@ -106,6 +106,22 @@ import {
 export type SessionListTab = "sessions" | "recent";
 
 /**
+ * A session to bring into view in the list — one just started, reopened or forked. `n` is bumped per
+ * request, so asking for the same session twice goes back to it.
+ */
+export interface SessionReveal {
+  node: string | null;
+  id: string;
+  n: number;
+}
+/**
+ * The last request each tree unfolded for ("heading" for the machines' headings), shared by both mounts
+ * of the sidebar: the phone's drawer is mounted only when opened, and opening it later must not unfold
+ * again what has been folded since. The fold state itself is in storage, so the drawer starts from it.
+ */
+const unfoldedFor = new Map<string, number>();
+
+/**
  * One virtual folder ready to draw: the group itself, the sessions filed into it, and the same fork
  * tree and drag list a folder group carries — so the rows inside a box you filled by hand and a box
  * a path filled are drawn by exactly the same code.
@@ -1564,6 +1580,7 @@ export function SessionSidebar({
   self = null,
   peers = NO_PEERS,
   onNewHere,
+  reveal = null,
   sessions,
   activityIds,
   draftIds,
@@ -1602,6 +1619,8 @@ export function SessionSidebar({
   peers?: PeerSidebar[];
   /** Start a session on this machine — the "+" on its heading, once there are headings. */
   onNewHere?: () => void;
+  /** A session to unfold the list down to and scroll to — see SessionReveal. */
+  reveal?: SessionReveal | null;
   sessions: SessionInfo[];
   // Who is busy / waiting on you / compacting / finished-but-unseen, in one bag — see ActivityIds.
   activityIds: ActivityIds;
@@ -1940,6 +1959,59 @@ export function SessionSidebar({
     narrowed
       ? sections.filter((s) => s.items.length > 0 || shownGroups(s.project).length > 0)
       : sections;
+
+  /**
+   * A session just started, reopened or forked is put where it can be seen: everything folded over it
+   * opens — its machine's heading, its project, its folder or virtual folder, the sessions it is nested
+   * under — and the list scrolls to its row. Folding is otherwise the user's to do, so this happens once
+   * per request and only for the tree the session is in; a request for one not in the list yet waits for
+   * it (the create response and the live push race, and either can bring it).
+   */
+  const revealed = useRef(0);
+  const [scrollTo, setScrollTo] = useState<SessionReveal | null>(null);
+  useEffect(() => {
+    if (!reveal) return;
+    // The heading is drawn by the top-level tree, whichever machine the session is on — and a peer's
+    // tree isn't mounted until it is unfolded, so this is also what lets that tree see the request.
+    if (!embedded && peers.length > 0 && unfoldedFor.get("heading") !== reveal.n) {
+      unfoldedFor.set("heading", reveal.n);
+      setAllNodes([reveal.node ?? SELF_NODE], false);
+    }
+    if (reveal.node !== node || revealed.current === reveal.n) return;
+    const s = sessions.find((x) => x.id === reveal.id);
+    if (!s) return;
+    revealed.current = reveal.n;
+    setScrollTo(reveal);
+    if (unfoldedFor.get(node ?? "") === reveal.n) return;
+    unfoldedFor.set(node ?? "", reveal.n);
+    const byId = new Map(sessions.map((x) => [x.id, x]));
+    const ancestors = new Set<string>();
+    for (let p = parentOf(s); p && !ancestors.has(p) && byId.has(p); p = parentOf(byId.get(p)!))
+      ancestors.add(p);
+    if ([...ancestors].some((id) => collapsedForks.has(id)))
+      setCollapsedForks((prev) => {
+        const next = new Set([...prev].filter((id) => !ancestors.has(id)));
+        saveCollapsedForks(next, node);
+        return next;
+      });
+    const vg = groupForSession(s, projects);
+    const key = dirKey(s.workingDirectory);
+    const folder = groups.find((g) => g.key === key)?.dir;
+    setAllGroups(
+      [vg ? `group:${vg.id}` : null, folder ?? null, s.workingDirectory].filter((k): k is string => !!k),
+      false
+    );
+    setAllProjects([projectForDir(s.workingDirectory, projects)?.id ?? ""], false);
+  }, [reveal, node, embedded, peers.length, sessions, projects, groups, collapsedForks]); // eslint-disable-line react-hooks/exhaustive-deps
+  // After the unfolding above has been drawn, so the row is there to scroll to.
+  useEffect(() => {
+    if (!scrollTo) return;
+    const path = navPrefix + navKey.session(scrollTo.id);
+    // The sidebar is mounted twice (desktop column, phone drawer); a hidden copy's row has no box and
+    // scrolling it does nothing.
+    for (const el of document.querySelectorAll<HTMLElement>(`[data-nav-row="${CSS.escape(path)}"]`))
+      el.scrollIntoView({ block: "nearest" });
+  }, [scrollTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- What the collapse/expand-all button acts on -----------------------------------------------
   // Two kinds of heading fold: folder groups, which only the grouped lists have, and project
@@ -3285,6 +3357,7 @@ export function SessionSidebar({
                         {...tree}
                         node={peer.id}
                         embedded={{ grouped, filter, depth: 1, routes: navRoutes.current }}
+                        reveal={reveal?.node === peer.id ? reveal : null}
                         recents={NO_RECENTS}
                         onReuse={noop}
                         onRemoveRecent={noop}

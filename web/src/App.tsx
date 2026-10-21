@@ -19,7 +19,13 @@ import { setFaviconStatus } from "@/lib/favicon";
 import { projectForDir } from "@/lib/projects";
 import type { Project, RemoteConnection, SessionInfo, ShellInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
-import { SessionSidebar, type PeerSidebar, type SessionListTab, folderProgress } from "@/components/SessionSidebar";
+import {
+  SessionSidebar,
+  type PeerSidebar,
+  type SessionListTab,
+  type SessionReveal,
+  folderProgress,
+} from "@/components/SessionSidebar";
 import { ACTIVITY_MARK, activityDetail as activityDetailOf, sessionActivity } from "@/components/ActivityMark";
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
@@ -108,6 +114,10 @@ export function App() {
   });
   // A session's shell picked in the Shells tab, to be brought forward in that session's tab bar.
   const [revealShell, setRevealShell] = useState<{ sessionId: string; focus: ShellFocus } | null>(null);
+  // A session just started, reopened or forked, for the sessions list to unfold down to and scroll to.
+  const [revealSession, setRevealSession] = useState<SessionReveal | null>(null);
+  const showInList = (node: string | null, id: string) =>
+    setRevealSession((cur) => ({ node, id, n: (cur?.n ?? 0) + 1 }));
   const focusSeq = useRef(0);
   const [sshDialog, setSshDialog] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(() => readUrlState().session ?? null);
@@ -1166,6 +1176,7 @@ export function App() {
     } else setSessions((prev) => [...prev.filter((x) => x.id !== s.id && x.id !== replaced), s]);
     setActiveNode(node);
     setActiveId(s.id);
+    showInList(node, s.id);
     clearMainArea(); // the new session takes over the main area, like selecting one does
     // Launching can start from the Files tab or the Recent list; pull both sidebar levels back to the
     // session list so the new session is visible and shown as selected.
@@ -1286,6 +1297,7 @@ export function App() {
     // Node and id together: wherever the view has gone meanwhile, this is a session it can show.
     setActiveNode(node);
     setActiveId(created.id);
+    showInList(node, created.id);
     setSidebarOpen(false);
   }
 
@@ -1329,6 +1341,7 @@ export function App() {
     if (forkFromNode) mesh.patchSession(forkFromNode, s);
     setActiveNode(forkFromNode);
     setActiveId(s.id);
+    showInList(forkFromNode, s.id);
     clearMainArea();
   }
 
@@ -1444,6 +1457,7 @@ export function App() {
                 self={selfNode}
                 peers={peerSidebars()}
                 onNewHere={() => openNew()}
+                reveal={revealSession}
                 onNewInFolder={newSessionInFolder}
                 onRevealFolder={revealFolderInFiles}
                 onNewInProject={newSessionInProject}
@@ -1523,6 +1537,7 @@ export function App() {
                       openNew();
                       setSidebarOpen(false);
                     }}
+                    reveal={revealSession}
                     onNewInFolder={newSessionInFolder}
                     onRevealFolder={revealFolderInFiles}
                     onNewInProject={newSessionInProject}
