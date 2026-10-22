@@ -203,6 +203,8 @@ export interface FileBrowserHandle {
   // Switch this browser into the git-changes view; `dir` also moves it to that root ("" = the
   // session's own), for the header's badge, which can name another worktree's branch.
   showChanges: (dir?: string) => void;
+  // Move to the worktree the header's badge has just been pointed at ("" = the session's own).
+  followWorktree: (dir: string) => void;
 }
 
 /** Two-pane file explorer: searchable, auto-refreshing directory tree + preview/edit pane. */
@@ -573,6 +575,25 @@ export const FileBrowser = forwardRef<
     [sessionId, isLinkedRoot, rootDir, pickRoot]
   );
 
+  // The header's badge was pointed at another worktree -- from the badge, or by the session itself --
+  // so the panel goes where the work now is. The worktrees are re-read first: one the session has
+  // only just created is missing from the list loaded at open, and the check that drops a root gone
+  // stale would throw the move straight back out.
+  const followWorktree = useCallback(
+    async (dir: string) => {
+      let list: GitWorktree[];
+      try {
+        list = await api.gitWorktrees(sessionId);
+      } catch {
+        return;
+      }
+      setWorktrees(list);
+      const tree = dir ? list.find((w) => samePath(w.path, dir)) : undefined;
+      if (!dir || tree) void pickRoot(!tree || tree.isCurrent ? "" : tree.path);
+    },
+    [api, sessionId, pickRoot]
+  );
+
   // ---- Linked folders: extra folders attached to this session, browsable in place of its own tree.
   // The list lives on the server (keyed by the session's working folder) so it survives a restart.
   const [linkOpen, setLinkOpen] = useState(false);
@@ -892,7 +913,11 @@ export const FileBrowser = forwardRef<
   );
 
   // Let SessionView open a file here (from a terminal file-link click) or switch to the changes view.
-  useImperativeHandle(ref, () => ({ revealFile, showChanges: openChanges }), [revealFile, openChanges]);
+  useImperativeHandle(
+    ref,
+    () => ({ revealFile, showChanges: openChanges, followWorktree: (dir) => void followWorktree(dir) }),
+    [revealFile, openChanges, followWorktree]
+  );
 
   // When the session actually changes, restore that session's last-previewed file (or clear if it
   // had none). Skips the initial mount (and StrictMode's double-invoked mount effect), so the

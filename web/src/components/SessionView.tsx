@@ -864,9 +864,22 @@ export function SessionView({
   // The worktree whose branch the header's badge names (see BranchBadge); "" = the session's own
   // folder. It is the session's, not this browser's, so it follows a pick made anywhere -- another
   // browser, or the session itself through /api/self/worktree.
+  // A move of it takes the Files panel along: the badge names where the work is, and that is the
+  // folder worth browsing. Only a move does -- the seed that arrives when the session is opened
+  // carries the panel's own saved root, which may have been put somewhere else on purpose since.
   const [gitRoot, setGitRoot] = useState(() => loadSessionUi(uiKey).gitWorktree ?? "");
   useEffect(() => {
-    const read = () => setGitRoot(loadSessionUi(uiKey).gitWorktree ?? "");
+    let last = loadSessionUi(uiKey).gitWorktree ?? "";
+    const read = (seed?: boolean) => {
+      const next = loadSessionUi(uiKey).gitWorktree ?? "";
+      setGitRoot(next);
+      if (seed === false && next !== last) {
+        // A panel not mounted yet reads its root from the bag when it is.
+        if (fileBrowserRef.current) fileBrowserRef.current.followWorktree(next);
+        else saveSessionUi(uiKey, { worktree: next });
+      }
+      last = next;
+    };
     read();
     return subscribeSessionUi(uiKey, read);
   }, [session.id]);
