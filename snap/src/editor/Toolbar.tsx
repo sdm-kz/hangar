@@ -7,6 +7,7 @@ import {
   Download,
   Grid3x3,
   Highlighter,
+  ImagePlus,
   Minus,
   MousePointer2,
   MoveUpRight,
@@ -58,6 +59,9 @@ export function Toolbar(props: {
   onClearCrop(): void;
   onCopy(): void;
   onSave(): void;
+  /** Take another capture into this editor, to send with this one. */
+  onAdd(): void;
+  canAdd: boolean;
   /** The zoom in percent of the capture's real size; null until there is a picture. */
   zoom: number | null;
   fitted: boolean;
@@ -146,6 +150,9 @@ export function Toolbar(props: {
           <Divider />
         </>
       )}
+      <IconButton title={`Add a capture, to send with this one (${mod}⇧N)`} disabled={!props.canAdd} onClick={props.onAdd}>
+        <ImagePlus size={17} />
+      </IconButton>
       <IconButton title={`Copy image (${mod}C)`} onClick={props.onCopy}>
         <Copy size={17} />
       </IconButton>

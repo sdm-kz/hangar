@@ -33,6 +33,14 @@ window. macOS and Linux snap to whole windows.
 The **editor** opens with the message box focused. The quickest path is: capture, type, `Ctrl+Enter`
 (`⌘↵` on a Mac).
 
+**Several pictures, one message.** *Add a capture* (the picture-plus button in the toolbar,
+`Ctrl+Shift+N`, `⌘⇧N`) steps the editor aside and picks a region as the hotkey does; the cut-out joins
+this editor instead of opening one of its own, and `Esc` comes back without one. With more than one, a
+strip over the picture shows them in the order they will go: click one to draw on it (each keeps its
+own drawing, crop, undo and zoom), drag one to move it, × to drop it; `Ctrl+PageUp`/`Ctrl+PageDown` step
+through them. Send, Postpone and New session take them all, with the one message, up to 10 (as many as
+a Hangar message takes). Copy and Save act on the one on show.
+
 **Postpone** (`Ctrl+Shift+Enter`, `⌘⇧↵`) puts the picture and the message in the session's postponed
 messages instead of its prompt, for when Claude is busy: they wait in the Postponed bar under the
 session in Hangar, to be sent from there or by its auto-send. Needs a Hangar that has
@@ -135,13 +143,18 @@ The log (`…\logs`) records how long each overlay and editor took to come up.
   `/api/sessions`) and its colours from the web UI's own table (`@web/lib/sessionColors`), so neither
   rule has a second copy here.
 - The editor (`src/editor`) draws with Konva in the capture's own pixels. It exports the full-resolution
-  PNG and hands it back over IPC. `api.rs` uploads it (`POST /api/sessions/{id}/fs/upload-image`) and
-  sends the message with the uploaded path (`POST /api/sessions/{id}/message`, `images`), which types
-  both into the session the way the web composer does. Postpone sends the same body to
+  PNGs and hands them back over IPC in one body, each after its length. `api.rs` uploads them one by one
+  (`POST /api/sessions/{id}/fs/upload-image`) and sends the message with the uploaded paths
+  (`POST /api/sessions/{id}/message`, `images`), which types them into the session the way the web
+  composer does.
+- An editor holds several captures as pages (`src/editor/pages.ts`). Only the one on show has a Konva
+  stage; the others keep their drawing and the PNG they were flattened to when left, so sending doesn't
+  have to draw them again. *Add a capture* (`add_capture`) hides the editor, waits for it to be off the
+  screen, and runs a capture whose result goes to that editor (`capture-added`) instead of a new one. Postpone sends the same body to
   `POST /api/sessions/{id}/postponed/items`, which the server adds to the pool itself, under the lock
   its other writers take, rather than this app rewriting the whole pool and racing a browser's save.
-- A new session can't be handed a picture through `upload-image`, which needs a session, so the PNG
-  goes into `<folder>/.hangar/uploads` through the plain file API (`/api/fs/mkdir`,
-  `/api/fs/upload`) and its path into the first prompt (`POST /api/sessions`, `initialPrompt`), which
-  Claude reads as the image it names. `projectId` and `groupId` on that request are the server's to
+- A new session can't be handed a picture through `upload-image`, which needs a session, so the PNGs
+  go into `<folder>/.hangar/uploads` through the plain file API (`/api/fs/mkdir`,
+  `/api/fs/upload`) and their paths into the first prompt (`POST /api/sessions`, `initialPrompt`), which
+  Claude reads as the images they name. `projectId` and `groupId` on that request are the server's to
   settle: it links the folder and files the session, or refuses before launching anything.

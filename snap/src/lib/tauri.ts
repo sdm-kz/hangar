@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { packImages } from "./pack";
 
 export type Mode = "region" | "window" | "fullscreen" | "freeform";
 
@@ -38,6 +39,12 @@ export interface EditorInit {
   width: number;
   height: number;
   scale: number;
+}
+
+/** A capture added to an editor through its "Add a capture". */
+export interface CaptureAdded {
+  editor: string;
+  id: string;
 }
 
 export interface SessionItem {
@@ -141,9 +148,10 @@ export const api = {
   capturePng: (id: string) => invoke<ArrayBuffer>("capture_png", { id }),
   editorReady: () => invoke<void>("editor_ready"),
   listSessions: () => invoke<SessionsView>("list_sessions"),
-  /** Send the capture into the session's prompt, or with `postpone` into its postponed messages. */
-  sendCapture: (png: Uint8Array, session: SessionItem, text: string, postpone = false) =>
-    invoke<void>("send_capture", png, {
+  /** Send the captures, in order, with one message into the session's prompt, or with `postpone` into
+   *  its postponed messages. */
+  sendCapture: (pngs: Uint8Array[], session: SessionItem, text: string, postpone = false) =>
+    invoke<void>("send_capture", packImages(pngs), {
       headers: {
         "x-session-id": encodeURIComponent(session.id),
         "x-claude-session-id": encodeURIComponent(session.claudeSessionId ?? ""),
@@ -153,9 +161,9 @@ export const api = {
     }),
   newSessionOptions: () => invoke<NewSessionOptions>("new_session_options"),
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
-  /** Start a session in `target.folder`, its first prompt the message with the capture. */
-  startSession: (png: Uint8Array, target: NewSessionTarget, text: string) =>
-    invoke<StartedSession>("start_session", png, {
+  /** Start a session in `target.folder`, its first prompt the message with the captures. */
+  startSession: (pngs: Uint8Array[], target: NewSessionTarget, text: string) =>
+    invoke<StartedSession>("start_session", packImages(pngs), {
       headers: {
         "x-folder": encodeURIComponent(target.folder.trim()),
         "x-project-id": encodeURIComponent(target.projectId ?? ""),
@@ -174,6 +182,10 @@ export const api = {
   signIn: (password: string) => invoke<void>("sign_in", { password }),
   signOut: () => invoke<void>("sign_out"),
   startCapture: (mode: Mode) => invoke<void>("start_capture_cmd", { mode }),
+  /** Take another capture for this editor: it hides meanwhile, and hears `capture-added`. */
+  addCapture: (mode: Mode) => invoke<void>("add_capture", { mode }),
+  /** Let go of a capture this editor no longer holds. */
+  dropCapture: (id: string) => invoke<void>("drop_capture", { id }),
   suspendHotkeys: (suspended: boolean) => invoke<void>("suspend_hotkeys", { suspended }),
   openSettings: () => invoke<void>("open_settings"),
 };

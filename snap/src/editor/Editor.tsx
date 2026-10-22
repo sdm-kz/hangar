@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api, apiErrorText, type ApiError, type EditorInit, type NewSessionTarget } from "@/lib/tauri";
+import { api, apiErrorText, type ApiError, type CaptureAdded, type NewSessionTarget } from "@/lib/tauri";
 import { Canvas, type CanvasHandle } from "./Canvas";
 import { MessageBox, SendBar, SessionPicker, type SendState, type SessionsState } from "./Composer";
 import { NewSessionPanel, type OptionsState } from "./NewSession";
+import { MAX_PAGES, loadPage, moveItem, neighbourOf, rawPng, thumbnail, type Page } from "./pages";
+import { PageStrip } from "./PageStrip";
 import {
   CANVAS_MIN,
   COMPOSER_HEIGHT,
@@ -105,8 +107,10 @@ function toPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
  * capture, type, ⌘↵ — and Esc leaves it, so the single-letter tool keys work.
  */
 export default function Editor({ id }: { id: string }) {
-  const [init, setInit] = useState<EditorInit | null>(null);
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
+  // The captures in this editor, in the order they go, and the one on show. That one's drawing and view
+  // are `history` and `view` below; the others' wait in their pages (see pages.ts).
+  const [pages, setPages] = useState<Page[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const prefs = useMemo(loadPrefs, []);
   const [history, setHistory] = useState(emptyHistory);
@@ -144,10 +148,34 @@ export default function Editor({ id }: { id: string }) {
   const messageColRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
+  const activePage = pages.find((p) => p.id === activeId) ?? null;
+  const image = activePage?.image ?? null;
+  const init = activePage?.init ?? null;
   const doc = history.present;
   const captureScale = init?.scale ?? 1;
   const strokeWidth = WEIGHTS[weight] * captureScale;
-  const dirty = history.past.length > 0 || message.trim().length > 0;
+  const dirty = pages.length > 1 || history.past.length > 0 || message.trim().length > 0;
+
+  // What the page changes below work from. They run one after another (`enqueue`), each from what the
+  // last left, which a render may not have caught up with yet — so the pages and the one on show are
+  // written here as they are set, not when React renders them.
+  const pagesRef = useRef(pages);
+  const activeRef = useRef(activeId);
+  const historyRef = useRef(history);
+  historyRef.current = history;
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const updatePages = useCallback((change: (pages: Page[]) => Page[]) => {
+    pagesRef.current = change(pagesRef.current);
+    setPages(pagesRef.current);
+  }, []);
+  const show = useCallback((page: Page) => {
+    activeRef.current = page.id;
+    setActiveId(page.id);
+    setHistory(page.history);
+    setView(page.view);
+    setSelectedId(null);
+  }, []);
 
   useEffect(() => {
     try {
@@ -164,35 +192,25 @@ export default function Editor({ id }: { id: string }) {
   useEffect(() => {
     let cancelled = false;
     let loading = false;
-    let url: string | null = null;
     const load = () => {
       if (loading) return;
       loading = true;
-      Promise.all([api.editorInit(id), api.capturePng(id)]).then(
-        ([info, png]) => {
-          if (cancelled) return;
+      loadPage(id).then(
+        (page) => {
+          if (cancelled) return URL.revokeObjectURL(page.url);
           // The tool, colour and weight as the last editor left them — this page may have been loaded
           // long before that one closed.
           const latest = loadPrefs();
           setTool(latest.tool);
           setColor(latest.color);
           setWeight(latest.weight);
-          setInit(info);
-        // A blob: URL is this page's own origin, so the canvas it's drawn into can still be exported.
-        url = URL.createObjectURL(new Blob([png], { type: "image/png" }));
-        const img = new Image();
-          img.onload = () => {
-            if (cancelled) return;
-            setImage(img);
-            void getCurrentWindow().setTitle(`Hangar Snap — ${info.width} × ${info.height}`);
-            void api.editorReady().then(() => messageRef.current?.focus());
-          };
-          img.onerror = () => setLoadError("Could not load the capture.");
-          img.src = url!;
+          updatePages(() => [page]);
+          show(page);
+          void api.editorReady().then(() => messageRef.current?.focus());
         },
         (e) => {
           loading = false;
-          if (String(e) !== "pending") setLoadError(String(e));
+          if (String(e) !== "pending") setLoadError(e instanceof Error ? e.message : String(e));
         },
       );
     };
@@ -203,9 +221,15 @@ export default function Editor({ id }: { id: string }) {
     return () => {
       cancelled = true;
       void ready.then((f) => f());
-      if (url) URL.revokeObjectURL(url);
     };
-  }, [id]);
+  }, [id, updatePages, show]);
+  useEffect(() => () => pagesRef.current.forEach((p) => URL.revokeObjectURL(p.url)), []);
+
+  useEffect(() => {
+    if (!init) return;
+    const which = pages.length > 1 ? ` — ${pages.findIndex((p) => p.id === activeId) + 1} of ${pages.length}` : "";
+    void getCurrentWindow().setTitle(`Hangar Snap — ${init.width} × ${init.height}${which}`);
+  }, [init, pages, activeId]);
 
   useEffect(() => saveLayout({ composer: composerHeight, picker: pickerWidth }), [composerHeight, pickerWidth]);
 
@@ -337,8 +361,9 @@ export default function Editor({ id }: { id: string }) {
       (e: ApiError | string) => setSessions({ kind: "error", error: e }),
     );
   }, []);
+  const loaded = pages.length > 0;
   useEffect(() => {
-    if (!init) return; // a spare editor, still waiting for its capture, has no one to send to yet
+    if (!loaded) return; // a spare editor, still waiting for its capture, has no one to send to yet
     loadSessions();
     const onFocus = () => loadSessions();
     window.addEventListener("focus", onFocus);
@@ -347,7 +372,7 @@ export default function Editor({ id }: { id: string }) {
       window.removeEventListener("focus", onFocus);
       clearInterval(timer);
     };
-  }, [init, loadSessions]);
+  }, [loaded, loadSessions]);
 
   const loadOptions = useCallback(() => {
     setOptions({ kind: "loading" });
@@ -391,10 +416,134 @@ export default function Editor({ id }: { id: string }) {
     return canvas ? toPng(canvas) : null;
   }, []);
 
-  const flash = (text: string) => {
+  const flash = useCallback((text: string) => {
     setToast(text);
     setTimeout(() => setToast((t) => (t === text ? null : t)), 1800);
-  };
+  }, []);
+
+  // ---- Pages ----
+  const queue = useRef(Promise.resolve());
+  const enqueue = useCallback((job: () => Promise<void> | void) => {
+    const next = queue.current.then(job).catch((e) => console.error("Page change failed", e));
+    queue.current = next;
+    return next;
+  }, []);
+
+  /** The page on show as it stands — its drawing, view and flattened picture — to be put away. */
+  const snapshotActive = useCallback(async (): Promise<Page | null> => {
+    const current = pagesRef.current.find((p) => p.id === activeRef.current);
+    if (!current) return null;
+    canvasRef.current?.finishEditing();
+    setSelectedId(null);
+    await settle();
+    const history = historyRef.current;
+    let { flat, thumb } = current;
+    if (flat?.doc !== history.present) {
+      const canvas = canvasRef.current?.exportCanvas();
+      if (canvas) {
+        flat = { doc: history.present, png: toPng(canvas) };
+        thumb = thumbnail(canvas);
+      }
+    }
+    return { ...current, history, view: viewRef.current, flat, thumb };
+  }, []);
+
+  /** Put the page on show away as it stands, then show `next` (added after the others when `add`). */
+  const switchTo = useCallback(
+    async (next: Page, add = false) => {
+      if (add && pagesRef.current.some((p) => p.id === next.id)) return URL.revokeObjectURL(next.url);
+      const left = await snapshotActive();
+      updatePages((ps) => {
+        const kept = left ? ps.map((p) => (p.id === left.id ? left : p)) : ps;
+        return add ? [...kept, next] : kept;
+      });
+      show(next);
+    },
+    [snapshotActive, updatePages, show],
+  );
+
+  const selectPage = useCallback(
+    (pageId: string) =>
+      enqueue(async () => {
+        const target = pagesRef.current.find((p) => p.id === pageId);
+        if (target && pageId !== activeRef.current) await switchTo(target);
+      }),
+    [enqueue, switchTo],
+  );
+  // The page to go to is worked out in its turn, so a key held down steps once per press.
+  const stepPage = useCallback(
+    (dir: 1 | -1) =>
+      enqueue(async () => {
+        const ps = pagesRef.current;
+        const next = ps[ps.findIndex((p) => p.id === activeRef.current) + dir];
+        if (next) await switchTo(next);
+      }),
+    [enqueue, switchTo],
+  );
+  const removePage = useCallback(
+    (pageId: string) =>
+      enqueue(() => {
+        const ps = pagesRef.current;
+        const index = ps.findIndex((p) => p.id === pageId);
+        if (index < 0 || ps.length < 2) return;
+        if (pageId === activeRef.current) show(neighbourOf(ps, index)!);
+        updatePages((all) => all.filter((p) => p.id !== pageId));
+        URL.revokeObjectURL(ps[index].url);
+        void api.dropCapture(pageId);
+      }),
+    [enqueue, show, updatePages],
+  );
+  const movePage = useCallback(
+    (from: number, to: number) => enqueue(() => updatePages((ps) => moveItem(ps, from, to))),
+    [enqueue, updatePages],
+  );
+
+  // A capture taken through "Add a capture" joins the others and is shown. Loaded in its turn, so a
+  // send pressed meanwhile waits for it rather than going without it.
+  useEffect(() => {
+    const added = listen<CaptureAdded>("capture-added", (e) => {
+      if (e.payload.editor !== id) return;
+      void enqueue(() =>
+        loadPage(e.payload.id).then(
+          (page) => switchTo(page, true),
+          (err) => flash(err instanceof Error ? err.message : String(err)),
+        ),
+      );
+    });
+    return () => void added.then((f) => f());
+  }, [id, enqueue, switchTo, flash]);
+
+  const working = send.kind === "sending" || send.kind === "sent";
+  const canAdd = loaded && pages.length < MAX_PAGES && !working;
+  const addCapture = useCallback(() => {
+    if (!canAdd) return;
+    canvasRef.current?.finishEditing();
+    api.addCapture("region").catch((e) => flash(apiErrorText(e)));
+  }, [canAdd, flash]);
+
+  // The strip shows the page on show with its drawing, a moment after it changes.
+  useEffect(() => {
+    if (pages.length < 2 || !activeId) return;
+    const timer = setTimeout(() => {
+      const canvas = canvasRef.current?.exportCanvas();
+      if (!canvas) return;
+      const thumb = thumbnail(canvas);
+      updatePages((ps) => ps.map((p) => (p.id === activeId ? { ...p, thumb } : p)));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [doc, activeId, pages.length, updatePages]);
+
+  /** Every page flattened, in order: the one on show as it is now, the others as they were left. */
+  const exportAll = useCallback(async (): Promise<Uint8Array[]> => {
+    let pngs: Promise<Uint8Array>[] = [];
+    await enqueue(async () => {
+      const current = await snapshotActive();
+      if (current) updatePages((ps) => ps.map((p) => (p.id === current.id ? current : p)));
+      pngs = pagesRef.current.map((p) => p.flat?.png ?? rawPng(p));
+    });
+    if (pngs.length === 0) throw new Error("Nothing to send");
+    return Promise.all(pngs);
+  }, [enqueue, snapshotActive, updatePages]);
 
   const close = useCallback(() => void getCurrentWindow().destroy(), []);
   const requestClose = useCallback(() => {
@@ -409,9 +558,8 @@ export default function Editor({ id }: { id: string }) {
       if (!s || send.kind === "sending" || send.kind === "sent") return;
       setSend({ kind: "sending", postpone });
       try {
-        const png = await exportPng();
-        if (!png) throw new Error("Nothing to send");
-        await api.sendCapture(png, s, message.trim(), postpone);
+        const pngs = await exportAll();
+        await api.sendCapture(pngs, s, message.trim(), postpone);
         setSend({ kind: "sent", postpone });
         setTimeout(close, 650);
       } catch (e) {
@@ -420,23 +568,22 @@ export default function Editor({ id }: { id: string }) {
         else if ((e as ApiError)?.kind === "notFound") loadSessions();
       }
     },
-    [items, target, send.kind, exportPng, message, close, loadSessions],
+    [items, target, send.kind, exportAll, message, close, loadSessions],
   );
 
   const doStart = useCallback(async () => {
     if (!newTarget.folder.trim() || send.kind === "sending" || send.kind === "sent") return;
     setSend({ kind: "sending", postpone: false });
     try {
-      const png = await exportPng();
-      if (!png) throw new Error("Nothing to send");
-      const started = await api.startSession(png, newTarget, message.trim());
+      const pngs = await exportAll();
+      const started = await api.startSession(pngs, newTarget, message.trim());
       setSend({ kind: "sent", postpone: false, started: started.name });
       if (started.note) flash(started.note);
       setTimeout(close, started.note ? 2500 : 900);
     } catch (e) {
       setSend({ kind: "error", message: apiErrorText(e) });
     }
-  }, [newTarget, send.kind, exportPng, message, close]);
+  }, [newTarget, send.kind, exportAll, message, close, flash]);
 
   const copy = useCallback(async () => {
     try {
@@ -446,7 +593,7 @@ export default function Editor({ id }: { id: string }) {
     } catch (e) {
       flash(apiErrorText(e));
     }
-  }, [exportPng]);
+  }, [exportPng, flash]);
 
   const save = useCallback(async () => {
     try {
@@ -456,7 +603,7 @@ export default function Editor({ id }: { id: string }) {
     } catch (e) {
       flash(apiErrorText(e));
     }
-  }, [exportPng]);
+  }, [exportPng, flash]);
 
   const pickColor = (c: string) => {
     setColor(c);
@@ -504,6 +651,17 @@ export default function Editor({ id }: { id: string }) {
         e.preventDefault();
         if (creating) void doStart();
         else void doSend(undefined, e.shiftKey);
+        return;
+      }
+      // As do these: adding a capture, and stepping through them.
+      if (mod && e.shiftKey && !e.altKey && e.code === "KeyN") {
+        e.preventDefault();
+        addCapture();
+        return;
+      }
+      if (mod && !e.shiftKey && (e.key === "PageDown" || e.key === "PageUp")) {
+        e.preventDefault();
+        stepPage(e.key === "PageDown" ? 1 : -1);
         return;
       }
       // The zoom keys work from anywhere, the message box included: they mean nothing to a text field.
@@ -593,7 +751,7 @@ export default function Editor({ id }: { id: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirmClose, close, doSend, items, query, copy, save, selectedId, doc, onCommit, requestClose, zoomStep, actualSize]);
+  }, [confirmClose, close, doSend, items, query, copy, save, selectedId, doc, onCommit, requestClose, zoomStep, actualSize, addCapture, stepPage]);
 
   if (loadError) {
     return <div className="flex h-full items-center justify-center text-muted-foreground">{loadError}</div>;
@@ -618,12 +776,26 @@ export default function Editor({ id }: { id: string }) {
         onClearCrop={() => onCommit({ ...doc, crop: null })}
         onCopy={() => void copy()}
         onSave={() => void save()}
+        onAdd={addCapture}
+        canAdd={canAdd}
         zoom={image ? percent(viewScale, dpr) : null}
         fitted={view.zoom === null}
         onZoom={zoomStep}
         onZoomToggle={() => (view.zoom === null ? actualSize() : setView(FIT))}
         mod={MOD}
       />
+      {pages.length > 1 && (
+        <PageStrip
+          pages={pages}
+          active={activeId}
+          onSelect={(pageId) => void selectPage(pageId)}
+          onRemove={(pageId) => void removePage(pageId)}
+          onMove={(from, to) => void movePage(from, to)}
+          onAdd={addCapture}
+          canAdd={canAdd}
+          mod={MOD}
+        />
+      )}
       <div
         ref={areaRef}
         className={clsx(
@@ -644,6 +816,8 @@ export default function Editor({ id }: { id: string }) {
             onPointerDown={() => (document.activeElement as HTMLElement | null)?.blur()}
           >
             <Canvas
+              // A page of its own: a drawing in progress or a text being typed stays with its picture.
+              key={activeId}
               ref={canvasRef}
               image={image}
               viewScale={viewScale}
@@ -667,7 +841,7 @@ export default function Editor({ id }: { id: string }) {
         )}
         {confirmClose && (
           <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-panel px-4 py-2.5 shadow-xl">
-            <span>Discard this screenshot?</span>
+            <span>Discard {pages.length > 1 ? `these ${pages.length} screenshots` : "this screenshot"}?</span>
             <button className="rounded-md border border-border px-2.5 py-1 hover:bg-muted" onClick={() => setConfirmClose(false)}>
               Keep editing <kbd>Esc</kbd>
             </button>
@@ -704,7 +878,11 @@ export default function Editor({ id }: { id: string }) {
             onSend={() => void (creating ? doStart() : doSend())}
             onPostpone={() => void doSend(undefined, true)}
             mod={MOD}
-            hint={out ? `${out.width} × ${out.height} PNG · ${isMac ? "⌥" : "Alt+"}↑↓ picks the session` : undefined}
+            hint={
+              out
+                ? `${pages.length > 1 ? `${pages.length} pictures · this one ` : ""}${out.width} × ${out.height} PNG · ${isMac ? "⌥" : "Alt+"}↑↓ picks the session`
+                : undefined
+            }
           />
         </div>
         {/* In the gap between the message and the list, which is the handle's own width. */}

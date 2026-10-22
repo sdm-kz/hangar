@@ -46,6 +46,8 @@ const TRAY_ID: &str = "main";
 
 /// A finished capture, waiting in its editor.
 struct Capture {
+    /// The editor it is in. Its first capture shares its id; one added to it later has its own.
+    editor: String,
     png: Vec<u8>,
     width: u32,
     height: u32,
@@ -60,6 +62,9 @@ struct AppState {
     /// Set from the hotkey until the overlays close: a second hotkey meanwhile is ignored rather than
     /// freezing the screen with our own overlays on it.
     capturing: AtomicBool,
+    /// The editor the capture in progress is added to (its "Add a capture"), hidden until it ends;
+    /// none for a capture that opens an editor of its own.
+    adding_to: Mutex<Option<String>>,
     /// Bumped per capture, so a stale watchdog can tell its capture has already finished.
     generation: AtomicU64,
     overlays_ready: AtomicU64,
@@ -103,54 +108,66 @@ fn notify_error(app: &AppHandle, message: impl Into<String>) {
 /// ends the capture: a commit on one overlay, Esc on another, an overlay closed by the OS. Taking it is
 /// atomic, so only the first of those acts — a second monitor's click a moment later finds it gone.
 pub fn start_capture(app: &AppHandle, mode: Mode) {
-    let st = state(app);
-    if st.capturing.swap(true, Ordering::SeqCst) {
-        log::info!("Ignoring {mode:?}: a capture is already in progress");
+    if !claim_capture(app, mode) {
         return;
     }
+    let app = app.clone();
+    std::thread::spawn(move || run_capture(&app, mode));
+}
+
+/// Mark a capture as in progress; false when one already is.
+fn claim_capture(app: &AppHandle, mode: Mode) -> bool {
+    if state(app).capturing.swap(true, Ordering::SeqCst) {
+        log::info!("Ignoring {mode:?}: a capture is already in progress");
+        return false;
+    }
+    true
+}
+
+/// The capture [`claim_capture`] claimed, from freezing the screens on. On a background thread.
+fn run_capture(app: &AppHandle, mode: Mode) {
+    let st = state(app);
     let generation = st.generation.fetch_add(1, Ordering::SeqCst) + 1;
     st.overlays_ready.store(0, Ordering::SeqCst);
     *st.started.lock().unwrap() = Some(Instant::now());
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let snapshot = match capture::take(mode) {
-            Ok(s) => Arc::new(s),
-            Err(e) => {
-                state(&app).capturing.store(false, Ordering::SeqCst);
-                notify_error(&app, e);
-                return;
-            }
-        };
-        if mode == Mode::Fullscreen {
-            let index = frame_under_cursor(&app, &snapshot);
-            *state(&app).committed.lock().unwrap() = Some(Instant::now());
-            finish(&app, &snapshot, index, &Selection::Full);
+    let snapshot = match capture::take(mode) {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            return_to_editor(app);
+            state(app).capturing.store(false, Ordering::SeqCst);
+            notify_error(app, e);
             return;
         }
-        // Encode every frame now, in parallel, so each overlay's request finds its picture ready.
-        for i in 0..snapshot.frames.len() {
-            let s = snapshot.clone();
-            std::thread::spawn(move || {
-                s.frames[i].png();
-            });
+    };
+    if mode == Mode::Fullscreen {
+        let index = frame_under_cursor(app, &snapshot);
+        *state(app).committed.lock().unwrap() = Some(Instant::now());
+        finish(app, &snapshot, index, &Selection::Full);
+        return;
+    }
+    // Encode every frame now, in parallel, so each overlay's request finds its picture ready.
+    for i in 0..snapshot.frames.len() {
+        let s = snapshot.clone();
+        std::thread::spawn(move || {
+            s.frames[i].png();
+        });
+    }
+    *state(app).snapshot.lock().unwrap() = Some(snapshot.clone());
+    for (i, frame) in snapshot.frames.iter().enumerate() {
+        if let Err(e) = windows::present_overlay(app, i, frame.monitor, generation) {
+            log::error!("Could not open the overlay for screen {i}: {e}");
         }
-        *state(&app).snapshot.lock().unwrap() = Some(snapshot.clone());
-        for (i, frame) in snapshot.frames.iter().enumerate() {
-            if let Err(e) = windows::present_overlay(&app, i, frame.monitor, generation) {
-                log::error!("Could not open the overlay for screen {i}: {e}");
-            }
-        }
-        // Not held across the wait below: the frames are hundreds of megabytes on big screens.
-        drop(snapshot);
-        // An overlay that never reports ready (its page failed) would leave the hotkey dead; give up on
-        // the capture instead.
-        std::thread::sleep(Duration::from_secs(10));
-        let st = state(&app);
-        if st.generation.load(Ordering::SeqCst) == generation && st.overlays_ready.load(Ordering::SeqCst) == 0 {
-            log::error!("No overlay came up; abandoning the capture");
-            cancel_capture(&app);
-        }
-    });
+    }
+    // Not held across the wait below: the frames are hundreds of megabytes on big screens.
+    drop(snapshot);
+    // An overlay that never reports ready (its page failed) would leave the hotkey dead; give up on
+    // the capture instead.
+    std::thread::sleep(Duration::from_secs(10));
+    let st = state(app);
+    if st.generation.load(Ordering::SeqCst) == generation && st.overlays_ready.load(Ordering::SeqCst) == 0 {
+        log::error!("No overlay came up; abandoning the capture");
+        cancel_capture(app);
+    }
 }
 
 /// The frame of the monitor the pointer is on — the primary one when that can't be told.
@@ -179,14 +196,53 @@ fn frame_under_cursor(app: &AppHandle, snapshot: &Snapshot) -> usize {
 /// The editor is created (hidden) before the overlays close: with no webview left in between, WebView2
 /// shuts its browser process down and the editor waits on a cold start of a new one.
 fn finish(app: &AppHandle, snapshot: &Snapshot, index: usize, selection: &Selection) {
+    // An editor that asked for this capture, and is still there to take it.
+    let adding_to = state(app)
+        .adding_to
+        .lock()
+        .unwrap()
+        .clone()
+        .filter(|id| app.get_webview_window(&format!("{}{id}", windows::EDITOR_PREFIX)).is_some());
     if let Some(frame) = snapshot.frames.get(index) {
-        match capture::cut(frame, selection) {
-            Some(image) => open_editor(app, image, frame),
-            None => log::info!("Nothing selected"),
+        match (capture::cut(frame, selection), adding_to) {
+            (Some(image), Some(editor)) => add_to_editor(app, &editor, image, frame),
+            (Some(image), None) => open_editor(app, image, frame),
+            (None, _) => log::info!("Nothing selected"),
         }
     }
     windows::hide_overlays(app);
+    // Before the next capture may start: it could be another editor's, and set `adding_to` to that.
+    return_to_editor(app);
     state(app).capturing.store(false, Ordering::SeqCst);
+}
+
+/// Show again the editor a capture was being added to, now that it is over. Nothing when the capture
+/// opened an editor of its own.
+fn return_to_editor(app: &AppHandle) {
+    let Some(id) = state(app).adding_to.lock().unwrap().take() else { return };
+    if let Some(window) = app.get_webview_window(&format!("{}{id}", windows::EDITOR_PREFIX)) {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// What an editor is told when a capture has been added to it.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureAdded {
+    editor: String,
+    id: String,
+}
+
+/// Put the capture into `editor`, beside the ones it has, under an id of its own.
+fn add_to_editor(app: &AppHandle, editor: &str, image: image::RgbaImage, frame: &capture::Frame) {
+    let st = state(app);
+    let (width, height) = image.dimensions();
+    let id = st.next_capture.fetch_add(1, Ordering::SeqCst).to_string();
+    let png = imageops::encode_png_fast(&image);
+    let capture = Capture { editor: editor.to_string(), png, width, height, scale: frame.scale };
+    st.captures.lock().unwrap().insert(id.clone(), Arc::new(capture));
+    let _ = app.emit("capture-added", CaptureAdded { editor: editor.to_string(), id });
 }
 
 /// Hand the capture to the spare editor — already loaded, so it only has to draw the picture — or
@@ -194,7 +250,7 @@ fn finish(app: &AppHandle, snapshot: &Snapshot, index: usize, selection: &Select
 fn open_editor(app: &AppHandle, image: image::RgbaImage, frame: &capture::Frame) {
     let st = state(app);
     let (width, height) = image.dimensions();
-    let capture = Arc::new(Capture { png: imageops::encode_png_fast(&image), width, height, scale: frame.scale });
+    let png = imageops::encode_png_fast(&image);
     // Only a spare whose window is already built: one still being built stays the spare, for the
     // capture after this, rather than ending up a hidden editor nothing will ever use.
     let spare = {
@@ -217,7 +273,8 @@ fn open_editor(app: &AppHandle, image: image::RgbaImage, frame: &capture::Frame)
             }
         }
     };
-    st.captures.lock().unwrap().insert(id.clone(), capture);
+    let capture = Capture { editor: id.clone(), png, width, height, scale: frame.scale };
+    st.captures.lock().unwrap().insert(id.clone(), Arc::new(capture));
     if let Err(e) = windows::place_editor(&window, (width, height), frame.monitor, frame.scale) {
         log::warn!("Could not place the editor: {e}");
     }
@@ -276,6 +333,7 @@ fn cancel_capture(app: &AppHandle) {
         return;
     }
     windows::hide_overlays(app);
+    return_to_editor(app);
     st.capturing.store(false, Ordering::SeqCst);
 }
 
@@ -422,16 +480,37 @@ fn raw_body(request: &Request<'_>) -> Result<Vec<u8>, String> {
     }
 }
 
+/// The PNGs of a request whose body holds several, each after its length (4 bytes, little-endian) —
+/// how the editor hands over every capture it has in one call.
+fn split_images(body: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    let mut images = Vec::new();
+    let mut rest = body;
+    while !rest.is_empty() {
+        let (len, tail) = rest.split_first_chunk::<4>().ok_or("A picture's length is cut short")?;
+        let len = u32::from_le_bytes(*len) as usize;
+        if len == 0 || len > tail.len() {
+            return Err("A picture is cut short".into());
+        }
+        images.push(tail[..len].to_vec());
+        rest = &tail[len..];
+    }
+    if images.is_empty() {
+        return Err("Nothing to send".into());
+    }
+    Ok(images)
+}
+
 fn header_text(request: &Request<'_>, name: &str) -> Option<String> {
     let value = request.headers().get(name)?.to_str().ok()?;
     Some(percent_encoding::percent_decode_str(value).decode_utf8_lossy().into_owned())
 }
 
-/// Send the flattened PNG (the request body) and the message (`x-text`, percent-encoded) to the session
-/// `x-session-id`.
+/// Send the flattened PNGs (the request body, see [`split_images`]) and the message (`x-text`,
+/// percent-encoded) to the session `x-session-id`, as one message.
 #[tauri::command]
 async fn send_capture(app: AppHandle, request: Request<'_>) -> Result<(), ApiError> {
-    let png = raw_body(&request).map_err(ApiError::Failed)?;
+    let body = raw_body(&request).map_err(ApiError::Failed)?;
+    let pngs = split_images(&body).map_err(ApiError::Failed)?;
     let session_id = header_text(&request, "x-session-id").ok_or(ApiError::Failed("No session chosen".into()))?;
     let claude_session_id = header_text(&request, "x-claude-session-id").filter(|s| !s.is_empty());
     let text = header_text(&request, "x-text").unwrap_or_default();
@@ -439,11 +518,15 @@ async fn send_capture(app: AppHandle, request: Request<'_>) -> Result<(), ApiErr
     let postpone = header_text(&request, "x-postpone").is_some_and(|v| v == "1");
 
     let (client, server) = client(&app)?;
-    let path = client.upload_image(&session_id, &png).await?;
+    // One at a time, in order: the paths go into the message in the order the pictures were in.
+    let mut paths = Vec::with_capacity(pngs.len());
+    for png in &pngs {
+        paths.push(client.upload_image(&session_id, png).await?);
+    }
     if postpone {
-        client.postpone(&session_id, text.trim(), &[path]).await?;
+        client.postpone(&session_id, text.trim(), &paths).await?;
     } else {
-        client.message(&session_id, text.trim(), &[path]).await?;
+        client.message(&session_id, text.trim(), &paths).await?;
     }
     if let Err(e) = state(&app).store.touch_recent(&server, &session_id, claude_session_id.as_deref(), now_ms()) {
         log::warn!("Could not remember the session: {e}");
@@ -495,12 +578,13 @@ struct StartedSession {
 }
 
 /// Start a new session in `x-folder` (optionally `x-project-id`, `x-group-id`), told the message
-/// (`x-text`) and shown the PNG in the request body. The picture goes into the folder's uploads
-/// first and its path into the first prompt, which is how a session that isn't running yet can be
-/// handed one: Claude reads an image it is given the path of.
+/// (`x-text`) and shown the PNGs in the request body (see [`split_images`]). The pictures go into the
+/// folder's uploads first and their paths into the first prompt, which is how a session that isn't
+/// running yet can be handed them: Claude reads an image it is given the path of.
 #[tauri::command]
 async fn start_session(app: AppHandle, request: Request<'_>) -> Result<StartedSession, ApiError> {
-    let png = raw_body(&request).map_err(ApiError::Failed)?;
+    let body = raw_body(&request).map_err(ApiError::Failed)?;
+    let pngs = split_images(&body).map_err(ApiError::Failed)?;
     let folder = header_text(&request, "x-folder").map(|f| f.trim().to_string()).filter(|f| !f.is_empty());
     let folder = folder.ok_or(ApiError::Failed("Choose a folder for the session".into()))?;
     let project = header_text(&request, "x-project-id").filter(|s| !s.is_empty());
@@ -512,14 +596,18 @@ async fn start_session(app: AppHandle, request: Request<'_>) -> Result<StartedSe
     // would otherwise come into being and have the session start in it.
     let folder = client.resolve_folder(&folder).await?;
     let uploads = format!("{}/.hangar/uploads", folder.trim_end_matches(['/', '\\']));
-    let name = format!("pasted-{}.png", chrono::Local::now().format("%Y%m%d-%H%M%S-%3f"));
-    let image = client.upload_to_folder(&uploads, &name, &png).await?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f").to_string();
+    let mut images = Vec::with_capacity(pngs.len());
+    for (i, png) in pngs.iter().enumerate() {
+        let name = if pngs.len() == 1 { format!("pasted-{stamp}.png") } else { format!("pasted-{stamp}-{}.png", i + 1) };
+        images.push(client.upload_to_folder(&uploads, &name, png).await?);
+    }
     let created = client
         .create_session(&api::NewSession {
             folder: &folder,
             project_id: project.as_deref(),
             group_id: group.as_deref(),
-            prompt: &initial_prompt(&text, &image),
+            prompt: &initial_prompt(&text, &images),
         })
         .await?;
     if let Err(e) = client.add_recent_folder(&folder).await {
@@ -533,14 +621,15 @@ async fn start_session(app: AppHandle, request: Request<'_>) -> Result<StartedSe
     Ok(StartedSession { id: created.id, name: created.name, note })
 }
 
-/// The first prompt of a session started from a capture: the message, then the picture's path on a
+/// The first prompt of a session started from a capture: the message, then each picture's path on a
 /// line of its own, which Claude reads as the image it names.
-fn initial_prompt(text: &str, image_path: &str) -> String {
+fn initial_prompt(text: &str, image_paths: &[String]) -> String {
     let text = text.trim();
+    let images = image_paths.join("\n");
     if text.is_empty() {
-        image_path.to_string()
+        images
     } else {
-        format!("{text}\n\n{image_path}")
+        format!("{text}\n\n{images}")
     }
 }
 
@@ -705,6 +794,32 @@ fn sign_out(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn start_capture_cmd(app: AppHandle, mode: Mode) {
     start_capture(&app, mode);
+}
+
+/// Forget a capture its editor has dropped, rather than hold its PNG until the editor closes.
+#[tauri::command]
+fn drop_capture(app: AppHandle, window: WebviewWindow, id: String) {
+    let Some(editor) = window.label().strip_prefix(windows::EDITOR_PREFIX) else { return };
+    state(&app).captures.lock().unwrap().retain(|key, c| !(key == &id && c.editor == editor));
+}
+
+/// Take another capture for the editor that asks, rather than opening one of its own. The editor
+/// steps aside while the screens are frozen and comes back when the capture ends, with or without it.
+#[tauri::command]
+fn add_capture(app: AppHandle, window: WebviewWindow, mode: Mode) -> Result<(), String> {
+    let id = window.label().strip_prefix(windows::EDITOR_PREFIX).ok_or("Not an editor")?.to_string();
+    if !claim_capture(&app, mode) {
+        return Err("A capture is already in progress".into());
+    }
+    *state(&app).adding_to.lock().unwrap() = Some(id);
+    let _ = window.hide();
+    std::thread::spawn(move || {
+        // Long enough for the window to be off the screen (Windows fades it out), or the frozen frame
+        // would show it.
+        std::thread::sleep(Duration::from_millis(250));
+        run_capture(&app, mode);
+    });
+    Ok(())
 }
 
 /// Let go of the hotkeys while the settings page records a new one — else pressing the current combo
@@ -942,6 +1057,8 @@ pub fn run() {
             sign_in,
             sign_out,
             start_capture_cmd,
+            add_capture,
+            drop_capture,
             suspend_hotkeys,
             open_settings,
         ])
@@ -977,6 +1094,7 @@ pub fn run() {
                 captures: Mutex::new(HashMap::new()),
                 next_capture: AtomicU64::new(1),
                 spare_editor: Mutex::new(None),
+                adding_to: Mutex::new(None),
                 started: Mutex::new(None),
                 committed: Mutex::new(None),
                 hotkeys: Mutex::new(HashMap::new()),
@@ -1008,7 +1126,7 @@ pub fn run() {
                 let label = window.label();
                 if let Some(id) = label.strip_prefix(windows::EDITOR_PREFIX) {
                     let st = state(app);
-                    st.captures.lock().unwrap().remove(id);
+                    st.captures.lock().unwrap().retain(|_, c| c.editor != id);
                     let mut spare = st.spare_editor.lock().unwrap();
                     if spare.as_deref() == Some(id) {
                         *spare = None;
@@ -1040,9 +1158,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn first_prompt_is_the_message_then_the_picture() {
-        assert_eq!(initial_prompt("  what is wrong here?\n", r"C:\w\a.png"), "what is wrong here?\n\nC:\\w\\a.png");
-        assert_eq!(initial_prompt("   ", "/w/a.png"), "/w/a.png", "no message: the picture alone");
+    fn first_prompt_is_the_message_then_the_pictures() {
+        let one = [r"C:\w\a.png".to_string()];
+        assert_eq!(initial_prompt("  what is wrong here?\n", &one), "what is wrong here?\n\nC:\\w\\a.png");
+        assert_eq!(initial_prompt("   ", &["/w/a.png".to_string()]), "/w/a.png", "no message: the picture alone");
+        let two = ["/w/a.png".to_string(), "/w/b.png".to_string()];
+        assert_eq!(initial_prompt("compare", &two), "compare\n\n/w/a.png\n/w/b.png", "a line each");
+    }
+
+    #[test]
+    fn splits_the_pictures_by_their_lengths() {
+        let mut body = Vec::new();
+        for png in [&b"abc"[..], &b"de"[..]] {
+            body.extend_from_slice(&(png.len() as u32).to_le_bytes());
+            body.extend_from_slice(png);
+        }
+        assert_eq!(split_images(&body).unwrap(), vec![b"abc".to_vec(), b"de".to_vec()]);
+        assert!(split_images(&[]).is_err(), "nothing to send");
+        assert!(split_images(&[5, 0, 0, 0, b'x']).is_err(), "a length past the end");
+        assert!(split_images(&[1, 0]).is_err(), "a length cut short");
     }
 
     #[test]
