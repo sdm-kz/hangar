@@ -56,6 +56,9 @@ remembers what it was last set to.
 - Tools: select `V`, arrow `A`, rectangle `R`, ellipse `E`, line `L`, pen `P`, highlighter `H`,
   text `T`, numbered step `N`, pixelate `B`, crop `C`. These single-letter keys work while focus isn't in
   a text box; `Esc` leaves the message box.
+- Crop: drag the area to keep; it can be moved and resized while the crop tool is out. `Enter`, the
+  green ✓ or a double-click inside it applies it, and the picture becomes just that area, to draw on and
+  send; `Ctrl+Z` brings the rest back. × drops a crop being set, or shows the whole picture again.
 - `Shift` snaps lines to 45° and squares shapes.
 - Any shape can be dragged, and clicking it selects it: then `Delete` removes it, and colour and weight
   apply to it. Double-click text to edit it.

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import clsx from "clsx";
 import {
+  Check,
   Circle,
   Copy,
   Crop,
@@ -55,7 +56,10 @@ export function Toolbar(props: {
   canRedo: boolean;
   onUndo(): void;
   onRedo(): void;
-  hasCrop: boolean;
+  /** A crop being set, one applied, or neither. */
+  crop: "set" | "applied" | "none";
+  onApplyCrop(): void;
+  /** Drop the crop being set, or else show the whole picture again. */
   onClearCrop(): void;
   onCopy(): void;
   onSave(): void;
@@ -94,14 +98,22 @@ export function Toolbar(props: {
           </IconButton>
         ))}
       </div>
-      {props.hasCrop && (
-        <button
-          className="ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
-          onClick={props.onClearCrop}
-          title="Remove the crop"
+      {props.crop === "set" && (
+        <IconButton
+          title="Apply the crop: keep only what is inside it (Enter, or double-click it) · undo brings the rest back"
+          onClick={props.onApplyCrop}
         >
-          <X size={13} /> Crop
-        </button>
+          {/* Green, not the accent: the crop tool beside it is already lit in that. */}
+          <Check size={18} strokeWidth={2.5} className="text-ok" />
+        </IconButton>
+      )}
+      {props.crop !== "none" && (
+        <IconButton
+          title={props.crop === "set" ? "Remove the crop" : "Show the whole picture again"}
+          onClick={props.onClearCrop}
+        >
+          <X size={17} />
+        </IconButton>
       )}
       <Divider />
       <div className="flex items-center gap-1" role="radiogroup" aria-label="Colour">
@@ -189,7 +201,7 @@ export function IconButton({
       disabled={disabled}
       onClick={onClick}
       className={clsx(
-        "flex h-8 items-center justify-center rounded-md transition-colors disabled:opacity-35",
+        "flex h-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:opacity-35",
         active ? "bg-accent text-accent-foreground" : "text-foreground/80 hover:bg-muted enabled:hover:text-foreground",
         width ?? "w-8",
       )}

@@ -5,10 +5,13 @@ import { getStroke } from "perfect-freehand";
 import type { Rect } from "@/lib/tauri";
 import {
   addShape,
+  applyCrop,
   arrowPolygon,
   contrastOn,
   dragRect,
+  exportArea,
   fontSizeFor,
+  frameOf,
   isMeaningful,
   moveShape,
   newId,
@@ -34,7 +37,8 @@ interface Props {
   image: HTMLImageElement;
   /** CSS pixels per capture pixel, as the window shows it. */
   viewScale: number;
-  /** The part of the scaled picture in view: its size, and how far into the picture it starts. */
+  /** The part of the scaled picture in view: its size, and how far into what is on show (the crop
+   *  applied, or all of it) it starts. */
   viewport: { width: number; height: number; panX: number; panY: number };
   /** Device pixels per CSS pixel; past one capture pixel per device pixel the picture is drawn sharp. */
   dpr: number;
@@ -70,6 +74,10 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
   const dragOrigin = useRef<{ x: number; y: number } | null>(null);
   const width = image.naturalWidth;
   const height = image.naturalHeight;
+  // The part of the picture on show. Everything stays in the capture's pixels; only the view moves.
+  const frame = frameOf(doc, width, height);
+  const panX = viewport.panX + frame.x * viewScale;
+  const panY = viewport.panY + frame.y * viewScale;
   const interactive = !DRAWS_OVER.includes(tool);
   const shadow = useMemo(
     () => ({ shadowColor: "black", shadowBlur: 3 * captureScale, shadowOpacity: 0.35, shadowForStrokeEnabled: true }),
@@ -84,7 +92,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
 
   const pointer = (): { x: number; y: number } => {
     const p = stageRef.current?.getPointerPosition() ?? { x: 0, y: 0 };
-    return { x: (p.x + viewport.panX) / viewScale, y: (p.y + viewport.panY) / viewScale };
+    return { x: (p.x + panX) / viewScale, y: (p.y + panY) / viewScale };
   };
 
   // Keep the transformer on whatever is selected and resizable.
@@ -113,7 +121,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
       const stage = stageRef.current;
       const layer = contentRef.current;
       if (!stage || !layer) return null;
-      const area = doc.crop ?? { x: 0, y: 0, width, height };
+      const area = exportArea(doc, width, height);
       // Draw at 1:1 and unpanned so the export has exactly the capture's pixels, then put the view back
       // before the next frame paints — nothing on screen changes. toCanvas draws into a canvas of its
       // own size, so the stage itself needn't grow to the picture's.
@@ -191,7 +199,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
     const p = pointer();
     const shift = e.evt.shiftKey;
     if (cropDraft) {
-      const r = dragRect(o.x, o.y, clamp(p.x, 0, width), clamp(p.y, 0, height), shift);
+      const r = dragRect(o.x, o.y, clamp(p.x, frame.x, frame.x + frame.width), clamp(p.y, frame.y, frame.y + frame.height), shift);
       setCropDraft({ x: r.x, y: r.y, width: r.w, height: r.h });
       return;
     }
@@ -314,8 +322,8 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
         height={viewport.height}
         scaleX={viewScale}
         scaleY={viewScale}
-        x={-viewport.panX}
-        y={-viewport.panY}
+        x={-panX}
+        y={-panY}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -335,9 +343,14 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
           {draft && <ShapeView shape={draft} image={image} shadow={shadow} captureScale={captureScale} listening={false} drafting />}
         </Layer>
         <Layer>
-          {crop && <CropShade crop={crop} width={width} height={height} active={tool === "crop"} viewScale={viewScale} />}
+          {crop && <CropShade crop={crop} frame={frame} active={tool === "crop"} viewScale={viewScale} />}
           {tool === "crop" && doc.crop && !cropDraft && (
-            <CropHandle crop={doc.crop} bounds={{ width, height }} onChange={(c) => onCommit({ ...doc, crop: c })} />
+            <CropHandle
+              crop={doc.crop}
+              bounds={frame}
+              onChange={(c) => onCommit({ ...doc, crop: c })}
+              onApply={() => onCommit(applyCrop(doc))}
+            />
           )}
           <Transformer
             ref={transformerRef}
@@ -372,7 +385,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
         <TextEditor
           edit={textEdit}
           viewScale={viewScale}
-          pan={viewport}
+          pan={{ panX, panY }}
           onChange={(text) => setTextEdit({ ...textEdit, shape: { ...textEdit.shape, text } })}
           onDone={(text) => commitText(textEdit, text)}
         />
@@ -580,15 +593,15 @@ function Pixelated({
   return <KImage {...node} x={x} y={y} width={w} height={h} image={canvas} />;
 }
 
-/** Everything outside the crop, shaded; dark while cropping, darker once it's set. */
-function CropShade({ crop, width, height, active, viewScale }: { crop: Rect; width: number; height: number; active: boolean; viewScale: number }) {
+/** Everything on show outside the crop, shaded; dark while cropping, darker once it's set. */
+function CropShade({ crop, frame, active, viewScale }: { crop: Rect; frame: Rect; active: boolean; viewScale: number }) {
   return (
     <>
       <KShape
         listening={false}
         sceneFunc={(ctx) => {
           ctx.beginPath();
-          ctx.rect(0, 0, width, height);
+          ctx.rect(frame.x, frame.y, frame.width, frame.height);
           ctx.rect(crop.x, crop.y, crop.width, crop.height);
           ctx.fillStyle = active ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.72)";
           ctx.fill("evenodd");
@@ -608,8 +621,8 @@ function CropShade({ crop, width, height, active, viewScale }: { crop: Rect; wid
   );
 }
 
-/** The crop, draggable and resizable while the crop tool is out. */
-function CropHandle({ crop, bounds, onChange }: { crop: Rect; bounds: { width: number; height: number }; onChange(c: Rect): void }) {
+/** The crop, draggable and resizable while the crop tool is out; a double-click applies it. */
+function CropHandle({ crop, bounds, onChange, onApply }: { crop: Rect; bounds: Rect; onChange(c: Rect): void; onApply(): void }) {
   const rectRef = useRef<Konva.Rect>(null);
   const trRef = useRef<Konva.Transformer>(null);
   useEffect(() => {
@@ -636,6 +649,7 @@ function CropHandle({ crop, bounds, onChange }: { crop: Rect; bounds: { width: n
         draggable
         onDragEnd={() => done(true)}
         onTransformEnd={() => done(false)}
+        onDblClick={onApply}
         onMouseEnter={(e) => (e.target.getStage()!.container().style.cursor = "move")}
         onMouseLeave={(e) => (e.target.getStage()!.container().style.cursor = "crosshair")}
       />

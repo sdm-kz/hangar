@@ -53,10 +53,12 @@ export type Shape =
   | (Styled & { kind: "step"; x: number; y: number; n: number })
   | { id: string; kind: "blur"; x: number; y: number; w: number; h: number };
 
-export type Doc = { shapes: Shape[]; crop: Rect | null };
+/** `crop` is a crop being set, shaded round on the picture; `frame` is one applied, and the picture
+ *  shows only that much. Applying is an edit like any other, so undo puts the rest back. */
+export type Doc = { shapes: Shape[]; crop: Rect | null; frame: Rect | null };
 export type History = { past: Doc[]; present: Doc; future: Doc[] };
 
-export const emptyHistory = (): History => ({ past: [], present: { shapes: [], crop: null }, future: [] });
+export const emptyHistory = (): History => ({ past: [], present: { shapes: [], crop: null, frame: null }, future: [] });
 
 /** Make `doc` the present, as one undoable step. */
 export function commit(h: History, doc: Doc): History {
@@ -211,27 +213,39 @@ export function isMeaningful(shape: Shape, minSize: number): boolean {
 }
 
 /**
- * Where a crop the person just moved (`moved`) or resized ends up, in whole pixels inside a picture of
- * `bounds`. Moved, it keeps its size and stops at the edges; resized, whatever went past an edge is cut
- * off. Edges are rounded rather than position and size, so the two can't round apart into a column of
- * nothing past the picture. Null when nothing of it is left.
+ * Where a crop the person just moved (`moved`) or resized ends up, in whole pixels inside `bounds` (the
+ * picture, or the crop already applied to it). Moved, it keeps its size and stops at the edges; resized,
+ * whatever went past an edge is cut off. Edges are rounded rather than position and size, so the two
+ * can't round apart into a column of nothing past the picture. Null when nothing of it is left.
  */
-export function placeCrop(r: Rect, moved: boolean, bounds: { width: number; height: number }): Rect | null {
+export function placeCrop(r: Rect, moved: boolean, bounds: Rect): Rect | null {
+  const right = bounds.x + bounds.width;
+  const bottom = bounds.y + bounds.height;
   const w = Math.min(r.width, bounds.width);
   const h = Math.min(r.height, bounds.height);
-  const x0 = moved ? Math.min(Math.max(r.x, 0), bounds.width - w) : Math.max(0, r.x);
-  const y0 = moved ? Math.min(Math.max(r.y, 0), bounds.height - h) : Math.max(0, r.y);
-  const x1 = Math.min(bounds.width, (moved ? x0 : r.x) + w);
-  const y1 = Math.min(bounds.height, (moved ? y0 : r.y) + h);
+  const x0 = moved ? Math.min(Math.max(r.x, bounds.x), right - w) : Math.max(bounds.x, r.x);
+  const y0 = moved ? Math.min(Math.max(r.y, bounds.y), bottom - h) : Math.max(bounds.y, r.y);
+  const x1 = Math.min(right, (moved ? x0 : r.x) + w);
+  const y1 = Math.min(bottom, (moved ? y0 : r.y) + h);
   const left = Math.round(x0);
   const top = Math.round(y0);
   const out = { x: left, y: top, width: Math.round(x1) - left, height: Math.round(y1) - top };
   return out.width > 0 && out.height > 0 ? out : null;
 }
 
-/** The area that will be exported: the crop, or the whole picture. */
+/** The part of the picture on show: the crop applied to it, or all of it. */
+export function frameOf(doc: Doc, width: number, height: number): Rect {
+  return doc.frame ?? { x: 0, y: 0, width, height };
+}
+
+/** The area that will be exported: the crop being set, or what is on show. */
 export function exportArea(doc: Doc, width: number, height: number): Rect {
-  return doc.crop ?? { x: 0, y: 0, width, height };
+  return doc.crop ?? frameOf(doc, width, height);
+}
+
+/** The crop being set made the picture's edges. */
+export function applyCrop(doc: Doc): Doc {
+  return doc.crop ? { ...doc, frame: doc.crop, crop: null } : doc;
 }
 
 let counter = 0;

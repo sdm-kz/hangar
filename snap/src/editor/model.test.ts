@@ -10,6 +10,9 @@ import {
   moveShape,
   nextStep,
   placeCrop,
+  applyCrop,
+  exportArea,
+  frameOf,
   redo,
   removeShape,
   restyle,
@@ -102,7 +105,7 @@ describe("geometry", () => {
 });
 
 describe("placeCrop", () => {
-  const bounds = { width: 1000, height: 500 };
+  const bounds = { x: 0, y: 0, width: 1000, height: 500 };
   it("keeps a moved crop's size, stopping at the edges", () => {
     expect(placeCrop({ x: 800, y: 100, width: 400, height: 100 }, true, bounds)).toEqual({ x: 600, y: 100, width: 400, height: 100 });
     expect(placeCrop({ x: -50, y: -20, width: 400, height: 100 }, true, bounds)).toEqual({ x: 0, y: 0, width: 400, height: 100 });
@@ -117,6 +120,30 @@ describe("placeCrop", () => {
   });
   it("gives nothing for a crop entirely outside", () => {
     expect(placeCrop({ x: 1200, y: 0, width: 100, height: 100 }, false, bounds)).toBeNull();
+  });
+  it("keeps inside a crop already applied", () => {
+    const applied = { x: 100, y: 50, width: 300, height: 200 };
+    expect(placeCrop({ x: 0, y: 0, width: 100, height: 100 }, true, applied)).toEqual({ x: 100, y: 50, width: 100, height: 100 });
+    expect(placeCrop({ x: 350, y: 200, width: 100, height: 100 }, false, applied)).toEqual({ x: 350, y: 200, width: 50, height: 50 });
+  });
+});
+
+describe("applyCrop", () => {
+  const crop = { x: 10, y: 20, width: 30, height: 40 };
+  it("makes the crop the picture's edges, and exports just that", () => {
+    const doc = applyCrop({ shapes: [], crop, frame: null });
+    expect(doc).toEqual({ shapes: [], crop: null, frame: crop });
+    expect(frameOf(doc, 800, 600)).toEqual(crop);
+    expect(exportArea(doc, 800, 600)).toEqual(crop);
+  });
+  it("is undone like any edit", () => {
+    const set = commit(emptyHistory(), { shapes: [], crop, frame: null });
+    const applied = commit(set, applyCrop(set.present));
+    expect(undo(applied).present).toEqual({ shapes: [], crop, frame: null });
+  });
+  it("leaves a doc with no crop being set alone", () => {
+    const doc = { shapes: [], crop: null, frame: crop };
+    expect(applyCrop(doc)).toBe(doc);
   });
 });
 

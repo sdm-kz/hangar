@@ -24,9 +24,11 @@ import { Toolbar } from "./Toolbar";
 import {
   COLORS,
   WEIGHTS,
+  applyCrop,
   commit,
   emptyHistory,
   exportArea,
+  frameOf,
   redo,
   removeShape,
   restyle,
@@ -241,12 +243,22 @@ export default function Editor({ id }: { id: string }) {
     return () => ro.disconnect();
   }, []);
 
+  // The picture is what is on show of it: the part a crop applied leaves, or all of it.
+  const shown = image ? frameOf(doc, image.naturalWidth, image.naturalHeight) : null;
   // Fitted to the window until zoomed (see view.ts). The handlers below read the sizes through a ref,
   // so they needn't be re-attached each time the window or the zoom changes.
   const imageSize = useMemo<Size>(
-    () => ({ width: image?.naturalWidth ?? 0, height: image?.naturalHeight ?? 0 }),
-    [image],
+    () => ({ width: shown?.width ?? 0, height: shown?.height ?? 0 }),
+    [shown?.width, shown?.height],
   );
+  // Applying a crop, or undoing one, changes what there is to show: the view goes back to fitting it.
+  // Not on a change of page, which brings its own view.
+  const lastFrame = useRef({ page: activeId, frame: doc.frame });
+  useEffect(() => {
+    const last = lastFrame.current;
+    lastFrame.current = { page: activeId, frame: doc.frame };
+    if (last.page === activeId && last.frame !== doc.frame) setView(FIT);
+  }, [activeId, doc.frame]);
   const dpr = useDevicePixelRatio();
   const placement = useMemo(() => place(view, imageSize, area, dpr), [view, imageSize, area, dpr]);
   const viewScale = placement.scale;
@@ -731,7 +743,9 @@ export default function Editor({ id }: { id: string }) {
       }
       if (e.key === "Enter") {
         e.preventDefault();
-        messageRef.current?.focus();
+        // Out with the crop tool, Enter applies the crop being set; otherwise it is back to the message.
+        if (tool === "crop" && doc.crop) onCommit(applyCrop(doc));
+        else messageRef.current?.focus();
         return;
       }
       if (e.code === "Space") {
@@ -751,7 +765,7 @@ export default function Editor({ id }: { id: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirmClose, close, doSend, items, query, copy, save, selectedId, doc, onCommit, requestClose, zoomStep, actualSize, addCapture, stepPage]);
+  }, [confirmClose, close, doSend, items, query, copy, save, selectedId, doc, tool, onCommit, requestClose, zoomStep, actualSize, addCapture, stepPage]);
 
   if (loadError) {
     return <div className="flex h-full items-center justify-center text-muted-foreground">{loadError}</div>;
@@ -772,8 +786,9 @@ export default function Editor({ id }: { id: string }) {
         canRedo={history.future.length > 0}
         onUndo={() => setHistory(undo)}
         onRedo={() => setHistory(redo)}
-        hasCrop={!!doc.crop}
-        onClearCrop={() => onCommit({ ...doc, crop: null })}
+        crop={doc.crop ? "set" : doc.frame ? "applied" : "none"}
+        onApplyCrop={() => onCommit(applyCrop(doc))}
+        onClearCrop={() => onCommit(doc.crop ? { ...doc, crop: null } : { ...doc, frame: null })}
         onCopy={() => void copy()}
         onSave={() => void save()}
         onAdd={addCapture}
