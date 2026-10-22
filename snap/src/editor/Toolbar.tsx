@@ -72,6 +72,16 @@ export function Toolbar(props: {
   const { tool, onTool, color, onColor, weight, onWeight, mod } = props;
   return (
     <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border bg-panel px-2">
+      <IconButton title={`Add a capture, to send with this one (${mod}⇧N)`} disabled={!props.canAdd} onClick={props.onAdd}>
+        <ImagePlus size={17} />
+      </IconButton>
+      <IconButton title={`Copy image (${mod}C)`} onClick={props.onCopy}>
+        <Copy size={17} />
+      </IconButton>
+      <IconButton title={`Save as… (${mod}S)`} onClick={props.onSave}>
+        <Download size={17} />
+      </IconButton>
+      <Divider />
       <div className="flex items-center gap-0.5" role="toolbar" aria-label="Tools">
         {TOOLS.map((t) => (
           <IconButton
@@ -127,38 +137,26 @@ export function Toolbar(props: {
       </IconButton>
       <div className="flex-1" />
       {props.zoom !== null && (
-        <>
-          <div className="flex items-center" role="group" aria-label="Zoom">
-            <IconButton title={`Zoom out (${mod}−)`} onClick={() => props.onZoom(-1)}>
-              <ZoomOut size={17} />
-            </IconButton>
-            <button
-              className="h-8 min-w-[52px] rounded-md px-1.5 text-[12px] tabular-nums text-foreground/80 hover:bg-muted hover:text-foreground"
-              onClick={props.onZoomToggle}
-              title={
-                props.fitted
-                  ? `Fitted to the window · click for actual size (${mod}1)`
-                  : `Click to fit the window (${mod}0) · ${mod}wheel zooms, Space-drag or the wheel moves`
-              }
-            >
-              {props.zoom}%
-            </button>
-            <IconButton title={`Zoom in (${mod}+)`} onClick={() => props.onZoom(1)}>
-              <ZoomIn size={17} />
-            </IconButton>
-          </div>
-          <Divider />
-        </>
+        <div className="flex items-center" role="group" aria-label="Zoom">
+          <IconButton title={`Zoom out (${mod}−)`} onClick={() => props.onZoom(-1)} width="w-7">
+            <ZoomOut size={17} />
+          </IconButton>
+          <button
+            className="h-8 min-w-[38px] rounded-md px-0.5 text-[12px] tabular-nums text-foreground/80 hover:bg-muted hover:text-foreground"
+            onClick={props.onZoomToggle}
+            title={
+              props.fitted
+                ? `Fitted to the window · click for actual size (${mod}1)`
+                : `Click to fit the window (${mod}0) · ${mod}wheel zooms, Space-drag or the wheel moves`
+            }
+          >
+            {props.zoom}%
+          </button>
+          <IconButton title={`Zoom in (${mod}+)`} onClick={() => props.onZoom(1)} width="w-7">
+            <ZoomIn size={17} />
+          </IconButton>
+        </div>
       )}
-      <IconButton title={`Add a capture, to send with this one (${mod}⇧N)`} disabled={!props.canAdd} onClick={props.onAdd}>
-        <ImagePlus size={17} />
-      </IconButton>
-      <IconButton title={`Copy image (${mod}C)`} onClick={props.onCopy}>
-        <Copy size={17} />
-      </IconButton>
-      <IconButton title={`Save as… (${mod}S)`} onClick={props.onSave}>
-        <Download size={17} />
-      </IconButton>
     </div>
   );
 }
@@ -172,12 +170,15 @@ export function IconButton({
   disabled,
   title,
   onClick,
+  width,
   children,
 }: {
   active?: boolean;
   disabled?: boolean;
   title: string;
   onClick(): void;
+  /** A width class in place of w-8, for a tighter group. */
+  width?: string;
   children: ReactNode;
 }) {
   return (
@@ -188,8 +189,9 @@ export function IconButton({
       disabled={disabled}
       onClick={onClick}
       className={clsx(
-        "flex h-8 w-8 items-center justify-center rounded-md transition-colors disabled:opacity-35",
+        "flex h-8 items-center justify-center rounded-md transition-colors disabled:opacity-35",
         active ? "bg-accent text-accent-foreground" : "text-foreground/80 hover:bg-muted enabled:hover:text-foreground",
+        width ?? "w-8",
       )}
     >
       {children}
