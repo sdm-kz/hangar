@@ -59,6 +59,7 @@ import { ToolbarMore, type ToolAction } from "./ToolbarMore";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { OrphanBar } from "./OrphanBar";
 import { UpdateButton } from "./UpdateButton";
+import type { CarryMode } from "./CarryDialog";
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import { navRowProps, useTreeKeyNav } from "@/lib/useTreeKeyNav";
@@ -76,6 +77,8 @@ import {
   Minus,
   MoreVertical,
   GitFork,
+  ArrowRightLeft,
+  Brain,
   Inbox,
   Play,
   Plus,
@@ -1550,6 +1553,7 @@ export interface PeerSidebar {
   onNewInProject?: (project: Project) => void;
   onClone?: (s: SessionInfo) => void;
   onSchedules?: (target?: { conversationId: string; name: string }) => void;
+  onCarry?: (s: SessionInfo, mode: CarryMode) => void;
   /** Start a session on this machine — the "+" on its heading. */
   onNew?: () => void;
   projects: Project[];
@@ -1604,6 +1608,7 @@ export function SessionSidebar({
   onReorderRecent,
   onSearch,
   onSchedules,
+  onCarry,
   tab,
   onTabChange,
   projects,
@@ -1660,6 +1665,9 @@ export function SessionSidebar({
   // with a session to pre-fill a schedule that continues that conversation, or with nothing to open
   // the list.
   onSchedules?: (target?: { conversationId: string; name: string }) => void;
+  // Take a session's work to another machine: its conversation, resumed there, and the folder's memory —
+  // or the memory alone. Absent with no other machine to take it to.
+  onCarry?: (s: SessionInfo, mode: CarryMode) => void;
   // Sessions/Recent list tab. Owned by App so creating a session can pull the sidebar back to the
   // list, and so the desktop sidebar and the mobile drawer stay on the same tab.
   tab: SessionListTab;
@@ -2770,6 +2778,10 @@ export function SessionSidebar({
                       ? () => onSchedules({ conversationId: s.claudeSessionId!, name: s.name })
                       : null
                 }
+                onContinueElsewhere={
+                  !onCarry ? undefined : s.claudeSessionId ? () => onCarry(s, "continue") : null
+                }
+                onCopyMemory={onCarry ? () => onCarry(s, "memory") : undefined}
                 onRestore={() => onRestore(s.id)}
                 onStop={() => onStop(s.id)}
                 onRemove={() => onRemove(s.id)}
@@ -3538,6 +3550,8 @@ function RowActionsMenu({
   onClone,
   onFork,
   onSchedule,
+  onContinueElsewhere,
+  onCopyMemory,
   onRestore,
   onStop,
   onRemove,
@@ -3574,6 +3588,10 @@ function RowActionsMenu({
    * young to have reported one has no handle to hold.
    */
   onSchedule?: (() => void) | null;
+  /** Resume this conversation on another machine. Null until there is a conversation id to carry. */
+  onContinueElsewhere?: (() => void) | null;
+  /** Copy what Claude remembers about this session's folder to another machine. */
+  onCopyMemory?: () => void;
   onRestore: () => void;
   onStop: () => void;
   onRemove: () => void;
@@ -3797,6 +3815,15 @@ function RowActionsMenu({
                   to hanging off the session it was forked from, which is where it belongs and was
                   never the user's arrangement to begin with. */}
               {nested && item("Move out", <CornerLeftUp className="size-3.5" />, onUnnest)}
+              {/* Waits on the conversation id like Fork and Schedule: it is the conversation that goes. */}
+              {onContinueElsewhere !== undefined && item(
+                "Continue on another machine…",
+                <ArrowRightLeft className="size-3.5" />,
+                onContinueElsewhere ?? (() => {}),
+                false,
+                !onContinueElsewhere && "Needs Claude's conversation id — send this session a message first"
+              )}
+              {onCopyMemory && item("Copy memory to another machine…", <Brain className="size-3.5" />, onCopyMemory)}
 
               <div className="my-1 border-t" />
 

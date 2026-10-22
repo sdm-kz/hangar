@@ -74,6 +74,8 @@ export interface CreateSessionRequest {
   watchdogEnabled?: boolean; // opt into the hang watchdog (auto-continue on API errors); off by default
   continue?: boolean; // resume the folder's most recent conversation (claude --continue) instead of starting fresh
   resumeSessionId?: string | null; // resume this exact Claude conversation (claude --resume <id>); wins over `continue`
+  forkSession?: boolean; // with resumeSessionId: branch it into a new conversation (--fork-session) rather than continue it
+  color?: string | null;
 }
 
 export interface DirEntry {
@@ -326,6 +328,31 @@ export type TransferSide =
   | { kind: "remote"; tab: string }
   // `node`: the node the session is on, when it isn't the one the paste is sent to (a copy between machines).
   | { kind: "session"; sessionId: string; dir?: string; node?: string };
+
+/** A memory file Claude keeps for a folder (`~/.claude/projects/<folder>/memory/`), as another machine is offered it. */
+export interface ClaudeMemoryFile {
+  name: string;
+  description: string | null;
+  /** Null when it is too large to carry. */
+  content: string | null;
+  size: number;
+  modifiedUtc: string;
+  /** Its line in MEMORY.md, the index; null when the index doesn't list it. */
+  indexLine: string | null;
+}
+
+export interface ClaudeMemoryListing {
+  folder: string;
+  files: ClaudeMemoryFile[];
+}
+
+/** What a merge of memory into a folder did, file by file. */
+export interface ClaudeMemoryImport {
+  copied: string[];
+  same: string[];
+  kept: string[];
+  missing: string[];
+}
 
 export interface TransferResult {
   paths: string[];

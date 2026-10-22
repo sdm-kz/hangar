@@ -984,6 +984,7 @@ internal static class Program
 
         // This node, its peers, and /n/{id}/… — see Nodes/NodeEndpoints.cs.
         Nodes.NodeEndpoints.Map(app);
+        Nodes.CarryEndpoints.Map(app);
 
         // ---- Session templates (named launch presets: project, folder, prompt template) ------------
         // Same shape as the projects above — every mutation answers with the whole list, so a client

@@ -30,6 +30,8 @@ import type {
   RemoteStatus,
   SshConfigInfo,
   TransferResult,
+  ClaudeMemoryListing,
+  ClaudeMemoryImport,
   TransferSide,
   ScheduleEntry,
   SessionInfo,
@@ -941,6 +943,26 @@ function createApi(base: string) {
       form.append("path", folder);
       for (const f of files) form.append("files", f);
       return multipart(`/api/remote/${tab}/upload`, form);
+    },
+    // Claude's own data for a folder on this machine: its memory, read to offer it to another machine.
+    claudeMemory(dir: string): Promise<ClaudeMemoryListing> {
+      return request(`/api/claude/memory?dir=${encodeURIComponent(dir)}`);
+    },
+    // Merge memory from `fromDir` on node `node` (null: this one) into `toDir` here. A file already here with
+    // other text is replaced only when named in `replace`.
+    importClaudeMemory(node: string | null, fromDir: string, toDir: string, names: string[], replace: string[]): Promise<ClaudeMemoryImport> {
+      return request("/api/claude/memory/import", {
+        method: "POST",
+        body: JSON.stringify({ node, fromDir, toDir, names, replace }),
+      });
+    },
+    // Copy conversation `conversationId` from node `node` (null: this one) under `toDir`'s data here, so a
+    // session started here can resume it. `written` is false when a copy as long was already here.
+    importConversation(node: string | null, conversationId: string, toDir: string): Promise<{ written: boolean }> {
+      return request("/api/claude/conversations/import", {
+        method: "POST",
+        body: JSON.stringify({ node, conversationId, toDir }),
+      });
     },
     /** Copy or move between any two panels — see the server's FileTransfer. */
     transfer(from: TransferSide, paths: string[], to: TransferSide, folder: string, move: boolean): Promise<TransferResult> {

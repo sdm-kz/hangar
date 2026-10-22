@@ -395,7 +395,7 @@ Each phase ships on its own and leaves the app working.
 | 3 | **Node-aware SPA** | `NodeContext`/`useApi`, `sessionKey`, `?node=`; a remote session opens and works fully by deep link | `api.ts`, `App.tsx`, `SessionView`, `TerminalPane`, views |
 | 4 | **Mesh & sidebar** | `NodeMesh`, `nodes[]` on `/hub/events`, node headings, offline state, search across nodes, tray submenus, push for remote sessions | `Nodes/NodeMesh.cs`, `SessionHub`, `PushNotifier`, sidebar, tray |
 | 5 | **Launch anywhere** | node picker in New session, per-node folder picker/recents/templates, per-node schedules list, per-node update button | `NewSessionDialog`, `FolderPicker`, `ScheduleDialog`, `UpdateButton` |
-| 6 | *Later* | cross-node projects (`folders: [{ node, path }]`), resume a conversation on another node (copy the transcript, map the folder), ~~copy/paste files between nodes~~ (done), share the peer list across the mesh, mDNS discovery, child sessions on another node from the `run-session` skill | — |
+| 6 | *Later* | cross-node projects (`folders: [{ node, path }]`), ~~resume a conversation on another node (copy the transcript, map the folder)~~ (done), ~~copy a folder's Claude memory to another node~~ (done), ~~copy/paste files between nodes~~ (done), share the peer list across the mesh, mDNS discovery, child sessions on another node from the `run-session` skill | — |
 
 **As built (phase 6, first part).**
 - Copy/paste between machines, by the paste's own path (`POST /api/transfer`).
@@ -422,6 +422,29 @@ Each phase ships on its own and leaves the app working.
   - Like `stage-update.ps1`, it won't drop commits the node's build has.
   - On a Mac it signs the binaries.
 - A link naming this node by its own id opens here, as if it named no node.
+
+**As built (phase 6, second part).** Carrying Claude's own data for a folder: a session's row menu has
+*Continue on another machine…* and *Copy memory to another machine…* (`CarryDialog`).
+- Claude keeps a folder's conversations and memory under `~/.claude/projects/<path, every non-alphanumeric
+  as "-">/` (`CLAUDE_CONFIG_DIR` honoured). `Sessions/ClaudeProjectData.cs` finds that folder (case-blind on
+  Windows; a name Claude cut short at 200 characters is found by its prefix, never invented).
+- A transcript resumes as it is under the target's folder: the paths in it are history, and claude takes its
+  working directory from where it starts. Tested PC → NAS by hand before building it. So nothing is rewritten.
+- Like a paste, the machine it lands on does the work and reads the other through its pairing
+  (`Nodes/CarryEndpoints.cs`): `GET /api/claude/memory?dir=`, `GET /api/claude/conversations/{id}/bundle`
+  (a zip of the transcript and its `<id>/` folder) on the source; `POST /api/claude/memory/import` and
+  `POST /api/claude/conversations/import` on the target. One hop, as everywhere.
+- Memory merges, never overwrites by default: a file not there is copied, the same text is left, other text is
+  kept unless ticked to replace. Copied files get the source's `MEMORY.md` line appended to the target's index.
+  Names are held to one plain `*.md` name, never the index. The dialog marks a memory that names paths of the
+  other kind of machine (`C:\` going to a Mac, `/Users/` to Windows).
+- The resumed session is a fork (`--resume <id> --fork-session`), so two machines never go on writing one
+  conversation id. A transcript already on the target that is as long or longer is kept. *Close it here* stops
+  the original once the new one has started.
+- The folder there is suggested by the longest run of trailing names it shares with a folder known on that
+  machine (`lib/carry.ts` `matchFolder`): `C:\Git\acme\webapp` finds `/Users/me/git/acme/webapp`.
+- From a peer, only to this machine: the target, asked from here, reads back from here only. Peer to peer is
+  done from that peer's own page.
 
 Phase 3 is the one to do carefully: after it, anything in the SPA that forgot the node silently talks
 to the home node instead. A grep-able rule helps — no bare `api.` import inside node-scoped

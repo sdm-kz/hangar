@@ -37,6 +37,8 @@ import { SshShellDialog } from "@/components/SshShellDialog";
 import { SessionView } from "@/components/SessionView";
 import { NewSessionDialog } from "@/components/NewSessionDialog";
 import { ForkSessionDialog } from "@/components/ForkSessionDialog";
+import { CarryDialog, type CarryMode } from "@/components/CarryDialog";
+import { matchFolder } from "@/lib/carry";
 import { ScheduleDialog } from "@/components/ScheduleDialog";
 import type { LaunchNode } from "@/components/NodePicker";
 import { isOverdue } from "@/lib/schedules";
@@ -159,6 +161,8 @@ export function App() {
   const [newOrigin, setNewOrigin] = useState<string | null>(null);
   // Id of the session the fork popup is open for (it asks for a name, then branches its conversation).
   const [forkFromId, setForkFromId] = useState<string | null>(null);
+  // A session's work being taken to another machine: the session (by id, on `from`), and the machine picked.
+  const [carry, setCarry] = useState<{ id: string; from: string | null; mode: CarryMode; node: string | null } | null>(null);
   // ...and its node: a fork stays on the parent's node, where its conversation's transcript is.
   const [forkFromNode, setForkFromNode] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentSession[]>([]);
@@ -845,6 +849,7 @@ export function App() {
   // session is gone).
   const forkSessions = forkFromNode ? sessionsOf(forkFromNode) : sessions;
   const forkFrom = forkSessions.find((s) => s.id === forkFromId) ?? null;
+  const carrySource = carry ? (sessionsOf(carry.from).find((s) => s.id === carry.id) ?? null) : null;
   const activeParent = active?.parentSessionId
     ? viewSessions.find((s) => s.id === active.parentSessionId) ?? null
     : null;
@@ -981,6 +986,34 @@ export function App() {
       })),
     [launchNodes, overdueNodes, mesh.peers]
   );
+
+  /**
+   * The machines a session's work can be taken to: any but its own. From a peer, only to this one — the
+   * machine it goes to reads the session's through its own pairing, and asked from here it reads back from
+   * here only (one hop); another peer can be reached from that peer's own page.
+   */
+  const carryNodes = useMemo<LaunchNode[]>(() => {
+    const from = carry?.from ?? null;
+    return launchNodes
+      .filter((n) => n.id !== from)
+      .map((n) => ({
+        ...n,
+        unavailable: n.unavailable ?? (from && n.id ? `only from ${n.name}'s own page` : null),
+      }));
+  }, [launchNodes, carry?.from]);
+
+  const carrySession = useCallback(
+    (s: SessionInfo, mode: CarryMode) => {
+      const from = s.nodeId ?? null;
+      // To the first machine it can go to; this one first, as the pickers list it.
+      const to = launchNodes.find((n) => n.id !== from && !n.unavailable && (!from || !n.id));
+      setCarry({ id: s.id, from, mode, node: to ? to.id : (launchNodes.find((n) => n.id !== from)?.id ?? null) });
+      setSidebarOpen(false);
+    },
+    [launchNodes]
+  );
+  // Offered only with somewhere to take it.
+  const onCarry = mesh.peers.length > 0 ? carrySession : undefined;
 
   /** A node's projects: this one's, or a peer's off the mesh. */
   function projectsOf(node: string | null): Project[] {
@@ -1332,6 +1365,16 @@ export function App() {
     setActiveId(null);
   }
 
+  // A session started on another machine with a conversation carried there: shown and opened there.
+  function onCarried(s: SessionInfo, node: string | null) {
+    if (node) mesh.patchSession(node, s);
+    else setSessions((prev) => [...prev.filter((x) => x.id !== s.id), s]);
+    setActiveNode(node);
+    setActiveId(s.id);
+    showInList(node, s.id);
+    clearMainArea();
+  }
+
   // A fork of a peer's session, made on that node.
   function onForkedRemote(s: SessionInfo) {
     if (forkFromNode) mesh.patchSession(forkFromNode, s);
@@ -1367,6 +1410,7 @@ export function App() {
       onNewInProject: (project) => newSessionInProject(project, p.id),
       onClone: cloneSession,
       onSchedules: (target) => setScheduling({ target: target ?? null, node: p.id }),
+      onCarry,
       onNew: () => {
         openNew(null, p.id);
         onPicked?.();
@@ -1470,6 +1514,7 @@ export function App() {
                 onReorderRecent={reorderRecents}
                 onSearch={() => setSearching(true)}
                 onSchedules={(target) => setScheduling({ target: target ?? null, node: null })}
+                onCarry={onCarry}
                 tab={listTab}
                 onTabChange={setListTab}
                 projects={projects}
@@ -1550,6 +1595,7 @@ export function App() {
                     onReorderRecent={reorderRecents}
                     onSearch={() => setSearching(true)}
                     onSchedules={(target) => setScheduling({ target: target ?? null, node: null })}
+                    onCarry={onCarry}
                     tab={listTab}
                     onTabChange={setListTab}
                     projects={projects}
@@ -1731,6 +1777,31 @@ export function App() {
             onReuse={reuseRecent}
             onClose={() => setSearching(false)}
           />
+        )}
+
+        {carry && carrySource && (
+          // Inside the machine it goes to: its folder picker, and the calls that write.
+          <NodeProvider node={carry.node}>
+            <CarryDialog
+              key={carry.node ?? ""}
+              session={carrySource}
+              mode={carry.mode}
+              from={carry.from}
+              fromName={carry.from ? (nodeNames[carry.from] ?? "the other machine") : (selfNode?.name ?? "this machine")}
+              sourceApi={apiFor(carry.from)}
+              nodes={carryNodes}
+              node={carry.node}
+              onNodeChange={(node) => setCarry({ ...carry, node })}
+              suggestFolder={(node) =>
+                matchFolder(carrySource.workingDirectory, [
+                  ...sessionsOf(node).map((s) => s.workingDirectory),
+                  ...projectsOf(node).flatMap((p) => p.folders),
+                ]) ?? ""
+              }
+              onDone={(s) => s && onCarried(s, carry.node)}
+              onClose={() => setCarry(null)}
+            />
+          </NodeProvider>
         )}
 
         {forkFrom && (
