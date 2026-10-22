@@ -1300,12 +1300,14 @@ export const TerminalPane = forwardRef<
           <RefreshCw className={cn("size-4", repainting && "animate-spin")} />
         </Button>
         {/* Zoom for the terminal alone (the browser's own zoom takes the whole app with it). Pinned
-            open once zoomed, since a non-default size should say so and offer the way back. */}
+            open once zoomed, since a non-default size should say so and offer the way back. Its
+            scrollbar margin is for a box parked in a corner; in this row it only pushed the fold
+            button away. */}
         <ZoomControls
           zoom={zoom}
           onChange={setZoom}
           className={cn(
-            "static transition-opacity",
+            "static mr-0 transition-opacity",
             zoom === 1 &&
               "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
           )}
