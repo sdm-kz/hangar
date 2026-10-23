@@ -9,22 +9,25 @@ device on your LAN. It is two programs:
   and its API, every store. It starts at sign-in as you — or, when it has to run while nobody is
   signed in, as a Windows service under your account — and there is one per port: launching it again
   just opens the UI.
-- **`Hangar.Tray.exe` — the tray icon.** A client of the server's API, and nothing more:
-  - **Left-click** → opens the web UI in your browser.
-  - **Right-click** → menu listing running sessions. Each project is a submenu, and inside it the
+- **`Hangar.Tray.exe` — Hangar Tray App** (`tray/`), for Windows, macOS and Linux. A client of the
+  server's API, and nothing more:
+  - **Left-click** (Windows) opens the web UI in your browser. On macOS and Linux a click opens the
+    menu, which starts with **Open Hangar**.
+  - **Sessions** in the menu lists the running sessions. Each project is a submenu, and inside it the
     sessions are laid out the way the sidebar's grouped view lays them out with its active-only filter
     on: virtual folders first, then folder groups (dropped where the project links only that folder
     and there is no virtual folder to tell it apart from), forks under the session they came from, and
-    no submenu for a project with nothing running in it. Click a session to open it.
-  - **Exit tray** closes the icon; **Stop server…** stops the server. Neither ends a session (see
-    *Sessions survive an app restart* below). The icon greys out while the server isn't running, and
-    the menu then offers **Start server**.
+    no submenu for a project with nothing running in it. Below them, **Recent** (closed sessions) and a
+    submenu per paired machine. Click a session to open it.
+  - **Screenshots.** A hotkey freezes the screen; you pick a region, window, screen or freeform shape,
+    mark it up, type a message, and send both to one of the server's running sessions — the picture
+    lands in the prompt as a pasted image would.
+  - **Quit** closes the app; **Stop server…** stops the server. Neither ends a session (see *Sessions
+    survive an app restart* below). The icon greys out while the server isn't running, and the menu
+    then offers **Start server**. Both server items are there only for a server on the same machine:
+    the app can follow a server anywhere it can reach (Settings → *Hangar address*).
 
-Beside them sits **Hangar Snap** (`snap/`), a separate tray app for Windows, macOS and Linux: a hotkey
-freezes the screen, you pick a region, window, screen or freeform shape, mark it up, type a message, and
-send both to one of the server's running sessions — the picture lands in the prompt as a pasted image
-would. It is a client of the same API and can run on any machine that reaches the server. See
-[snap/README.md](snap/README.md).
+  See [tray/README.md](tray/README.md).
 
 The web UI is a **session manager with a full terminal**:
 
@@ -337,7 +340,7 @@ otherwise block startup, so the app pre-accepts it.
 ## Architecture
 
 ```
-Browser (React + Vite + TS + Tailwind + shadcn/ui)       Hangar.Tray.exe  (tray icon, WinForms)
+Browser (React + Vite + TS + Tailwind + shadcn/ui)       Hangar.Tray.exe  (tray app, Tauri)
    │  REST /api/*     ──►  auth, session create/list/stop,  │  the same REST + /hub/events, with a
    │                       filesystem browse                │  per-run token from the instance file
    │  WS /hub/events  ──►  live session list                │
@@ -396,11 +399,13 @@ directly at its port — no Vite needed:
 powershell -ExecutionPolicy Bypass -File scripts\run.ps1
 ```
 
-Neither starts the tray. It follows a server by port, and picks one up whenever it starts listening:
+Neither starts the tray. It follows the server its settings name, and picks it up whenever it starts
+listening. A dev copy with a settings folder of its own runs beside the installed one (it skips the
+single-instance check), and is pointed at a dev server in its Settings:
 
 ```powershell
-dotnet run --project tray                  # follows 5099
-dotnet run --project tray -- --port 5199   # follows a dev server on 5199
+cd tray
+$env:HANGAR_TRAY_CONFIG_DIR = "$env:TEMP\hangar-tray-dev"; npm run tauri dev
 ```
 
 ### Running a second instance beside the installed app
@@ -438,9 +443,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
 Output: three self-contained exes in `publish\` (no .NET runtime needed) plus `wwwroot\` and
-`appsettings.json` beside them. Edit `appsettings.json` to set `Auth:Password` (hashed on first
-launch — see above) and `Server:Urls` (port). The tray reads its port from the same file, so the two
-stay paired; a tray for another port takes `--port <n>`.
+`appsettings.json` beside them. The build needs the .NET SDK and Node for the server, and Rust for the
+tray. Edit `appsettings.json` to set `Auth:Password` (hashed on first launch — see above) and
+`Server:Urls` (port). On its first run the tray takes its port from the same file, so the two start
+out paired; after that the address is the tray's own setting.
 
 **Start at sign-in** — the recommended setup (current user, no admin needed):
 
@@ -484,9 +490,9 @@ same (the tray itself still starts at sign-in, in your session). Two things to k
 
 ## Linux and macOS
 
-The server and the pty host run on Linux (x64, arm64) and macOS (Apple silicon, Intel). The tray is
-Windows-only (WinForms); everything else is the same app — the web UI, sessions that survive a restart
-of the server, shell tabs, schedules, the in-app updater.
+The server and the pty host run on Linux (x64, arm64) and macOS (Apple silicon, Intel), and so does
+the tray app; it is the same app everywhere — the web UI, sessions that survive a restart of the
+server, shell tabs, schedules, the in-app updater, the tray menu.
 
 ```bash
 scripts/build.sh                 # this machine's runtime; or: scripts/build.sh linux-arm64 | osx-arm64 | …
@@ -495,7 +501,11 @@ scripts/install-unix.sh --uninstall
 ```
 
 `build.sh` cross-builds from anywhere the .NET SDK and Node run (Git Bash on Windows too) into
-`publish/`: `Hangar` and `Hangar.PtyHost`, self-contained, no .NET runtime needed. Before the
+`publish/`: `Hangar` and `Hangar.PtyHost`, self-contained, no .NET runtime needed. The tray
+(`Hangar.Tray`) builds only on the machine it is for, so it comes along when the build is for this
+machine and Rust is installed, and is left out of a cross-build (the NAS has no desktop to put it on
+anyway). An update leaves a running tray on its old build until it reconnects to the new server; it
+then restarts into the new one by itself. Before the
 first install, set `Server:Urls` and `FileSystem:DefaultFolder` in `publish/appsettings.json` (the
 committed one names `C:\Git`); an install never overwrites an `appsettings.json` already in place.
 The default `Server:Urls` binds every interface over plain HTTP, and Linux has no firewall prompt to
@@ -892,9 +902,9 @@ and it survives a reopen; a worktree removed later quietly falls back to the ses
 
 ```
 server/   .NET 10 daemon, the Minimal API host (Program.cs, Sessions/, Auth/, Nodes/, FileSystem/, Diagnostics/, Logging/, Update/)
-tray/     Windows tray icon — a client of the daemon's API (WinForms)
+tray/     Hangar Tray App — the tray menu and screenshots, a client of the daemon's API (Tauri: Rust + React)
 ptyhost/  the per-session pty host that owns each pseudoconsole
-shared/   source compiled into two projects: Pty/ (daemon ↔ pty host), Contract/ (daemon ↔ tray)
+shared/   source shared between projects: Pty/ (daemon ↔ pty host); Contract/, the wire records the tray reads
 web/      React + Vite + TS + Tailwind + shadcn/ui launcher UI
 scripts/  dev.ps1, run.ps1, build.ps1, register-autostart.ps1, install-service.ps1, uninstall-service.ps1,
           stage-update.ps1 + apply-update.ps1 (the two halves of the in-app updater);

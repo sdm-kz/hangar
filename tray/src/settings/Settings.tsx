@@ -103,9 +103,9 @@ export default function Settings() {
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
         <header>
-          <h1 className="text-[17px] font-semibold">Hangar Snap</h1>
+          <h1 className="text-[17px] font-semibold">Hangar Tray App</h1>
           <p className="text-muted-foreground">
-            Take a screenshot, mark it up, and send it to a Claude session with a message.
+            Your Hangar sessions in the tray menu, and screenshots: take one, mark it up, and send it to a session with a message.
           </p>
         </header>
 
@@ -291,7 +291,7 @@ function PlatformNote({ platform }: { platform: string }) {
   if (platform === "macos") {
     return (
       <p className="text-[12px] text-muted-foreground">
-        macOS asks once for <b>Screen Recording</b> permission (System Settings → Privacy &amp; Security). Snap needs it to see
+        macOS asks once for <b>Screen Recording</b> permission (System Settings → Privacy &amp; Security). The app needs it to see
         anything but the desktop wallpaper.
       </p>
     );
@@ -299,7 +299,7 @@ function PlatformNote({ platform }: { platform: string }) {
   if (platform === "linux") {
     return (
       <p className="text-[12px] text-muted-foreground">
-        On Wayland, apps can't register global hotkeys. Bind <code>hangar-snap --capture region</code> (or <code>window</code>,{" "}
+        On Wayland, apps can't register global hotkeys. Bind <code>Hangar.Tray --capture region</code> (or <code>window</code>,{" "}
         <code>fullscreen</code>, <code>freeform</code>) in your desktop's keyboard settings instead.
       </p>
     );

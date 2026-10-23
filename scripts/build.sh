@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Builds the SPA and publishes Hangar for Linux or macOS into ./publish: the daemon (Hangar) and
-# the pty host (Hangar.PtyHost), each a single self-contained executable. The counterpart of
-# build.ps1, minus the tray, which is Windows-only (WinForms).
+# the pty host (Hangar.PtyHost), each a single self-contained executable, and the tray app
+# (Hangar.Tray) when it can be built here. The counterpart of build.ps1.
 #
-# Usage:  scripts/build.sh [rid]
+# The tray is a Tauri app, which builds only for the machine it is built on: it needs Rust, Node and
+# the platform's webview headers (see tray/README.md). So it comes along when the build is for this
+# machine's own platform and cargo is there, and is left out otherwise -- a cross-build from Windows
+# for the NAS, say, which has no desktop to put a tray on anyway. --no-tray leaves it out regardless.
+#
+# Usage:  scripts/build.sh [--no-tray] [rid]
 #   rid: linux-x64 | linux-arm64 | osx-arm64 | osx-x64 -- defaults to this machine's.
 #
 # It cross-builds from anywhere the .NET SDK and Node run, Git Bash on Windows included. A macOS build
@@ -13,19 +18,31 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 
+with_tray=1
+if [ "${1:-}" = "--no-tray" ]; then
+  with_tray=
+  shift
+fi
+
+# This machine's own runtime id, when it is Linux or macOS.
+host_rid=
+case "$(uname -s)" in
+  Linux) host_os=linux ;;
+  Darwin) host_os=osx ;;
+  *) host_os= ;;
+esac
+case "$(uname -m)" in
+  x86_64 | amd64) host_arch=x64 ;;
+  arm64 | aarch64) host_arch=arm64 ;;
+  *) host_arch= ;;
+esac
+[ -n "$host_os" ] && [ -n "$host_arch" ] && host_rid="$host_os-$host_arch"
+
 rid=${1:-}
 if [ -z "$rid" ]; then
-  case "$(uname -s)" in
-    Linux) os=linux ;;
-    Darwin) os=osx ;;
-    *) echo "Pass a runtime id (linux-x64, linux-arm64, osx-arm64, osx-x64) on this OS." >&2; exit 2 ;;
-  esac
-  case "$(uname -m)" in
-    x86_64 | amd64) arch=x64 ;;
-    arm64 | aarch64) arch=arm64 ;;
-    *) echo "Unsupported CPU: $(uname -m)" >&2; exit 2 ;;
-  esac
-  rid="$os-$arch"
+  [ -n "$host_os" ] || { echo "Pass a runtime id (linux-x64, linux-arm64, osx-arm64, osx-x64) on this OS." >&2; exit 2; }
+  [ -n "$host_arch" ] || { echo "Unsupported CPU: $(uname -m)" >&2; exit 2; }
+  rid=$host_rid
 fi
 case "$rid" in
   linux-x64 | linux-arm64 | osx-x64 | osx-arm64) ;;
@@ -61,6 +78,29 @@ dotnet publish "$root/ptyhost" -c Release -r "$rid" --self-contained true \
 cp -R "$pty_out"/. "$publish"/
 rm -rf "$pty_out"
 
+# The tray app, for this machine only (see the header).
+tray_note="left out (--no-tray)"
+if [ -n "$with_tray" ]; then
+  if [ "$rid" != "$host_rid" ]; then
+    tray_note="left out: a $rid tray can only be built on a $rid machine"
+  elif ! command -v cargo > /dev/null 2>&1; then
+    tray_note="left out: no cargo (Rust) here"
+  else
+    echo "==> Building tray (tray) for $rid"
+    # A tray that fails to build (the webview headers missing, say) is left out rather than taking the
+    # server's build down with it. Chained with &&: set -e doesn't reach inside an if's condition.
+    # --no-bundle: the executable is all an install needs; .deb/.dmg are for handing it to others.
+    if (cd "$root/tray" && { [ -d node_modules ] || npm ci; } && npx tauri build --no-bundle); then
+      cp "$root/tray/src-tauri/target/release/hangar-tray" "$publish/Hangar.Tray"
+      chmod +x "$publish/Hangar.Tray"
+      tray_note="$publish/Hangar.Tray"
+    else
+      echo "warning: the tray did not build; the rest of the build goes on without it." >&2
+      tray_note="left out: its build failed (see above)"
+    fi
+  fi
+fi
+
 # The pipeline that produced these may not have carried the executable bit (a build on Windows).
 chmod +x "$publish/Hangar" "$publish/Hangar.PtyHost"
 # Windows-only leftovers of the web SDK.
@@ -88,4 +128,5 @@ done
 echo "==> Done. Published to: $publish ($rid)"
 echo "    Build stamp: $build_id"
 echo "    Run the server:   $publish/Hangar   (headless; browse to its port)"
+echo "    Tray app:         $tray_note"
 echo "    Install it:       scripts/install-unix.sh $publish   (systemd user unit or launchd agent)"

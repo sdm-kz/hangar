@@ -135,6 +135,9 @@ for path in "$staging"/* "$staging"/.[!.]*; do
   replace "$name" || fail "could not copy $name"
 done
 chmod +x "$target/Hangar" "$target/Hangar.PtyHost" 2> /dev/null
+# A running tray keeps the old Hangar.Tray it has open; it sees the new one once it reconnects, and
+# restarts into it.
+[ -f "$target/Hangar.Tray" ] && chmod +x "$target/Hangar.Tray" 2> /dev/null
 
 # --- 3) Back up on its feet ------------------------------------------------------------------------
 start_app || fail "could not start the app"

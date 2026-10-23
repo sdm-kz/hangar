@@ -1,5 +1,5 @@
-// The session list as it crosses the wire. Compiled into both the daemon and the tray, like shared\Pty:
-// the daemon serializes these and the tray deserializes the very same records, so the two can't drift.
+// The session list as it crosses the wire. The tray app (tray/src-tauri, Rust) reads the fields its menu
+// needs by their JSON names (session_tree.rs, HubSession), so a renamed field has to be renamed there too.
 
 namespace Hangar.Contract;
 

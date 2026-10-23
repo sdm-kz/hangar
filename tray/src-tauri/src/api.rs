@@ -20,12 +20,21 @@ pub struct Credentials {
     pub local: bool,
 }
 
-/// The fields of a server's instance file (`Hangar.Contract.DaemonInstance`) this app reads.
-#[derive(Deserialize)]
+/// The fields of a server's instance file (`Hangar.Contract.DaemonInstance`) this app reads: written by
+/// a server on this machine once it listens, and removed when it stops.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DaemonInstance {
-    local_url: String,
-    token: String,
+pub struct Instance {
+    #[serde(default)]
+    pub pid: u32,
+    pub local_url: String,
+    /// Where to send a person: the server's public URL when it has one, else the loopback.
+    #[serde(default)]
+    pub open_url: String,
+    pub token: String,
+    /// The server's executable, which says which install it is.
+    #[serde(default)]
+    pub exe_path: Option<String>,
 }
 
 /// Where a server on this machine writes its instance files: .NET's LocalApplicationData, which is
@@ -47,9 +56,27 @@ fn is_loopback(url: &Url) -> bool {
     }
 }
 
+/// The instance file of the server `server_url` names, when that is a loopback address and a server
+/// on this machine has written one for its port. One whose own address is off this machine wasn't
+/// written by the server — it never writes anything but a loopback address — and is ignored, since it
+/// would otherwise be told where to send the token.
+pub fn local_instance(server_url: &str, instances_dirs: &[PathBuf]) -> Option<Instance> {
+    let base = Url::parse(server_url.trim()).ok()?;
+    if !is_loopback(&base) {
+        return None;
+    }
+    let port = base.port_or_known_default()?;
+    let instance = instances_dirs.iter().find_map(|dir| {
+        std::fs::read_to_string(dir.join(format!("{port}.json")))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Instance>(&t).ok())
+    })?;
+    Url::parse(&instance.local_url).ok().filter(is_loopback).map(|_| instance)
+}
+
 /// Work out how to talk to `server_url`. A server on this machine is spoken to with the token from
-/// its instance file — the tray's way in, and only ever sent to a loopback address — so a local
-/// install works with no password at all. Anything else uses the token saved from signing in.
+/// its instance file (see [`local_instance`]), so a local install works with no password at all.
+/// Anything else uses the token saved from signing in.
 pub fn resolve_credentials(
     server_url: &str,
     saved_token: Option<&str>,
@@ -59,22 +86,9 @@ pub fn resolve_credentials(
     if !matches!(base.scheme(), "http" | "https") {
         return Err("The server URL must start with http:// or https://".into());
     }
-    if is_loopback(&base) {
-        if let Some(port) = base.port_or_known_default() {
-            let instance = instances_dirs.iter().find_map(|dir| {
-                std::fs::read_to_string(dir.join(format!("{port}.json")))
-                    .ok()
-                    .and_then(|t| serde_json::from_str::<DaemonInstance>(&t).ok())
-            });
-            if let Some(instance) = instance {
-                // The server never writes anything but a loopback address here; a file that says
-                // otherwise wasn't written by it, and must not be handed the token's destination.
-                if let Ok(local) = Url::parse(&instance.local_url) {
-                    if is_loopback(&local) {
-                        return Ok(Credentials { base: local, token: Some(instance.token), local: true });
-                    }
-                }
-            }
+    if let Some(instance) = local_instance(server_url, instances_dirs) {
+        if let Ok(local) = Url::parse(&instance.local_url) {
+            return Ok(Credentials { base: local, token: Some(instance.token), local: true });
         }
     }
     Ok(Credentials { base, token: saved_token.map(Into::into), local: false })
@@ -392,6 +406,42 @@ impl Client {
         self.send(self.request_url(reqwest::Method::POST, url)?.json(&body)).await?;
         Ok(())
     }
+
+    /// The pty hosts still running for sessions the server no longer knows about.
+    pub async fn orphans(&self) -> Result<Vec<Orphan>, ApiError> {
+        let res = self.send(self.request(reqwest::Method::GET, "/api/pty/orphans")?).await?;
+        res.json().await.map_err(|e| ApiError::Failed(e.to_string()))
+    }
+
+    /// Stop every orphaned pty host, and the claude under each. Answers how many stopped.
+    pub async fn stop_orphans(&self) -> Result<u32, ApiError> {
+        #[derive(Deserialize)]
+        struct Stopped {
+            #[serde(default)]
+            stopped: u32,
+        }
+        // No id: all of them.
+        let req = self.request(reqwest::Method::POST, "/api/pty/orphans/stop")?.json(&serde_json::json!({}));
+        let res = self.send(req).await?;
+        Ok(res.json::<Stopped>().await.map_err(|e| ApiError::Failed(e.to_string()))?.stopped)
+    }
+
+    /// Ask the server to shut down. Its sessions keep running in their pty hosts, and the next server
+    /// to start picks them up again.
+    pub async fn stop_daemon(&self) -> Result<(), ApiError> {
+        self.send(self.request(reqwest::Method::POST, "/api/daemon/stop")?).await?;
+        Ok(())
+    }
+}
+
+/// A pty host still running for a session the server no longer tracks (`PtyOrphanInfo`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Orphan {
+    #[serde(default)]
+    pub child_pid: u32,
+    #[serde(default)]
+    pub working_directory: String,
 }
 
 /// reqwest's own message for a refused connection is "error sending request"; the reason is further
@@ -529,7 +579,7 @@ mod tests {
     }
 
     fn instances_dir_with(port: u16, body: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("hangar-snap-inst-{port}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hangar-tray-inst-{port}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("{port}.json")), body).unwrap();
         dir

@@ -3,6 +3,8 @@
 //! blurred, and a dark glyph disappears into a dark taskbar. On Windows the app's windows wear the same
 //! glyph, in their title bar and taskbar button.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::image::Image;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -60,7 +62,41 @@ fn personalize(_value: &str) -> bool {
     false
 }
 
+/// Whether the tray is following a server that answers. The icon is greyed out while it isn't, as the
+/// first sign that the server is down.
+static ONLINE: AtomicBool = AtomicBool::new(false);
+
+/// Grey the icon out, or bring its colour back, when the server goes away or comes back.
+pub fn set_online(app: &AppHandle, tray_id: &str, online: bool) {
+    if ONLINE.swap(online, Ordering::SeqCst) == online {
+        return;
+    }
+    if let (Some(tray), Ok(image)) = (app.tray_by_id(tray_id), image_for(current_look(app))) {
+        let _ = tray.set_icon(Some(image));
+        let _ = tray.set_icon_as_template(cfg!(target_os = "macos"));
+    }
+}
+
+/// The picture faded to grey: colour drained, and well under half as opaque.
+fn dimmed(image: Image<'_>) -> Image<'static> {
+    let (w, h) = (image.width(), image.height());
+    let mut rgba = image.rgba().to_vec();
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let grey = ((px[0] as u32 * 30 + px[1] as u32 * 59 + px[2] as u32 * 11) / 100) as u8;
+        px[0] = grey;
+        px[1] = grey;
+        px[2] = grey;
+        px[3] = (px[3] as u32 * 2 / 5) as u8;
+    }
+    Image::new_owned(rgba, w, h)
+}
+
 pub fn image_for(look: Look) -> tauri::Result<Image<'static>> {
+    let image = picture_for(look)?;
+    Ok(if ONLINE.load(Ordering::SeqCst) { image } else { dimmed(image) })
+}
+
+fn picture_for(look: Look) -> tauri::Result<Image<'static>> {
     #[cfg(windows)]
     let bytes = pick(if look.light_taskbar { GLYPH_LIGHT } else { GLYPH_DARK }, look.px);
     // The menu bar recolours a template image for light and dark itself.
@@ -151,6 +187,7 @@ pub fn watch(app: &AppHandle, tray_id: &'static str) {
             shown = look;
             if let (Some(tray), Ok(image)) = (app.tray_by_id(tray_id), image_for(look)) {
                 let _ = tray.set_icon(Some(image));
+                let _ = tray.set_icon_as_template(cfg!(target_os = "macos"));
             }
             for window in app.webview_windows().values() {
                 dress_window(window);
@@ -170,6 +207,12 @@ mod tests {
         assert_eq!(pick(table, 20), b"b", "125% scaling: the 24 shrinks less than the 16 grows");
         assert_eq!(pick(table, 28), b"c");
         assert_eq!(pick(table, 64), b"c", "past the biggest, the biggest");
+    }
+
+    #[test]
+    fn dimming_greys_and_fades_every_pixel() {
+        let image = dimmed(Image::new_owned(vec![200, 100, 0, 255, 0, 0, 0, 0], 2, 1));
+        assert_eq!(image.rgba(), &[119, 119, 119, 102, 0, 0, 0, 0]);
     }
 
     #[cfg(windows)]

@@ -54,6 +54,17 @@ if ($trays.Count -gt 0) {
   $trays | Stop-Process -Force
 }
 
+# Hangar Snap, the screenshot app the tray took over (scripts\deploy-snap.ps1 used to install it to
+# C:\apps\hangar-snap). Left running it would hold the capture hotkeys the tray registers. Its sign-in
+# entry is removed by the tray itself on its first run, and its settings carried over.
+$hadSnap = $false
+$snaps = @(Get-Process -Name "hangar-snap", "homeport-snap" -ErrorAction SilentlyContinue)
+if ($snaps.Count -gt 0) {
+  Write-Host "==> Closing Hangar Snap ($($snaps.Count) process(es)); the tray does what it did" -ForegroundColor Cyan
+  $snaps | Stop-Process -Force
+  $hadSnap = $true
+}
+
 $restart = "none"
 $svc = Get-Service -Name "Hangar" -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -eq "Running") {
@@ -142,9 +153,10 @@ if (-not $NoRestart) {
   # The tray comes back if it was running — whichever way the daemon runs, since it finds the daemon on
   # its own and waits for it to listen. An install set up without one (register-autostart -NoTray)
   # stays without one.
-  if ($trays.Count -gt 0 -and (Test-Path $trayExe)) {
+  # One that replaces a running Hangar Snap starts too, or the screenshots would go with Snap.
+  if (($trays.Count -gt 0 -or $hadSnap) -and (Test-Path $trayExe)) {
     Write-Host "==> Launching Hangar.Tray.exe" -ForegroundColor Cyan
-    Start-Process $trayExe
+    Start-Process $trayExe -ArgumentList "--autostart"
   }
 } else {
   Write-Host "    (-NoRestart) App left stopped. Start it with: $Target\Hangar.exe (and $Target\Hangar.Tray.exe)" -ForegroundColor DarkGray

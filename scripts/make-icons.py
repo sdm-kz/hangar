@@ -1,17 +1,17 @@
-"""Builds every Hangar icon from one logo: the browser tab, the installed web app, the header, the tray
-and the two exes. Needs Pillow (pip install pillow).
+"""Builds every Hangar icon from one logo: the browser tab, the installed web app, the header and the
+server's exe. Needs Pillow (pip install pillow).
 
     python scripts/make-icons.py [path/to/logo.png]
 
 With a path, that picture (the logo on a transparent background) becomes the new master,
 assets/hangar-logo.png; without one, the icons are rebuilt from the master already there. The
-screenshot app (snap/) has an icon of its own and is not touched.
+tray app (tray/) draws its own icons (tray/src-tauri/icons) and is not touched.
 """
 
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 MASTER = ROOT / "assets" / "hangar-logo.png"
@@ -36,14 +36,6 @@ def fit(logo: Image.Image, size: int, share: float, background=(0, 0, 0, 0)) -> 
     part = logo.resize((w, h), Image.LANCZOS)
     canvas.alpha_composite(part, ((size - w) // 2, (size - h) // 2))
     return canvas
-
-
-def grey(img: Image.Image) -> Image.Image:
-    """The tray's "not connected" look: the same shape, grey and a little faded."""
-    g = ImageOps.grayscale(img.convert("RGB"))
-    g = g.point(lambda v: 110 + v * 70 // 255)  # a mid grey that reads on light and dark taskbars
-    out = Image.merge("RGBA", (g, g, g, img.getchannel("A").point(lambda a: a * 85 // 100)))
-    return out
 
 
 def ico(img_for_size, path: Path, sizes=(16, 20, 24, 32, 40, 48, 64, 128, 256)) -> None:
@@ -78,9 +70,8 @@ def main() -> None:
     badge.putalpha(shape.getchannel("A"))
     badge.save(web / "public" / "icons" / "badge-96.png", optimize=True)
 
-    # Tray and exes: as large as the square allows -- at 16 px every pixel counts.
+    # The exe: as large as the square allows -- at 16 px every pixel counts.
     ico(lambda s: fit(logo, s, 0.98), ROOT / "assets" / "hangar.ico")
-    ico(lambda s: grey(fit(logo, s, 0.98)), ROOT / "assets" / "hangar-offline.ico", sizes=(16, 20, 24, 32, 40, 48, 64))
     print("ok")
 
 

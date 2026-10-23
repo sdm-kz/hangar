@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <!-- The daemon. Plain net10.0: no WinForms and no UI of its own — the tray is a separate project
-         (tray\) and only a client of this app's API. It runs on Windows, Linux and macOS; what differs
+    <!-- The daemon. Plain net10.0: no UI of its own — the tray is a separate app
+         (tray\, Tauri) and only a client of this app's API. It runs on Windows, Linux and macOS; what differs
          between them (the pty host launch, the shell catalog, the updater) is chosen at run time with
          OperatingSystem.IsWindows(). -->
     <TargetFramework>net10.0</TargetFramework>

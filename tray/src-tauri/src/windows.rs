@@ -43,7 +43,7 @@ pub fn ensure_overlay(app: &AppHandle, index: usize) -> tauri::Result<WebviewWin
         format!("{OVERLAY_PREFIX}{index}"),
         WebviewUrl::App(format!("index.html#overlay/{index}").into()),
     )
-    .title("Hangar Snap")
+    .title(crate::PRODUCT)
     .decorations(false)
     // Mutter won't fullscreen a window that can't be resized.
     .resizable(cfg!(target_os = "linux"))
@@ -131,7 +131,7 @@ const EDITOR_MIN: (f64, f64) = (820.0, 600.0);
 /// Made ahead of time as the spare (see `AppState::spare_editor`), or on the spot when there is none.
 pub fn create_editor(app: &AppHandle, id: &str) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(app, format!("{EDITOR_PREFIX}{id}"), WebviewUrl::App(format!("index.html#editor/{id}").into()))
-        .title("Hangar Snap")
+        .title(crate::PRODUCT)
         .inner_size(EDITOR_MIN.0, EDITOR_MIN.1)
         .visible(false)
         .build()
@@ -199,7 +199,7 @@ pub fn show_settings(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let built = WebviewWindowBuilder::new(&app, SETTINGS, WebviewUrl::App("index.html#settings".into()))
-            .title("Hangar Snap — Settings")
+            .title(format!("{} — Settings", crate::PRODUCT))
             .inner_size(560.0, 640.0)
             .min_inner_size(480.0, 520.0)
             .center()

@@ -105,11 +105,14 @@ for path in "$publish"/* "$publish"/.[!.]*; do
   mv "$target/.$name.new" "$target/$name"
 done
 chmod +x "$target/Hangar" "$target/Hangar.PtyHost"
+# The tray app, when the build has one (build.sh makes it only on the machine it is for).
+[ -f "$target/Hangar.Tray" ] && chmod +x "$target/Hangar.Tray"
 
 if [ "$platform" = macos ]; then
   # A build made on another OS (or downloaded) arrives quarantined and, on Apple silicon, unsigned --
   # and macOS kills an unsigned arm64 binary on launch. An ad-hoc signature is all it needs.
-  for exe in Hangar Hangar.PtyHost; do
+  for exe in Hangar Hangar.PtyHost Hangar.Tray; do
+    [ -f "$target/$exe" ] || continue
     xattr -d com.apple.quarantine "$target/$exe" 2> /dev/null || true
     codesign --verify "$target/$exe" 2> /dev/null || codesign --force --sign - "$target/$exe"
   done
@@ -212,3 +215,6 @@ fi
 
 port=$(sed -n 's/.*"Urls"[^,}]*:\([0-9][0-9]*\)".*/\1/p' "$target/appsettings.json" | head -n 1)
 echo "    Browse to http://localhost:${port:-5099}. Settings: $target/appsettings.json"
+if [ -f "$target/Hangar.Tray" ]; then
+  echo "    Tray app: $target/Hangar.Tray -- its menu's \"Start when I sign in\" keeps it in the menu bar or panel."
+fi

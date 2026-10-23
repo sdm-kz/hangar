@@ -1,5 +1,6 @@
 # Builds the SPA and publishes Hangar into ./publish: the daemon, the tray and the pty host, each a
-# single self-contained exe.
+# single self-contained exe. The daemon and the pty host need the .NET SDK; the tray (tray\, a Tauri
+# app) needs Rust and Node.
 # Usage:  powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -44,21 +45,23 @@ Pop-Location
 Copy-Item (Join-Path $ptyOut "*") $publish -Recurse -Force
 Remove-Item $ptyOut -Recurse -Force
 
-# The tray icon: a client of the daemon's API, and the one project that needs WinForms. WinForms can't
-# be trimmed, so it is compressed instead -- a moment more at startup, for something that starts once
-# per logon.
-Write-Host "==> Publishing tray (tray)" -ForegroundColor Cyan
-$trayOut = Join-Path $root "publish-tray"
-if (Test-Path $trayOut) { Remove-Item $trayOut -Recurse -Force }
+# The tray app: a client of the daemon's API, built with Tauri (Rust, with its pages compiled in), so
+# it is one exe with nothing beside it. Shipped as Hangar.Tray.exe, the name everything that starts,
+# stops and updates it already uses.
+Write-Host "==> Building tray (tray)" -ForegroundColor Cyan
 Push-Location (Join-Path $root "tray")
-dotnet publish -c Release -r win-x64 --self-contained true `
-  -p:PublishSingleFile=true `
-  -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:EnableCompressionInSingleFile=true `
-  -o $trayOut
-Pop-Location
-Copy-Item (Join-Path $trayOut "*") $publish -Recurse -Force
-Remove-Item $trayOut -Recurse -Force
+try {
+  if (-not (Test-Path "node_modules")) {
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed in tray\" }
+  }
+  # --no-bundle: the exe is all an install needs; installers (MSI/NSIS) are for handing it to others.
+  npx tauri build --no-bundle
+  if ($LASTEXITCODE -ne 0) { throw "tauri build failed in tray\" }
+} finally {
+  Pop-Location
+}
+Copy-Item (Join-Path $root "tray\src-tauri\target\release\hangar-tray.exe") (Join-Path $publish "Hangar.Tray.exe") -Force
 
 # --- Build stamp ------------------------------------------------------------------------------
 # Names this exact build so a running app can tell a staged update apart from itself. deploy.ps1

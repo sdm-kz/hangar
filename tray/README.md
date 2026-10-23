@@ -1,13 +1,61 @@
-# Hangar Snap
+# Hangar Tray App
 
-A tray app for Windows, macOS and Linux: press a hotkey, pick part of the screen, mark it up, type a
-message, and send both to one of the Claude sessions a Hangar server is running. The picture lands in
-the session's prompt exactly as an image pasted in the web UI does.
+Hangar in the tray, on Windows, macOS and Linux (`Hangar.Tray`). It does two things:
+
+- **The tray menu.** It follows a Hangar server: the server's state, its running sessions, and the
+  server controls, for a server on this machine.
+- **Screenshots.** Press a hotkey, pick part of the screen, mark it up, type a message, and send both to
+  one of the server's sessions. The picture lands in the session's prompt exactly as an image pasted in
+  the web UI does.
+
+It replaces two apps: the Windows-only tray icon (WinForms) and Hangar Snap, the screenshot app it grew
+out of. On its first run it carries Snap's settings over (the server, its sign-in, the hotkeys) and takes
+Snap out of the sign-in items.
 
 Built with [Tauri 2](https://tauri.app): a small Rust shell (tray, hotkeys, screen capture, talking to
 the server) and a React page for the overlay, the editor and the settings.
 
-## Using it
+## The menu
+
+```
+Open Hangar
+Sessions  (12)        ▸  Running — 12
+                         App  (5)            ▸  (folder groups, sessions, forks)
+                         No project  (7)     ▸
+                         Recent — 30         ▸
+                         ───
+                         nas — 3 running     ▸  (a submenu per paired machine)
+───
+Capture region        Ctrl+Shift+1
+Capture window        Ctrl+Shift+2
+Capture full screen   Ctrl+Shift+3
+Capture freeform      Ctrl+Shift+4
+───
+Settings…
+✓ Start when I sign in
+───
+Stop 2 orphaned session(s)…     (only when there are any)
+Stop server…
+Quit Hangar Tray App
+```
+
+**Sessions** lays the running sessions out the way the web UI's sidebar does with its grouped view and
+active-only filter: a submenu per project, with its virtual folders first, then its folder groups (the
+folder heading dropped where the project links just that one folder), and forks under the session they
+came from. Clicking one opens it in the browser, on this server or on the paired machine it runs on.
+
+- On **Windows** a left click on the icon opens Hangar and a right click opens the menu. On **macOS**
+  and **Linux** a click opens the menu.
+- The icon is **greyed out** while the server isn't answering, and the menu then says why: not running,
+  not responding, or asking for a sign-in. For a stopped server on this machine it offers **Start
+  server** — the `hangar.service` user unit or the `com.hangar.server` launch agent that
+  `scripts/install-unix.sh` set up, or else the `Hangar` executable beside this one.
+- **Stop server…** and **Stop … orphaned session(s)…** are there only for a server on this machine, and
+  ask first. Stopping the server doesn't end a session; stopping an orphan does (it is a running
+  `claude` no server tracks any more).
+- **Quit** closes the app. The server and its sessions keep running.
+
+## Screenshots
 
 | Hotkey (default) | Capture | How |
 |---|---|---|
@@ -74,38 +122,47 @@ The **session picker** lists the server's running sessions, the ones you sent to
 `Alt+↑/↓` changes the target from the message box. `/` searches by name, project or folder. Double-click
 a row to send straight to it.
 
-## Installing (Windows)
+## Installing
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\deploy-snap.ps1            # build, install to C:\apps\hangar-snap, start
-powershell -ExecutionPolicy Bypass -File scripts\deploy-snap.ps1 -Autostart # …and start it at sign-in
-```
+It ships with Hangar: `scripts\build.ps1` builds it into `publish\` as `Hangar.Tray.exe`, beside the
+server, and `scripts\deploy.ps1`, the in-app updater and `scripts\register-autostart.ps1` handle it
+the way they handled the old tray. On Linux and macOS, `scripts/build.sh` builds it as `Hangar.Tray`
+when building for the machine it runs on (a Tauri app can't be cross-built) and `install-unix.sh`
+installs it with the rest.
 
-It builds the release exe (`-SkipBuild` reuses the last one), stops any running copy, installs, and
-starts it. Settings and recents live in `%LOCALAPPDATA%\io.github.sdm-kz.homeport.snap` and survive a reinstall.
-Starting at sign-in is a toggle in the tray menu (*Start when I sign in*) and in Settings; a reinstall
-points an existing registration at the installed exe.
+It is a single executable, with the pages compiled in. Settings and recents live in the app's local
+data folder (`%LOCALAPPDATA%\io.github.sdm-kz.hangar.tray`, `~/Library/Application Support/…`,
+`~/.local/share/…`) and survive a reinstall. Starting at sign-in is a toggle in the tray menu (*Start
+when I sign in*) and in Settings: the same `Hangar.Tray` entry `register-autostart.ps1` writes.
+
+An update replaces it with the rest of the install. On Windows a running exe can't be overwritten, so
+when the server says an update is being applied the tray exits and a hidden PowerShell starts it again
+once the new server answers. On Linux and macOS the update renames the new file into place; the tray
+sees the file has changed when it reconnects, and restarts into it.
 
 ## Connecting to a server
 
-Settings → *Hangar address*. On the machine that runs Hangar (`http://127.0.0.1:5099`) there is
-nothing else to do: Snap reads the server's instance file, the same way the tray does. Any other address
-asks for the server's password once; the token is kept in the app's settings file (readable only by you
-on macOS/Linux) until it expires, then the editor asks you to sign in again.
+Settings → *Hangar address*. A first run takes the port from the `appsettings.json` beside it, so an
+installed tray follows its own server from the start. On the machine that runs the server
+(`http://127.0.0.1:5099`) there is nothing else to do: the app reads the server's instance file and
+uses the token in it. Any other address asks for the server's password once; the token is kept in the
+app's settings file (readable only by you on macOS/Linux) until it expires, then the menu and the
+editor ask you to sign in again. The menu's server controls (start, stop, orphans) are only offered for
+a server on this machine.
 
 ## Platform notes
 
 - **macOS** asks for *Screen Recording* permission on the first capture (System Settings → Privacy &
-  Security). Without it, captures show only the wallpaper. Snap runs as a menu-bar app with no Dock icon.
+  Security). Without it, captures show only the wallpaper. The app runs in the menu bar, with no Dock icon.
 - **Linux, X11**: everything works. The tray needs `libayatana-appindicator3`.
 - **Linux, Wayland**: apps can't register global hotkeys or list windows, so bind
-  `hangar-snap --capture region` (or `window`, `fullscreen`, `freeform`) in your desktop's keyboard
+  `Hangar.Tray --capture region` (or `window`, `fullscreen`, `freeform`) in your desktop's keyboard
   settings. Region and freeform still work on the frozen screen; window mode falls back to the whole
   screen.
 - **Windows**: `Ctrl+Shift+digit` overrides apps that use those keys (Excel's number formats, for
   example). Change them in Settings; a combo another app already holds is reported there.
 
-`hangar-snap --capture <mode>` works on every platform, and goes to the running instance.
+`Hangar.Tray --capture <mode>` works on every platform, and goes to the running instance.
 
 ## Developing
 
@@ -120,14 +177,23 @@ npm run tauri build      # installers for this platform
 Linux needs the [Tauri prerequisites](https://tauri.app/start/prerequisites/) plus `libxcb1-dev
 libxrandr-dev libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev` for screen capture.
 
-Set `HANGAR_SNAP_CONFIG_DIR` to keep a test run's settings and recents apart from your real ones
-(otherwise they live in the app's local data folder, e.g. `%LOCALAPPDATA%\io.github.sdm-kz.homeport.snap`). In
-a debug build, `HANGAR_SNAP_TEST_FRAMES=1` makes every capture a generated picture per screen, for
+Set `HANGAR_TRAY_CONFIG_DIR` to keep a test run's settings and recents apart from your real ones
+(otherwise they live in the app's local data folder, e.g. `%LOCALAPPDATA%\io.github.sdm-kz.hangar.tray`). A
+run with one also skips the single-instance check, so it runs beside the installed tray. In a debug
+build, `HANGAR_TRAY_TEST_FRAMES=1` makes every capture a generated picture per screen, for
 exercising the overlays and editor where there is nothing to capture (a disconnected remote session, CI).
 The log (`…\logs`) records how long each overlay and editor took to come up.
 
 ### How it fits together
 
+- `src-tauri/src/server.rs` holds the server's `/hub/events` socket open (`?client=tray`, the hub's slow
+  tick) for the session list and the paired machines, re-reads `/api/projects` when the snapshot's
+  `projectsRev` moves, and the orphaned pty hosts (`/api/pty/orphans`) when the session list changes. It
+  publishes a `View`, and the menu is rebuilt only when that changes — never on a keepalive.
+  `session_tree.rs` arranges the running sessions as the sidebar does; `menu.rs` turns that into the
+  menu. Which project a session is in is the server's answer (`projectId`), not a second copy of the rule.
+- `host.rs` is this machine's side: whether the server's process is alive, starting it, and stepping
+  aside for an update.
 - `src-tauri/src/capture.rs` freezes every monitor and lists the windows (via `xcap`).
   `geometry.rs` maps a window onto its monitor's frame. The OS reports both in the same units: points
   on macOS, pixels elsewhere.

@@ -26,7 +26,7 @@
   The tray (Hangar.Tray.exe) is a separate process that holds its own exe open. It steps aside by
   itself: when the daemon reports the update, the tray exits and arranges to start again once the new
   daemon answers. As a backstop, a tray still running from <Target> when the copy is due is stopped --
-  it is only a client, so nothing is lost, but that one stays closed until it is next started.
+  it is only a client, so nothing is lost -- and started again once the daemon is back up.
 
   Everything is logged to -LogPath, since nobody is watching a detached window. On any failure the
   script still tries to start the old build back up rather than leaving the machine with no app.
@@ -91,6 +91,18 @@ function Stop-FromTarget([string]$name) {
     $procs | Stop-Process -Force
     Start-Sleep -Seconds 1   # let the OS release the file locks
   }
+  return $procs.Count
+}
+
+# A tray this script had to stop is started again once the daemon is back -- one that stepped aside on
+# its own has a relauncher of its own, and the tray being single-instance makes a second start harmless.
+$script:trayStopped = $false
+function Start-Tray {
+  $tray = Join-Path $Target "Hangar.Tray.exe"
+  if ($script:trayStopped -and (Test-Path $tray)) {
+    Write-Log "Starting $tray again"
+    Start-Process $tray -ArgumentList "--autostart"
+  }
 }
 
 Write-Log "=== apply-update: $Staging -> $Target (mode=$Mode, pid=$ProcessId) ==="
@@ -135,8 +147,8 @@ try {
 
   # Anything of THIS install still holding its exe open would fail the copy: a leftover daemon, or a
   # tray that did not step aside on its own (an older tray, or one that had lost its connection).
-  Stop-FromTarget "Hangar"
-  Stop-FromTarget "Hangar.Tray"
+  Stop-FromTarget "Hangar" | Out-Null
+  $script:trayStopped = (Stop-FromTarget "Hangar.Tray") -gt 0
 
   # --- 2) Mirror the payload over the install, preserving settings -----------------------------
   # Same shape as deploy.ps1: top-level files copied without /MIR (so unrelated files the target may
@@ -155,6 +167,7 @@ try {
 
   # --- 3) Back up on its feet ------------------------------------------------------------------
   Start-App
+  Start-Tray
   Write-Log "=== apply-update: done ==="
 } catch {
   Write-Log "FAILED: $_"
@@ -162,5 +175,6 @@ try {
   # copy never started, the new one if it finished and the restart failed) is what we bring back.
   try { Start-App; Write-Log "Restarted the app after the failure" }
   catch { Write-Log "Could not restart the app: $_" }
+  try { Start-Tray } catch { Write-Log "Could not start the tray: $_" }
   exit 1
 }

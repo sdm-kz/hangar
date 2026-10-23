@@ -1,7 +1,7 @@
-// Projects as they cross the wire, and the rules for which project a session falls under. Compiled into
-// both the daemon and the tray, like shared\Pty: the tray menu asks the same questions of the same data
-// as the daemon does, and a second answer to "which project is this folder in?" would be a second thing
-// to keep in step.
+// Projects as they cross the wire, and the rules for which project a session falls under. The tray app
+// (tray/src-tauri, Rust) reads these by their JSON names, so a renamed field has to be renamed there too;
+// it doesn't carry its own copy of "which project is this folder in?" — it takes each session's
+// ProjectId, which the daemon works out with ForDirectory below.
 
 namespace Hangar.Contract;
 

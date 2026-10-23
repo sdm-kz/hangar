@@ -68,8 +68,10 @@ Write-Host "Registered autostart for the current user:" -ForegroundColor Green
 Write-Host "  $Name = `"$daemon`"   (server)"
 
 if ($withTray) {
-  Set-ItemProperty -Path $runKey -Name $trayName -Value ('"{0}"' -f $tray)
-  Write-Host "  $trayName = `"$tray`"   (tray icon)"
+  # The same entry the tray's own "Start when I sign in" switches, flag and all: --autostart tells it
+  # that it was started at sign-in, so it doesn't open its settings on a first run.
+  Set-ItemProperty -Path $runKey -Name $trayName -Value ('"{0}" --autostart' -f $tray)
+  Write-Host "  $trayName = `"$tray`" --autostart   (tray app)"
 } elseif ($NoTray) {
   if (Get-ItemProperty -Path $runKey -Name $trayName -ErrorAction SilentlyContinue) { Remove-Entry $trayName }
 } else {

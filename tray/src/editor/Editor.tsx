@@ -230,7 +230,7 @@ export default function Editor({ id }: { id: string }) {
   useEffect(() => {
     if (!init) return;
     const which = pages.length > 1 ? ` — ${pages.findIndex((p) => p.id === activeId) + 1} of ${pages.length}` : "";
-    void getCurrentWindow().setTitle(`Hangar Snap — ${init.width} × ${init.height}${which}`);
+    void getCurrentWindow().setTitle(`Hangar Tray App — ${init.width} × ${init.height}${which}`);
   }, [init, pages, activeId]);
 
   useEffect(() => saveLayout({ composer: composerHeight, picker: pickerWidth }), [composerHeight, pickerWidth]);

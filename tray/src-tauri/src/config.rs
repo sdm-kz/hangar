@@ -140,6 +140,35 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     }
 }
 
+/// The server a first run should follow: the one installed beside this app, by the port its
+/// `appsettings.json` binds (`Server:Urls`, or the `Server__Urls` the server would read over it), when
+/// that says one. An install puts the tray and the server in one folder with one config, so a server on
+/// another port is found without anyone opening the settings.
+pub fn default_server_url(exe_dir: Option<&Path>) -> String {
+    let urls = std::env::var("Server__Urls")
+        .ok()
+        .or_else(|| exe_dir.and_then(|d| fs::read_to_string(d.join("appsettings.json")).ok()).and_then(|t| urls_setting(&t)));
+    match urls.as_deref().and_then(port_of_urls) {
+        Some(port) => format!("http://127.0.0.1:{port}"),
+        None => DEFAULT_SERVER_URL.into(),
+    }
+}
+
+/// The `"Urls"` string of an appsettings file. Read by hand rather than parsed: the file is JSON with
+/// comments, which serde_json doesn't take.
+fn urls_setting(text: &str) -> Option<String> {
+    let after = &text[text.find("\"Urls\"")? + "\"Urls\"".len()..];
+    let after = after.trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
+    Some(after[..after.find('"')?].to_string())
+}
+
+/// The port of the first entry of a Kestrel bind list (`http://0.0.0.0:5099;https://...`).
+fn port_of_urls(urls: &str) -> Option<u16> {
+    let first = urls.split(';').map(str::trim).find(|u| !u.is_empty())?;
+    let first = first.replace("0.0.0.0", "localhost").replace("://+", "://localhost").replace("://*", "://localhost");
+    url::Url::parse(&first).ok()?.port_or_known_default()
+}
+
 /// Write via a temporary file and a rename, so a crash mid-write leaves the old file, not half a new
 /// one. Readable by this user only on Unix: the settings carry a bearer token, so the file is created
 /// 0600 rather than narrowed after it has been written (a leftover temp file is removed first, so it
@@ -170,9 +199,29 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("hangar-snap-test-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hangar-tray-test-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn a_first_run_follows_the_port_the_server_beside_it_binds() {
+        let text = "{
+  // the bind list
+  \"Server\": { \"Urls\" : \"http://0.0.0.0:5123;https://0.0.0.0:5124\" }
+}";
+        assert_eq!(urls_setting(text).as_deref(), Some("http://0.0.0.0:5123;https://0.0.0.0:5124"));
+        assert_eq!(port_of_urls("http://0.0.0.0:5123;https://x:1"), Some(5123));
+        assert_eq!(port_of_urls("http://+:8080"), Some(8080));
+        assert_eq!(port_of_urls(""), None);
+        let dir = temp_dir("beside");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("appsettings.json"), text).unwrap();
+        if std::env::var_os("Server__Urls").is_none() {
+            assert_eq!(default_server_url(Some(&dir)), "http://127.0.0.1:5123");
+            assert_eq!(default_server_url(None), DEFAULT_SERVER_URL);
+        }
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

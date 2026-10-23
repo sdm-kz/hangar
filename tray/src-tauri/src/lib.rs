@@ -1,8 +1,11 @@
-//! Hangar Snap: a tray app that takes a screenshot on a hotkey, lets you mark it up, and sends it —
-//! with a message — to one of the Claude sessions a Hangar server is running.
+//! Hangar Tray App: the tray icon of a Hangar server, on Windows, macOS and Linux. Its menu shows the
+//! server's state and its running sessions, opens any of them in the web UI, and starts and stops a
+//! server on this machine ([`server`], [`menu`], [`host`]). And it takes screenshots: on a hotkey it
+//! freezes the screen, lets you pick part of it and mark it up, and sends it — with a message — to one
+//! of the server's sessions.
 //!
-//! The flow, end to end:
-//! 1. A hotkey (or the tray menu, or `hangar-snap --capture <mode>`) freezes every monitor
+//! The capture flow, end to end:
+//! 1. A hotkey (or the tray menu, or `Hangar.Tray --capture <mode>`) freezes every monitor
 //!    ([`capture::take`]).
 //! 2. Full screen goes straight to the editor; the other modes put an overlay over each monitor showing
 //!    its frozen frame, where the person drags a region, clicks a window or traces a shape.
@@ -16,7 +19,12 @@ mod config;
 #[doc(hidden)] // public for examples/element_at.rs
 pub mod elements;
 mod geometry;
+mod host;
 mod imageops;
+mod legacy;
+mod menu;
+mod server;
+mod session_tree;
 mod tray_icon;
 mod windows;
 
@@ -29,8 +37,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::http::{header, Response, StatusCode};
 use tauri::ipc::{InvokeBody, Request};
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -43,6 +50,13 @@ use capture::{Mode, Selection, Snapshot};
 use config::{Hotkeys, Settings, Store};
 
 const TRAY_ID: &str = "main";
+
+/// The app's name, as its windows, menu and dialogs say it.
+pub const PRODUCT: &str = "Hangar Tray App";
+
+/// The sign-in entry's name: `scripts\register-autostart.ps1` writes the same one (`Hangar.Tray`), so
+/// the script and the menu's tick switch one entry rather than each adding its own.
+const AUTOSTART_NAME: &str = "Hangar.Tray";
 
 /// A finished capture, waiting in its editor.
 struct Capture {
@@ -80,6 +94,8 @@ struct AppState {
     /// Registered hotkeys, by the shortcut's id.
     hotkeys: Mutex<HashMap<u32, Mode>>,
     hotkey_errors: Mutex<Vec<String>>,
+    /// What each session item of the tray menu opens, by its id; replaced with the menu.
+    menu_targets: Mutex<HashMap<String, menu::Target>>,
 }
 
 fn state(app: &AppHandle) -> tauri::State<'_, AppState> {
@@ -96,7 +112,7 @@ fn now_ms() -> i64 {
 fn notify_error(app: &AppHandle, message: impl Into<String>) {
     let message = message.into();
     log::error!("{message}");
-    app.dialog().message(message).title("Hangar Snap").kind(tauri_plugin_dialog::MessageDialogKind::Error).show(|_| {});
+    app.dialog().message(message).title(PRODUCT).kind(tauri_plugin_dialog::MessageDialogKind::Error).show(|_| {});
 }
 
 // ---- Capturing ------------------------------------------------------------------------------------
@@ -680,10 +696,30 @@ fn screenshot_stamp() -> String {
 
 #[tauri::command]
 fn open_hangar(app: AppHandle, session_id: Option<String>) -> Result<(), String> {
-    let base = state(&app).settings.lock().unwrap().server_url.clone();
+    open_in_hangar(&app, session_id.as_deref(), None)
+}
+
+/// Open the web UI — at a session, on this server or (`node`) on one of its peers. A server on this
+/// machine is opened where it says people should go (its public URL, when it has one).
+fn open_in_hangar(app: &AppHandle, session_id: Option<&str>, node: Option<&str>) -> Result<(), String> {
+    let configured = state(app).settings.lock().unwrap().server_url.clone();
+    let base = server::connection(app)
+        .view()
+        .instance
+        .map(|i| i.open_url)
+        .filter(|u| !u.is_empty())
+        .unwrap_or(configured);
     let mut url = url::Url::parse(&base).map_err(|e| e.to_string())?;
+    // A web address or nothing: the instance file is only a file on disk, and opening a path or a
+    // share from it would run whatever it names.
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("Not opening {base}: not a web address"));
+    }
+    if let Some(node) = node {
+        url.query_pairs_mut().append_pair("node", node);
+    }
     if let Some(id) = session_id {
-        url.query_pairs_mut().append_pair("session", &id);
+        url.query_pairs_mut().append_pair("session", id);
     }
     app.opener().open_url(url.as_str(), None::<&str>).map_err(|e| e.to_string())
 }
@@ -746,6 +782,7 @@ fn save_settings(app: AppHandle, input: SettingsInput) -> Result<SettingsView, S
     set_autostart(&app, input.autostart);
     // After the autostart change: this also rebuilds the tray menu, whose tick shows it.
     apply_hotkeys(&app);
+    server::connection(&app).reconnect();
     Ok(settings_view(&app))
 }
 
@@ -780,7 +817,9 @@ async fn sign_in(app: AppHandle, password: String) -> Result<(), ApiError> {
     let st = state(&app);
     let mut settings = st.settings.lock().unwrap();
     settings.token = Some(token);
-    st.store.save_settings(&settings).map_err(ApiError::Failed)
+    st.store.save_settings(&settings).map_err(ApiError::Failed)?;
+    server::connection(&app).reconnect();
+    Ok(())
 }
 
 #[tauri::command]
@@ -788,7 +827,9 @@ fn sign_out(app: AppHandle) -> Result<(), String> {
     let st = state(&app);
     let mut settings = st.settings.lock().unwrap();
     settings.token = None;
-    st.store.save_settings(&settings)
+    st.store.save_settings(&settings)?;
+    server::connection(&app).reconnect();
+    Ok(())
 }
 
 #[tauri::command]
@@ -878,45 +919,55 @@ fn apply_hotkeys(app: &AppHandle) {
     }
     *st.hotkeys.lock().unwrap() = map;
     *st.hotkey_errors.lock().unwrap() = errors;
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        match build_menu(app, &hotkeys) {
-            Ok(menu) => {
-                let _ = tray.set_menu(Some(menu));
-            }
-            Err(e) => log::error!("Could not rebuild the tray menu: {e}"),
-        }
-    }
+    refresh_tray(app);
     let _ = app.emit("settings-changed", ());
 }
 
-fn build_menu(app: &AppHandle, hotkeys: &Hotkeys) -> tauri::Result<Menu<tauri::Wry>> {
-    let menu = Menu::new(app)?;
-    for mode in Mode::ALL {
-        let accel = hotkey_for(hotkeys, mode).trim();
-        let id = format!("capture:{}", serde_json::to_value(mode).unwrap().as_str().unwrap());
-        let label = format!("Capture {}", mode.label().to_lowercase());
-        // The accelerator is only shown, not bound, in a tray menu; one the menu can't parse is left off.
-        let item = MenuItem::with_id(app, &id, &label, true, (!accel.is_empty()).then_some(accel))
-            .or_else(|_| MenuItem::with_id(app, &id, &label, true, None::<&str>))?;
-        menu.append(&item)?;
+/// Redraw the tray from the latest view of the server: the menu, the tooltip, and the icon, greyed
+/// while there is no server to show.
+fn refresh_tray(app: &AppHandle) {
+    // Always on the main thread, one at a time: the menu and the targets its items open are built and
+    // put in place together, and two builds racing could pair one's menu with the other's targets.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || refresh_tray_now(&handle));
+}
+
+fn refresh_tray_now(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let view = server::connection(app).view();
+    let hotkeys = state(app).settings.lock().unwrap().hotkeys.clone();
+    match menu::build(app, &hotkeys, &view) {
+        Ok(built) => {
+            *state(app).menu_targets.lock().unwrap() = built.targets;
+            let _ = tray.set_menu(Some(built.menu));
+        }
+        Err(e) => log::error!("Could not rebuild the tray menu: {e}"),
     }
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "open", "Open Hangar", true, None::<&str>)?)?;
-    menu.append(&MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?)?;
-    let autostart = app.autolaunch().is_enabled().unwrap_or(false);
-    menu.append(&CheckMenuItem::with_id(app, "autostart", "Start when I sign in", true, autostart, None::<&str>)?)?;
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "quit", "Quit Hangar Snap", true, None::<&str>)?)?;
-    Ok(menu)
+    let _ = tray.set_tooltip(Some(menu::tooltip(&view)));
+    tray_icon::set_online(app, TRAY_ID, view.connected());
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "open" => {
-            if let Err(e) = open_hangar(app.clone(), None) {
+            if let Err(e) = open_in_hangar(app, None, None) {
                 notify_error(app, e);
             }
         }
+        "server:start" => match host::starter() {
+            // Off the main thread: systemctl and launchctl are waited for.
+            Some(starter) => {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = host::start_server(&starter) {
+                        notify_error(&app, format!("Could not start the server: {e}"));
+                    }
+                });
+            }
+            None => notify_error(app, "There is no Hangar server beside this app to start."),
+        },
+        "server:stop" => confirm_stop_server(app),
+        "orphans:stop" => confirm_stop_orphans(app),
         "settings" => windows::show_settings(app),
         "autostart" => {
             let on = app.autolaunch().is_enabled().unwrap_or(false);
@@ -929,13 +980,89 @@ fn on_menu(app: &AppHandle, id: &str) {
         other => {
             if let Some(mode) = other.strip_prefix("capture:").and_then(Mode::parse) {
                 start_capture(app, mode);
+                return;
+            }
+            // Its own statement, so the lock is let go before the browser is opened.
+            let target = state(app).menu_targets.lock().unwrap().get(other).cloned();
+            if let Some(target) = target {
+                if let Err(e) = open_in_hangar(app, Some(&target.session), target.node.as_deref()) {
+                    notify_error(app, e);
+                }
             }
         }
     }
 }
 
+/// Ask first, then do `action` with a client of the server: each of these acts on the server. A
+/// failure is shown, since otherwise nothing would seem to happen.
+fn confirm_then<F, Fut>(app: &AppHandle, title: &str, message: String, ok: &str, action: F)
+where
+    F: FnOnce(Client) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<Option<String>, ApiError>> + Send,
+{
+    let app = app.clone();
+    let heading = title.to_string();
+    app.dialog()
+        .message(message)
+        .title(title)
+        .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
+        .buttons(tauri_plugin_dialog::MessageDialogButtons::OkCancelCustom(ok.into(), "Cancel".into()))
+        .show(move |yes| {
+            if !yes {
+                return;
+            }
+            tauri::async_runtime::spawn(async move {
+                let result = match client(&app) {
+                    Ok((client, _)) => action(client).await,
+                    Err(e) => Err(e),
+                };
+                match result {
+                    Ok(Some(done)) => app.dialog().message(done).title(&heading).show(|_| {}),
+                    Ok(None) => {}
+                    Err(e) => notify_error(&app, format!("{heading}: {e}")),
+                }
+                server::connection(&app).reconnect();
+            });
+        });
+}
+
+fn confirm_stop_server(app: &AppHandle) {
+    confirm_then(
+        app,
+        "Stop server",
+        "Stop the Hangar server?\n\nRunning sessions are not stopped: they keep running on their own, and the \
+         server picks them up again the next time it starts. Until then neither the web UI nor this menu can reach them."
+            .into(),
+        "Stop server",
+        |client| async move { client.stop_daemon().await.map(|()| None) },
+    );
+}
+
+fn confirm_stop_orphans(app: &AppHandle) {
+    let orphans = server::connection(app).view().orphans;
+    if orphans.is_empty() {
+        return;
+    }
+    let mut detail: Vec<String> =
+        orphans.iter().take(10).map(|o| format!("  •  {}  (claude pid {})", o.working_directory, o.child_pid)).collect();
+    if orphans.len() > 10 {
+        detail.push(format!("  …and {} more", orphans.len() - 10));
+    }
+    let count = orphans.len();
+    confirm_then(
+        app,
+        "Stop orphaned sessions",
+        format!(
+            "Stop {count} session(s) this server no longer tracks?\n\n{}\n\nEach is a running claude process. This ends them and cannot be undone.",
+            detail.join("\n")
+        ),
+        "Stop them",
+        move |client| async move { client.stop_orphans().await.map(|n| Some(format!("Stopped {n} of {count}."))) },
+    );
+}
+
 /// Start (or stop starting) at sign-in, as this executable: the entry names the path the app runs
-/// from now, so after a move it is re-pointed by switching it off and on (or by `deploy-snap.ps1`).
+/// from now, so after a move it is re-pointed by switching it off and on (or by `register-autostart.ps1`).
 fn set_autostart(app: &AppHandle, on: bool) {
     let autolaunch = app.autolaunch();
     let result = if on { autolaunch.enable() } else { autolaunch.disable() };
@@ -945,12 +1072,26 @@ fn set_autostart(app: &AppHandle, on: bool) {
 }
 
 fn build_tray(app: &AppHandle, hotkeys: &Hotkeys) -> tauri::Result<()> {
+    let view = server::connection(app).view();
+    let built = menu::build(app, hotkeys, &view)?;
+    *state(app).menu_targets.lock().unwrap() = built.targets;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_icon::image_for(tray_icon::current_look(app))?)
         .icon_as_template(cfg!(target_os = "macos"))
-        .tooltip("Hangar Snap")
-        .menu(&build_menu(app, hotkeys)?)
-        .show_menu_on_left_click(true)
+        .tooltip(menu::tooltip(&view))
+        .menu(&built.menu)
+        // A left click opens Hangar on Windows, as a taskbar icon's does. A menu-bar item opens its menu
+        // on any click, and a Linux panel indicator has nothing but its menu.
+        .show_menu_on_left_click(!cfg!(windows))
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                if cfg!(windows) {
+                    if let Err(e) = open_in_hangar(tray.app_handle(), None, None) {
+                        notify_error(tray.app_handle(), e);
+                    }
+                }
+            }
+        })
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .build(app)?;
     tray_icon::watch(app, TRAY_ID);
@@ -988,15 +1129,29 @@ fn serve_picture(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
     }
 }
 
+/// The settings folder a test or dev run was given, which keeps its settings and recents away from the
+/// real ones (`HANGAR_SNAP_CONFIG_DIR` is the name from before the rename).
+fn test_config_dir() -> Option<std::ffi::OsString> {
+    std::env::var_os("HANGAR_TRAY_CONFIG_DIR").or_else(|| std::env::var_os("HANGAR_SNAP_CONFIG_DIR"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+    host::remember_exe();
+    let mut builder = tauri::Builder::default();
+    // One copy per user — except a test run, which has a settings folder of its own and runs beside the
+    // installed one rather than handing itself to it.
+    if test_config_dir().is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             match capture_arg(&args) {
                 Some(mode) => start_capture(app, mode),
+                // Sign-in, or the update hand-off, starting a copy that is already running: nothing to do.
+                None if args.iter().any(|a| a == "--autostart") => {}
                 None => windows::show_settings(app),
             }
-        }))
+        }));
+    }
+    builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -1022,10 +1177,13 @@ pub fn run() {
                 })
                 .build(),
         )
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--autostart"]),
-        ))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                // A launch agent on macOS, the builder's default.
+                .app_name(AUTOSTART_NAME)
+                .arg("--autostart")
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
@@ -1066,17 +1224,23 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            // HANGAR_SNAP_CONFIG_DIR keeps a test run's settings and recents away from the real ones.
-            let dir = match std::env::var_os("HANGAR_SNAP_CONFIG_DIR") {
+            let dir = match test_config_dir() {
                 Some(d) => std::path::PathBuf::from(d),
                 // The local, not the roaming, folder on Windows: the settings hold a bearer token,
                 // which has no business following a roaming profile to other machines.
-                None => app.path().app_local_data_dir()?,
+                None => {
+                    let dir = app.path().app_local_data_dir()?;
+                    legacy::migrate_settings(&dir);
+                    legacy::retire_snap(app.handle());
+                    dir
+                }
             };
             let first_run = !dir.join("settings.json").exists();
             let store = Store::new(dir);
-            let settings = store.load_settings();
+            let mut settings = store.load_settings();
             if first_run {
+                let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
+                settings.server_url = config::default_server_url(exe_dir.as_deref());
                 // Written now, so "first run" (which opens settings) means the first run only, whether
                 // or not anything is changed and saved in them.
                 if let Err(e) = store.save_settings(&settings) {
@@ -1099,9 +1263,13 @@ pub fn run() {
                 committed: Mutex::new(None),
                 hotkeys: Mutex::new(HashMap::new()),
                 hotkey_errors: Mutex::new(Vec::new()),
+                menu_targets: Mutex::new(HashMap::new()),
             });
+            let connection = server::Connection::new();
+            app.manage(connection.clone());
             let handle = app.handle().clone();
             build_tray(&handle, &hotkeys)?;
+            server::start(&handle, connection);
             apply_hotkeys(&handle);
             prewarm(&handle);
 
@@ -1142,7 +1310,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building Hangar Snap")
+        .expect("error while building the Hangar tray")
         // A tray app: closing the last window doesn't quit it.
         .run(|_app, event| {
             if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
