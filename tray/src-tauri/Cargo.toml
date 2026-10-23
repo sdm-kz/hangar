@@ -38,7 +38,6 @@ futures-util = { version = "0.3.34", default-features = false, features = ["sink
 auto-launch = "0.6"
 
 [target.'cfg(windows)'.dependencies]
-windows-registry = "0.6"
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",

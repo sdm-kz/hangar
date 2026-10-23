@@ -1,11 +1,10 @@
-"""Builds every Hangar icon from one logo: the browser tab, the installed web app, the header and the
-server's exe. Needs Pillow (pip install pillow).
+"""Builds every Hangar icon from one logo: the browser tab, the installed web app, the header, the
+server's exe, and the tray app's exe and tray icon. Needs Pillow (pip install pillow).
 
     python scripts/make-icons.py [path/to/logo.png]
 
 With a path, that picture (the logo on a transparent background) becomes the new master,
-assets/hangar-logo.png; without one, the icons are rebuilt from the master already there. The
-tray app (tray/) draws its own icons (tray/src-tauri/icons) and is not touched.
+assets/hangar-logo.png; without one, the icons are rebuilt from the master already there.
 """
 
 import sys
@@ -72,6 +71,23 @@ def main() -> None:
 
     # The exe: as large as the square allows -- at 16 px every pixel counts.
     ico(lambda s: fit(logo, s, 0.98), ROOT / "assets" / "hangar.ico")
+
+    # The tray app (tray/src-tauri/icons). Its exe and bundles: the same logo as the server's exe.
+    icons = ROOT / "tray" / "src-tauri" / "icons"
+    ico(lambda s: fit(logo, s, 0.98), icons / "icon.ico")
+    for name, size in (("32x32.png", 32), ("128x128.png", 128), ("128x128@2x.png", 256), ("icon.png", 512)):
+        fit(logo, size, 0.98).save(icons / name, optimize=True)
+    fit(logo, 1024, 0.9).save(icons / "icon.icns", format="ICNS")
+    # The tray icon, a picture per size: the app picks the one for the display's scaling, since a
+    # picture the OS squeezes into the slot comes out blurred. The logo's own colours read on light and
+    # dark taskbars alike.
+    for size in (16, 20, 24, 28, 32, 40, 48, 56, 64):
+        fit(logo, size, 0.98).save(icons / "tray" / f"logo-{size}.png", optimize=True)
+    # The macOS menu bar's template: the silhouette in black, which it recolours itself. 22 pt at 2x.
+    shape = fit(logo, 44, 0.9)
+    template = Image.new("RGBA", shape.size, (0, 0, 0, 0))
+    template.putalpha(shape.getchannel("A"))
+    template.save(icons / "tray" / "template.png", optimize=True)
     print("ok")
 
 

@@ -1916,7 +1916,6 @@ dependencies = [
  "tokio-tungstenite",
  "url",
  "windows",
- "windows-registry",
  "windows-sys 0.61.2",
  "xcap",
 ]
