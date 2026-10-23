@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
-import { api } from "@/lib/api";
+import { useApi, useNodeId } from "@/lib/node";
 import type { DirEntry, FsNode } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
@@ -39,29 +39,31 @@ import {
 } from "lucide-react";
 
 // Which folders are expanded in the tree is a per-browser preference, remembered across refreshes so
-// the tree comes back the way you left it instead of collapsing to the default start folder.
-const EXPANDED_KEY = "hangar.filesExpanded";
-function loadExpanded(): Set<string> {
+// the tree comes back the way you left it instead of collapsing to the default start folder. The rest
+// of the tree's view state is remembered the same way: which folder the toolbar actions target, and how
+// far the tree is scrolled. The panel unmounts whenever the sidebar switches to Sessions, so without
+// this every trip back to Files (and every refresh) would drop you at the top of the tree.
+// Each machine's tree keeps its own: this one's under the keys it always had, a peer's under its id.
+function storeKeys(node: string | null) {
+  const of = (key: string) => (node ? `${key}:${node}` : key);
+  return { expanded: of("hangar.filesExpanded"), selected: of("hangar.filesSelectedDir"), scroll: of("hangar.filesScroll") };
+}
+function loadExpanded(key: string): Set<string> {
   try {
-    const raw = localStorage.getItem(EXPANDED_KEY);
+    const raw = localStorage.getItem(key);
     return new Set(raw ? (JSON.parse(raw) as string[]) : []);
   } catch {
     return new Set();
   }
 }
-function saveExpanded(set: Set<string>) {
+function saveExpanded(key: string, set: Set<string>) {
   try {
-    localStorage.setItem(EXPANDED_KEY, JSON.stringify([...set]));
+    localStorage.setItem(key, JSON.stringify([...set]));
   } catch {
     /* storage disabled — preference is best-effort */
   }
 }
 
-// The rest of the tree's view state, remembered the same way: which folder the toolbar actions target,
-// and how far the tree is scrolled. The panel unmounts whenever the sidebar switches to Sessions, so
-// without this every trip back to Files (and every refresh) would drop you at the top of the tree.
-const SELECTED_KEY = "hangar.filesSelectedDir";
-const SCROLL_KEY = "hangar.filesScroll";
 function readStored(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -125,7 +127,8 @@ function FileGlyph({ name }: { name: string }) {
 }
 
 /**
- * Whole-server filesystem tree for the sidebar Files tab. Lazily lists drives, then directories on
+ * Whole-server filesystem tree for the sidebar Files tab: the disk of the machine its NodeProvider names
+ * (this one, or a paired peer's, read through it). Lazily lists drives, then directories on
  * expand. Clicking a file opens it in the main content area (via <c>onOpenFile</c>); clicking a
  * folder selects it as the target for the New session / New file / New folder / Upload toolbar actions.
  * Any node can be renamed inline. Absolute server paths throughout.
@@ -143,15 +146,17 @@ export function FilesSidebar({
   revealToken?: number; // bumped per request, so asking for the same folder twice goes back to it
   onOpenFile: (path: string) => void;
   onNewSession: (path: string) => void; // start a session in a folder (hover action on dir rows)
-  onOpenShell: (path: string) => void; // open a shell in a folder (hover action on dir rows)
+  onOpenShell?: (path: string) => void; // open a shell in a folder (hover action on dir rows); not on a peer
 }) {
+  const api = useApi();
+  const keys = storeKeys(useNodeId());
   const confirm = useConfirm();
   const [drives, setDrives] = useState<DirEntry[]>([]);
   const [children, setChildren] = useState<Map<string, FsNode[]>>(new Map());
-  const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
+  const [expanded, setExpanded] = useState<Set<string>>(() => loadExpanded(keys.expanded));
   const [loading, setLoading] = useState<Set<string>>(new Set());
   // Target for toolbar actions; restored from the last visit so the toolbar isn't disabled on arrival.
-  const [selectedDir, setSelectedDir] = useState<string | null>(() => readStored(SELECTED_KEY));
+  const [selectedDir, setSelectedDir] = useState<string | null>(() => readStored(keys.selected));
   const [renaming, setRenaming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false); // has the initial batch of folder listings landed?
@@ -193,7 +198,7 @@ export function FilesSidebar({
         return n;
       });
     }
-  }, []);
+  }, [api]);
 
   // Expand the tree down to (and select) a directory, loading each ancestor as needed.
   const expandTo = useCallback(
@@ -223,8 +228,8 @@ export function FilesSidebar({
 
   // Remember the expanded-folder set across refreshes.
   useEffect(() => {
-    saveExpanded(expanded);
-  }, [expanded]);
+    saveExpanded(keys.expanded, expanded);
+  }, [keys.expanded, expanded]);
 
   // List any folder that is open and on screen but has no listing yet: one remembered open inside a
   // parent that has just been reopened, or one "expand one more level" opened. A failed listing
@@ -237,8 +242,8 @@ export function FilesSidebar({
 
   // ...and the selected folder alongside it.
   useEffect(() => {
-    writeStored(SELECTED_KEY, selectedDir);
-  }, [selectedDir]);
+    writeStored(keys.selected, selectedDir);
+  }, [keys.selected, selectedDir]);
 
   // Replay the remembered scroll offset, but only once the restored folders have finished listing.
   // Scrolling earlier is worse than not scrolling at all: rows keep arriving above the viewport, and
@@ -249,7 +254,7 @@ export function FilesSidebar({
     if (restoredScrollRef.current || !settled) return;
     const box = scrollRef.current;
     if (!box) return;
-    const target = Number(readStored(SCROLL_KEY) ?? 0);
+    const target = Number(readStored(keys.scroll) ?? 0);
     if (!(target > 0)) {
       restoredScrollRef.current = true;
       return;
@@ -257,7 +262,7 @@ export function FilesSidebar({
     if (box.scrollHeight - box.clientHeight < target) return; // a listing is still outstanding
     box.scrollTop = target;
     restoredScrollRef.current = true;
-  }, [settled, drives, children]);
+  }, [settled, drives, children, keys.scroll]);
 
   // Remember where the tree is scrolled to, debounced so a flick doesn't hammer localStorage. Scrolls
   // that happen while the tree is still filling in aren't the user's doing (anchoring again), so they
@@ -268,9 +273,9 @@ export function FilesSidebar({
       restoredScrollRef.current = true; // the view is where it's wanted now; don't jump it later
       const top = Math.round(e.currentTarget.scrollTop);
       window.clearTimeout(saveScrollRef.current);
-      saveScrollRef.current = window.setTimeout(() => writeStored(SCROLL_KEY, String(top)), 150);
+      saveScrollRef.current = window.setTimeout(() => writeStored(keys.scroll, String(top)), 150);
     },
-    [settled]
+    [settled, keys.scroll]
   );
 
   // Initial load: drive roots plus a useful starting point. Priority: (1) restore the folders the user
@@ -282,10 +287,10 @@ export function FilesSidebar({
         const res = await api.fsList();
         setDrives(res.drives);
         // Restore the remembered tree: load every persisted-expanded folder so its rows render.
-        const persisted = loadExpanded();
+        const persisted = loadExpanded(keys.expanded);
         if (persisted.size > 0) {
           // Keep the folder that was selected last time; only fall back to the default start folder.
-          if (res.current && !readStored(SELECTED_KEY) && !revealDirRef.current) setSelectedDir(res.current);
+          if (res.current && !readStored(keys.selected) && !revealDirRef.current) setSelectedDir(res.current);
           // Only the ones that will be on screen. The set also remembers folders left open inside ones
           // since closed, and listing those up front is work nobody sees; the effect below lists them
           // when a parent opening brings them back into view.
@@ -621,8 +626,8 @@ export function FilesSidebar({
     // The top is where the tree is now meant to be: a scroll restore still pending must not undo
     // that, and an already-top tree fires no scroll event to record it.
     restoredScrollRef.current = true;
-    writeStored(SCROLL_KEY, "0");
-  }, []);
+    writeStored(keys.scroll, "0");
+  }, [keys.scroll]);
 
   // Everything the toolbar offers, most-used first: when the panel is too narrow for all of them,
   // the ones at the end move into the "more" menu, so what stays out is what is reached for most.
@@ -642,13 +647,17 @@ export function FilesSidebar({
       onClick: () => selectedDir && onNewSession(selectedDir),
       disabled: !selectedDir,
     },
-    {
-      id: "shell",
-      label: "Open a shell in this folder",
-      icon: <TerminalSquare className="size-4" />,
-      onClick: () => selectedDir && onOpenShell(selectedDir),
-      disabled: !selectedDir,
-    },
+    ...(onOpenShell
+      ? [
+          {
+            id: "shell",
+            label: "Open a shell in this folder",
+            icon: <TerminalSquare className="size-4" />,
+            onClick: () => selectedDir && onOpenShell(selectedDir),
+            disabled: !selectedDir,
+          },
+        ]
+      : []),
     { id: "file", label: "New file", icon: <FilePlus className="size-4" />, onClick: newFile, disabled: !selectedDir },
     { id: "folder", label: "New folder", icon: <FolderPlus className="size-4" />, onClick: newFolder, disabled: !selectedDir },
     {
@@ -901,7 +910,7 @@ function TreeNode({
   onToggle: (path: string) => void;
   onOpenFile: (path: string) => void;
   onNewSession: (path: string) => void;
-  onOpenShell: (path: string) => void;
+  onOpenShell?: (path: string) => void;
   onStartRename: (path: string) => void;
   onRename: (path: string, name: string) => void;
   onCancelRename: () => void;
@@ -985,13 +994,13 @@ function TreeNode({
           </button>
         )}
         {/* Open a shell in this folder — hover action on any directory row. */}
-        {isDir && renaming !== path && (
+        {isDir && renaming !== path && onOpenShell && (
           <button
             className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
             title="Open a shell in this folder"
             onClick={(e) => {
               e.stopPropagation();
-              onOpenShell(path);
+              onOpenShell?.(path);
             }}
           >
             <TerminalSquare className="size-3.5" />

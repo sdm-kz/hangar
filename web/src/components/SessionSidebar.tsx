@@ -1550,6 +1550,7 @@ export interface PeerSidebar {
   onRename: (id: string, name: string) => void;
   onRemoveSessions: (ids: string[]) => void;
   onNewInFolder?: (dir: string) => void;
+  onRevealFolder?: (dir: string) => void;
   onNewInProject?: (project: Project) => void;
   onClone?: (s: SessionInfo) => void;
   onSchedules?: (target?: { conversationId: string; name: string }) => void;

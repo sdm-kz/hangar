@@ -40,7 +40,7 @@ import { ForkSessionDialog } from "@/components/ForkSessionDialog";
 import { CarryDialog, type CarryMode } from "@/components/CarryDialog";
 import { matchFolder } from "@/lib/carry";
 import { ScheduleDialog } from "@/components/ScheduleDialog";
-import type { LaunchNode } from "@/components/NodePicker";
+import { NodePicker, type LaunchNode } from "@/components/NodePicker";
 import { isOverdue } from "@/lib/schedules";
 import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,8 @@ type AuthStatus = "loading" | "authed" | "anon";
 const SIDEBAR_MIN = 220;
 const SIDEBAR_MAX = 560;
 const SIDEBAR_DEFAULT = 288;
+// The machine the Files tab was left on: a peer's id, absent for this one.
+const FILES_NODE_KEY = "hangar.filesNode";
 
 function readSidebarWidth() {
   const n = Number(localStorage.getItem("hangar.sidebarWidth"));
@@ -104,9 +106,19 @@ export function App() {
   const [listTab, setListTab] = useState<SessionListTab>("sessions"); // Sessions vs Recent list
   // Server file open in the main area, restored from the URL so a refresh comes back to it.
   const [openFile, setOpenFile] = useState<string | null>(() => readUrlState().open ?? null);
-  // The node `openFile` is on: a peer's, when it was opened from one of that node's sessions. Only this
+  // The node `openFile` is on: a peer's, when it was opened from one of that node's sessions or from its
+  // disk in the Files tab. Only this
   // node's files go into the URL — `open` has no node of its own to say which disk it means.
   const [openFileNode, setOpenFileNode] = useState<string | null>(null);
+  // The machine whose disk the Files tab shows: null for this one. A per-browser preference, like the
+  // tree's own state, so the tab comes back on the machine it was left on.
+  const [filesNode, setFilesNode] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(FILES_NODE_KEY);
+    } catch {
+      return null;
+    }
+  });
   // Shells filling the main area: a folder's (opened from the Files tree or the Shells tab), or the
   // SSH connections. Restored from the URL like openFile is, and mutually exclusive with it — each
   // takes the main area from the other. `focus` is a tab to bring forward, picked in the Shells tab.
@@ -1025,10 +1037,11 @@ export function App() {
     return node ? (mesh.peers.find((p) => p.id === node)?.snap?.sessions ?? []) : sessions;
   }
 
-  // Open a server file (from the Files tab) in the main content area; close the mobile drawer.
-  const openServerFile = useCallback((path: string) => {
+  // Open a server file (from the Files tab, on the machine it shows) in the main content area; close the
+  // mobile drawer.
+  const openServerFile = useCallback((path: string, node: string | null = null) => {
     setShellView(null);
-    setOpenFileNode(null);
+    setOpenFileNode(node);
     setOpenFile(path);
     setSidebarOpen(false);
   }, []);
@@ -1048,12 +1061,13 @@ export function App() {
     setSidebarOpen(false);
   }, []);
 
-  // Reveal the open file in the Files tree: switch the sidebar to the Files tab (which expands and
-  // scrolls to openFile) and open the mobile drawer so it's visible on small screens.
+  // Reveal the open file in the Files tree: switch the sidebar to the Files tab, on the file's machine
+  // (which expands and scrolls to openFile), and open the mobile drawer so it's visible on small screens.
   const revealInFiles = useCallback(() => {
+    pickFilesNode(openFileNode);
     setSidebarTab("files");
     setSidebarOpen(true);
-  }, []);
+  }, [openFileNode]);
 
   // The same move for a session's folder, from its row menu. The Files tab lists every drive, so
   // walking down to a session's working directory by hand is the long way round to somewhere the
@@ -1061,12 +1075,24 @@ export function App() {
   // usually been scrolled somewhere else, and going back is the whole point of asking again.
   const [revealDir, setRevealDir] = useState<string | null>(null);
   const [revealDirToken, setRevealDirToken] = useState(0);
-  const revealFolderInFiles = useCallback((dir: string) => {
+  const revealFolderInFiles = useCallback((dir: string, node: string | null = null) => {
+    pickFilesNode(node);
     setRevealDir(dir);
     setRevealDirToken((n) => n + 1);
     setSidebarTab("files");
     setSidebarOpen(true);
   }, []);
+
+  // Switch the Files tab to a machine's disk, and remember it.
+  function pickFilesNode(node: string | null) {
+    setFilesNode(node);
+    try {
+      if (node) localStorage.setItem(FILES_NODE_KEY, node);
+      else localStorage.removeItem(FILES_NODE_KEY);
+    } catch {
+      /* storage disabled — preference is best-effort */
+    }
+  }
 
   // The request lives only as long as the visit it was made for. The Files panel unmounts whenever
   // the sidebar shows Sessions, so a request left standing would fire again on the way back and drag
@@ -1407,6 +1433,7 @@ export function App() {
       onRename: (id, name) => void onRename(id, name, p.id),
       onRemoveSessions: (ids) => void onRemoveSessions(ids, p.id),
       onNewInFolder: (dir) => newSessionInFolder(dir, p.id),
+      onRevealFolder: (dir) => revealFolderInFiles(dir, p.id),
       onNewInProject: (project) => newSessionInProject(project, p.id),
       onClone: cloneSession,
       onSchedules: (target) => setScheduling({ target: target ?? null, node: p.id }),
@@ -1440,6 +1467,47 @@ export function App() {
   if (auth === "anon") {
     return <Login onSuccess={() => setAuth("authed")} />;
   }
+
+  // The Files tab, for both the desktop column and the mobile drawer: one machine's disk at a time, picked
+  // above the tree once there are peers. A peer's is read through it, as its sessions' files are; one no
+  // longer paired falls back to this machine's.
+  const filesAt = filesNode && (!mesh.known || mesh.peers.some((p) => p.id === filesNode)) ? filesNode : null;
+  const filesNodes: LaunchNode[] = launchNodes.map((n) => {
+    const peer = n.id ? mesh.peers.find((p) => p.id === n.id) : null;
+    return { ...n, unavailable: peer && peer.status !== "online" ? "not reachable right now" : null };
+  });
+  const filesPanel = (
+    <div className="flex h-full min-h-0 flex-col">
+      {filesNodes.length > 1 && (
+        <div className="border-b px-2 py-1.5">
+          <NodePicker
+            nodes={filesNodes}
+            value={filesAt}
+            onChange={(node) => {
+              // A folder still waiting to be revealed is on the machine it was asked for, not this one.
+              setRevealDir(null);
+              pickFilesNode(node);
+            }}
+          />
+        </div>
+      )}
+      <div className="min-h-0 flex-1">
+        <NodeProvider node={filesAt}>
+          <FilesSidebar
+            // Each machine's tree is its own: switching mounts the other's, with its own remembered state.
+            key={filesAt ?? ""}
+            openPath={openFile && openFileNode === filesAt ? openFile : null}
+            revealDir={revealDir}
+            revealToken={revealDirToken}
+            onOpenFile={(path) => openServerFile(path, filesAt)}
+            onNewSession={(path) => newSessionInFolder(path, filesAt)}
+            // A folder's shells are this machine's; a peer's are opened from its own page.
+            onOpenShell={filesAt ? undefined : openFolderShell}
+          />
+        </NodeProvider>
+      </div>
+    </div>
+  );
 
   // The Shells tab, for both the desktop column and the mobile drawer.
   const shellsPanel = (
@@ -1521,16 +1589,7 @@ export function App() {
                 onProjectsChange={setProjects}
               />
             }
-            files={
-              <FilesSidebar
-                openPath={openFileNode ? null : openFile}
-                revealDir={revealDir}
-                revealToken={revealDirToken}
-                onOpenFile={openServerFile}
-                onNewSession={newSessionInFolder}
-                onOpenShell={openFolderShell}
-              />
-            }
+            files={filesPanel}
             shells={shellsPanel}
             shellsCount={allShells?.length}
           />
@@ -1602,16 +1661,7 @@ export function App() {
                     onProjectsChange={setProjects}
                   />
                 }
-                files={
-                  <FilesSidebar
-                    openPath={openFileNode ? null : openFile}
-                    revealDir={revealDir}
-                    revealToken={revealDirToken}
-                    onOpenFile={openServerFile}
-                    onNewSession={newSessionInFolder}
-                    onOpenShell={openFolderShell}
-                  />
-                }
+                files={filesPanel}
                 shells={shellsPanel}
                 shellsCount={allShells?.length}
               />
@@ -1627,8 +1677,7 @@ export function App() {
                   key={openFileNode ?? ""}
                   path={openFile}
                   onClose={() => setOpenFile(null)}
-                  // The Files tree is this node's disk: nothing to reveal a peer's file in.
-                  onReveal={openFileNode ? undefined : revealInFiles}
+                  onReveal={revealInFiles}
                   onToggleSidebar={() => setSidebarOpen(true)}
                   collapsed={collapsed}
                   onToggleCollapsed={toggleCollapsed}

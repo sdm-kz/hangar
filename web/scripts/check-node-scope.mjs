@@ -18,7 +18,6 @@ const API = join(src, "lib", "api");
 // is never shown for another node's session.
 const THIS_NODE_ONLY = new Set([
   "App.tsx", // picks the node itself: this one's api for its own, apiFor(node) for a peer's
-  "components/FilesSidebar.tsx", // the sidebar's Files tab: this machine's disk
   "components/Login.tsx",
   "components/NodesDialog.tsx",
   "components/PreviewApp.tsx", // the standalone preview tab reads this machine's disk; never offered for a peer's file
