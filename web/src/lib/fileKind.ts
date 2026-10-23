@@ -1,4 +1,4 @@
-export type FileKind = "image" | "video" | "text" | "office" | "pdf" | "binary";
+export type FileKind = "image" | "video" | "text" | "office" | "pdf" | "model" | "binary";
 
 const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"]);
 
@@ -8,6 +8,10 @@ const VIDEO = new Set(["mp4", "webm", "ogv", "m4v", "mov"]);
 
 // Office documents we render inline (read-only) via docx-preview / SheetJS.
 const OFFICE = new Set(["docx", "xlsx"]);
+
+// 3D models we render inline (read-only) via three.js. Checked before the text fallback on purpose: an
+// ASCII STL is text, but nobody wants to read its facet list.
+const MODEL = new Set(["stl", "3mf"]);
 
 // Known binary formats we never try to preview as text (they'd render as gibberish).
 const BINARY = new Set([
@@ -29,6 +33,9 @@ const BINARY = new Set([
 // Parsing docx/xlsx in the browser is heavy; refuse anything past this before rendering.
 export const MAX_OFFICE_PREVIEW = 15_000_000; // 15 MB
 
+// Same for 3D models. Meshes run bigger than documents, and a few million triangles still orbit smoothly.
+export const MAX_MODEL_PREVIEW = 150_000_000; // 150 MB
+
 export function fileExt(name: string): string {
   const i = name.lastIndexOf(".");
   return i > 0 ? name.slice(i + 1).toLowerCase() : "";
@@ -45,6 +52,7 @@ export function fileKind(name: string): FileKind {
   // PDFs render in the browser's own viewer (the server already serves them as application/pdf),
   // so there's nothing to parse and no size cap — unlike the docx/xlsx "office" kind.
   if (ext === "pdf") return "pdf";
+  if (ext && MODEL.has(ext)) return "model";
   if (ext && BINARY.has(ext)) return "binary";
   return "text";
 }

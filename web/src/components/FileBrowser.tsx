@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type UIEvent } from "react";
 import { ApiError } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
-import { MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
+import { MAX_MODEL_PREVIEW, MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
 import { useHtml } from "@/lib/useHtml";
 import { useContentRev } from "@/lib/useContentRev";
@@ -44,6 +44,7 @@ import { FolderPicker } from "./FolderPicker";
 import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
+import { ModelViewer } from "./ModelViewer";
 import {
   GitHistory,
   CommitFilePreview,
@@ -51,6 +52,7 @@ import {
   type CommitSelection,
 } from "./GitHistory";
 import {
+  Box,
   Check,
   ChevronDown,
   ChevronRight,
@@ -1670,7 +1672,7 @@ function FlatFileList({
     <>
       {entries.map((e) => {
         const kind = fileKind(e.name);
-        const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : FileText;
+        const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : FileText;
         // Rows here carry the path under the name -- a hit can come from anywhere, so the name alone
         // does not say where it is. The row is handed the same line so the rename box keeps it.
         const pathLine = <span className="truncate text-[10px] text-muted-foreground">{e.path}</span>;
@@ -1836,7 +1838,7 @@ function ChangeDirChildren({ dir, depth, ...rest }: { dir: ChangeDir; depth: num
               <span className="size-3.5 shrink-0" />
               {(() => {
                 const kind = fileKind(e.name);
-                const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : FileText;
+                const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : FileText;
                 return <Icon className="size-3.5 shrink-0 text-muted-foreground" />;
               })()}
             </>
@@ -2084,7 +2086,7 @@ function FileRow({
 }) {
   const kind = fileKind(entry.name);
   const Icon =
-    kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "binary" ? FileIcon : FileText;
+    kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : kind === "binary" ? FileIcon : FileText;
   // Bring a URL-restored selection into view (fires only when a row mounts already
   // selected — normal clicks select an already-mounted row, so they don't scroll).
   const ref = useRef<HTMLDivElement>(null);
@@ -3092,13 +3094,18 @@ function FilePreview({
               />
             )}
 
+            {kind === "model" && file.size <= MAX_MODEL_PREVIEW && (
+              <ModelViewer url={rawUrl()} name={file.name} />
+            )}
+
             {(kind === "binary" ||
               status === "toolarge" ||
-              (kind === "office" && file.size > MAX_OFFICE_PREVIEW)) && (
+              (kind === "office" && file.size > MAX_OFFICE_PREVIEW) ||
+              (kind === "model" && file.size > MAX_MODEL_PREVIEW)) && (
               <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
                 <FileIcon className="size-10 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  {status === "toolarge" || kind === "office"
+                  {status === "toolarge" || kind === "office" || kind === "model"
                     ? "File is too large to preview."
                     : "No preview available for this file type."}
                 </p>

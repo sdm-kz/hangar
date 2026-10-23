@@ -13,6 +13,7 @@ import { ToolbarMore, type ToolAction } from "./ToolbarMore";
 import { Button } from "@/components/ui/button";
 import {
   Bot,
+  Box,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
@@ -123,6 +124,7 @@ function FileGlyph({ name }: { name: string }) {
   const kind = fileKind(name);
   if (kind === "image") return <ImageIcon className="size-4 shrink-0 text-muted-foreground" />;
   if (kind === "video") return <Video className="size-4 shrink-0 text-muted-foreground" />;
+  if (kind === "model") return <Box className="size-4 shrink-0 text-muted-foreground" />;
   if (kind === "text") return <FileText className="size-4 shrink-0 text-muted-foreground" />;
   return <FileIcon className="size-4 shrink-0 text-muted-foreground" />;
 }

@@ -3,7 +3,7 @@ import type { GitFiles } from "./FileBrowser";
 import { fileKind } from "@/lib/fileKind";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { cn } from "@/lib/utils";
-import { File as FileIcon, FileText, Image as ImageIcon, Video, X } from "lucide-react";
+import { Box, File as FileIcon, FileText, Image as ImageIcon, Video, X } from "lucide-react";
 
 /**
  * The session's open files, as tabs in its tab bar. A file is a view of the session in its own right,
@@ -46,7 +46,7 @@ export function FileTabs({
       {tabs.map((t) => {
         const kind = fileKind(t.name);
         const Icon =
-          kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "binary" ? FileIcon : FileText;
+          kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : kind === "binary" ? FileIcon : FileText;
         const current = t.path === activePath;
         const active = current && showingFile;
         const preview = t.path === previewPath;

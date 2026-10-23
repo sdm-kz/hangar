@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
+import { ModelViewer } from "./ModelViewer";
 import {
   ScrollJumpButtons,
   ZoomControls,
@@ -621,6 +622,8 @@ export function ServerFileViewer({
           <OfficeViewer url={rawUrl} name={name} />
         ) : kind === "pdf" ? (
           <PdfViewer url={rawUrl} downloadUrl={downloadUrl} name={name} />
+        ) : kind === "model" ? (
+          <ModelViewer url={rawUrl} name={name} />
         ) : kind !== "text" ? (
           <DownloadPrompt href={downloadUrl} name={name} />
         ) : tooLarge ? (

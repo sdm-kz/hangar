@@ -79,6 +79,7 @@ import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
 import { sessionColor } from "@/lib/sessionColors";
 import {
+  Box,
   Check,
   Copy,
   File as FileIcon,
@@ -995,7 +996,7 @@ export function SessionView({
         const t = fileTabs.tabs.find((x) => x.path === arg);
         if (!t) return null;
         const kind = fileKind(t.name);
-        const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "binary" ? FileIcon : FileText;
+        const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : kind === "binary" ? FileIcon : FileText;
         return {
           icon: <Icon className="size-4 shrink-0" />,
           // The transient preview tab (a single click reuses it) is in italics; double-click keeps it.
