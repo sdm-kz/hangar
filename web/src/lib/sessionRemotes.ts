@@ -33,6 +33,46 @@ export function saveRemoteWhere(sessionId: string, id: string, patch: { cwd?: st
   saveSessionUi(sessionId, { remoteWhere: { ...all, [id]: { ...cur, ...patch } } });
 }
 
+// The same for a connection browsed from the sidebar's Files tab, which belongs to no session: kept in
+// this browser, like the rest of that tree's state.
+const LOCAL_WHERE_KEY = "hangar.remoteWhere";
+
+function readLocalWhere(): Record<string, { cwd?: string; file?: string }> {
+  try {
+    const v = JSON.parse(localStorage.getItem(LOCAL_WHERE_KEY) ?? "{}");
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+export function loadLocalRemoteWhere(id: string): { cwd?: string; file?: string } {
+  return readLocalWhere()[id] ?? {};
+}
+
+export function saveLocalRemoteWhere(id: string, patch: { cwd?: string; file?: string }) {
+  const all = readLocalWhere();
+  const cur = all[id] ?? {};
+  if (Object.entries(patch).every(([k, v]) => cur[k as "cwd" | "file"] === v)) return;
+  try {
+    localStorage.setItem(LOCAL_WHERE_KEY, JSON.stringify({ ...all, [id]: { ...cur, ...patch } }));
+  } catch {
+    /* storage disabled — the tree just starts at the connection's start folder next time */
+  }
+}
+
+/** Forget where a sidebar connection was left — it has been deleted. */
+export function forgetLocalRemoteWhere(id: string) {
+  const all = readLocalWhere();
+  if (!(id in all)) return;
+  delete all[id];
+  try {
+    localStorage.setItem(LOCAL_WHERE_KEY, JSON.stringify(all));
+  } catch {
+    /* storage disabled */
+  }
+}
+
 export interface SessionRemotes {
   remotes: SessionRemote[];
   /** Open a tab for a connection — under the id it was connected with, or a fresh one. */

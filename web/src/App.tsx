@@ -17,7 +17,7 @@ import { failureLine, useDoneSessions, type ActivityDetail, type ActivityIds } f
 import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
 import { projectForDir } from "@/lib/projects";
-import type { Project, RemoteConnection, SessionInfo, ShellInfo, UpdateStatus } from "@/types";
+import type { Project, RemoteConnection, SessionInfo, SessionRemote, ShellInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
 import {
   SessionSidebar,
@@ -30,7 +30,8 @@ import { ACTIVITY_MARK, activityDetail as activityDetailOf, sessionActivity } fr
 import { AppSidebar, type SidebarTab } from "@/components/AppSidebar";
 import { UpdateButton, UpdatingOverlay } from "@/components/UpdateButton";
 import { FilesSidebar } from "@/components/FilesSidebar";
-import { ServerFileViewer } from "@/components/ServerFileViewer";
+import { remoteFileSource, ServerFileViewer } from "@/components/ServerFileViewer";
+import { FilesTab } from "@/components/FilesTab";
 import { ShellView, type ShellFocus, type ShellTarget } from "@/components/ShellView";
 import { ShellsPanel, useAllShells } from "@/components/ShellsPanel";
 import { SshShellDialog } from "@/components/SshShellDialog";
@@ -40,7 +41,7 @@ import { ForkSessionDialog } from "@/components/ForkSessionDialog";
 import { CarryDialog, type CarryMode } from "@/components/CarryDialog";
 import { matchFolder } from "@/lib/carry";
 import { ScheduleDialog } from "@/components/ScheduleDialog";
-import { NodeSelect, type LaunchNode } from "@/components/NodePicker";
+import { type LaunchNode } from "@/components/NodePicker";
 import { isOverdue } from "@/lib/schedules";
 import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,7 @@ const SIDEBAR_MAX = 560;
 const SIDEBAR_DEFAULT = 288;
 // The machine the Files tab was left on: a peer's id, absent for this one.
 const FILES_NODE_KEY = "hangar.filesNode";
+const FILES_REMOTE_KEY = "hangar.filesRemote";
 
 function readSidebarWidth() {
   const n = Number(localStorage.getItem("hangar.sidebarWidth"));
@@ -110,11 +112,25 @@ export function App() {
   // disk in the Files tab. Only this
   // node's files go into the URL — `open` has no node of its own to say which disk it means.
   const [openFileNode, setOpenFileNode] = useState<string | null>(null);
+  // Or the SSH connection `openFile` is on, when it was opened from one in the Files tab. Kept out of the
+  // URL like a peer's file: a refresh would have to connect again before it could show it.
+  const [openFileRemote, setOpenFileRemote] = useState<SessionRemote | null>(null);
+  // Its source, made once per connection: the viewer reloads the file whenever the source changes.
+  const openRemoteId = openFileRemote?.id;
+  const openRemoteSource = useMemo(() => (openRemoteId ? remoteFileSource(api, openRemoteId) : null), [openRemoteId]);
   // The machine whose disk the Files tab shows: null for this one. A per-browser preference, like the
   // tree's own state, so the tab comes back on the machine it was left on.
   const [filesNode, setFilesNode] = useState<string | null>(() => {
     try {
       return localStorage.getItem(FILES_NODE_KEY);
+    } catch {
+      return null;
+    }
+  });
+  // Or the saved SSH connection it shows instead of a machine's disk (see FilesTab); remembered the same way.
+  const [filesRemote, setFilesRemote] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(FILES_REMOTE_KEY);
     } catch {
       return null;
     }
@@ -323,8 +339,8 @@ export function App() {
   // Mirror the server file open in the main area, so a refresh reopens it (and keeps it highlighted
   // in the Files tree). Per-tab state, hence the URL rather than localStorage.
   useEffect(() => {
-    patchUrlState({ open: (!openFileNode && openFile) || undefined });
-  }, [openFile, openFileNode]);
+    patchUrlState({ open: (!openFileNode && !openFileRemote && openFile) || undefined });
+  }, [openFile, openFileNode, openFileRemote]);
 
   // Same for a folder's shells (or the SSH ones), so a refresh comes back to the shell that was open.
   const shellParam = shellView ? ("folder" in shellView.target ? shellView.target.folder : SSH_SHELLS) : undefined;
@@ -1043,6 +1059,7 @@ export function App() {
   const openServerFile = useCallback((path: string, node: string | null = null) => {
     setShellView(null);
     setOpenFileNode(node);
+    setOpenFileRemote(null);
     setOpenFile(path);
     setSidebarOpen(false);
   }, []);
@@ -1051,6 +1068,16 @@ export function App() {
   const openSessionServerFile = useCallback((path: string) => {
     setShellView(null);
     setOpenFileNode(activeNodeRef.current);
+    setOpenFileRemote(null);
+    setOpenFile(path);
+    setSidebarOpen(false);
+  }, []);
+
+  // A file of an SSH connection picked in the Files tab, read over that connection (this node holds it).
+  const openRemoteFile = useCallback((remote: SessionRemote, path: string) => {
+    setShellView(null);
+    setOpenFileNode(null);
+    setOpenFileRemote(remote);
     setOpenFile(path);
     setSidebarOpen(false);
   }, []);
@@ -1065,10 +1092,11 @@ export function App() {
   // Reveal the open file in the Files tree: switch the sidebar to the Files tab, on the file's machine
   // (which expands and scrolls to openFile), and open the mobile drawer so it's visible on small screens.
   const revealInFiles = useCallback(() => {
-    pickFilesNode(openFileNode);
+    if (openFileRemote) pickFilesRemote(openFileRemote.connection.id);
+    else pickFilesNode(openFileNode);
     setSidebarTab("files");
     setSidebarOpen(true);
-  }, [openFileNode]);
+  }, [openFileNode, openFileRemote]);
 
   // The same move for a session's folder, from its row menu. The Files tab lists every drive, so
   // walking down to a session's working directory by hand is the long way round to somewhere the
@@ -1086,6 +1114,7 @@ export function App() {
 
   // Switch the Files tab to a machine's disk, and remember it.
   function pickFilesNode(node: string | null) {
+    pickFilesRemote(null);
     setFilesNode(node);
     try {
       if (node) localStorage.setItem(FILES_NODE_KEY, node);
@@ -1094,6 +1123,17 @@ export function App() {
       /* storage disabled — preference is best-effort */
     }
   }
+
+  // Or to a saved SSH connection (null: back to the machine), likewise remembered.
+  const pickFilesRemote = useCallback((id: string | null) => {
+    setFilesRemote(id);
+    try {
+      if (id) localStorage.setItem(FILES_REMOTE_KEY, id);
+      else localStorage.removeItem(FILES_REMOTE_KEY);
+    } catch {
+      /* storage disabled — preference is best-effort */
+    }
+  }, []);
 
   // The request lives only as long as the visit it was made for. The Files panel unmounts whenever
   // the sidebar shows Sessions, so a request left standing would fire again on the way back and drag
@@ -1478,26 +1518,25 @@ export function App() {
     return { ...n, unavailable: peer && peer.status !== "online" ? "not reachable right now" : null };
   });
   const filesPanel = (
-    <div className="flex h-full min-h-0 flex-col">
-      {filesNodes.length > 1 && (
-        <div className="border-b px-2 py-1.5">
-          <NodeSelect
-            nodes={filesNodes}
-            value={filesAt}
-            onChange={(node) => {
-              // A folder still waiting to be revealed is on the machine it was asked for, not this one.
-              setRevealDir(null);
-              pickFilesNode(node);
-            }}
-          />
-        </div>
-      )}
-      <div className="min-h-0 flex-1">
+    <FilesTab
+      nodes={filesNodes}
+      node={filesAt}
+      onPickNode={(node) => {
+        // A folder still waiting to be revealed is on the machine it was asked for, not this one.
+        setRevealDir(null);
+        pickFilesNode(node);
+      }}
+      remoteId={filesRemote}
+      onPickRemote={pickFilesRemote}
+      openRemote={openFile && openFileRemote ? { tab: openFileRemote.id, path: openFile } : null}
+      onOpenRemoteFile={openRemoteFile}
+      onCloseRemoteFile={() => setOpenFile(null)}
+      machineTree={
         <NodeProvider node={filesAt}>
           <FilesSidebar
             // Each machine's tree is its own: switching mounts the other's, with its own remembered state.
             key={filesAt ?? ""}
-            openPath={openFile && openFileNode === filesAt ? openFile : null}
+            openPath={openFile && !openFileRemote && openFileNode === filesAt ? openFile : null}
             revealDir={revealDir}
             revealToken={revealDirToken}
             onOpenFile={(path) => openServerFile(path, filesAt)}
@@ -1506,8 +1545,8 @@ export function App() {
             onOpenShell={filesAt ? undefined : openFolderShell}
           />
         </NodeProvider>
-      </div>
-    </div>
+      }
+    />
   );
 
   // The Shells tab, for both the desktop column and the mobile drawer.
@@ -1671,7 +1710,18 @@ export function App() {
         )}
 
         <main className="min-w-0 flex-1">
-            {openFile ? (
+            {openFile && openFileRemote ? (
+              <ServerFileViewer
+                key={openFileRemote.id}
+                path={openFile}
+                source={openRemoteSource!}
+                onClose={() => setOpenFile(null)}
+                onReveal={revealInFiles}
+                onToggleSidebar={() => setSidebarOpen(true)}
+                collapsed={collapsed}
+                onToggleCollapsed={toggleCollapsed}
+              />
+            ) : openFile ? (
               <NodeProvider node={openFileNode}>
                 <ServerFileViewer
                   // A file on another node's disk; remounted rather than re-pointed when that changes.

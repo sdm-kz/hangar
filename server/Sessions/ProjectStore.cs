@@ -551,7 +551,7 @@ public sealed class ProjectStore
     /// A connection as it may be stored: trimmed and bounded, with an auth method the server knows.
     /// Null when there is no host to connect to.
     /// </summary>
-    private static RemoteConnection? CleanConnection(RemoteConnection c)
+    internal static RemoteConnection? CleanConnection(RemoteConnection c)
     {
         static string? Field(string? s, int max)
         {

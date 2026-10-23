@@ -906,6 +906,16 @@ function createApi(base: string) {
     sshConfig(): Promise<SshConfigInfo> {
       return request("/api/remote/ssh-config");
     },
+    // The connections saved for the sidebar's Files tab (no secrets); each change answers with the list.
+    savedConnections(): Promise<RemoteConnection[]> {
+      return request("/api/remote/connections");
+    },
+    saveConnection(connection: RemoteConnection): Promise<RemoteConnection[]> {
+      return request("/api/remote/connections", { method: "POST", body: JSON.stringify(connection) });
+    },
+    deleteSavedConnection(id: string): Promise<RemoteConnection[]> {
+      return request(`/api/remote/connections/${encodeURIComponent(id)}`, { method: "DELETE" });
+    },
     remoteConnect(
       tab: string,
       body: { connection: RemoteConnection; password?: string; passphrase?: string; trustFingerprint?: string }

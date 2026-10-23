@@ -88,6 +88,16 @@ export function serverFileSource(api: Api): FileSource {
   };
 }
 
+/** A host's disk over a remote files tab's SSH connection. */
+export function remoteFileSource(api: Api, tab: string): FileSource {
+  return {
+    url: (p, dl) => api.remoteFileUrl(tab, p, dl),
+    text: (p) => api.remoteFileText(tab, p),
+    write: (p, c) => api.remoteWrite(tab, p, c),
+    newTab: false,
+  };
+}
+
 /**
  * Main-area preview/editor for a file on the server machine (absolute path), opened from the sidebar
  * Files tab. Text files preview with syntax highlighting and can be edited/saved; Markdown has a

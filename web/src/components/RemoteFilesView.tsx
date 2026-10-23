@@ -18,13 +18,20 @@ import {
   useFileClip,
   type RemoteChange,
 } from "@/lib/fileClipboard";
-import { connectionTarget, loadRemoteWhere, remoteTabLabel, saveRemoteWhere } from "@/lib/sessionRemotes";
+import {
+  connectionTarget,
+  loadLocalRemoteWhere,
+  loadRemoteWhere,
+  remoteTabLabel,
+  saveLocalRemoteWhere,
+  saveRemoteWhere,
+} from "@/lib/sessionRemotes";
 import { useConfirm } from "@/components/ui/confirm";
 import { Button } from "@/components/ui/button";
 import { RenameField } from "./RenameField";
 import { CopyPathButton } from "./CopyPathButton";
 import { ToolbarMore, type ToolAction } from "./ToolbarMore";
-import { ServerFileViewer, type FileSource } from "./ServerFileViewer";
+import { remoteFileSource, ServerFileViewer, type FileSource } from "./ServerFileViewer";
 import { RemoteReconnect } from "./RemoteConnect";
 import {
   ArrowUp,
@@ -151,11 +158,34 @@ function formatSize(n: number): string {
  * of the app uses. Files and folders copy and cut through the app's file clipboard, so they paste into
  * another folder here, into another SSH tab, or into the session's own Files panel — and back.
  */
-export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remote: SessionRemote }) {
+export function RemoteFilesView({
+  sessionId,
+  remote,
+  onOpenFile,
+  onCloseFile,
+  openPath = null,
+}: {
+  /** The session the tab is in, whose bag keeps where it was left; none for the sidebar's Files tab,
+   *  which keeps that in this browser. */
+  sessionId?: string;
+  remote: SessionRemote;
+  /** Files open somewhere else -- the main area, from the sidebar -- and the view is the tree alone. */
+  onOpenFile?: (path: string) => void;
+  /** With `onOpenFile`: the file shown there was deleted or moved away here. */
+  onCloseFile?: () => void;
+  /** With `onOpenFile`: the file of this connection open there now, for the tree to mark. */
+  openPath?: string | null;
+}) {
   const api = useApi();
-  const uiKey = useSessionKey(sessionId);
+  const uiKey = useSessionKey(sessionId ?? "");
   const tab = remote.id;
   const confirm = useConfirm();
+  const treeOnly = !!onOpenFile;
+  const saveWhere = useCallback(
+    (patch: { cwd?: string; file?: string }) =>
+      sessionId ? saveRemoteWhere(uiKey, tab, patch) : saveLocalRemoteWhere(tab, patch),
+    [sessionId, uiKey, tab]
+  );
   // `manual`: the person pressed Disconnect, so the reconnect prompt must not reconnect by itself.
   const [status, setStatus] = useState<{
     state: "checking" | "connected" | "disconnected";
@@ -163,11 +193,38 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     manual?: boolean;
   }>({ state: "checking" });
   const [home, setHome] = useState("/");
-  const where = useMemo(() => loadRemoteWhere(uiKey, tab), [sessionId, tab]);
+  const where = useMemo(
+    () => (sessionId ? loadRemoteWhere(uiKey, tab) : loadLocalRemoteWhere(tab)),
+    [sessionId, tab]
+  );
   // The folder the tree is rooted at, and the one the toolbar acts on.
   const [root, setRoot] = useState<string | null>(where.cwd ?? null);
   const [selectedDir, setSelectedDir] = useState<string | null>(where.cwd ?? null);
-  const [openFile, setOpenFile] = useState<string | null>(where.file ?? null);
+  const [openFile, setOpenFile] = useState<string | null>(treeOnly ? openPath : where.file ?? null);
+  // Showing a file, here or -- for the tree alone -- wherever files of it open.
+  const show = useCallback(
+    (path: string) => {
+      setOpenFile(path);
+      onOpenFile?.(path);
+    },
+    [onOpenFile]
+  );
+  // The tree alone marks the file that is open where it opens, whoever opened or closed it.
+  useEffect(() => {
+    if (treeOnly) setOpenFile(openPath);
+  }, [treeOnly, openPath]);
+  const openFileRef = useRef(openFile);
+  openFileRef.current = openFile;
+  // The file showing is gone -- deleted, or moved away: let go of it here, and where it opened.
+  const dropIfUnder = useCallback(
+    (paths: string[]) => {
+      const f = openFileRef.current;
+      if (!f || !paths.some((p) => isUnder(f, p))) return;
+      setOpenFile(null);
+      onCloseFile?.();
+    },
+    [onCloseFile]
+  );
   // The last row clicked, file or folder: what Copy, Rename and Delete act on when nothing is marked.
   const [focusPath, setFocusPath] = useState<string | null>(where.file ?? null);
   const [children, setChildren] = useState<Map<string, RemoteEntry[]>>(new Map());
@@ -290,12 +347,12 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
       // A root that is gone (deleted since, or a start folder that never existed) falls back home.
       if (r === "failed" && root !== home) setRoot((cur) => (cur === root ? home : cur));
     });
-    saveRemoteWhere(uiKey, tab, { cwd: root });
-  }, [connected, root, home, listDir, sessionId, tab]);
+    saveWhere({ cwd: root });
+  }, [connected, root, home, listDir, saveWhere]);
 
   useEffect(() => {
-    saveRemoteWhere(uiKey, tab, { file: openFile ?? undefined });
-  }, [openFile, sessionId, tab]);
+    saveWhere({ file: openFile ?? undefined });
+  }, [openFile, saveWhere]);
 
   /** Re-list every open folder (or just the ones given) — after a change, or the refresh button. */
   const reload = useCallback(
@@ -310,12 +367,12 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     const on = (e: Event) => {
       const change = (e as CustomEvent<RemoteChange>).detail;
       if (change?.tab !== tab) return;
-      if (change.gone?.length) setOpenFile((f) => (f && change.gone!.some((g) => isUnder(f, g)) ? null : f));
+      if (change.gone?.length) dropIfUnder(change.gone);
       reload();
     };
     window.addEventListener(REMOTE_CHANGED_EVENT, on);
     return () => window.removeEventListener(REMOTE_CHANGED_EVENT, on);
-  }, [tab, reload]);
+  }, [tab, reload, dropIfUnder]);
 
   const toggle = useCallback(
     (path: string) => {
@@ -333,11 +390,14 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     [expanded, listDir]
   );
 
-  const open = useCallback((path: string) => {
-    setOpenFile(path);
-    setFocusPath(path);
-    setSelectedDir(parentOf(path));
-  }, []);
+  const open = useCallback(
+    (path: string) => {
+      show(path);
+      setFocusPath(path);
+      setSelectedDir(parentOf(path));
+    },
+    [show]
+  );
 
   const treeKeys = useTreeKeyNav({ containerRef: scrollRef, onFocusFile: open, onToggleDir: toggle });
 
@@ -415,7 +475,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
       const moved = move ? c.items.map((i) => i.path).filter((p) => !r.errors.some((x) => x.path === p)) : [];
       if (move && (c.base ?? "") === api.base && sameSide(c.source, side)) {
         dirs.push(...c.items.map((i) => parentOf(i.path)));
-        setOpenFile((f) => (f && moved.some((p) => isUnder(f, p)) ? null : f));
+        dropIfUnder(moved);
       }
       reload(dirs);
       void listDir(target);
@@ -434,7 +494,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     } finally {
       setBusy(null);
     }
-  }, [target, side, reload, listDir, tab, fail]);
+  }, [target, side, reload, listDir, tab, fail, dropIfUnder]);
 
   const remove = useCallback(async () => {
     const items = subject();
@@ -455,7 +515,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     setBusy(`Deleting ${what}…`);
     try {
       for (const i of items) await api.remoteDelete(tab, i.path);
-      if (openFile && items.some((i) => isUnder(openFile, i.path))) setOpenFile(null);
+      dropIfUnder(items.map((i) => i.path));
       mark.clear();
       setFocusPath(null);
       reload(items.map((i) => parentOf(i.path)));
@@ -465,7 +525,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     } finally {
       setBusy(null);
     }
-  }, [subject, confirm, remote.connection, tab, openFile, mark, reload, fail]);
+  }, [subject, confirm, remote.connection, tab, dropIfUnder, mark, reload, fail]);
 
   const rename = useCallback(
     async (path: string, name: string) => {
@@ -473,7 +533,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
       if (!name.trim() || name === baseName(path)) return;
       try {
         const r = await api.remoteRename(tab, path, name.trim());
-        if (openFile && isUnder(openFile, path)) setOpenFile(r.path + openFile.slice(path.length));
+        if (openFile && isUnder(openFile, path)) show(r.path + openFile.slice(path.length));
         if (selectedDir && isUnder(selectedDir, path)) setSelectedDir(r.path + selectedDir.slice(path.length));
         setFocusPath(r.path);
         reload([parentOf(path)]);
@@ -481,7 +541,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
         fail(e, "Rename failed");
       }
     },
-    [tab, openFile, selectedDir, reload, fail]
+    [tab, openFile, show, selectedDir, reload, fail]
   );
 
   const create = useCallback(
@@ -590,15 +650,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     window.addEventListener("pointerup", up);
   };
 
-  const source = useMemo<FileSource>(
-    () => ({
-      url: (p, dl) => api.remoteFileUrl(tab, p, dl),
-      text: (p) => api.remoteFileText(tab, p),
-      write: (p, c) => api.remoteWrite(tab, p, c),
-      newTab: false,
-    }),
-    [tab]
-  );
+  const source = useMemo<FileSource>(() => remoteFileSource(api, tab), [api, tab]);
 
   if (status.state === "checking")
     return (
@@ -665,7 +717,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
   const crumbs = (root ?? "/").split("/").filter(Boolean);
 
   const tree = (
-    <div className="flex h-full min-h-0 min-w-0 flex-col" style={narrow ? undefined : { width: treeWidth }}>
+    <div className="flex h-full min-h-0 min-w-0 flex-col" style={narrow || treeOnly ? undefined : { width: treeWidth }}>
       <div className="flex items-center gap-0.5 border-b px-2 py-1.5">
         <Server className="mr-1 size-4 shrink-0 text-muted-foreground" />
         <span className="mr-auto min-w-0 truncate text-xs font-medium" title={connectionTarget(remote.connection)}>
@@ -868,7 +920,7 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
     if (!ok) return;
     try {
       await api.remoteDelete(tab, path);
-      if (openFile && isUnder(openFile, path)) setOpenFile(null);
+      dropIfUnder([path]);
       setFocusPath(null);
       reload([parentOf(path)]);
     } catch (e) {
@@ -892,7 +944,9 @@ export function RemoteFilesView({ sessionId, remote }: { sessionId: string; remo
 
   return (
     <div ref={rootRef} className="flex h-full min-h-0 min-w-0">
-      {narrow ? (
+      {treeOnly ? (
+        <div className="min-w-0 flex-1">{tree}</div>
+      ) : narrow ? (
         openFile ? preview : <div className="min-w-0 flex-1">{tree}</div>
       ) : (
         <>

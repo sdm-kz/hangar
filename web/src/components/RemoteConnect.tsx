@@ -556,11 +556,14 @@ export function RemoteConnectDialog({
  */
 export function RemoteConnectionDialog({
   connection,
+  description = "Offered when a session in this project opens a remote files tab. No password or passphrase is saved — those are asked for when connecting.",
   onSave,
   onClose,
 }: {
   /** The connection to edit, or null for a new one. */
   connection: RemoteConnection | null;
+  /** Where the connection will be offered — a project's sessions by default. */
+  description?: string;
   onSave: (connection: RemoteConnection) => Promise<boolean>;
   onClose: () => void;
 }) {
@@ -574,10 +577,7 @@ export function RemoteConnectionDialog({
           <DialogTitle className="flex items-center gap-2">
             <Server className="size-4" /> {connection ? "Edit SSH connection" : "New SSH connection"}
           </DialogTitle>
-          <DialogDescription>
-            Offered when a session in this project opens a remote files tab. No password or passphrase
-            is saved — those are asked for when connecting.
-          </DialogDescription>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <form
           className="flex min-w-0 flex-col gap-4"

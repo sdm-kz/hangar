@@ -38,6 +38,13 @@ internal static class RemoteEndpoints
             sshDir = SshConfigFile.SshDir,
         }));
 
+        // The connections saved for the sidebar's Files tab -- parameters only, never a secret. Each
+        // change answers with the whole list, the way a project's connections do.
+        app.MapGet("/api/remote/connections", (SavedConnectionStore saved) => Results.Ok(saved.List()));
+        app.MapPost("/api/remote/connections", (RemoteConnection body, SavedConnectionStore saved) =>
+            saved.Save(body) is { } list ? Results.Ok(list) : Results.BadRequest(new { error = "could not save the connection" }));
+        app.MapDelete("/api/remote/connections/{id}", (string id, SavedConnectionStore saved) => Results.Ok(saved.Delete(id)));
+
         app.MapPost("/api/remote/{tab}/connect", async (string tab, RemoteConnectRequest body, RemoteManager remotes, CancellationToken ct) =>
             Results.Ok(await remotes.ConnectAsync(tab, body, ct)));
 

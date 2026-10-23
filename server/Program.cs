@@ -357,6 +357,7 @@ internal static class Program
         // nothing secret is written down) and the host keys the user has accepted (trust on first use).
         builder.Services.AddSingleton<Remote.KnownHostStore>();
         builder.Services.AddSingleton<Remote.RemoteManager>();
+        builder.Services.AddSingleton<Remote.SavedConnectionStore>();
         // Web Push: the VAPID keypair, the subscription store, and the notifier that fires a push on
         // the same attention/waiting transitions the UI shows — so alerts arrive with every tab closed.
         builder.Services.AddSingleton<VapidKeyStore>();
