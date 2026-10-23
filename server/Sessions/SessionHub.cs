@@ -209,7 +209,7 @@ public sealed class SessionHub : BackgroundService
     private string WithNodes(string own)
     {
         var me = _identity.Current;
-        var extra = JsonSerializer.Serialize(new { node = new { me.Id, me.Name, me.Color }, nodes = _mesh.Nodes() }, JsonOpts);
+        var extra = JsonSerializer.Serialize(new { node = new { me.Id, me.Name, me.Color, Os = NodePairing.OsName() }, nodes = _mesh.Nodes() }, JsonOpts);
         return $"{own[..^1]},{extra[1..]}";
     }
 

@@ -86,11 +86,14 @@ public sealed class NodePairing(
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
+    /// <summary>The OS this node runs on, as <see cref="NodeInfo.Os"/> and the stream name it.</summary>
+    public static string OsName() =>
+        OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : OperatingSystem.IsLinux() ? "linux" : "other";
+
     public NodeInfo Info(string? version)
     {
         var me = identity.Current;
-        var os = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : OperatingSystem.IsLinux() ? "linux" : "other";
-        return new NodeInfo(me.Id, me.Name, me.Color, me.Url, version, os, [Capability],
+        return new NodeInfo(me.Id, me.Name, me.Color, me.Url, version, OsName(), [Capability],
             Diagnostics.EnvironmentReport.ClaudeFound(sessionOptions.ClaudeExecutable));
     }
 

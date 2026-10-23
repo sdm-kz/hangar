@@ -53,6 +53,8 @@ export interface SelfNode {
   id: string;
   name: string;
   color: string | null;
+  /** The OS it runs: "windows", "macos", "linux"; null from a build that doesn't say. */
+  os: string | null;
 }
 
 /** A peer as /hub/events carries it. */

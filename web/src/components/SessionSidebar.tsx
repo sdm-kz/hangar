@@ -59,6 +59,7 @@ import { ToolbarMore, type ToolAction } from "./ToolbarMore";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { OrphanBar } from "./OrphanBar";
 import { UpdateButton } from "./UpdateButton";
+import { OsIcon } from "./OsIcon";
 import type { CarryMode } from "./CarryDialog";
 import { cn } from "@/lib/utils";
 import { useDismissable } from "@/lib/useDismissable";
@@ -102,7 +103,6 @@ import {
   ChevronDown,
   ChevronsDownUp,
   ChevronsUpDown,
-  Monitor,
 } from "lucide-react";
 
 // The two lists the session sidebar can show: live sessions, or recent launch presets.
@@ -3318,6 +3318,7 @@ export function SessionSidebar({
               onNew={onNewHere}
               name={self?.name ?? "This machine"}
               color={self?.color ?? null}
+              os={self?.os}
               here={!!self}
               status="online"
               count={visibleSessions.length}
@@ -3355,6 +3356,7 @@ export function SessionSidebar({
                     }
                     name={peer.name}
                     color={peer.color}
+                    os={peer.os}
                     status={peer.status}
                     error={peer.error}
                     lastSeen={peer.lastSeen}
@@ -3413,6 +3415,7 @@ function NodeHeading({
   extra,
   name,
   color,
+  os,
   here = false,
   status,
   error,
@@ -3428,6 +3431,8 @@ function NodeHeading({
 }: {
   name: string;
   color: string | null;
+  /** The OS it runs, for its icon; null or absent when it isn't known. */
+  os?: string | null;
   /** This machine — the one the page came from. */
   here?: boolean;
   status: string;
@@ -3480,7 +3485,7 @@ function NodeHeading({
           <ChevronDown className="size-3.5 shrink-0" />
         )}
         <span className="relative inline-flex shrink-0">
-          <Monitor className="size-3.5" style={tint ? { color: tint } : undefined} />
+          <OsIcon os={os} className="size-3.5" style={tint ? { color: tint } : undefined} />
           <HeadingActivityMark activity={online ? activity : null} />
         </span>
         <span

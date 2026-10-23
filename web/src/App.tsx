@@ -40,7 +40,7 @@ import { ForkSessionDialog } from "@/components/ForkSessionDialog";
 import { CarryDialog, type CarryMode } from "@/components/CarryDialog";
 import { matchFolder } from "@/lib/carry";
 import { ScheduleDialog } from "@/components/ScheduleDialog";
-import { NodePicker, type LaunchNode } from "@/components/NodePicker";
+import { NodeSelect, type LaunchNode } from "@/components/NodePicker";
 import { isOverdue } from "@/lib/schedules";
 import { SessionSearchDialog } from "@/components/SessionSearch";
 import { Button } from "@/components/ui/button";
@@ -514,9 +514,9 @@ export function App() {
           const me = msg.node;
           if (me?.id)
             setSelfNode((cur) =>
-              cur && cur.id === me.id && cur.name === me.name && cur.color === (me.color ?? null)
+              cur && cur.id === me.id && cur.name === me.name && cur.color === (me.color ?? null) && cur.os === (me.os ?? null)
                 ? cur
-                : { id: me.id, name: me.name, color: me.color ?? null }
+                : { id: me.id, name: me.name, color: me.color ?? null, os: me.os ?? null }
             );
           ingestPeers(msg.nodes);
           setBusyIds(new Set(msg.busy));
@@ -948,11 +948,12 @@ export function App() {
    */
   const launchNodes = useMemo<LaunchNode[]>(
     () => [
-      { id: null, name: selfNode?.name ?? "This machine", color: selfNode?.color ?? null, unavailable: null },
+      { id: null, name: selfNode?.name ?? "This machine", color: selfNode?.color ?? null, os: selfNode?.os ?? null, unavailable: null },
       ...mesh.peers.map((p) => ({
         id: p.id,
         name: p.name,
         color: p.color,
+        os: p.os,
         unavailable:
           p.status !== "online"
             ? p.status === "connecting"
@@ -1480,7 +1481,7 @@ export function App() {
     <div className="flex h-full min-h-0 flex-col">
       {filesNodes.length > 1 && (
         <div className="border-b px-2 py-1.5">
-          <NodePicker
+          <NodeSelect
             nodes={filesNodes}
             value={filesAt}
             onChange={(node) => {

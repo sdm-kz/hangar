@@ -1,6 +1,7 @@
-import { AlertTriangle, Monitor } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { sessionColor } from "@/lib/sessionColors";
 import { cn } from "@/lib/utils";
+import { OsIcon } from "./OsIcon";
 
 /** A machine something can be started on, as a picker offers it. */
 export interface LaunchNode {
@@ -8,6 +9,8 @@ export interface LaunchNode {
   id: string | null;
   name: string;
   color: string | null;
+  /** The OS it runs, for its icon: "windows", "macos", "linux"; null when it isn't known. */
+  os?: string | null;
   /** Why it can't be picked right now — it is away, or has no claude — or null when it can. */
   unavailable: string | null;
   /** Something wrong there worth seeing from here — an overdue schedule. */
@@ -59,12 +62,57 @@ export function NodePicker({
               blocked && "cursor-not-allowed"
             )}
           >
-            <Monitor className="size-3.5 shrink-0" style={tint ? { color: tint } : undefined} />
+            <OsIcon os={n.os} className="size-3.5 shrink-0" style={tint ? { color: tint } : undefined} />
             <span className="truncate">{n.name}</span>
             {n.warning && <AlertTriangle className="size-3 shrink-0 text-amber-500" aria-label={n.warning} />}
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * The same choice as {@link NodePicker} as a dropdown, for a narrow strip that must stay one line however
+ * many machines there are — the sidebar's Files tab. The picked machine's colour tints the icon beside it;
+ * one that can't be picked is listed greyed, with why. Drawn only when there is more than one machine.
+ */
+export function NodeSelect({
+  nodes,
+  value,
+  onChange,
+  label = "Machine",
+}: {
+  nodes: LaunchNode[];
+  value: string | null;
+  onChange: (id: string | null) => void;
+  label?: string;
+}) {
+  if (nodes.length < 2) return null;
+  const picked = nodes.find((n) => n.id === value);
+  const tint = sessionColor(picked?.color ?? null);
+  return (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <OsIcon os={picked?.os} className="size-3.5 shrink-0 text-muted-foreground" style={tint ? { color: tint } : undefined} />
+      <select
+        aria-label={label}
+        title={label}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value || null)}
+        className="h-7 min-w-0 flex-1 truncate rounded-md field-edge bg-transparent px-1.5 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        {nodes.map((n) => (
+          <option
+            key={n.id ?? ""}
+            value={n.id ?? ""}
+            // The picked one stays pickable: it is what the box shows, whatever has become of it since.
+            disabled={!!n.unavailable && n.id !== value}
+            className="bg-popover text-popover-foreground"
+          >
+            {[n.name, n.unavailable].filter(Boolean).join(" — ")}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
