@@ -5,6 +5,7 @@ import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
+import { movedPairs, useTreeDrag } from "@/lib/useTreeDrag";
 import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
 import { CopyPathButton } from "./CopyPathButton";
@@ -553,6 +554,42 @@ export function FilesSidebar({
       );
   }, [mark, confirm, reload]);
 
+  // Drag and drop: rows dropped on a folder move into it. The server moves each one on its own, like
+  // a paste -- nothing written over, a taken name gets " (1)" -- and says which could not go.
+  const moveInto = useCallback(
+    async (paths: string[], folder: string) => {
+      try {
+        const r = await api.fsMove(paths, folder);
+        // The open file follows its own to where it went.
+        const m = openPath
+          ? movedPairs(paths, r)?.find(
+              ([from]) => openPath === from || (openPath.startsWith(from) && /[\\/]/.test(openPath[from.length]))
+            )
+          : undefined;
+        if (openPath && m && m[0] !== m[1]) onOpenFile(m[1] + openPath.slice(m[0].length));
+        // A drag of the marked rows uses the selection up; one of some other row leaves it standing.
+        if (paths.some((p) => mark.has(p))) mark.clear();
+        for (const parent of new Set(paths.map(parentOf))) reload(parent);
+        // Open the folder they went into, so the move can be seen to have happened.
+        setExpanded((s) => new Set(s).add(folder));
+        await listDir(folder);
+        if (r.errors.length) setError(r.errors.map((x) => `${baseName(x.path)}: ${x.error}`).join(" · "));
+      } catch {
+        setError("Move failed.");
+      }
+    },
+    [api, openPath, onOpenFile, mark, reload, listDir]
+  );
+  const treeDrag = useTreeDrag({
+    mark,
+    parentOf,
+    // The whole disk has no folder that the space under its drives could stand for.
+    root: null,
+    onMove: (paths, folder) => void moveInto(paths, folder),
+    // Only opened, never folded or selected: the listing follows from the effect that lists open folders.
+    onOpenDir: (dir) => setExpanded((s) => new Set(s).add(dir)),
+  });
+
   const newFolder = useCallback(async () => {
     if (!selectedDir) return;
     const name = window.prompt("New folder name:");
@@ -841,6 +878,7 @@ export function FilesSidebar({
           }
           treeKeys.onKeyDown?.(e);
         }}
+        {...treeDrag.areaProps}
         className="min-h-0 flex-1 overflow-auto py-1 outline-none"
       >
         {drives.map((d) => (
@@ -866,6 +904,7 @@ export function FilesSidebar({
             onCancelRename={() => setRenaming(null)}
             onDelete={doDelete}
             mark={mark}
+            dropOver={treeDrag.over}
           />
         ))}
       </div>
@@ -895,6 +934,7 @@ function TreeNode({
   onCancelRename,
   onDelete,
   mark,
+  dropOver,
 }: {
   path: string;
   name: string;
@@ -916,6 +956,7 @@ function TreeNode({
   onCancelRename: () => void;
   onDelete: (path: string, isDir: boolean) => void;
   mark: MarkedPaths;
+  dropOver: string | null; // the folder a drag would drop into (see useTreeDrag)
 }) {
   const isOpen = expanded.has(path);
   const isBusy = loading.has(path);
@@ -925,18 +966,23 @@ function TreeNode({
   const marked = mark.has(path);
   // A drive is the one thing here that cannot be deleted, so it is not a thing that can be marked.
   const markable = !isDrive;
+  // Nor moved -- though a drop onto one lands in its root.
+  const draggable = !isDrive && renaming !== path;
 
   return (
     <div>
       <div
         data-fspath={path}
         {...navRowProps({ path, isDir, open: isOpen, current: active || selected, depth })}
+        draggable={draggable || undefined}
+        data-drag={draggable ? "1" : undefined}
         className={cn(
           "group flex items-center gap-1 rounded px-1 py-0.5 text-sm",
           "cursor-pointer hover:bg-accent",
           active && "bg-accent font-medium",
           selected && "bg-accent/50",
-          marked && "bg-primary/10"
+          marked && "bg-primary/10",
+          isDir && dropOver === path && "bg-primary/15 ring-1 ring-inset ring-primary/50"
         )}
         style={{ paddingLeft: depth * 12 + 4 }}
         // In select mode the row is a checkbox: everything it normally does -- opening a file,
@@ -1076,6 +1122,7 @@ function TreeNode({
                 onCancelRename={onCancelRename}
                 onDelete={onDelete}
                 mark={mark}
+                dropOver={dropOver}
               />
             ))
           )}

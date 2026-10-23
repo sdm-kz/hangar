@@ -376,6 +376,10 @@ function createApi(base: string) {
     fsDelete(path: string): Promise<void> {
       return request("/api/fs/delete", { method: "POST", body: JSON.stringify({ path }) });
     },
+    /** Move files and folders into another folder, by absolute path; per path, like a paste. */
+    fsMove(paths: string[], folder: string): Promise<TransferResult> {
+      return request("/api/fs/move", { method: "POST", body: JSON.stringify({ paths, folder }) });
+    },
     async fsUpload(folder: string, files: File[]): Promise<{ paths: string[] }> {
       const form = new FormData();
       form.append("path", folder);

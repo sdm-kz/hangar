@@ -1288,6 +1288,15 @@ internal static class Program
             return full is null ? Results.BadRequest(new { error = "could not rename" }) : Results.Ok(new { path = full });
         });
 
+        // Move files and folders into another folder (the Files tree's drag and drop). Per path, like a
+        // paste: what could not move is listed, and the rest still goes.
+        app.MapPost("/api/fs/move", (FsMoveRequest body) =>
+        {
+            if (body.Paths is not { Count: > 0 }) return Results.BadRequest(new { error = "nothing to move" });
+            if (string.IsNullOrWhiteSpace(body.Folder)) return Results.BadRequest(new { error = "no target folder" });
+            return Results.Ok(Remote.FileTransfer.MoveAbsolute(body.Paths, body.Folder));
+        });
+
         app.MapPost("/api/fs/upload", async (HttpRequest req) =>
         {
             if (!req.HasFormContentType) return Results.BadRequest(new { error = "expected multipart form" });
@@ -2090,6 +2099,7 @@ internal record ViewedRequest(string? Path, string? Sha, bool Viewed, string? Re
 internal record RepoRequest(string? Repo);
 internal record FsPathRequest(string Path);
 internal record FsRenameRequest(string Path, string NewName);
+internal record FsMoveRequest(List<string>? Paths, string? Folder);
 internal record ImageUploadRequest(string? DataBase64, string? Ext);
 internal record PushSubscribeRequest(string? Endpoint, PushKeys? Keys);
 internal record PushKeys(string? P256dh, string? Auth);

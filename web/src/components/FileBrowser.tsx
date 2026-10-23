@@ -10,6 +10,7 @@ import { loadSessionUi, saveSessionUi, subscribeSessionUi } from "@/lib/sessionU
 import { EXPLORER_GUARD, fileEntryFromPath, UNKNOWN_SIZE, type FileTabs, type PreviewGuard } from "@/lib/useFileTabs";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
+import { movedPairs, useTreeDrag } from "@/lib/useTreeDrag";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import {
   announceRemoteChange,
@@ -108,6 +109,9 @@ interface RowActions {
   onDelete: (entry: FileEntry) => void;
   onNewFolderIn: (dir: string) => void;
   mark: MarkedPaths; // rows marked for a batch action (see useMarkedPaths)
+  // Rows can be dragged onto a folder to move them (the tree only); `over` is the folder a drop
+  // would land in. See useTreeDrag.
+  drag?: { over: string | null };
 }
 
 /**
@@ -694,6 +698,24 @@ export const FileBrowser = forwardRef<
     [tabs]
   );
 
+  /** Keep open tabs on files that moved: a tab on a moved file, or on one inside a moved folder, follows it. */
+  const followMoves = useCallback(
+    (moves: [from: string, to: string][]) => {
+      const moveOf = (p: string) => moves.find(([from]) => p === from || p.startsWith(from + "/"));
+      const remap = (p: string | null) => {
+        const m = p ? moveOf(p) : undefined;
+        return p && m ? m[1] + p.slice(m[0].length) : p;
+      };
+      if (!tabs.tabs.some((t) => moveOf(t.path))) return;
+      tabs.replace(
+        tabs.tabs.map((t) => (moveOf(t.path) ? fileEntryFromPath(remap(t.path)!) : t)),
+        remap(tabs.activePath),
+        remap(tabs.previewPath)
+      );
+    },
+    [tabs]
+  );
+
   const doRename = useCallback(
     async (path: string, newName: string) => {
       setRenamingPath(null);
@@ -703,21 +725,13 @@ export const FileBrowser = forwardRef<
         await api.renameSessionFile(sessionId, path, clean, writeDir);
         // Follow any open tab whose file (or ancestor folder) was renamed.
         const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-        const newPath = parent ? `${parent}/${clean}` : clean;
-        const affected = (p: string) => p === path || p.startsWith(path + "/");
-        if (tabs.tabs.some((t) => affected(t.path))) {
-          const next = tabs.tabs.map((t) =>
-            affected(t.path) ? fileEntryFromPath(t.path.replace(path, newPath)) : t
-          );
-          const remap = (p: string | null) => (p && affected(p) ? p.replace(path, newPath) : p);
-          tabs.replace(next, remap(tabs.activePath), remap(tabs.previewPath));
-        }
+        followMoves([[path, parent ? `${parent}/${clean}` : clean]]);
         onRefresh?.();
       } catch {
         /* ignore — best effort */
       }
     },
-    [sessionId, writeDir, tabs, onRefresh]
+    [sessionId, writeDir, followMoves, onRefresh]
   );
 
   const doDelete = useCallback(
@@ -866,6 +880,38 @@ export const FileBrowser = forwardRef<
     }
   }, [api, readOnly, clipSide, uploadDir, closeTabsUnder, onRefresh]);
 
+  // ---- Drag and drop in the tree: rows dropped on a folder move into it. Same move as a cut and a
+  //      paste within this root, so the same rules hold -- nothing written over, a taken name gets
+  //      " (1)" -- and open tabs follow their files to where they went.
+  const moveInto = useCallback(
+    async (paths: string[], folder: string) => {
+      if (readOnly) return;
+      setDeleteError(null);
+      try {
+        const r = await api.transfer(clipSide, paths, clipSide, folder, true);
+        const moves = movedPairs(paths, r);
+        if (moves) followMoves(moves);
+        if (r.errors.length) setDeleteError(r.errors.map((x) => `${x.path.split("/").pop()}: ${x.error}`).join(" · "));
+        // A drag of the marked rows uses the selection up; one of some other row leaves it standing.
+        if (paths.some((p) => mark.has(p))) mark.clear();
+        // Open the folder they went into, so the move can be seen to have happened.
+        if (folder && !filesExpanded.has(folder)) toggleFilesDir(folder);
+      } catch (e) {
+        setDeleteError(`Move failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        onRefresh?.();
+      }
+    },
+    [api, readOnly, clipSide, followMoves, mark, filesExpanded, toggleFilesDir, onRefresh]
+  );
+  const treeDrag = useTreeDrag({
+    mark,
+    parentOf: (p) => (p ? (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "") : null),
+    root: "",
+    onMove: (paths, folder) => void moveInto(paths, folder),
+    onOpenDir: toggleFilesDir,
+  });
+
   // Open the new-folder creator targeting a specific directory ("" = repo root).
   const newFolderIn = useCallback((dir: string) => {
     setUploadDir(dir);
@@ -884,6 +930,10 @@ export const FileBrowser = forwardRef<
     onNewFolderIn: newFolderIn,
     mark,
   };
+  // Dragging is the tree's alone: a search result or a changed file has no folder around it on
+  // screen to be dropped into, and another worktree is browsed read-only.
+  const treeDragOn = !readOnly && !changesView && !query.trim();
+  const treeActions: RowActions = treeDragOn ? { ...rowActions, drag: { over: treeDrag.over } } : rowActions;
 
   // Reveal a file in the working-tree Files pane (from a commit preview): leave the changes/commit
   // view, select it, and expand the tree down to it.
@@ -1415,7 +1465,9 @@ export const FileBrowser = forwardRef<
             }
             treeKeys.onKeyDown?.(e);
           }}
-          className="flex-1 overflow-auto px-1 pb-2 outline-none"
+          {...(treeDragOn ? treeDrag.areaProps : {})}
+          // A drop below the rows lands in the root, which has no row of its own to light up.
+          className={cn("flex-1 overflow-auto px-1 pb-2 outline-none", treeDragOn && treeDrag.over === "" && "bg-primary/5")}
         >
           {changesView ? (
             changesTree ? (
@@ -1464,7 +1516,7 @@ export const FileBrowser = forwardRef<
               onSelect={selectFile}
               uploadDir={uploadDir}
               onSelectDir={setUploadDir}
-              actions={rowActions}
+              actions={treeActions}
             />
           )}
         </div>
@@ -2098,13 +2150,19 @@ const Row = forwardRef<
       {marked ? <SquareCheck className="size-3.5" /> : <Square className="size-3.5" />}
     </span>
   );
+  // A row being renamed stays put: its field is where the pointer is busy.
+  const draggable = !!actions.drag && !renaming;
+  const dropTarget = entry.isDir && actions.drag?.over === entry.path;
   return (
     <div
       ref={ref}
+      draggable={draggable || undefined}
+      data-drag={draggable ? "1" : undefined}
       className={cn(
         "group relative flex items-center rounded-sm text-xs hover:bg-accent",
         selected && "bg-accent font-medium",
-        marked && "bg-primary/10"
+        marked && "bg-primary/10",
+        dropTarget && "bg-primary/15 ring-1 ring-inset ring-primary/50"
       )}
     >
       {/* The rename box is the row button's own box: the same padding, the same flex line, the same

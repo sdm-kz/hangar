@@ -231,6 +231,57 @@ internal static class FileTransfer
         return new TransferResult(done, errors);
     }
 
+    /// <summary>
+    /// Move files and folders by absolute path on this machine -- for the sidebar's Files panel, which
+    /// isn't held to a session's folder. Each path goes through a side rooted at its own drive, so the
+    /// rules a session's move keeps hold here too: nothing is written over, a folder never goes into
+    /// itself, a drive's root never moves. Moving to another drive is a copy and a delete. The paths
+    /// come back absolute, the way the panel speaks them.
+    /// </summary>
+    public static TransferResult MoveAbsolute(IReadOnlyList<string> paths, string folder)
+    {
+        var done = new List<string>();
+        var errors = new List<TransferError>();
+        string dst, dstRoot;
+        try
+        {
+            dst = Path.GetFullPath(folder);
+            dstRoot = Path.GetPathRoot(dst) ?? throw new ArgumentException("no root");
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return new TransferResult(done, [new TransferError(folder, "That isn't a valid folder.")]);
+        }
+        var to = new LocalSide(dstRoot);
+        foreach (var path in paths.Distinct())
+        {
+            string full, srcRoot;
+            try
+            {
+                full = Path.GetFullPath(path);
+                srcRoot = Path.GetPathRoot(full) ?? throw new ArgumentException("no root");
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                errors.Add(new TransferError(path, "That isn't a valid path."));
+                continue;
+            }
+            var from = string.Equals(srcRoot, dstRoot, StringComparison.OrdinalIgnoreCase) ? to : new LocalSide(srcRoot);
+            var r = Run(from, [RelTo(srcRoot, full)], to, RelTo(dstRoot, dst), move: true);
+            // What lands is under the target's root; a path left where it was is too, being in that folder.
+            done.AddRange(r.Paths.Select(p => Path.GetFullPath(Path.Combine(dstRoot, p))));
+            errors.AddRange(r.Errors.Select(e => e with { Path = path }));
+        }
+        return new TransferResult(done, errors);
+    }
+
+    /// <summary>A path below a drive's root as a side rooted there names it: forward slashes, "" for the root.</summary>
+    private static string RelTo(string root, string full)
+    {
+        var rel = Path.GetRelativePath(root, full);
+        return rel == "." ? "" : rel.Replace(Path.DirectorySeparatorChar, '/');
+    }
+
     /// <summary>Whether <paramref name="path"/> is <paramref name="dir"/> or under it, by identity.</summary>
     private static bool Covers(string dir, string path) =>
         path == dir || path.StartsWith(dir.TrimEnd('/') + "/", StringComparison.Ordinal);
