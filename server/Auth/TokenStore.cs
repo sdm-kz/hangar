@@ -116,7 +116,7 @@ public sealed class TokenStore
     /// fixed when its claude process starts, and that process outlives the app — a restart or a redeploy
     /// re-adopts the still-running session (see SessionManager adoption) but cannot re-inject anything
     /// into it. A per-run secret therefore left every surviving session holding a stale token, and its
-    /// hooks and its <c>/rename-session</c> silently 401'd until it was restarted by hand.</para>
+    /// hooks and its <c>/hgr-rename-session</c> silently 401'd until it was restarted by hand.</para>
     /// </summary>
     public string HookToken { get; private set; } = "";
 
