@@ -23,6 +23,7 @@ mod host;
 mod imageops;
 mod legacy;
 mod menu;
+mod progress;
 mod server;
 mod session_tree;
 mod tray_icon;
@@ -977,6 +978,10 @@ fn on_menu(app: &AppHandle, id: &str) {
             apply_hotkeys(app);
         }
         "quit" => app.exit(0),
+        "seen:all" => {
+            let done: Vec<_> = server::connection(app).view().done.into_iter().collect();
+            server::mark_seen(app, &done);
+        }
         other => {
             if let Some(mode) = other.strip_prefix("capture:").and_then(Mode::parse) {
                 start_capture(app, mode);
@@ -987,7 +992,10 @@ fn on_menu(app: &AppHandle, id: &str) {
             if let Some(target) = target {
                 if let Err(e) = open_in_hangar(app, Some(&target.session), target.node.as_deref()) {
                     notify_error(app, e);
+                    return;
                 }
+                // Opened: whatever it finished is seen, as a browser counts it once it has had it on screen.
+                server::opened(app, &(target.node, target.session));
             }
         }
     }

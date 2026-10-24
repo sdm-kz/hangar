@@ -7,6 +7,7 @@
 //! the server takes a few seconds to bind; a tray that "helpfully" started one in that window would
 //! race it. Starting is a menu item ([`crate::host::start_server`]).
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,6 +19,7 @@ use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest, Message};
 use url::Url;
 
 use crate::api::{self, Client, Credentials, Instance, Orphan};
+use crate::progress::{Ids, Key, Machine, Tracker};
 use crate::session_tree::{HubSession, Project};
 
 /// The hub re-sends its snapshot every few seconds even when nothing changed; this long without one is
@@ -52,6 +54,7 @@ pub struct Peer {
     /// `online`, or why not: `offline`, `connecting`, `unauthorized`…
     pub status: String,
     pub sessions: Vec<HubSession>,
+    pub ids: Ids,
 }
 
 /// What the tray knows about the server at one moment. Replaced whole, and only when it differs, so a
@@ -67,11 +70,22 @@ pub struct View {
     pub projects: Vec<Project>,
     pub orphans: Vec<Orphan>,
     pub peers: Vec<Peer>,
+    /// What the server's own sessions are doing.
+    pub ids: Ids,
+    /// The sessions, here or on a peer, that finished a turn you haven't opened from the tray since.
+    pub done: BTreeSet<Key>,
 }
 
 impl View {
     pub fn connected(&self) -> bool {
         self.status == Status::Connected
+    }
+
+    /// Every machine whose sessions are listed: this server, then each peer that is online.
+    pub fn machines(&self) -> Vec<Machine<'_>> {
+        let own = Machine { node: None, sessions: &self.sessions, ids: &self.ids };
+        let peers = self.peers.iter().filter(|p| p.status == "online");
+        std::iter::once(own).chain(peers.map(|p| Machine { node: Some(&p.id), sessions: &p.sessions, ids: &p.ids })).collect()
     }
 }
 
@@ -84,6 +98,8 @@ struct Snapshot {
     nodes: Vec<Node>,
     /// Moves whenever the projects do; the tray re-reads `/api/projects` when it sees it move.
     projects_rev: Option<serde_json::Value>,
+    #[serde(flatten)]
+    ids: Ids,
 }
 
 #[derive(Deserialize)]
@@ -111,12 +127,12 @@ fn peers_of(nodes: Vec<Node>) -> Vec<Peer> {
         .into_iter()
         .filter_map(|n| {
             let id = n.id.filter(|i| !i.is_empty())?;
-            let sessions = n
+            let (sessions, ids) = n
                 .snapshot
                 .and_then(|s| serde_json::from_value::<Snapshot>(s).ok())
-                .map(|s| sessions_of(s.sessions))
+                .map(|s| (sessions_of(s.sessions), s.ids))
                 .unwrap_or_default();
-            Some(Peer { name: n.name.unwrap_or_else(|| id.clone()), id, status: n.status.unwrap_or_else(|| "offline".into()), sessions })
+            Some(Peer { name: n.name.unwrap_or_else(|| id.clone()), id, status: n.status.unwrap_or_else(|| "offline".into()), sessions, ids })
         })
         .collect()
 }
@@ -133,11 +149,12 @@ fn signature(sessions: &[HubSession]) -> String {
 pub struct Connection {
     view: std::sync::Mutex<View>,
     reconnect: Notify,
+    finished: std::sync::Mutex<Tracker>,
 }
 
 impl Connection {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { view: std::sync::Mutex::new(View::default()), reconnect: Notify::new() })
+        Arc::new(Self { view: std::sync::Mutex::new(View::default()), reconnect: Notify::new(), finished: Default::default() })
     }
 
     pub fn view(&self) -> View {
@@ -148,6 +165,29 @@ impl Connection {
     /// waiting (it may be mid-connect or mid-fetch), and only `notify_one` keeps the request for it.
     pub fn reconnect(&self) {
         self.reconnect.notify_one();
+    }
+}
+
+/// You've seen how these sessions' last turns ended: their ticks go, here and in the menu.
+pub fn mark_seen(app: &AppHandle, keys: &[Key]) {
+    update_done(app, |t| t.seen(keys));
+}
+
+/// You've opened this session from the tray: seen, as [`mark_seen`], and its being opened isn't a turn.
+pub fn opened(app: &AppHandle, key: &Key) {
+    update_done(app, |t| t.opened(key));
+}
+
+/// Change the ticks and put them in the view as it is now. The tracker is locked first and held while
+/// the view is written, as [`follow`] does, so neither can put back what the other just changed.
+fn update_done(app: &AppHandle, change: impl FnOnce(&mut Tracker) -> BTreeSet<Key>) {
+    let conn = connection(app);
+    let mut finished = conn.finished.lock().unwrap();
+    let done = change(&mut finished);
+    let mut view = conn.view();
+    if view.done != done {
+        view.done = done;
+        publish(app, &conn, view);
     }
 }
 
@@ -285,6 +325,7 @@ async fn follow(
     let mut orphans_for: Option<String> = None;
     let mut orphans_at = Instant::now() - ORPHANS_MAX;
     let mut last_frame = String::new();
+    conn.finished.lock().unwrap().reset();
 
     loop {
         let frame = tokio::select! {
@@ -332,19 +373,22 @@ async fn follow(
             orphans_at = Instant::now();
         }
 
-        publish(
-            app,
-            conn,
-            View {
-                status: Status::Connected,
-                local: creds.local,
-                instance: instance.clone(),
-                sessions,
-                projects: projects.clone(),
-                orphans: orphans.clone(),
-                peers: peers_of(snapshot.nodes),
-            },
-        );
+        let mut view = View {
+            status: Status::Connected,
+            local: creds.local,
+            instance: instance.clone(),
+            sessions,
+            projects: projects.clone(),
+            orphans: orphans.clone(),
+            peers: peers_of(snapshot.nodes),
+            ids: snapshot.ids,
+            done: BTreeSet::new(),
+        };
+        // Held through the publish: see update_done.
+        let mut finished = conn.finished.lock().unwrap();
+        view.done = finished.observe(&view.machines());
+        publish(app, conn, view);
+        drop(finished);
     }
 }
 
@@ -365,6 +409,8 @@ mod tests {
             ],
             "update": {"state":"Idle"},
             "projectsRev": 7,
+            "busy": ["a"],
+            "waiting": [],
             "nodes": [
                 {"id":"nas","name":"NAS","status":"online","snapshot":{"sessions":[{"id":"x","name":"far","workingDirectory":"/srv","state":"Running"}]}},
                 {"id":"mac","status":"offline","snapshot":null},
@@ -373,6 +419,7 @@ mod tests {
         }"#;
         let s: Snapshot = serde_json::from_str(frame).unwrap();
         assert_eq!(s.projects_rev, Some(serde_json::json!(7)));
+        assert!(s.ids.busy.contains("a") && s.ids.waiting.is_empty());
         let sessions = sessions_of(s.sessions);
         assert_eq!(sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["a"], "a row that doesn't read is skipped");
         assert_eq!(sessions[0].project_id.as_deref(), Some("p"));

@@ -19,6 +19,9 @@ the server) and a React page for the overlay, the editor and the settings.
 
 ```
 Open Hangar
+Activity  1/3         ▸  Waiting on you · 1    (only while anything is busy, waiting or finished)
+                         Working · 1
+                         Finished · 1
 Sessions  (12)        ▸  Running — 12
                          App  (5)            ▸  (folder groups, sessions, forks)
                          No project  (7)     ▸
@@ -43,6 +46,12 @@ Quit Hangar Tray App
 active-only filter: a submenu per project, with its virtual folders first, then its folder groups (the
 folder heading dropped where the project links just that one folder), and forks under the session they
 came from. Clicking one opens it in the browser, on this server or on the paired machine it runs on.
+
+**Activity** is the web UI's Sessions-tab fraction: of the sessions doing anything, here and on the
+paired machines, how many have finished a turn. It opens onto them grouped as that fraction's list is:
+waiting on you (a prompt, the watchdog asking, a turn that failed), working, and finished. "Finished" is
+the tray's own: a turn that ended since you last opened that session from the tray. A browser keeps its
+own the same way, so the two can differ. Opening a session, or **Mark all seen**, clears it.
 
 - On **Windows** a left click on the icon opens Hangar and a right click opens the menu. On **macOS**
   and **Linux** a click opens the menu.
@@ -192,6 +201,7 @@ The log (`…\logs`) records how long each overlay and editor took to come up.
   publishes a `View`, and the menu is rebuilt only when that changes — never on a keepalive.
   `session_tree.rs` arranges the running sessions as the sidebar does; `menu.rs` turns that into the
   menu. Which project a session is in is the server's answer (`projectId`), not a second copy of the rule.
+  `progress.rs` reads what each session is doing for **Activity**, and keeps the tray's "finished" ticks.
 - `host.rs` is this machine's side: whether the server's process is alive, starting it, and stepping
   aside for an update.
 - `src-tauri/src/capture.rs` freezes every monitor and lists the windows (via `xcap`).

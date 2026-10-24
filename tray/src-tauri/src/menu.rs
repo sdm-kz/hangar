@@ -10,6 +10,7 @@ use tauri_plugin_autostart::ManagerExt as _;
 
 use crate::capture::Mode;
 use crate::config::Hotkeys;
+use crate::progress::{self, Key};
 use crate::server::{Status, View};
 use crate::session_tree::{self, HubSession};
 
@@ -68,6 +69,47 @@ impl Builder<'_> {
                 None => self.label(&row.text),
             })
             .collect()
+    }
+
+    /// The Activity submenu: the sessions doing anything, grouped by what — the web app's Sessions-tab
+    /// fraction and the list it drops down. None while nothing is.
+    fn activity(&mut self, view: &View) -> tauri::Result<Option<Item>> {
+        let machines = view.machines();
+        let (finished, active) = progress::fraction(&machines, &view.done);
+        if active == 0 {
+            return Ok(None);
+        }
+        let names: HashMap<&str, &str> = view.peers.iter().map(|p| (p.id.as_str(), p.name.as_str())).collect();
+        let mut rows: Vec<(progress::Activity, Key, String)> = Vec::new();
+        for m in &machines {
+            for s in m.sessions.iter().filter(|s| s.running()) {
+                let key = (m.node.map(String::from), s.id.clone());
+                let Some(activity) = progress::activity(s, m.ids, view.done.contains(&key)) else { continue };
+                let place = match m.node {
+                    Some(node) => format!("{} · {}", names.get(node).copied().unwrap_or(node), folder_name(&s.working_directory)),
+                    None => folder_name(&s.working_directory),
+                };
+                rows.push((activity, key, format!("{}   ·  {place}", s.name)));
+            }
+        }
+        let mut items = Vec::new();
+        for (title, activities) in progress::GROUPS {
+            let group: Vec<_> = rows.iter().filter(|(a, _, _)| activities.contains(a)).collect();
+            if group.is_empty() {
+                continue;
+            }
+            if !items.is_empty() {
+                items.push(self.separator()?);
+            }
+            items.push(self.label(&format!("{title} · {}", group.len()))?);
+            for (_, (node, id), text) in &group {
+                items.push(self.session(&format!("   {text}"), id, node.as_deref())?);
+            }
+            if title == "Finished" && group.len() > 1 {
+                items.push(self.item("seen:all", "   Mark all seen")?);
+            }
+        }
+        Ok(Some(self.submenu(&format!("Activity  {finished}/{active}"), items)?))
     }
 
     /// The contents of the Sessions submenu: what is running, laid out as the sidebar lays it out;
@@ -134,6 +176,11 @@ impl Builder<'_> {
     }
 }
 
+/// A folder's own name, the last segment of its path.
+fn folder_name(path: &str) -> String {
+    path.split(['/', '\\']).rfind(|p| !p.is_empty()).unwrap_or(path).to_string()
+}
+
 /// Last two path segments: enough to tell same-named sessions apart without a long menu.
 fn short_path(path: &str) -> String {
     let parts: Vec<&str> = path.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
@@ -176,6 +223,9 @@ pub fn build(app: &AppHandle, hotkeys: &Hotkeys, view: &View) -> tauri::Result<B
     match status_line(view) {
         None => {
             items.push(b.item("open", "Open Hangar")?);
+            if let Some(activity) = b.activity(view)? {
+                items.push(activity);
+            }
             let sessions = b.sessions(view)?;
             let running = view.sessions.iter().filter(|s| s.running()).count();
             items.push(b.submenu(&format!("Sessions  ({running})"), sessions)?);
@@ -226,6 +276,13 @@ mod tests {
     fn short_path_keeps_the_last_two_segments() {
         assert_eq!(short_path(r"C:\Git\org\repo"), "org/repo");
         assert_eq!(short_path("/srv/app"), "/srv/app");
+    }
+
+    #[test]
+    fn folder_name_is_the_last_segment() {
+        assert_eq!(folder_name(r"C:\Git\org\repo\"), "repo");
+        assert_eq!(folder_name("/srv/app"), "app");
+        assert_eq!(folder_name("/"), "/");
     }
 
     #[test]
