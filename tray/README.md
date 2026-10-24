@@ -116,6 +116,9 @@ remembers what it was last set to.
 - Crop: drag the area to keep; it can be moved and resized while the crop tool is out. `Enter`, the
   green ✓ or a double-click inside it applies it, and the picture becomes just that area, to draw on and
   send; `Ctrl+Z` brings the rest back. × drops a crop being set, or shows the whole picture again.
+- A shape drawn, moved or resized past the picture's edge grows the picture to take it in, on white,
+  with a little room to spare. It is part of the same step: `Ctrl+Z` takes the shape and the margin back
+  together.
 - `Shift` snaps lines to 45° and squares shapes.
 - Any shape can be dragged, and clicking it selects it: then `Delete` removes it, and colour and weight
   apply to it. Double-click text to edit it.

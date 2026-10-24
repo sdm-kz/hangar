@@ -238,6 +238,100 @@ export function frameOf(doc: Doc, width: number, height: number): Rect {
   return doc.frame ?? { x: 0, y: 0, width, height };
 }
 
+/** Measures one line of a text annotation at `fontSize`, in capture pixels. */
+export type TextWidth = (line: string, fontSize: number) => number;
+
+/** The typeface text annotations are drawn in. */
+export const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif';
+
+/** The room left past a shape that grows the picture, in logical pixels. */
+export const FIT_MARGIN = 12;
+
+let measurer: CanvasRenderingContext2D | null = null;
+
+/** A line's width as the canvas draws a text annotation: bold, in FONT. */
+export const measureText: TextWidth = (line, fontSize) => {
+  measurer ??= typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+  if (!measurer) return line.length * fontSize * 0.6;
+  measurer.font = `bold ${fontSize}px ${FONT}`;
+  return measurer.measureText(line).width;
+};
+
+/** How far a shape reaches, its stroke and arrowhead included. Null for a pixelation: there is nothing
+ *  past the picture's edge for it to hide. */
+export function reach(shape: Shape, textWidth: TextWidth): Rect | null {
+  // A loop, not Math.min(...points): a long pen stroke is more arguments than a call can take.
+  const box = (points: number[], pad: number): Rect => {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (let i = 0; i + 1 < points.length; i += 2) {
+      x0 = Math.min(x0, points[i]);
+      x1 = Math.max(x1, points[i]);
+      y0 = Math.min(y0, points[i + 1]);
+      y1 = Math.max(y1, points[i + 1]);
+    }
+    return { x: x0 - pad, y: y0 - pad, width: x1 - x0 + 2 * pad, height: y1 - y0 + 2 * pad };
+  };
+  switch (shape.kind) {
+    case "arrow": {
+      const poly = arrowPolygon(...shape.points, shape.width);
+      return poly.length ? box(poly, 0) : null;
+    }
+    case "line":
+      return box(shape.points, shape.width / 2);
+    case "pen":
+      return box(shape.points, shape.width * 0.9);
+    case "marker":
+      // Past half its stroke: the curve drawn through its points can swing out at a sharp turn.
+      return box(shape.points, shape.width * 3);
+    case "rect":
+    case "ellipse":
+      return box([shape.x, shape.y, shape.x + shape.w, shape.y + shape.h], shape.width / 2);
+    case "text": {
+      const lines = shape.text.split("\n");
+      const w = lines.reduce((m, l) => Math.max(m, textWidth(l, shape.fontSize)), 0);
+      const h = lines.length * shape.fontSize * 1.2;
+      return box([shape.x, shape.y, shape.x + w, shape.y + h], shape.fontSize * 0.1);
+    }
+    case "step":
+      return box([shape.x, shape.y], stepRadius(shape.width) * 1.12);
+    case "blur":
+      return null;
+  }
+}
+
+/**
+ * The picture grown to take in `shape` where it reaches past the edge of what is on show, with
+ * `margin` to spare on that side: a mark placed half off the picture is all there in the export, on
+ * white. Only the sides it crosses move, to whole pixels, so a shape inside changes nothing.
+ */
+export function extendFor(doc: Doc, shape: Shape, width: number, height: number, margin: number, textWidth: TextWidth): Doc {
+  const r = reach(shape, textWidth);
+  if (!r) return doc;
+  const f = frameOf(doc, width, height);
+  const x0 = r.x < f.x ? Math.floor(r.x - margin) : f.x;
+  const y0 = r.y < f.y ? Math.floor(r.y - margin) : f.y;
+  const x1 = r.x + r.width > f.x + f.width ? Math.ceil(r.x + r.width + margin) : f.x + f.width;
+  const y1 = r.y + r.height > f.y + f.height ? Math.ceil(r.y + r.height + margin) : f.y + f.height;
+  if (x0 === f.x && y0 === f.y && x1 === f.x + f.width && y1 === f.y + f.height) return doc;
+  return { ...doc, frame: { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } };
+}
+
+/** Whether what is on show leaves some of the picture out: a crop is applied. A picture only grown to
+ *  fit its shapes isn't cropped. */
+export function isCropped(doc: Doc, width: number, height: number): boolean {
+  const f = doc.frame;
+  return !!f && (f.x > 0 || f.y > 0 || f.x + f.width < width || f.y + f.height < height);
+}
+
+/** The whole picture on show again, grown afresh to take in every shape — a crop applied since may
+ *  have cut off a margin some of them were in. */
+export function uncrop(doc: Doc, width: number, height: number, margin: number, textWidth: TextWidth): Doc {
+  return doc.shapes.reduce((d, s) => extendFor(d, s, width, height, margin, textWidth), { ...doc, frame: null } as Doc);
+}
+
 /** The area that will be exported: the crop being set, or what is on show. */
 export function exportArea(doc: Doc, width: number, height: number): Rect {
   return doc.crop ?? frameOf(doc, width, height);

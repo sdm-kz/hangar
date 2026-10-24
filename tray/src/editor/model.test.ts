@@ -6,6 +6,9 @@ import {
   contrastOn,
   dragRect,
   emptyHistory,
+  extendFor,
+  isCropped,
+  uncrop,
   isMeaningful,
   moveShape,
   nextStep,
@@ -158,5 +161,42 @@ describe("misc", () => {
     expect(toolForKey("KeyA")).toBe("arrow");
     expect(toolForKey("KeyZ")).toBeUndefined();
     expect(toolForKey("Digit1")).toBeUndefined();
+  });
+});
+
+describe("growing the picture to fit a shape", () => {
+  const W = 100;
+  const H = 50;
+  const width = () => 0;
+  const empty = { shapes: [], crop: null, frame: null };
+  const rect = (x: number, y: number, w: number, h: number) => ({ id: "r", kind: "rect" as const, color: "#f00", width: 2, x, y, w, h });
+
+  it("leaves a shape inside the picture alone", () => {
+    expect(extendFor(empty, rect(10, 10, 20, 20), W, H, 5, width)).toBe(empty);
+  });
+  it("moves only the sides the shape crosses, with the margin past it", () => {
+    // Reaches 1 past its edges for half its stroke: x 89..121, y -11..21.
+    const doc = extendFor(empty, rect(90, -10, 30, 30), W, H, 5, width);
+    expect(doc.frame).toEqual({ x: 0, y: -16, width: 126, height: 66 });
+  });
+  it("grows a cropped picture from its crop", () => {
+    const cropped = { ...empty, frame: { x: 20, y: 10, width: 40, height: 30 } };
+    expect(extendFor(cropped, rect(50, 15, 20, 5), W, H, 0, width).frame).toEqual({ x: 20, y: 10, width: 51, height: 30 });
+  });
+  it("measures text with the measure it is given", () => {
+    const text = { id: "t", kind: "text" as const, color: "#f00", width: 2, x: 90, y: 5, text: "ab\nabcd", fontSize: 10 };
+    const doc = extendFor(empty, text, W, H, 0, (line) => line.length * 5);
+    expect(doc.frame).toEqual({ x: 0, y: 0, width: 111, height: 50 });
+  });
+  it("is no crop, and showing the whole picture keeps it", () => {
+    const grown = extendFor(empty, rect(90, 10, 30, 10), W, H, 0, width);
+    expect(isCropped(grown, W, H)).toBe(false);
+    const both = { ...grown, frame: { ...grown.frame!, x: 30, width: grown.frame!.width - 30 } };
+    expect(isCropped(both, W, H)).toBe(true);
+    expect(uncrop({ ...both, shapes: [rect(90, 10, 30, 10)] }, W, H, 0, width).frame).toEqual(grown.frame);
+    // Cropped down to inside the picture, then back: the margin its shape was in comes back too.
+    const cut = { shapes: [rect(90, 10, 30, 10)], crop: null, frame: { x: 10, y: 10, width: 20, height: 20 } };
+    expect(uncrop(cut, W, H, 0, width).frame).toEqual(grown.frame);
+    expect(uncrop({ ...empty, frame: { x: 10, y: 10, width: 20, height: 20 } }, W, H, 0, width).frame).toBeNull();
   });
 });

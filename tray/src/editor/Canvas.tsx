@@ -10,6 +10,10 @@ import {
   contrastOn,
   dragRect,
   exportArea,
+  extendFor,
+  FIT_MARGIN,
+  FONT,
+  measureText,
   fontSizeFor,
   frameOf,
   isMeaningful,
@@ -90,6 +94,10 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
   const latest = useRef({ doc, onCommit, onSelect, tool });
   latest.current = { doc, onCommit, onSelect, tool };
 
+  // `next`, with the picture grown to take in `shape` if it now reaches past the edge — in the same
+  // undoable step, so undoing the shape takes the margin it made with it.
+  const fit = (next: Doc, shape: Shape) => extendFor(next, shape, width, height, FIT_MARGIN * captureScale, measureText);
+
   const pointer = (): { x: number; y: number } => {
     const p = stageRef.current?.getPointerPosition() ?? { x: 0, y: 0 };
     return { x: (p.x + panX) / viewScale, y: (p.y + panY) / viewScale };
@@ -112,7 +120,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
       if (!edit.isNew) onCommit(removeShape(doc, shape.id));
       return;
     }
-    onCommit(edit.isNew ? addShape(doc, shape) : replaceShape(doc, shape));
+    onCommit(fit(edit.isNew ? addShape(doc, shape) : replaceShape(doc, shape), shape));
     onSelect(shape.id);
   };
 
@@ -184,7 +192,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
       case "step": {
         dragOrigin.current = null;
         const shape: Shape = { ...base, kind: "step", x: p.x, y: p.y, n: nextStep(doc) };
-        onCommit(addShape(doc, shape));
+        onCommit(fit(addShape(doc, shape), shape));
         break;
       }
       case "crop":
@@ -244,7 +252,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
     }
     if (draft) {
       setDraft(null);
-      if (isMeaningful(draft, min)) onCommit(addShape(doc, draft));
+      if (isMeaningful(draft, min)) onCommit(fit(addShape(doc, draft), draft));
     }
   };
 
@@ -268,7 +276,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
       default:
         moved = { ...shape, x: node.x(), y: node.y() } as Shape;
     }
-    onCommit(replaceShape(doc, moved));
+    onCommit(fit(replaceShape(doc, moved), moved));
   };
 
   const onTransformEnd = (shape: Shape, node: Konva.Node) => {
@@ -286,7 +294,7 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
     } else if (shape.kind === "text") {
       next = { ...shape, x: node.x(), y: node.y(), fontSize: Math.max(6, Math.round(shape.fontSize * sy)) };
     }
-    onCommit(replaceShape(doc, next));
+    onCommit(fit(replaceShape(doc, next), next));
   };
 
   const shapeProps = (shape: Shape) => ({
@@ -330,6 +338,8 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
       >
         {/* Smoothed only while shrinking: zoomed in, each capture pixel shows as a crisp square. */}
         <Layer ref={contentRef} imageSmoothingEnabled={viewScale * dpr < 1}>
+          {/* What the picture was grown by to fit its shapes, white, as on a page. */}
+          <Margin frame={frame} width={width} height={height} />
           <KImage image={image} name="background" width={width} height={height} />
           {doc.shapes.map((s) =>
             textEdit?.shape.id === s.id ? null : (
@@ -376,7 +386,10 @@ export const Canvas = memo(forwardRef<CanvasHandle, Props>(function Canvas(props
             <LineEndHandles
               shape={lineEnds}
               viewScale={viewScale}
-              onChange={(points) => onCommit(replaceShape(doc, { ...lineEnds, points }))}
+              onChange={(points) => {
+                const moved = { ...lineEnds, points };
+                onCommit(fit(replaceShape(doc, moved), moved));
+              }}
             />
           )}
         </Layer>
@@ -563,7 +576,23 @@ function ShapeViewImpl({ shape, image, shadow, captureScale, drafting, ...node }
   }
 }
 
-const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif';
+/** The part of what is on show past the picture's own edges, filled white. Only that part: a window
+ *  capture can have see-through corners of its own. */
+function Margin({ frame, width, height }: { frame: Rect; width: number; height: number }) {
+  if (frame.x >= 0 && frame.y >= 0 && frame.x + frame.width <= width && frame.y + frame.height <= height) return null;
+  return (
+    <KShape
+      listening={false}
+      sceneFunc={(ctx) => {
+        ctx.beginPath();
+        ctx.rect(frame.x, frame.y, frame.width, frame.height);
+        ctx.rect(0, 0, width, height);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill("evenodd");
+      }}
+    />
+  );
+}
 
 /** A region of the picture redrawn in coarse blocks: unreadable, and still obviously "something was
  *  here". Pixelation rather than blur, since a blur of large text can often be read back. */

@@ -28,12 +28,16 @@ import {
   commit,
   emptyHistory,
   exportArea,
+  FIT_MARGIN,
   frameOf,
+  isCropped,
+  measureText,
   redo,
   removeShape,
   restyle,
   replaceShape,
   toolForKey,
+  uncrop,
   undo,
   type Doc,
   type Tool,
@@ -252,12 +256,23 @@ export default function Editor({ id }: { id: string }) {
     [shown?.width, shown?.height],
   );
   // Applying a crop, or undoing one, changes what there is to show: the view goes back to fitting it.
-  // Not on a change of page, which brings its own view.
+  // The picture growing to fit a shape only adds to it, so a zoomed view stays where it was, moved by
+  // whatever was added above and to the left. Not on a change of page, which brings its own view.
   const lastFrame = useRef({ page: activeId, frame: doc.frame });
   useEffect(() => {
     const last = lastFrame.current;
     lastFrame.current = { page: activeId, frame: doc.frame };
-    if (last.page === activeId && last.frame !== doc.frame) setView(FIT);
+    if (last.page !== activeId || last.frame === doc.frame || !image) return;
+    const was = frameOf({ ...doc, frame: last.frame }, image.naturalWidth, image.naturalHeight);
+    const now = frameOf(doc, image.naturalWidth, image.naturalHeight);
+    const grew =
+      now.x <= was.x &&
+      now.y <= was.y &&
+      now.x + now.width >= was.x + was.width &&
+      now.y + now.height >= was.y + was.height;
+    setView((v) => (grew && v.zoom !== null ? { ...v, cx: v.cx + was.x - now.x, cy: v.cy + was.y - now.y } : FIT));
+    // Only a change of frame (or page) moves the view; `doc` and `image` are read as they are then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, doc.frame]);
   const dpr = useDevicePixelRatio();
   const placement = useMemo(() => place(view, imageSize, area, dpr), [view, imageSize, area, dpr]);
@@ -786,9 +801,11 @@ export default function Editor({ id }: { id: string }) {
         canRedo={history.future.length > 0}
         onUndo={() => setHistory(undo)}
         onRedo={() => setHistory(redo)}
-        crop={doc.crop ? "set" : doc.frame ? "applied" : "none"}
+        crop={doc.crop ? "set" : image && isCropped(doc, image.naturalWidth, image.naturalHeight) ? "applied" : "none"}
         onApplyCrop={() => onCommit(applyCrop(doc))}
-        onClearCrop={() => onCommit(doc.crop ? { ...doc, crop: null } : { ...doc, frame: null })}
+        onClearCrop={() =>
+          onCommit(doc.crop ? { ...doc, crop: null } : image ? uncrop(doc, image.naturalWidth, image.naturalHeight, FIT_MARGIN * captureScale, measureText) : doc)
+        }
         onCopy={() => void copy()}
         onSave={() => void save()}
         onAdd={addCapture}
