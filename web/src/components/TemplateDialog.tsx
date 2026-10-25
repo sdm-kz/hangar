@@ -215,7 +215,7 @@ export function TemplateDialog({
             <Textarea
               id="template-prompt"
               value={prompt}
-              placeholder="e.g. /fix-issue {input} — or “investigate this issue from the logs”"
+              placeholder="e.g. /fix-issue {input} — or “investigate this error from the logs”"
               onChange={(e) => setPrompt(e.target.value)}
               className="min-h-28 font-mono text-xs"
             />
@@ -240,7 +240,7 @@ export function TemplateDialog({
             <Input
               id="template-hint"
               value={inputHint}
-              placeholder="e.g. “Paste the error from the logs” or “Jira key or link”"
+              placeholder="e.g. “Paste the error from the logs” or “Issue key or link”"
               onChange={(e) => setInputHint(e.target.value)}
             />
           </div>

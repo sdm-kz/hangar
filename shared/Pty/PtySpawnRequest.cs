@@ -42,9 +42,12 @@ public sealed record PtySpawnRequest(
     /// <para>Load-bearing for shells. Porta.Pty quotes every argument unconditionally, which most
     /// programs shrug off (the CRT unquotes them again) but <c>wsl.exe</c> does not: it parses its
     /// own command line and reads <c>"-d"</c> as a command to run rather than as its distribution
-    /// flag, so a WSL tab silently became "bash: -d: command not found". The claude launch keeps the
-    /// quoted path — nothing there needs this — so an older host that ignores this field still
-    /// starts sessions correctly.</para>
+    /// flag, so a WSL tab silently became "bash: -d: command not found".</para>
+    /// <para>And for claude on Windows, for the opposite reason: the pty library quotes by rules no
+    /// C runtime reads back (it doubles an inner <c>"</c> and ignores backslashes), so a session name
+    /// could split into extra arguments — an <c>--mcp-config</c> among them. The daemon quotes that line
+    /// itself (<c>ClaudeExecutableResolver.WindowsCommandLine</c>). A host is always the build's own copy
+    /// (see <see cref="PtyState.BuildStamp"/>), so none that ignores this field is ever handed one.</para>
     /// </summary>
     bool VerbatimArguments = false);
 

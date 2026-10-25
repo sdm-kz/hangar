@@ -10,14 +10,16 @@ public sealed class UpdateOptions
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// Folder scripts\stage-update.ps1 (stage-update.sh on Linux and macOS) publishes into. The staged build itself lives in the
-    /// "payload" subfolder; this is the folder that holds it.
+    /// Folder scripts\stage-update.ps1 (stage-update.sh on Linux and macOS) publishes into. The staged
+    /// build itself lives in the "payload" subfolder; this is the folder that holds it.
+    /// <para>Defaults to <c>updates</c> in the per-user data folder — %LocalAppData%\Hangar\updates on
+    /// Windows, ~/.local/share/Hangar/updates on Linux, ~/Library/Application Support/Hangar/updates on
+    /// macOS — and the staging scripts pick the same folder. Whatever lands here is run as this user on
+    /// the next apply, so it must be a folder only this user can write: one made directly under
+    /// <c>C:\</c> inherits Authenticated Users:Modify, which would let any account on the machine plant
+    /// an update. Point it elsewhere only at a folder locked down the same way.</para>
     /// </summary>
-    public string StagingPath { get; set; } = OperatingSystem.IsWindows()
-        ? @"C:\apps\hangar-updates"
-        // ~/.local/share/Hangar/updates (Linux), ~/Library/Application Support/Hangar/updates (macOS).
-        // stage-update.sh picks the same folder: this one once a build that has it has run.
-        : AppDataFolder.PathFor("updates");
+    public string StagingPath { get; set; } = AppDataFolder.PathFor("updates");
 
     /// <summary>
     /// How often to re-read the staged build stamp. A FileSystemWatcher already reacts within a

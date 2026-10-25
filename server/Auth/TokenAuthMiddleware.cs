@@ -3,16 +3,36 @@ using Hangar.Server.Nodes;
 namespace Hangar.Server.Auth;
 
 /// <summary>
-/// Gates /api/* and /hub/* behind a bearer token (Authorization header or ?access_token= for SignalR) — a
+/// Gates /api/* and /hub/* behind a bearer token (Authorization header or ?access_token= for the sockets) — a
 /// browser's, the tray's local one, or a paired node's peer token. The login endpoint and everything else
 /// (the SPA static files) pass through. <c>/n/*</c>, a peer's API through this node, checks its own: see
 /// <see cref="NodeProxy"/>.
+/// <para>In front of all of that: an instance with no password answers requests made on this machine only
+/// (<see cref="LocalRequest"/>) — every path, the login, the sockets and the static files included. Without a
+/// password there is nothing else between a caller and a shell, so whoever else can reach the port, whatever
+/// it is bound to and whatever proxies it, is turned away until <c>Auth:Password</c> is set.</para>
 /// </summary>
 public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens, PeerTokenStore peerTokens)
 {
     public async Task Invoke(HttpContext ctx)
     {
         var path = ctx.Request.Path;
+
+        // The tray's token proves the caller can read this user's files, so it is let in however it came.
+        if (tokens.AuthDisabled && !LocalRequest.Is(ctx) && !tokens.IsLocalToken(ExtractToken(ctx.Request)))
+        {
+            const string refusal = "This Hangar has no password set, so it only answers requests made on this machine " +
+                                   "(http://localhost:<port>). Set Auth:Password to use it from anywhere else.";
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            if (path.StartsWithSegments("/api") || path.StartsWithSegments("/hub") || path.StartsWithSegments("/n"))
+                await ctx.Response.WriteAsJsonAsync(new { error = refusal });
+            else
+            {
+                ctx.Response.ContentType = "text/plain; charset=utf-8";
+                await ctx.Response.WriteAsync(refusal);
+            }
+            return;
+        }
 
         var isProtected = path.StartsWithSegments("/api") || path.StartsWithSegments("/hub");
         // The login and auth-config endpoints must be reachable before a token exists. The hook
@@ -47,9 +67,12 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens,
 
         // External automation endpoints authenticate with an API key in the X-Api-Key header
         // instead of the browser bearer token. This grants access to /api/external/* only.
+        // With no password set, a request that got this far was made on this machine (see the gate
+        // above), and the rest of the API is already open to it — so is this, key or none; that is
+        // what lets scripts\hgr-new-session.ps1 work on a fresh install.
         if (path.StartsWithSegments("/api/external"))
         {
-            if (!tokens.IsValidApiKey(ctx.Request.Headers["X-Api-Key"].ToString()))
+            if (!tokens.AuthDisabled && !tokens.IsValidApiKey(ctx.Request.Headers["X-Api-Key"].ToString()))
             {
                 ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });

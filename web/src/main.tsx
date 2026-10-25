@@ -1,5 +1,3 @@
-// First, before any module reads its saved settings: they move to their names after the rename.
-import "./lib/storageMigration";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";

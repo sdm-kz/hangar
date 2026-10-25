@@ -4,7 +4,7 @@
       "commandName": "Project",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "Server__Urls": "http://0.0.0.0:5199",
+        "Server__Urls": "http://127.0.0.1:5199",
         "Hooks__Enabled": "false"
       }
     }

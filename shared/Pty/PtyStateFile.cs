@@ -39,33 +39,19 @@ public static class PtyStateStore
     /// </summary>
     public static string Directory(string instanceKey) => AppDataFolder.PathFor("pty", Sanitize(instanceKey));
 
-    /// <summary>
-    /// The same folder under the data folder's name from before the rename. A host an older build
-    /// started writes its state there for as long as it runs, so readers look in both.
-    /// </summary>
-    private static string LegacyDirectory(string instanceKey) => AppDataFolder.LegacyPathFor("pty", Sanitize(instanceKey));
-
-    /// <summary>The state file a host launched now writes for one session.</summary>
+    /// <summary>The state file a session's host writes.</summary>
     public static string PathFor(string instanceKey, string sessionId) =>
         Path.Combine(Directory(instanceKey), Sanitize(sessionId) + ".json");
-
-    /// <summary>
-    /// The state file a session's host already has: <see cref="PathFor"/>, unless only the folder from
-    /// before the rename has one — the session's host was started by an older build.
-    /// </summary>
-    public static string Locate(string instanceKey, string sessionId)
-    {
-        var path = PathFor(instanceKey, sessionId);
-        if (File.Exists(path)) return path;
-        var legacy = Path.Combine(LegacyDirectory(instanceKey), Sanitize(sessionId) + ".json");
-        return File.Exists(legacy) ? legacy : path;
-    }
 
     /// <summary>
     /// The pipe a session's host listens on. Namespaced by instance for the same reason the state
     /// directory is.
     /// </summary>
     /// <remarks>
+    /// <para>Only a <b>new</b> host is given this name (the daemon passes it in the spawn request, and the
+    /// host records it in its state file as <see cref="PtyState.PipeName"/>). Re-attaching always dials the
+    /// recorded name, never this one — so a host started by a build that named its pipe differently is
+    /// still found after an update, and the prefix here is free to change.</para>
     /// On Linux and macOS a .NET named pipe is a Unix domain socket, and a bare name would put it at
     /// <c>$TMPDIR/CoreFxPipe_&lt;name&gt;</c>. Neither half of that holds up: a socket path is capped
     /// at 104 bytes on macOS, which a per-user <c>/var/folders/…/T/</c> plus this name overruns, and
@@ -75,7 +61,7 @@ public static class PtyStateStore
     /// </remarks>
     public static string PipeName(string instanceKey, string sessionId)
     {
-        var name = $"claudeweb-pty-{Sanitize(instanceKey)}-{Sanitize(sessionId)}";
+        var name = $"hangar-pty-{Sanitize(instanceKey)}-{Sanitize(sessionId)}";
         if (OperatingSystem.IsWindows()) return name;
         var hash = Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(name)))[..16].ToLowerInvariant();
@@ -121,14 +107,12 @@ public static class PtyStateStore
     /// <summary>Every state file for an instance, with the path each was read from.</summary>
     public static IEnumerable<(string Path, PtyState State)> ReadAll(string instanceKey)
     {
-        foreach (var dir in new[] { Directory(instanceKey), LegacyDirectory(instanceKey) })
+        var dir = Directory(instanceKey);
+        if (!System.IO.Directory.Exists(dir)) yield break;
+        foreach (var path in System.IO.Directory.EnumerateFiles(dir, "*.json"))
         {
-            if (!System.IO.Directory.Exists(dir)) continue;
-            foreach (var path in System.IO.Directory.EnumerateFiles(dir, "*.json"))
-            {
-                var state = Read(path);
-                if (state is not null) yield return (path, state);
-            }
+            var state = Read(path);
+            if (state is not null) yield return (path, state);
         }
     }
 
@@ -139,8 +123,9 @@ public static class PtyStateStore
     /// </summary>
     public static IEnumerable<(string Path, PtyState State)> ReadAllInstances()
     {
-        var roots = new[] { AppDataFolder.PathFor("pty"), AppDataFolder.LegacyPathFor("pty") };
-        foreach (var dir in roots.Where(System.IO.Directory.Exists).SelectMany(System.IO.Directory.EnumerateDirectories))
+        var root = AppDataFolder.PathFor("pty");
+        if (!System.IO.Directory.Exists(root)) yield break;
+        foreach (var dir in System.IO.Directory.EnumerateDirectories(root))
         {
             IEnumerable<string> files;
             try { files = System.IO.Directory.EnumerateFiles(dir, "*.json"); }

@@ -16,6 +16,12 @@
   The install folder's appsettings*.json are never part of the payload's authority -- apply-update.ps1
   preserves the ones already installed, exactly like deploy.ps1.
 
+.PARAMETER Staging
+  The folder to stage into -- it must be the one the running app watches. Defaults to that folder as
+  the app finds it: $env:Update__StagingPath, else Update:StagingPath from the install's
+  appsettings.Local.json, else from its appsettings.json, else %LocalAppData%\Hangar\updates (see
+  scripts\_paths.ps1).
+
 .PARAMETER NotesFile
   A "what's new" file to carry with the build, shown in the update dialog before anyone installs it.
   Plain text: lines starting with "-" or "*" are the changes, and the first line that is neither a
@@ -30,8 +36,12 @@
   Stage with no "what's new" at all -- not even the commit subjects.
 
 .PARAMETER InstallPath
-  Where the running app lives. Only read, and only to find the build the notes are measured from:
-  its build.json names the commit the range starts at.
+  Where the running app lives: $env:HANGAR_INSTALL_DIR, else %LocalAppData%\Programs\Hangar, by
+  default. Only read: its build.json names the commit the notes are measured from, and its settings
+  name the staging folder when -Staging doesn't.
+
+.PARAMETER NoTray
+  Build without the tray app (passed to build.ps1). The installed tray is then left as it is.
 
 .PARAMETER AllowDroppingCommits
   Stage even though the installed build's commit is not in the history of the one being staged.
@@ -46,16 +56,20 @@
   powershell -ExecutionPolicy Bypass -File scripts\stage-update.ps1 -Staging D:\apps\hangar-updates -SkipBuild
 #>
 param(
-  [string]$Staging = "C:\apps\hangar-updates",
+  [string]$Staging,
   [switch]$SkipBuild,  # stage the existing ./publish output without rebuilding
   [string]$NotesFile,
   [string]$Summary,
   [switch]$NoNotes,
-  [string]$InstallPath = "C:\apps\hangar",
+  [string]$InstallPath,
+  [switch]$NoTray,
   [switch]$AllowDroppingCommits
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "_paths.ps1")
+if (-not $InstallPath) { $InstallPath = Get-HangarInstallDir }
+if (-not $Staging) { $Staging = Get-HangarStagingDir $InstallPath }
 $root    = Split-Path -Parent $PSScriptRoot
 $publish = Join-Path $root "publish"
 
@@ -96,7 +110,7 @@ if (-not $SkipBuild) {
 
 # --- 1) Build + publish (single self-contained exe into ./publish) ---------------------------
 if (-not $SkipBuild) {
-  & (Join-Path $PSScriptRoot "build.ps1")
+  & (Join-Path $PSScriptRoot "build.ps1") -NoTray:$NoTray
 } elseif (-not (Test-Path (Join-Path $publish "Hangar.exe"))) {
   throw "No published build at '$publish'. Run without -SkipBuild first."
 }
@@ -182,6 +196,7 @@ if ($notes) {
     commit     = $stamp.commit
     branch     = $stamp.branch
     builtAtUtc = $stamp.builtAtUtc
+    runtime    = $stamp.runtime
     notes      = [ordered]@{
       summary = $notes.summary
       changes = @($notes.changes)
@@ -208,7 +223,8 @@ if ($notes) {
 } else {
   Write-Host "    What's new: nothing recorded (pass -NotesFile to say what changed)."
 }
-Write-Host "    If no button appears, check Update:StagingPath in the app's appsettings.json -- it must point at '$Staging'."
+Write-Host ("    If no button appears, check Update:StagingPath in $InstallPath\appsettings.Local.json (or " +
+  "appsettings.json) -- the app must be watching '$Staging'.")
 
 # The robocopy above exits 1 for "files were copied" -- success, as far as robocopy is concerned, but it
 # would otherwise be left as this script's own exit code and read as a failure by whatever ran it.

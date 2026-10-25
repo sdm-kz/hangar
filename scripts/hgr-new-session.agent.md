@@ -4,26 +4,28 @@ Launches a **new Claude Code session** on this machine through the Hangar server
 (`POST /api/external/sessions`). The session runs as a real `claude` process in the folder you
 name, shows up in the web UI, and — with Remote Control on — in the Claude Code app.
 
-The script is on `PATH`, so call it by name; no path, no `cd` needed.
+Call it by name once the repo's `scripts` folder is on `PATH` (for example, in PowerShell:
+`[Environment]::SetEnvironmentVariable('PATH', "$env:PATH;<repo>\scripts", 'User')`, then open a new
+shell), or call it by its full path, `<repo>\scripts\hgr-new-session.ps1`. The examples below assume
+it is on `PATH`.
 
 ## Before you call it
 
-Two things must be true, or the call fails:
-
-1. The Hangar server is running (default `http://localhost:5099`).
-2. `$env:HANGAR_API_KEY` (or `$env:CLAUDE_WEB_API_KEY`, its name before the rename) is set to the key configured as `Auth:ApiKey` in
-   `server/appsettings.json`. Without it the script exits 1 with
-   `No API key. Pass -ApiKey or set $env:HANGAR_API_KEY`. Pass `-ApiKey <key>` to override.
+1. The Hangar server must be running (default `http://127.0.0.1:5099`).
+2. `$env:HANGAR_API_KEY` holds the key from `Auth:ApiKey` (the install's `appsettings.Local.json` or
+   `appsettings.json`), when one is set; `-ApiKey <key>` overrides it. Without a key the request is
+   sent without an `X-Api-Key` header, and a server that wants one answers 401 -- the script then
+   says so.
 
 ## How to invoke
 
-From PowerShell (PowerShell resolves `.ps1` files on `PATH`):
+From PowerShell (PowerShell resolves `.ps1` files on `PATH`; otherwise give the full path):
 
 ```powershell
 hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Name build -Model opus
 ```
 
-From bash/cmd, go through PowerShell so `PATH` lookup still applies:
+From bash/cmd, go through PowerShell so `PATH` lookup still applies (or use `-File <full path>`):
 
 ```bash
 powershell -NoProfile -Command "hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Name build"
@@ -47,10 +49,10 @@ so the server's own default applies — omit rather than guess.
 | `-ResumeSessionId` | string | none | Resume one **specific** conversation by its Claude session id (`claude --resume <id>`). Takes precedence over `-Continue`; prefer it when you know the id, since one folder can hold many conversations. |
 | `-Color` | string | none | Session color name (same values `/color` accepts), for visual grouping in the list. |
 | `-NestUnderSessionId` | string | none | Draw the new session under this one in the sessions list (its `nestedUnderId`). An arrangement of the list only — the new session has its own conversation and is not a fork. An id no session answers to is a 400, not a silently top-level session. |
-| `-Child` | switch | off | Nest under the session this runs inside: fills `-NestUnderSessionId` from `$env:HANGAR_SESSION_ID` (else `$env:CLAUDEWEB_SESSION_ID`). With neither set it exits 1 instead of launching at the top level. An explicit `-NestUnderSessionId` wins. Use this whenever you launch a session from inside one. |
+| `-Child` | switch | off | Nest under the session this runs inside: fills `-NestUnderSessionId` from `$env:HANGAR_SESSION_ID`. Without it set it exits 1 instead of launching at the top level. An explicit `-NestUnderSessionId` wins. Use this whenever you launch a session from inside one. |
 | `-WatchdogEnabled` | switch | off | Lets the hang watchdog auto-continue this session if it stalls. |
-| `-BaseUrl` | string | `$env:HANGAR_URL` (set inside a session), else `$env:CLAUDE_WEB_URL`, else `http://localhost:5099` | Server base URL — set it when targeting another machine. |
-| `-ApiKey` | string | `$env:HANGAR_API_KEY`, else `$env:CLAUDE_WEB_API_KEY` | Sent as the `X-Api-Key` header. |
+| `-BaseUrl` | string | `$env:HANGAR_URL` (set inside a session), else `http://127.0.0.1:5099` | Server base URL — set it when targeting another machine. |
+| `-ApiKey` | string | `$env:HANGAR_API_KEY` | Sent as the `X-Api-Key` header; no header when there is no key. |
 | `-PassThru` | switch | off | Return the session object instead of printing a formatted list — use this when you need to read the result. |
 | `-Verbose` | switch | off | Prints the exact URL and JSON body before sending. Best first move when a call misbehaves. |
 

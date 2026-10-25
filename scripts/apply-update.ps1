@@ -36,7 +36,8 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File apply-update.ps1 `
-    -Staging C:\apps\hangar-updates\payload -Target C:\apps\hangar -ProcessId 1234 -Mode process
+    -Staging "$env:LOCALAPPDATA\Hangar\updates\payload" -Target "$env:LOCALAPPDATA\Programs\Hangar" `
+    -ProcessId 1234 -Mode process
 #>
 # Keep this file pure ASCII. Windows PowerShell 5.1 reads a .ps1 as ANSI, so a UTF-8 em-dash arrives
 # as bytes including 0x94 -- a CP1252 smart quote, which closes a double-quoted string early and turns

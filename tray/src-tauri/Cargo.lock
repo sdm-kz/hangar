@@ -1889,7 +1889,6 @@ dependencies = [
 name = "hangar-tray"
 version = "0.1.0"
 dependencies = [
- "auto-launch",
  "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",

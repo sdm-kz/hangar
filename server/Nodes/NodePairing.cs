@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -65,20 +64,12 @@ public sealed class NodePairing(
     PeerStore peers,
     PeerTokenStore inbound,
     TokenStore tokens,
+    LoginThrottle throttle,
     NodeOptions options,
     Sessions.SessionManagerOptions sessionOptions,
     ILogger<NodePairing> log)
 {
     public const string Capability = "node-v1";
-
-    // A wrong password costs a PBKDF2 hash — slow on purpose — but this endpoint, unlike the login, also mints
-    // a credential; a few failures from one address and it waits a while. An attempt counts as a failure from
-    // the moment it starts (and is forgiven when it succeeds), so a burst of them in parallel can't all slip
-    // in under the limit before the first one has been checked.
-    private const int MaxFailures = 5;
-    private const int MaxTrackedAddresses = 1000;
-    private static readonly TimeSpan FailureWindow = TimeSpan.FromMinutes(15);
-    private readonly ConcurrentDictionary<string, (int Count, DateTimeOffset Since)> _failures = new();
 
     // One pairing started from here at a time. Two in flight to the same node each mint a token there, the
     // second revoking the first, and whichever answer lands last decides which one this node keeps.
@@ -213,23 +204,21 @@ public sealed class NodePairing(
             return (null, StatusCodes.Status503ServiceUnavailable,
                 "That node's identity (node.json) can't be read, so it can't pair right now.");
 
+        // The password is the login's, so guesses at it here draw on the login's budget (LoginThrottle).
         var caller = ctx.Connection.RemoteIpAddress;
-        var who = caller?.ToString() ?? "?";
-        var now = DateTimeOffset.UtcNow;
-        if (_failures.Count > MaxTrackedAddresses)
-            foreach (var (address, old) in _failures)
-                if (now - old.Since > FailureWindow) _failures.TryRemove(address, out _);
-        var attempts = _failures.AddOrUpdate(who, _ => (1, now),
-            (_, old) => now - old.Since > FailureWindow ? (1, now) : (old.Count + 1, old.Since));
-        if (attempts.Count > MaxFailures)
+        var who = LoginThrottle.ClientKey(ctx);
+        if (!throttle.TryBegin(who, out var wait))
+        {
+            ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(wait.TotalSeconds)).ToString();
             return (null, StatusCodes.Status429TooManyRequests, "too many attempts");
+        }
 
         if (!tokens.CheckPassword(req.Password))
         {
             log.LogWarning("A pairing request from {Address} gave the wrong password", who);
             return (null, StatusCodes.Status401Unauthorized, "unauthorized");
         }
-        _failures.TryRemove(who, out _);
+        throttle.Succeeded(who);
 
         var me = identity.Current;
         var nodeId = req.Node?.Id?.Trim();

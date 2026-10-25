@@ -41,10 +41,10 @@ internal static class Program
 
         var isService = OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService();
         var contentRoot = ResolveContentRoot();
-        var port = GetPort(contentRoot);
+        var port = GetPort(contentRoot, args);
         // Where a person gets sent: the local loopback, unless Server:PublicUrl names an externally
         // reachable hostname. Clients read it from the instance file; a second launch opens it.
-        var openUrl = ResolveOpenUrl(contentRoot, port);
+        var openUrl = ResolveOpenUrl(contentRoot, args, port);
 
         // Single instance: a second launch just opens the UI and exits. (A service can't collide with
         // itself — the SCM runs one — and has no desktop to open a browser on.)
@@ -60,15 +60,7 @@ internal static class Program
             }
         }
 
-        // Before any store loads: bring the data over from the folder's name from before the rename.
-        var migrated = LegacyDataMigration.Run();
-
         var app = BuildApp(args, contentRoot);
-        if (migrated.Count > 0)
-        {
-            var migrationLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Migration");
-            foreach (var line in migrated) migrationLog.LogInformation("{Line}", line);
-        }
 
         // Register Hangar's Claude Code hooks in ~/.claude/settings.json so launched sessions report
         // their lifecycle back to /api/hooks (driving reliable busy/idle/waiting status). Opt out with
@@ -182,6 +174,13 @@ internal static class Program
         log.LogInformation("Hangar started on port {Port}. Logs: {LogDir} (crash log: {CrashLog}).",
             port, LogDirectory(), CrashHandler.CrashLogPath);
 
+        // Bound where other machines can reach it, with nothing to let them in: say why they get a 403.
+        if (app.Services.GetRequiredService<TokenStore>().AuthDisabled
+            && app.Urls.Where(LocalRequest.ExposedBeyondLoopback).ToList() is { Count: > 0 } exposed)
+            log.LogWarning("No password is set (Auth:Password), yet this instance listens on {Urls}. Only requests " +
+                           "made on this machine are answered; everyone else — through a reverse proxy too — gets a " +
+                           "403 until a password is set.", string.Join(", ", exposed));
+
         // The instance file first, and on its own: it is what the tray is waiting for.
         int? written = null;
         var local = LoopbackUrl(app.Urls);
@@ -256,6 +255,12 @@ internal static class Program
             Args = args,
             ContentRootPath = contentRoot,
         });
+        // This machine's own settings on top of the shipped ones (see AddLocalSettings), and the
+        // environment and command line on top of both again, as they are over appsettings.json.
+        builder.Configuration
+            .AddLocalSettings(contentRoot)
+            .AddEnvironmentVariables()
+            .AddCommandLine(args);
 
         // Run as a Windows service when hosted by the SCM; a no-op when launched interactively.
         builder.Host.UseWindowsService(o => o.ServiceName = "Hangar");
@@ -273,13 +278,20 @@ internal static class Program
         // preview ticket, a credential. Its warnings and errors are the part worth keeping.
         builder.Logging.AddFilter("Yarp", LogLevel.Warning);
 
-        var urls = builder.Configuration["Server:Urls"] ?? "http://0.0.0.0:5099";
+        var urls = builder.Configuration["Server:Urls"] ?? DefaultUrls;
         builder.WebHost.UseUrls(urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
         var authOptions = builder.Configuration.GetSection("Auth").Get<AuthOptions>() ?? new AuthOptions();
         var sessionOptions = builder.Configuration.GetSection("Sessions").Get<SessionManagerOptions>() ?? new SessionManagerOptions();
         var watchdogOptions = builder.Configuration.GetSection("Watchdog").Get<WatchdogOptions>() ?? new WatchdogOptions();
         var updateOptions = builder.Configuration.GetSection("Update").Get<Update.UpdateOptions>() ?? new Update.UpdateOptions();
+        // A relative staging folder means one beside the install, where the settings naming it are read
+        // from — as the staging scripts take it (scripts\_paths.ps1) — not the process's working
+        // directory, which for a daemon started at sign-in is System32.
+        if (string.IsNullOrWhiteSpace(updateOptions.StagingPath))
+            updateOptions.StagingPath = new Update.UpdateOptions().StagingPath;
+        else if (!Path.IsPathRooted(updateOptions.StagingPath))
+            updateOptions.StagingPath = Path.GetFullPath(Path.Combine(contentRoot, updateOptions.StagingPath));
         var ptyHostOptions = builder.Configuration.GetSection("Pty").Get<Sessions.Pty.PtyHostOptions>() ?? new Sessions.Pty.PtyHostOptions();
         var scheduleOptions = builder.Configuration.GetSection("Schedules").Get<ScheduleOptions>() ?? new ScheduleOptions();
 
@@ -298,6 +310,7 @@ internal static class Program
 
         builder.Services.AddSingleton(authOptions);
         builder.Services.AddSingleton<TokenStore>();
+        builder.Services.AddSingleton<LoginThrottle>();
         builder.Services.AddSingleton(sessionOptions);
         builder.Services.AddSingleton(ptyHostOptions);
         // Collects Claude hook callbacks and derives live busy/waiting status; consumed by SessionManager
@@ -404,15 +417,61 @@ internal static class Program
     /// <summary>upload-image's largest accepted image, decoded.</summary>
     private const int MaxImageBytes = 25 * 1024 * 1024;
 
+    /// <summary>
+    /// Headers for a file served at this origin to be looked at in the browser. <c>nosniff</c>, so a file
+    /// is never run as something other than the type it is served as. And for the types that can carry
+    /// a script — an SVG, anything HTML or XML — <c>Content-Security-Policy: sandbox</c>, which gives the
+    /// document an opaque origin of its own if it is ever opened as a page: a script in it then can't
+    /// reach this app's API with this origin's standing, or read its token. (As an <c>&lt;img&gt;</c> an
+    /// SVG runs no script anyway, so the viewers lose nothing.) Not for every type: a PDF under
+    /// <c>sandbox</c> is one the browser refuses to show.
+    /// </summary>
+    private static void GuardServedFile(HttpResponse response, string contentType)
+    {
+        response.Headers.XContentTypeOptions = "nosniff";
+        if (contentType.Contains("svg", StringComparison.OrdinalIgnoreCase)
+            || contentType.Contains("xml", StringComparison.OrdinalIgnoreCase)
+            || contentType.Contains("html", StringComparison.OrdinalIgnoreCase))
+            response.Headers.ContentSecurityPolicy = "sandbox";
+    }
+
+    /// <summary>
+    /// A path into the Win32 device namespace (<c>\\?\…</c>, <c>\\.\…</c>, or the same with forward
+    /// slashes): raw volumes, pipes and devices rather than files, which nothing in the Files panel has a
+    /// use for. Plain UNC paths (<c>\\server\share</c>) are still served — a share is a place people keep
+    /// files.
+    /// </summary>
+    private static bool IsDevicePath(string? path) =>
+        path is { Length: >= 4 }
+        && path[0] is '\\' or '/' && path[1] is '\\' or '/'
+        && path[2] is '?' or '.' && path[3] is '\\' or '/';
+
     private static readonly HashSet<string> AllowedImageExts =
         new(StringComparer.OrdinalIgnoreCase) { "png", "jpg", "jpeg", "gif", "webp", "bmp" };
 
     private static void MapEndpoints(WebApplication app)
     {
-        app.MapPost("/api/auth/login", (LoginRequest body, TokenStore tokens) =>
+        // Throttled per client (LoginThrottle), together with a node pairing's password check: both are
+        // guesses at the same password.
+        app.MapPost("/api/auth/login", (LoginRequest body, HttpContext ctx, TokenStore tokens, LoginThrottle throttle,
+            ILoggerFactory lf) =>
         {
+            var client = LoginThrottle.ClientKey(ctx);
+            if (!throttle.TryBegin(client, out var wait))
+            {
+                var seconds = (int)Math.Ceiling(wait.TotalSeconds);
+                ctx.Response.Headers.RetryAfter = seconds.ToString();
+                return Results.Json(new { error = $"Too many wrong passwords. Try again in {seconds} s." },
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
             var token = tokens.Login(body.Password);
-            return token is null ? Results.Unauthorized() : Results.Ok(new { token });
+            if (token is null)
+            {
+                lf.CreateLogger("Auth").LogWarning("A login from {Client} gave the wrong password", client);
+                return Results.Unauthorized();
+            }
+            throttle.Succeeded(client);
+            return Results.Ok(new { token });
         });
 
         app.MapPost("/api/auth/logout", (HttpContext ctx, TokenStore tokens) =>
@@ -524,6 +583,7 @@ internal static class Program
         // answer its pipe — so the request awaits rather than blocking a thread pool thread on it.
         app.MapPost("/api/sessions", async (CreateSessionRequest req, SessionManager mgr) =>
         {
+            if (LaunchRequestProblem(req) is { } problem) return Results.BadRequest(new { error = problem });
             try
             {
                 var info = await mgr.CreateAsync(req);
@@ -547,6 +607,7 @@ internal static class Program
             // its folder is linked to, and the virtual folder inside it; see CreateAsync.
             if (!string.IsNullOrWhiteSpace(req.NestedUnderId) && !mgr.Exists(req.NestedUnderId))
                 return Results.BadRequest(new { error = $"No session '{req.NestedUnderId}' to put this one under." });
+            if (LaunchRequestProblem(req) is { } problem) return Results.BadRequest(new { error = problem });
             try
             {
                 var info = await mgr.CreateAsync(req);
@@ -911,8 +972,7 @@ internal static class Program
         }
 
         // An image named in a message must be one upload-image wrote: a file in the session's
-        // .hangar/uploads/, or in .claudeweb/uploads/ from before the rename (a postponed message can
-        // still name one). Anything else would make the message endpoint a way to have Claude read
+        // .hangar/uploads/. Anything else would make the message endpoint a way to have Claude read
         // an arbitrary path — and /api/external carries only an API key, not the run of the disk. The
         // checks above are on the path's text, so a link (a symlink or junction, at the file or at the
         // uploads folder) could still point it elsewhere; upload-image never writes one, so none is
@@ -922,10 +982,9 @@ internal static class Program
             var full = SessionFileBrowser.ResolveSafe(workingDirectory, rel);
             if (full is null) return null;
             var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-            var uploads = new[] { UploadsFolder, SessionDataFolder.LegacyUploads }
-                .Select(folder => SessionFileBrowser.ResolveSafe(workingDirectory, folder))
-                .FirstOrDefault(folder => folder is not null && string.Equals(Path.GetDirectoryName(full), folder, comparison));
-            if (uploads is null || !AllowedImageExts.Contains(Path.GetExtension(full).TrimStart('.'))) return null;
+            var uploads = SessionFileBrowser.ResolveSafe(workingDirectory, UploadsFolder);
+            if (uploads is null || !string.Equals(Path.GetDirectoryName(full), uploads, comparison)
+                || !AllowedImageExts.Contains(Path.GetExtension(full).TrimStart('.'))) return null;
             var file = new FileInfo(full);
             return file.Exists && file.LinkTarget is null && new DirectoryInfo(uploads).LinkTarget is null
                 ? full
@@ -1103,6 +1162,11 @@ internal static class Program
         {
             if (body.Endpoint is null || body.Keys?.P256dh is null || body.Keys?.Auth is null)
                 return Results.BadRequest(new { error = "invalid subscription" });
+            // Every browser's push service is an https URL. Holding the endpoint to that keeps this from
+            // being a way to have the server POST to a plain-http address of the caller's choosing (a
+            // service on this machine or its LAN, say).
+            if (!Uri.TryCreate(body.Endpoint, UriKind.Absolute, out var endpoint) || endpoint.Scheme != Uri.UriSchemeHttps)
+                return Results.BadRequest(new { error = "a push endpoint must be an https:// URL" });
             store.Add(new PushSubscriptionEntry(body.Endpoint, body.Keys.P256dh, body.Keys.Auth));
             return Results.Ok();
         });
@@ -1141,6 +1205,7 @@ internal static class Program
 
         app.MapGet("/api/fs/file", (string path, bool? download, HttpContext http) =>
         {
+            if (IsDevicePath(path)) return Results.BadRequest(new { error = "not a file path" });
             var full = Path.GetFullPath(path);
             if (!File.Exists(full)) return Results.NotFound();
             var contentType = SessionFileBrowser.ContentType(full);
@@ -1149,6 +1214,7 @@ internal static class Program
             // stale heuristically-cached body after the file changes. ETag/Last-Modified still yield a
             // cheap 304 when unchanged.
             http.Response.Headers.CacheControl = "no-cache";
+            GuardServedFile(http.Response, contentType);
             return download == true
                 ? Results.File(full, contentType, fileDownloadName: name, enableRangeProcessing: true)
                 : Results.File(full, contentType, enableRangeProcessing: true);
@@ -1398,6 +1464,7 @@ internal static class Program
             // stale heuristically-cached body after the file changes. ETag/Last-Modified still yield a
             // cheap 304 when unchanged.
             http.Response.Headers.CacheControl = "no-cache";
+            GuardServedFile(http.Response, contentType);
             return download == true
                 ? Results.File(full, contentType, fileDownloadName: name, enableRangeProcessing: true)
                 : Results.File(full, contentType, enableRangeProcessing: true);
@@ -1536,9 +1603,15 @@ internal static class Program
         {
             var dir = mgr.FolderOf(id);
             if (dir is null) return Results.NotFound();
+            // The cap is on characters, checked once the body is read; the request is held to what that
+            // many could take in UTF-8 before anything is read, so an oversized body is never buffered.
+            const int maxChars = 512 * 1024;
+            if (ctx.Request.ContentLength > maxChars * 4L) return Results.BadRequest(new { error = "too large" });
+            if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
+                limit.MaxRequestBodySize = maxChars * 4L;
             using var reader = new StreamReader(ctx.Request.Body);
             var body = await reader.ReadToEndAsync();
-            if (body.Length > 512 * 1024) return Results.BadRequest(new { error = "too large" });
+            if (body.Length > maxChars) return Results.BadRequest(new { error = "too large" });
             return PostponedStore.Write(dir, id, System.Text.Encoding.UTF8.GetBytes(body))
                 ? Results.Ok()
                 : Results.BadRequest(new { error = "Could not save the postponed messages." });
@@ -1897,6 +1970,18 @@ internal static class Program
             .ToArray();
     }
 
+    /// <summary>
+    /// What is wrong with the values of a launch request that reach claude's command line, or null. The
+    /// model and the conversation to resume are each held to their shape here, where the caller can be
+    /// told; <c>ClaudeSession.BuildArgs</c> leaves off anything that slips past.
+    /// </summary>
+    private static string? LaunchRequestProblem(CreateSessionRequest req) =>
+        !string.IsNullOrWhiteSpace(req.Model) && !ClaudeSession.IsValidModel(req.Model)
+            ? $"Not a model name: {req.Model}"
+        : !string.IsNullOrWhiteSpace(req.ResumeSessionId) && !ClaudeSession.IsValidResumeId(req.ResumeSessionId)
+            ? $"Not a conversation id: {req.ResumeSessionId}"
+        : null;
+
     /// <summary>Why a schedule can never fire as it stands, or null when nothing is stopping it.</summary>
     private static string? BlockedReason(SessionSchedule s) =>
         s.TemplateId is null ? "It has no template."
@@ -1944,7 +2029,6 @@ internal static class Program
             var sessionScoped =
                 name is "CLAUDECODE" or "CLAUDE_PID" or "NO_COLOR"
                 || name.StartsWith("CLAUDE_CODE_", StringComparison.OrdinalIgnoreCase)
-                || name.StartsWith("CLAUDEWEB_", StringComparison.OrdinalIgnoreCase)
                 || name.StartsWith("HANGAR_", StringComparison.OrdinalIgnoreCase) && name != "HANGAR_TEST_ROOT";
             if (!sessionScoped) continue;
             // One the user set for good (CLAUDE_CODE_USE_BEDROCK, say) is configuration, not the session's.
@@ -1996,42 +2080,61 @@ internal static class Program
     // Server:PublicUrl (e.g. a reverse-proxied public hostname) wins when set; otherwise fall back to the
     // local loopback on the bound port. The web host itself still binds to Server:Urls — this only
     // changes where people are sent.
-    private static string ResolveOpenUrl(string contentRoot, int port)
+    private static string ResolveOpenUrl(string contentRoot, string[] args, int port)
     {
         try
         {
-            var config = new ConfigurationBuilder()
-                .SetBasePath(contentRoot)
-                .AddJsonFile("appsettings.json", optional: true)
-                .AddEnvironmentVariables()
-                .Build();
-            var publicUrl = config["Server:PublicUrl"];
+            var publicUrl = StartupConfig(contentRoot, args)["Server:PublicUrl"];
             if (!string.IsNullOrWhiteSpace(publicUrl)) return publicUrl.Trim();
         }
         catch { /* fall back to loopback below */ }
         return $"http://localhost:{port}";
     }
 
-    private static int GetPort(string contentRoot)
+    private static int GetPort(string contentRoot, string[] args)
     {
-        try
-        {
-            var config = new ConfigurationBuilder()
-                .SetBasePath(contentRoot)
-                .AddJsonFile("appsettings.json", optional: true)
-                .AddEnvironmentVariables()
-                .Build();
-            return PortFromUrls(config["Server:Urls"]);
-        }
+        try { return PortFromUrls(StartupConfig(contentRoot, args)["Server:Urls"]); }
         catch { return 5099; }
     }
 
-    /// <summary>The port from the first entry of a Kestrel bind list ("http://0.0.0.0:5099;...").</summary>
+    /// <summary>
+    /// Where the host listens when <c>Server:Urls</c> isn't set: this machine only. Reaching it from
+    /// anywhere else is a deliberate step — a bind address in Server:Urls, or a reverse proxy — and the
+    /// password it needs (TokenAuthMiddleware turns remote requests away while there is none).
+    /// </summary>
+    private const string DefaultUrls = "http://127.0.0.1:5099";
+
+    /// <summary>
+    /// The settings read before the host is built — the port (for the single-instance lock) and where a
+    /// person is sent — layered the same way the host's own configuration is: appsettings.json, then
+    /// appsettings.Local.json, then the environment, then the command line. The last matters: a dev
+    /// instance started with <c>--Server:Urls=…:5199</c> that read its port without it would take the
+    /// live app's port for its single-instance lock, find it held, and quietly exit.
+    /// </summary>
+    private static IConfiguration StartupConfig(string contentRoot, string[] args) =>
+        new ConfigurationBuilder()
+            .SetBasePath(contentRoot)
+            .AddJsonFile("appsettings.json", optional: true)
+            .AddLocalSettings(contentRoot)
+            .AddEnvironmentVariables()
+            .AddCommandLine(args)
+            .Build();
+
+    /// <summary>
+    /// <c>appsettings.Local.json</c> beside appsettings.json, when there is one: this machine's own
+    /// settings (bind address, public URL, password bootstrap, default folder, …) over the template the
+    /// source ships. It is kept out of git, so a checkout never carries one machine's settings to
+    /// another, and an update leaves it in place like every appsettings*.json in the install.
+    /// </summary>
+    private static IConfigurationBuilder AddLocalSettings(this IConfigurationBuilder config, string contentRoot) =>
+        config.AddJsonFile(Path.Combine(contentRoot, "appsettings.Local.json"), optional: true, reloadOnChange: false);
+
+    /// <summary>The port from the first entry of a Kestrel bind list ("http://127.0.0.1:5099;...").</summary>
     private static int PortFromUrls(string? urls)
     {
         try
         {
-            var first = (urls ?? "http://0.0.0.0:5099").Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+            var first = (urls ?? DefaultUrls).Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
             return new Uri(first.Replace("0.0.0.0", "localhost").Replace("+", "localhost").Replace("*", "localhost")).Port;
         }
         catch { return 5099; }

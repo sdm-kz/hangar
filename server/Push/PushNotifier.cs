@@ -40,6 +40,7 @@ public sealed class PushNotifier : BackgroundService
     private readonly NodeIdentityStore _identity;
     private readonly ILogger<PushNotifier> _log;
     private readonly WebPushClient _client = new();
+    private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);
     private readonly SemaphoreSlim _wake = new(0, 1);
 
     /// <summary>The marks a node's sessions carried at the last check — the state a transition is measured from.</summary>
@@ -242,7 +243,11 @@ public sealed class PushNotifier : BackgroundService
             var sub = new PushSubscription(entry.Endpoint, entry.P256dh, entry.Auth);
             try
             {
-                await _client.SendNotificationAsync(sub, payload, vapid);
+                // Each subscriber is sent to in turn, so one push endpoint that never answers would hold up
+                // every other device's notification for the client's default 100 s. A push service answers
+                // in well under a second; one that hasn't in ten is not going to.
+                using var timeout = new CancellationTokenSource(SendTimeout);
+                await _client.SendNotificationAsync(sub, payload, vapid, timeout.Token);
             }
             catch (WebPushException ex) when (
                 ex.StatusCode == HttpStatusCode.Gone || ex.StatusCode == HttpStatusCode.NotFound)

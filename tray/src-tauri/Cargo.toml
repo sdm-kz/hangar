@@ -3,6 +3,8 @@ name = "hangar-tray"
 version = "0.1.0"
 description = "The Hangar tray: running sessions, the server, and screenshots sent to a session"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/sdm-kz/hangar"
 publish = false
 
 [lib]
@@ -35,7 +37,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tauri-plugin-log = "2"
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
-auto-launch = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }

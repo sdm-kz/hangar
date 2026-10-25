@@ -1,6 +1,6 @@
 # Detach ≠ kill: move the ConPTY into a per-session host process
 
-**Goal.** A launched `claude` session survives a restart of `ClaudeWeb.exe` — in-app update,
+**Goal.** A launched `claude` session survives a restart of `Hangar.exe` — in-app update,
 `deploy.ps1`, tray **Exit**, or a crash. On the next start the web app *re-attaches* to the live
 session (scrollback intact, conversation mid-turn intact) instead of relaunching it with
 `--resume`/`--continue`.
@@ -40,10 +40,10 @@ Also already in place and reusable:
 ### Target architecture
 
 ```
-ClaudeWeb.exe                         <- restarts, updates, crashes freely
-   |  named pipe \\.\pipe\claudeweb-pty-<instance>-<sessionId>
+Hangar.exe                         <- restarts, updates, crashes freely
+   |  named pipe \\.\pipe\hangar-pty-<instance>-<sessionId>
    v
-ClaudeWeb.PtyHost.exe   (one per session, DETACHED_PROCESS, own job)
+Hangar.PtyHost.exe   (one per session, DETACHED_PROCESS, own job)
    |  owns HPCON + TerminalChannel (ring, fan-out, sniffers) + watchdog
    v
 claude.exe
@@ -57,7 +57,7 @@ this adds one process per session, not two.
 
 ## 2. Project layout
 
-New project `ptyhost/ClaudeWeb.PtyHost.csproj`:
+New project `ptyhost/Hangar.PtyHost.csproj`:
 
 - `net10.0` (**not** `-windows`), `OutputType=Exe`, console subsystem, self-contained.
 - References `Porta.Pty` only. No ASP.NET, no WinForms — keep it small; ~15 MB self-contained
@@ -65,7 +65,7 @@ New project `ptyhost/ClaudeWeb.PtyHost.csproj`:
 - Consider NativeAOT as a **follow-up**, not now (verify `Porta.Pty` — netstandard2.0, pure managed
   — is AOT-clean before spending time on it).
 
-Alternative considered and rejected: a `--pty-host` switch on the existing `ClaudeWeb.exe`. One
+Alternative considered and rejected: a `--pty-host` switch on the existing `Hangar.exe`. One
 binary is simpler to publish, but every host process would then carry the WinForms + ASP.NET image,
 and the side-by-side copy the updater needs (§6) is no easier for one big exe than one small one.
 
@@ -114,7 +114,7 @@ public interface ITerminal : IDisposable
 
 ## 4. Pipe protocol
 
-**Pipe name:** `claudeweb-pty-{instanceKey}-{sessionId}`.
+**Pipe name:** `hangar-pty-{instanceKey}-{sessionId}`.
 **`instanceKey` is load-bearing** — see §8; without it a dev instance on port 5199 will adopt (and
 can then kill) the live app's sessions. Default it from the bound port.
 
@@ -165,7 +165,7 @@ plus a 5 s heartbeat; `PtyHostClient` caches the last value and `IsBusy`/`Recent
 ## 6. Process lifecycle — the Windows landmines
 
 **Spawn flags.** `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, no handle inheritance, no console.
-Add `CREATE_BREAKAWAY_FROM_JOB` where the parent job permits it — if `ClaudeWeb.exe` is ever inside
+Add `CREATE_BREAKAWAY_FROM_JOB` where the parent job permits it — if `Hangar.exe` is ever inside
 a job (service host, debugger, some CI parents) the host would otherwise inherit its
 kill-on-close and die with it, silently defeating the whole feature.
 
@@ -182,8 +182,8 @@ last client disconnects — that is the entire feature. Optional `Pty:OrphanMaxA
 **The updater will break on this — fix it in the same change.** `apply-update.ps1` mirrors over the
 install folder and would hit a locked, running host binary.
 
-1. At spawn time the web app copies `ClaudeWeb.PtyHost.exe` into
-   `%LocalAppData%\ClaudeWeb\ptyhost\<buildStamp>\` (if not already there) and launches **from
+1. At spawn time the web app copies `Hangar.PtyHost.exe` into
+   `%LocalAppData%\Hangar\ptyhost\<buildStamp>\` (if not already there) and launches **from
    that path**. An update then never touches a running host binary.
 2. Prune `<buildStamp>` folders with no live host.
 3. `stage-update.ps1` / `build.ps1` publish the host exe alongside; `apply-update.ps1` mirrors it.
@@ -228,11 +228,11 @@ launching user explicitly rather than relying on the default DACL.
 
 **`server/Sessions/SessionHub.cs`** — busy/attention now come from cached pushed state.
 
-**State file:** `%LocalAppData%\ClaudeWeb\pty\<instanceKey>\<sessionId>.json`
+**State file:** `%LocalAppData%\Hangar\pty\<instanceKey>\<sessionId>.json`
 
 ```json
 { "sessionId": "...", "hostPid": 1234, "hostStartTicks": 638,
-  "pipeName": "claudeweb-pty-5099-abc", "childPid": 5678, "childStartTicks": 638,
+  "pipeName": "hangar-pty-5099-abc", "childPid": 5678, "childStartTicks": 638,
   "workingDirectory": "C:\\Git\\x", "buildStamp": "...", "protocol": 1, "createdAt": "..." }
 ```
 
@@ -243,7 +243,7 @@ launching user explicitly rather than relying on the default DACL.
 
 ## 8. Instance isolation (read this before testing)
 
-`%LocalAppData%\ClaudeWeb\` is shared by every instance on the machine. The single-instance mutex is
+`%LocalAppData%\Hangar\` is shared by every instance on the machine. The single-instance mutex is
 already port-scoped (`Program.cs:36`), but `sessions.json` is not. **A dev instance started with
 `ResumeOnStart=true` will relaunch the live app's sessions**, and once the pty state dir exists it
 would also *adopt* the live app's hosts — and could then stop them.
@@ -277,7 +277,7 @@ in the sidebar, a tray "stop all orphaned hosts" action).
 ## 10. Acceptance tests
 
 1. Launch a session, type in the terminal — works as before.
-2. **Kill `ClaudeWeb.exe` from Task Manager** (not tray Exit) → `claude.exe` is still alive.
+2. **Kill `Hangar.exe` from Task Manager** (not tray Exit) → `claude.exe` is still alive.
    Restart → the session is `Running`, terminal replays, the conversation kept its context, and
    **no `--resume` was issued**.
 3. Tray **Exit** → same as (2).
@@ -287,7 +287,7 @@ in the sidebar, a tray "stop all orphaned hosts" action).
 7. Two browser tabs on one session → both attached and live.
 8. Watchdog fires while the web app is stopped → recovery visible after reconnect (Phase 2).
 9. Stale state file (host killed directly) → cleaned up, session offered as `Restorable`.
-10. **Orphan sweep:** after stopping everything, no stray `claude.exe`, `ClaudeWeb.PtyHost.exe`, or
+10. **Orphan sweep:** after stopping everything, no stray `claude.exe`, `Hangar.PtyHost.exe`, or
     `conhost.exe` remains.
 11. Reboot → sessions come back via `ResumeOnStart`, exactly as today (unchanged behaviour).
 

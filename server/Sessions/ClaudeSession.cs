@@ -300,9 +300,14 @@ public sealed class ClaudeSession : IDisposable
         // and from there to us and on to the in-app xterm.js terminal.
         var args = BuildArgs();
         // The resolver may front the executable with a prefix (node + cli.js for a classic npm shim,
-        // or cmd.exe /c as a last resort); it goes ahead of our own arguments.
-        var launchArgs = new List<string>(_exe.Prefix);
-        launchArgs.AddRange(args);
+        // or cmd.exe /c as a last resort); it goes ahead of our own arguments. On Windows the whole
+        // line is quoted here and handed to the host verbatim — the pty library's own quoting lets a
+        // name split into arguments of its own (see WindowsCommandLine). Elsewhere each argument
+        // reaches execvp as one argv entry, and there is nothing to quote.
+        var verbatim = OperatingSystem.IsWindows();
+        var launchArgs = verbatim
+            ? ClaudeExecutableResolver.WindowsCommandLine(_exe, args)
+            : [.. _exe.Prefix, .. args];
 
         _log.LogInformation("Launching claude session {Id} in {Cwd}: {Exe} {Args}",
             Id, WorkingDirectory, _exe.FileName, string.Join(' ', launchArgs));
@@ -315,7 +320,7 @@ public sealed class ClaudeSession : IDisposable
         {
             var client = await _hosts.StartAsync(
                 Id, _exe.FileName, launchArgs, WorkingDirectory, BuildEnvironment(), 120, 30,
-                _watchdog, WatchdogEnabled, ct: ct);
+                _watchdog, WatchdogEnabled, verbatimArguments: verbatim, ct: ct);
             Bind(client);
             State = SessionState.Running;
             PromptToType = FiresInitialPrompt && !PromptOnCommandLine ? InitialPrompt : null;
@@ -390,25 +395,26 @@ public sealed class ClaudeSession : IDisposable
         // starts from ours — which is what it inherited implicitly when we spawned it in-process.
         foreach (System.Collections.DictionaryEntry kv in Environment.GetEnvironmentVariables())
             env[(string)kv.Key] = kv.Value?.ToString() ?? "";
-        // Each under both names: HANGAR_*, which the hook config and the commands read, and CLAUDEWEB_*
-        // for scripts written before the rename (plans/rename-to-hangar.md, step 4).
-        SetBoth(env, "SESSION_ID", Id);
+        env["HANGAR_SESSION_ID"] = Id;
         if (!string.IsNullOrEmpty(_hookToken))
-            SetBoth(env, "HOOK_TOKEN", _hookToken);
+            env["HANGAR_HOOK_TOKEN"] = _hookToken;
         // Where the session can reach us: the same pair of correlation headers also authorizes the
         // self-service endpoints (POST /api/self/name), so a command run *inside* the session can
         // rename it with a one-line curl. Loopback — a session always runs on this machine.
         if (!string.IsNullOrEmpty(_selfUrl))
-            SetBoth(env, "URL", _selfUrl);
+            env["HANGAR_URL"] = _selfUrl;
         return env;
-
-        static void SetBoth(Dictionary<string, string> env, string name, string value)
-        {
-            env["HANGAR_" + name] = value;
-            env["CLAUDEWEB_" + name] = value;
-        }
     }
 
+    /// <remarks>
+    /// Every value that can come from a caller — a name, a model, a session id to resume, the prompt — is
+    /// kept from being read as a flag of its own. claude parses its command line with commander, which
+    /// takes a value that starts with a dash as the next option, not as the value: a session named
+    /// <c>--mcp-config=evil.json</c>, or a prompt that begins that way, would load an MCP server of the
+    /// caller's choosing, which is running a program of their choosing. So each value rides in its
+    /// option's own argument (<c>--name=…</c>, which commander never splits off), and the prompt comes
+    /// after <c>--</c>, past which nothing is an option.
+    /// </remarks>
     private List<string> BuildArgs()
     {
         var args = new List<string>();
@@ -417,11 +423,10 @@ public sealed class ClaudeSession : IDisposable
         // instead, with no relaunch and no --resume. Prefer --resume <id> to reopen the EXACT
         // conversation — a folder can hold several, and --continue would grab whichever was most
         // recent. Fall back to --continue when we never captured the session id (e.g. a pre-hooks one).
-        if (ResumeSessionId is not null)
-        {
-            args.Add("--resume");
-            args.Add(ResumeSessionId);
-        }
+        // Both already held to their shapes where a request comes in (SessionManager.CreateAsync); a
+        // value that still isn't — from an older sessions.json, say — is left off rather than passed on.
+        if (ResumeSessionId is not null && IsValidResumeId(ResumeSessionId))
+            args.Add("--resume=" + ResumeSessionId);
         else if (Continue)
             args.Add("--continue");
         // A fork replays the resumed conversation into a NEW Claude session id, so the session we
@@ -446,23 +451,20 @@ public sealed class ClaudeSession : IDisposable
                 break;
         }
         if (RemoteControl)
-        {
-            args.Add("--remote-control");
-            args.Add(Name); // names the Remote Control session shown in the app
-        }
+            args.Add("--remote-control=" + Name); // names the Remote Control session shown in the app
         // Also set the display name shown in the session picker / terminal title.
-        args.Add("--name");
-        args.Add(Name);
-        if (Model is not null)
-        {
-            args.Add("--model");
-            args.Add(Model);
-        }
-        // The initial prompt is a positional argument and MUST come last, after all flags.
+        args.Add("--name=" + Name);
+        if (Model is not null && IsValidModel(Model))
+            args.Add("--model=" + Model);
+        // The initial prompt is a positional argument and MUST come last, after all flags — and after
+        // "--", so that one starting with a dash is still a prompt (see the remarks).
         // Claude submits it on startup and stays interactive (works alongside --remote-control).
-        // Windows only: see PromptToType for the rest.
+        // Only where it may ride the command line: see PromptOnCommandLine.
         if (FiresInitialPrompt && PromptOnCommandLine)
+        {
+            args.Add("--");
             args.Add(InitialPrompt!);
+        }
         return args;
     }
 
@@ -477,8 +479,31 @@ public sealed class ClaudeSession : IDisposable
     /// a process's command line there. On Linux and macOS anyone on the machine can, with <c>ps</c> or
     /// <c>/proc/&lt;pid&gt;/cmdline</c> — and a prompt is where people paste the error log, the
     /// customer's ticket, the key that wasn't meant to be in it.
+    /// <para>Nor on Windows when claude is started through <c>cmd.exe /c</c> (an npm shim the resolver
+    /// couldn't read): cmd parses that line itself, by rules of its own, and a quote in the prompt ends
+    /// the quoting the line was built with — after which <c>&amp;</c> starts a command of the prompt's
+    /// choosing. Typed into the input box, it is only text.</para>
+    /// <para>Nor a prompt that is a single word. claude still dispatches its first operand as a
+    /// subcommand when it names one — even after <c>--</c> — so a prompt of just <c>update</c> or
+    /// <c>doctor</c> would run that instead of being asked. A prompt with a space in it can never be a
+    /// subcommand's name. (Typing every prompt in would close this too, but on Windows that trades an
+    /// instant, certain start for one that waits on reading claude's screen; it is kept for the few
+    /// prompts that need it.)</para>
     /// </summary>
-    private static bool PromptOnCommandLine => OperatingSystem.IsWindows();
+    private bool PromptOnCommandLine =>
+        OperatingSystem.IsWindows() && !_exe.ThroughCmd && InitialPrompt?.Any(char.IsWhiteSpace) == true;
+
+    /// <summary>
+    /// A model name as claude takes one — an alias (<c>opus</c>), a full id (<c>claude-opus-4-1-20250805</c>),
+    /// a provider's (<c>us.anthropic.…:0</c>), or with a suffix such as <c>[1m]</c>. Nothing that could be
+    /// read as an option or split a command line.
+    /// </summary>
+    public static bool IsValidModel(string? model) =>
+        !string.IsNullOrEmpty(model) && model.Length <= 200 && !model.StartsWith('-')
+        && model.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or ':' or '[' or ']' or '-');
+
+    /// <summary>A Claude conversation id to resume: always a UUID.</summary>
+    public static bool IsValidResumeId(string? id) => Guid.TryParse(id, out _);
 
     /// <summary>
     /// The prompt this launch left off the command line, to be typed in once claude's input is up

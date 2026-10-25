@@ -14,7 +14,16 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": { target: backend, changeOrigin: true },
+      "/api": {
+        target: backend,
+        changeOrigin: true,
+        // With no password set the backend serves only its own page (server/Auth/LocalRequest.cs), so a
+        // request carrying the dev server's Origin is re-labelled as the backend's, as /hub's sockets are.
+        configure: (proxy) =>
+          proxy.on("proxyReq", (req) => {
+            if (req.getHeader("origin")) req.setHeader("origin", new URL(backend).origin);
+          }),
+      },
       "/hub": {
         target: backend,
         changeOrigin: true,

@@ -1,0 +1,11 @@
+<Project>
+  <!-- Package metadata shared by every .NET project in the repo (the server and the pty host). -->
+  <PropertyGroup>
+    <Authors>Denis Silkov</Authors>
+    <Product>Hangar</Product>
+    <Copyright>Copyright (c) 2026 Denis Silkov</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/sdm-kz/hangar</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+</Project>

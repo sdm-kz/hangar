@@ -21,7 +21,6 @@ pub mod elements;
 mod geometry;
 mod host;
 mod imageops;
-mod legacy;
 mod menu;
 mod progress;
 mod server;
@@ -1138,9 +1137,9 @@ fn serve_picture(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
 }
 
 /// The settings folder a test or dev run was given, which keeps its settings and recents away from the
-/// real ones (`HANGAR_SNAP_CONFIG_DIR` is the name from before the rename).
+/// real ones.
 fn test_config_dir() -> Option<std::ffi::OsString> {
-    std::env::var_os("HANGAR_TRAY_CONFIG_DIR").or_else(|| std::env::var_os("HANGAR_SNAP_CONFIG_DIR"))
+    std::env::var_os("HANGAR_TRAY_CONFIG_DIR")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1236,12 +1235,7 @@ pub fn run() {
                 Some(d) => std::path::PathBuf::from(d),
                 // The local, not the roaming, folder on Windows: the settings hold a bearer token,
                 // which has no business following a roaming profile to other machines.
-                None => {
-                    let dir = app.path().app_local_data_dir()?;
-                    legacy::migrate_settings(&dir);
-                    legacy::retire_snap(app.handle());
-                    dir
-                }
+                None => app.path().app_local_data_dir()?,
             };
             let first_run = !dir.join("settings.json").exists();
             let store = Store::new(dir);

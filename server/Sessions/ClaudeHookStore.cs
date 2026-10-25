@@ -101,7 +101,7 @@ public static class ClaudeHookStore
                 if (FindOurHandler(groups) is { } existing)
                 {
                     // Already registered — refresh what may have moved: the URL (a port change) and the
-                    // variables the headers name (renamed from CLAUDEWEB_* to HANGAR_*).
+                    // variables the headers name.
                     var fresh = BuildHandler(url);
                     foreach (var key in new[] { "url", "headers", "allowedEnvVars" })
                     {
@@ -124,10 +124,9 @@ public static class ClaudeHookStore
             if (!changed)
                 return; // nothing to write — hooks already current
 
-            // One-time backup so the user can restore if anything looks wrong. One made before the
-            // rename (.claudeweb-hooks-backup) already holds the original.
+            // One-time backup so the user can restore if anything looks wrong.
             var backup = path + ".hangar-hooks-backup";
-            if (File.Exists(path) && !File.Exists(backup) && !File.Exists(path + ".claudeweb-hooks-backup"))
+            if (File.Exists(path) && !File.Exists(backup))
                 try { File.Copy(path, backup); } catch { /* non-fatal */ }
 
             // Atomic-ish replace to avoid a torn write.

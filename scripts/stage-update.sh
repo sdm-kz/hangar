@@ -18,13 +18,9 @@ if [ "$(uname -s)" = Darwin ]; then
 else
   data=${XDG_DATA_HOME:-$HOME/.local/share}
 fi
-# The running app's own staging folder: <data>/Hangar once a build from after the rename has run (it
-# makes that folder on start), <data>/ClaudeWeb before then -- which is where an older build looks.
-if [ -d "$data/Hangar" ] || [ ! -d "$data/ClaudeWeb" ]; then
-  staging=${2:-$data/Hangar/updates}
-else
-  staging=${2:-$data/ClaudeWeb/updates}
-fi
+# The running app's own staging folder (Update:StagingPath's default). An install that set
+# Update:StagingPath to somewhere else is staged into by passing that folder.
+staging=${2:-$data/Hangar/updates}
 
 [ -n "$skip_build" ] || bash "$root/scripts/build.sh" ${rid:+"$rid"}
 [ -f "$root/publish/Hangar" ] || { echo "No Hangar build in $root/publish." >&2; exit 1; }

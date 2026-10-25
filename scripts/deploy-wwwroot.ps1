@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-  Builds the SPA and deploys ONLY wwwroot (static frontend assets) to the install folder.
+  Builds the SPA and deploys ONLY wwwroot (static frontend assets) to the install folder: -Target,
+  else $env:HANGAR_INSTALL_DIR, else %LocalAppData%\Programs\Hangar (see scripts\_paths.ps1).
 
   Unlike scripts\deploy.ps1 this never rebuilds/replaces the exe and never stops or restarts
   the running instance — it just mirrors the freshly built wwwroot, so the live app picks up
@@ -12,11 +13,18 @@
   powershell -ExecutionPolicy Bypass -File scripts\deploy-wwwroot.ps1 -Target D:\apps\hangar -SkipBuild
 #>
 param(
-  [string]$Target = "C:\apps\hangar",
+  [string]$Target,     # install folder; default $env:HANGAR_INSTALL_DIR, else %LocalAppData%\Programs\Hangar
   [switch]$SkipBuild   # deploy the existing server\wwwroot without rebuilding
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "_paths.ps1")
+if (-not $Target) { $Target = Get-HangarInstallDir }
+# Only into an existing install: mirroring into a folder with no app in it would just make one with
+# a lone wwwroot, which nothing serves.
+if (-not (Test-Path (Join-Path $Target "Hangar.exe"))) {
+  throw "No Hangar install at '$Target'. Deploy it first (scripts\deploy.ps1), or pass -Target."
+}
 $root = Split-Path -Parent $PSScriptRoot
 $src  = Join-Path $root "server\wwwroot"
 
@@ -25,8 +33,13 @@ if (-not $SkipBuild) {
   Write-Host "==> Building frontend (web)" -ForegroundColor Cyan
   Push-Location (Join-Path $root "web")
   try {
-    if (-not (Test-Path "node_modules")) { npm install }
+    # A failed build must stop here: mirroring would ship whatever an earlier build left behind.
+    if (-not (Test-Path "node_modules")) {
+      npm install
+      if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit $LASTEXITCODE)." }
+    }
     npm run build
+    if ($LASTEXITCODE -ne 0) { throw "npm run build failed (exit $LASTEXITCODE)." }
   } finally { Pop-Location }
 } elseif (-not (Test-Path (Join-Path $src "index.html"))) {
   throw "No built frontend at '$src'. Run without -SkipBuild first."

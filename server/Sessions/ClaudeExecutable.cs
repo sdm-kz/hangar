@@ -4,7 +4,12 @@ using System.Text;
 namespace Hangar.Server.Sessions;
 
 /// <summary>How to launch the CLI: a filename plus any argument prefix (e.g. node.exe cli.js).</summary>
-public sealed record ExecutableSpec(string FileName, IReadOnlyList<string> Prefix);
+/// <param name="ThroughCmd">
+/// Launched as <c>cmd.exe /c shim.cmd …</c>, the last resort for a shim the resolver couldn't read. cmd
+/// re-parses the whole command line by its own rules, so arguments must be fit for it: see
+/// <see cref="ClaudeExecutableResolver.WindowsCommandLine"/>.
+/// </param>
+public sealed record ExecutableSpec(string FileName, IReadOnlyList<string> Prefix, bool ThroughCmd = false);
 
 /// <summary>
 /// Resolves the configured "claude" command to something CreateProcess can actually launch.
@@ -49,10 +54,65 @@ public static class ClaudeExecutableResolver
             if (direct is not null) return direct;
 
             var comspec = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
-            return new ExecutableSpec(comspec, new[] { "/c", path });
+            return new ExecutableSpec(comspec, new[] { "/c", path }, ThroughCmd: true);
         }
         return new ExecutableSpec(path, Array.Empty<string>());
     }
+
+    /// <summary>
+    /// The command line (after the program's own name) that launches <paramref name="spec"/> with
+    /// <paramref name="args"/> on Windows, one already-quoted token per entry — to be joined with spaces
+    /// and handed over as it is (<c>PtySpawnRequest.VerbatimArguments</c>, <c>ProcessStartInfo.Arguments</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>Windows passes a program one string, and the program splits it into arguments itself. Quoting
+    /// it is therefore what decides where one argument ends, and the pty library's own quoting gets that
+    /// wrong: it doubles a <c>"</c> inside an argument and leaves backslashes alone, which is not how the C
+    /// runtime (or <c>CommandLineToArgvW</c>) reads a line. A session named <c>a\ --mcp-config=evil.json \</c>
+    /// came out as three arguments, the middle one an option that runs a program of the caller's choosing —
+    /// whatever <c>--name=</c> and <c>--</c> did. So every argument is quoted here, by the rule the reader
+    /// applies: see <see cref="QuoteArg"/>.</para>
+    /// <para>Through <c>cmd.exe /c</c>, cmd reads the line first. The part after <c>/c</c> goes in one more
+    /// pair of quotes, which cmd strips (its documented rule for a line with more than two of them), leaving
+    /// every argument inside quotes of its own, where cmd's operators are plain text. What still acts there
+    /// is taken out of each argument first (<see cref="ForCmd"/>).</para>
+    /// </remarks>
+    public static List<string> WindowsCommandLine(ExecutableSpec spec, IEnumerable<string> args)
+    {
+        if (!spec.ThroughCmd) return spec.Prefix.Concat(args).Select(QuoteArg).ToList();
+        // Prefix is ["/c", shim]: see Wrap.
+        var inner = spec.Prefix.Skip(1).Select(QuoteArg).Concat(args.Select(a => QuoteArg(ForCmd(a))));
+        return [spec.Prefix[0], "\"" + string.Join(' ', inner) + "\""];
+    }
+
+    /// <summary>
+    /// One argument, quoted so that the C runtime and <c>CommandLineToArgvW</c> read it back exactly: always
+    /// in double quotes; a <c>"</c> inside as <c>\"</c>; and a run of backslashes doubled where it comes
+    /// right before a <c>"</c> — one inside, or the closing one — since only there do backslashes escape.
+    /// </summary>
+    public static string QuoteArg(string arg)
+    {
+        var sb = new StringBuilder("\"");
+        var backslashes = 0;
+        foreach (var c in arg)
+        {
+            if (c == '\\') { backslashes++; continue; }
+            if (c == '"') sb.Append('\\', backslashes * 2 + 1).Append('"');
+            else sb.Append('\\', backslashes).Append(c);
+            backslashes = 0;
+        }
+        return sb.Append('\\', backslashes * 2).Append('"').ToString();
+    }
+
+    /// <summary>
+    /// An argument made safe inside a quoted stretch of a <c>cmd.exe /c</c> line. There cmd's operators —
+    /// <c>&amp; | &lt; &gt; ^</c> — are plain text, but two things still act: a <c>"</c>, which ends the quoting
+    /// however it is escaped (cmd knows nothing of <c>\"</c>), leaving whatever follows to run as a command;
+    /// and <c>%NAME%</c>, which cmd expands. Both are dropped, as are line breaks, which end cmd's line. What
+    /// passes through here is a session's name, model or id — never the prompt (that goes in another way).
+    /// </summary>
+    public static string ForCmd(string arg) =>
+        new(arg.Where(c => c is not ('"' or '%' or '\r' or '\n')).ToArray());
 
     /// <summary>
     /// Read an npm .cmd shim and work out the program it actually launches, so the caller can run

@@ -11,11 +11,11 @@ that is what the permission mode on the schedule is for, and it is the user's ca
 
 ---
 
-## 1. Why the clock lives in `ClaudeWeb.exe`
+## 1. Why the clock lives in `Hangar.exe`
 
 The daemon is already the always-on process. It has three `BackgroundService`s
 (`SessionHub`, `PushNotifier`, `UpdateService`), a settled convention for server-side JSON stores
-under `%LocalAppData%\ClaudeWeb\`, and `Sessions:ResumeOnStart`
+under `%LocalAppData%\Hangar\`, and `Sessions:ResumeOnStart`
 (`SessionManager.ResumePersistedAsync`, `SessionManager.cs:1167`) already rebuilds the working set
 after a reboot. A scheduler is a fourth background service and a fifth store. Nothing new.
 
@@ -127,7 +127,7 @@ Three choices worth defending:
 - **`History` in the record, capped at ~20.** A schedule that fires while you sleep is only useful
   if it leaves a trace. Same file, same save; no second store.
 
-Persisted to `%LocalAppData%\ClaudeWeb\schedules.json` via `ScheduleStore`, shaped like
+Persisted to `%LocalAppData%\Hangar\schedules.json` via `ScheduleStore`, shaped like
 `TemplateStore`: every mutation returns the full list.
 
 ### Cron
@@ -192,7 +192,7 @@ Stop hook arrives for session X   (POST /api/hooks, Program.cs:386)
         -> on fire: SendMessageAsync, unless Waiting, or a newer turn already started
 ```
 
-Every piece exists: the hook endpoint, `CLAUDEWEB_SESSION_ID`, and `HookStatus.Busy` / `.Waiting`.
+Every piece exists: the hook endpoint, `HANGAR_SESSION_ID`, and `HookStatus.Busy` / `.Waiting`.
 **The `Waiting` gate is load-bearing** — it is what stops a paste landing on a permission prompt.
 
 This is why `IntervalMinutes` is a separate field from `Cron` rather than sugar over it: they are
@@ -214,7 +214,7 @@ terminal is a deliberate exception to that, and it should behave like one.
 
 So when a poke cannot be delivered — the session has been busy past `MaxRunMinutes`, is `Waiting`
 on a prompt, or has been stopped — **write it into that session's postponed pool instead of
-dropping it** (`.claudeweb/postponed/<id>.json`, `PostponedStore.RelPathFor`). It is a JSON write,
+dropping it** (`.hangar/postponed/<id>.json`, `PostponedStore.RelPathFor`). It is a JSON write,
 and it buys the badge, the composer and the read/discard UI for free. Nothing is silently lost, and
 a count of six says a schedule has been blocked all afternoon. The run is recorded as
 `Outcome = "postponed"`.

@@ -8,10 +8,6 @@ Hangar in the tray, on Windows, macOS and Linux (`Hangar.Tray`). It does two thi
   one of the server's sessions. The picture lands in the session's prompt exactly as an image pasted in
   the web UI does.
 
-It replaces two apps: the Windows-only tray icon (WinForms) and Hangar Snap, the screenshot app it grew
-out of. On its first run it carries Snap's settings over (the server, its sign-in, the hotkeys) and takes
-Snap out of the sign-in items.
-
 Built with [Tauri 2](https://tauri.app): a small Rust shell (tray, hotkeys, screen capture, talking to
 the server) and a React page for the overlay, the editor and the settings.
 
@@ -27,7 +23,7 @@ Sessions  (12)        ▸  Running — 12
                          No project  (7)     ▸
                          Recent — 30         ▸
                          ───
-                         nas — 3 running     ▸  (a submenu per paired machine)
+                         builder — 3 running ▸  (a submenu per paired machine)
 ───
 Capture region        Ctrl+Shift+1
 Capture window        Ctrl+Shift+2
@@ -137,15 +133,18 @@ a row to send straight to it.
 ## Installing
 
 It ships with Hangar: `scripts\build.ps1` builds it into `publish\` as `Hangar.Tray.exe`, beside the
-server, and `scripts\deploy.ps1`, the in-app updater and `scripts\register-autostart.ps1` handle it
-the way they handled the old tray. On Linux and macOS, `scripts/build.sh` builds it as `Hangar.Tray`
+server. `scripts\deploy.ps1` installs it with the server, the in-app updater replaces it along with
+the server, and `scripts\register-autostart.ps1` starts it at sign-in next to the server (`-NoTray`
+leaves it out). On Linux and macOS, `scripts/build.sh` builds it as `Hangar.Tray`
 when building for the machine it runs on (a Tauri app can't be cross-built) and `install-unix.sh`
 installs it with the rest.
 
 It is a single executable, with the pages compiled in. Settings and recents live in the app's local
-data folder (`%LOCALAPPDATA%\io.github.sdm-kz.hangar.tray`, `~/Library/Application Support/…`,
-`~/.local/share/…`) and survive a reinstall. Starting at sign-in is a toggle in the tray menu (*Start
-when I sign in*) and in Settings: the same `Hangar.Tray` entry `register-autostart.ps1` writes.
+data folder (`%LOCALAPPDATA%\io.github.sdm-kz.hangar.tray` on Windows,
+`~/Library/Application Support/io.github.sdm-kz.hangar.tray` on macOS,
+`~/.local/share/io.github.sdm-kz.hangar.tray` on Linux) and survive a reinstall. Starting at sign-in
+is a toggle in the tray menu (*Start when I sign in*) and in Settings: the same `Hangar.Tray` entry
+`register-autostart.ps1` writes.
 
 An update replaces it with the rest of the install. On Windows a running exe can't be overwritten, so
 when the server says an update is being applied the tray exits and a hidden PowerShell starts it again
@@ -154,8 +153,9 @@ sees the file has changed when it reconnects, and restarts into it.
 
 ## Connecting to a server
 
-Settings → *Hangar address*. A first run takes the port from the `appsettings.json` beside it, so an
-installed tray follows its own server from the start. On the machine that runs the server
+Settings → *Hangar address*. A first run takes the port from the server settings beside it, read as
+the server reads them (`Server__Urls` in the environment, then `appsettings.Local.json`, then
+`appsettings.json`), so an installed tray follows its own server from the start. On the machine that runs the server
 (`http://127.0.0.1:5099`) there is nothing else to do: the app reads the server's instance file and
 uses the token in it. Any other address asks for the server's password once; the token is kept in the
 app's settings file (readable only by you on macOS/Linux) until it expires, then the menu and the

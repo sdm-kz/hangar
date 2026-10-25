@@ -140,14 +140,21 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     }
 }
 
-/// The server a first run should follow: the one installed beside this app, by the port its
-/// `appsettings.json` binds (`Server:Urls`, or the `Server__Urls` the server would read over it), when
-/// that says one. An install puts the tray and the server in one folder with one config, so a server on
-/// another port is found without anyone opening the settings.
+/// The server a first run should follow: the one installed beside this app, by the port its settings
+/// bind (`Server:Urls`), when they say one. An install puts the tray and the server in one folder with
+/// one config, so a server on another port is found without anyone opening the settings.
 pub fn default_server_url(exe_dir: Option<&Path>) -> String {
-    let urls = std::env::var("Server__Urls")
-        .ok()
-        .or_else(|| exe_dir.and_then(|d| fs::read_to_string(d.join("appsettings.json")).ok()).and_then(|t| urls_setting(&t)));
+    server_url_from(std::env::var("Server__Urls").ok(), exe_dir)
+}
+
+/// `default_server_url` with the environment's `Server__Urls` handed in. The server's own precedence:
+/// the environment over `appsettings.Local.json` over `appsettings.json` — a Local file that doesn't
+/// set `Urls` leaves the base file's in force.
+fn server_url_from(env_urls: Option<String>, exe_dir: Option<&Path>) -> String {
+    let from_file = |name: &str| exe_dir.and_then(|d| fs::read_to_string(d.join(name)).ok()).and_then(|t| urls_setting(&t));
+    let urls = env_urls
+        .or_else(|| from_file("appsettings.Local.json"))
+        .or_else(|| from_file("appsettings.json"));
     match urls.as_deref().and_then(port_of_urls) {
         Some(port) => format!("http://127.0.0.1:{port}"),
         None => DEFAULT_SERVER_URL.into(),
@@ -217,10 +224,28 @@ mod tests {
         let dir = temp_dir("beside");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("appsettings.json"), text).unwrap();
-        if std::env::var_os("Server__Urls").is_none() {
-            assert_eq!(default_server_url(Some(&dir)), "http://127.0.0.1:5123");
-            assert_eq!(default_server_url(None), DEFAULT_SERVER_URL);
-        }
+        assert_eq!(server_url_from(None, Some(&dir)), "http://127.0.0.1:5123");
+        assert_eq!(server_url_from(None, None), DEFAULT_SERVER_URL);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn local_settings_override_the_base_file_and_the_environment_overrides_both() {
+        let dir = temp_dir("layered");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("appsettings.json"), r#"{ "Server": { "Urls": "http://127.0.0.1:5123" } }"#).unwrap();
+
+        // A Local file without a bind list leaves the base file's in force.
+        fs::write(dir.join("appsettings.Local.json"), r#"{ "Server": { "Password": "x" } }"#).unwrap();
+        assert_eq!(server_url_from(None, Some(&dir)), "http://127.0.0.1:5123");
+
+        fs::write(dir.join("appsettings.Local.json"), r#"{ "Server": { "Urls": "http://127.0.0.1:6001" } }"#).unwrap();
+        assert_eq!(server_url_from(None, Some(&dir)), "http://127.0.0.1:6001");
+        assert_eq!(server_url_from(Some("http://0.0.0.0:7002".into()), Some(&dir)), "http://127.0.0.1:7002");
+
+        // Only a Local file: it is enough on its own.
+        fs::remove_file(dir.join("appsettings.json")).unwrap();
+        assert_eq!(server_url_from(None, Some(&dir)), "http://127.0.0.1:6001");
         let _ = fs::remove_dir_all(dir);
     }
 

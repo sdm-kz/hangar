@@ -39,12 +39,9 @@ pub struct Instance {
 
 /// Where a server on this machine writes its instance files: .NET's LocalApplicationData, which is
 /// `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS and `~/.local/share` on Linux
-/// — the same folders `dirs::data_local_dir` answers with. `Hangar` in it, then `ClaudeWeb`, the
-/// folder's name before the rename, where a server of an older build writes.
+/// — the same folders `dirs::data_local_dir` answers with — under `Hangar`.
 pub fn default_instances_dirs() -> Vec<PathBuf> {
-    dirs::data_local_dir()
-        .map(|d| ["Hangar", "ClaudeWeb"].iter().map(|name| d.join(name).join("instances")).collect())
-        .unwrap_or_default()
+    dirs::data_local_dir().map(|d| vec![d.join("Hangar").join("instances")]).unwrap_or_default()
 }
 
 fn is_loopback(url: &Url) -> bool {
@@ -564,7 +561,7 @@ mod tests {
             ServerProject { id: "p-git".into(), name: "Git".into(), color: Some("blue".into()), folders: vec![], groups: vec![] },
             ServerProject { id: "p-home".into(), name: "Home".into(), color: None, folders: vec![], groups: vec![] },
         ];
-        let mut a = session("a", "C:\\Git\\.home\\claude-web\\", "Running", "1");
+        let mut a = session("a", "C:\\Git\\myproject\\", "Running", "1");
         a.project_id = Some("p-home".into());
         let mut b = session("b", "/home/me/other", "Running", "2");
         b.project_id = Some("p-git".into());
@@ -572,7 +569,7 @@ mod tests {
         c.project_id = Some("p-deleted".into());
         let items = picker_items(vec![a, b, c], &["a".to_string()], &projects, &[], "srv");
         let a = items.iter().find(|i| i.id == "a").unwrap();
-        assert_eq!((a.project.as_deref(), a.folder.as_str(), a.busy), (Some("Home"), "claude-web", true));
+        assert_eq!((a.project.as_deref(), a.folder.as_str(), a.busy), (Some("Home"), "myproject", true));
         let b = items.iter().find(|i| i.id == "b").unwrap();
         assert_eq!((b.project.as_deref(), b.project_color.as_deref(), b.folder.as_str()), (Some("Git"), Some("blue"), "other"));
         assert_eq!(items.iter().find(|i| i.id == "c").unwrap().project, None, "a project that's gone names nothing");

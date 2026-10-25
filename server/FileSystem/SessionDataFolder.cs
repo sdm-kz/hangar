@@ -5,19 +5,12 @@ namespace Hangar.Server.FileSystem;
 /// a session (<c>uploads/</c>), postponed messages (<c>postponed/</c>) and pull-request reviews
 /// (<c>reviews/</c>). It ignores itself: the first write into it leaves a <c>.gitignore</c> of
 /// <c>*</c> there, so git never lists it and no repo's own <c>.gitignore</c> has to mention it.
-/// Before the rename the folder was <c>.claudeweb/</c>; what is in one of those is read where it
-/// lies (see <see cref="LegacyName"/>), and nothing new is written there.
 /// </summary>
 public static class SessionDataFolder
 {
     public const string Name = ".hangar";
 
-    /// <summary>The folder's name before the rename. Its uploads stay where they are, since
-    /// conversations and postponed messages name them by path.</summary>
-    public const string LegacyName = ".claudeweb";
-
     public const string Uploads = Name + "/uploads";
-    public const string LegacyUploads = LegacyName + "/uploads";
 
     /// <summary>
     /// Make sure the <c>.hangar</c> folder that <paramref name="fullPath"/> is in (or is) ignores

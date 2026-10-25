@@ -65,6 +65,15 @@
 
   <!-- The built React app lives in wwwroot; the Web SDK includes and publishes it automatically. -->
 
+  <!-- appsettings.Local.json is this checkout's own settings (git-ignored; see Program.AddLocalSettings),
+       and appsettings.Development.json a developer's (git-ignored too). The Web SDK would copy both into
+       every build and publish like any appsettings*.json, and from there into a staged update or a
+       release archive: one machine's address and password on another. An install keeps a Local file of
+       its own beside the exe instead. -->
+  <ItemGroup>
+    <Content Update="appsettings.Local.json;appsettings.Development.json" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
   <!-- Local runs (scripts\dev.ps1, scripts\run.ps1, F5) need the pty host beside the app, or no session
        can launch: build it and drop its output in a "ptyhost" subfolder, which PtyHostLauncher looks in
        after the published layout. A released build never takes this path - scripts\build.ps1 publishes

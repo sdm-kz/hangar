@@ -15,7 +15,7 @@ const item = (id: string, name: string, project: string | null, folder: string):
 });
 
 const items = [
-  item("1", "Fix login", "Hangar", "claude-web"),
+  item("1", "Fix login", "Hangar", "myproject"),
   item("2", "Invoices", "Finance", "invoices"),
   item("3", "Snap app", "Hangar", "feat-snap"),
 ];

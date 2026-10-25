@@ -666,34 +666,35 @@ public sealed class ScheduleService : BackgroundService
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        foreach (var a in spec.Prefix) psi.ArgumentList.Add(a);
-        psi.ArgumentList.Add("-p");
-        if (!string.IsNullOrWhiteSpace(t.Model))
-        {
-            psi.ArgumentList.Add("--model");
-            psi.ArgumentList.Add(t.Model);
-        }
+        var args = new List<string> { "-p" };
+        // As in ClaudeSession: a value rides in its option's own argument, so one starting with a dash
+        // can't be read as an option of its own.
+        if (!string.IsNullOrWhiteSpace(t.Model) && ClaudeSession.IsValidModel(t.Model))
+            args.Add("--model=" + t.Model);
         switch (t.PermissionMode)
         {
             case "auto":
             case "acceptEdits":
-                psi.ArgumentList.Add("--permission-mode");
-                psi.ArgumentList.Add(t.PermissionMode);
+                args.Add("--permission-mode=" + t.PermissionMode);
                 break;
             case "bypassPermissions":
-                psi.ArgumentList.Add("--dangerously-skip-permissions");
+                args.Add("--dangerously-skip-permissions");
                 break;
         }
-        // Positional and last, as in ClaudeSession — on Windows. On Linux and macOS a command line is
-        // readable by every user on the machine, so there the prompt goes in on stdin, which `claude -p`
-        // reads when it is given no prompt argument.
-        var promptOnStdin = !OperatingSystem.IsWindows();
-        if (promptOnStdin)
-        {
-            psi.RedirectStandardInput = true;
-            psi.StandardInputEncoding = new UTF8Encoding(false);
-        }
-        else psi.ArgumentList.Add(prompt);
+        // On Windows the line is quoted here (see ClaudeExecutableResolver.WindowsCommandLine): through
+        // cmd.exe, ArgumentList's quoting is no protection at all — cmd knows nothing of \", so a quote in
+        // an argument ends the quoting and whatever follows runs as a command.
+        if (OperatingSystem.IsWindows())
+            psi.Arguments = string.Join(' ', ClaudeExecutableResolver.WindowsCommandLine(spec, args));
+        else
+            foreach (var a in spec.Prefix.Concat(args)) psi.ArgumentList.Add(a);
+        // The prompt never rides the command line; it goes in on stdin, which `claude -p` reads when it
+        // is given no prompt argument. On Linux and macOS a command line is readable by every user on the
+        // machine. Through cmd.exe a prompt can't be made safe at all (a quote in it would end cmd's
+        // quoting). And anywhere, a prompt that is one word — "update", "doctor" — would be run as that
+        // claude subcommand even after "--"; from stdin it is only ever a prompt.
+        psi.RedirectStandardInput = true;
+        psi.StandardInputEncoding = new UTF8Encoding(false);
 
         var started = Stopwatch.StartNew();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -707,18 +708,15 @@ public sealed class ScheduleService : BackgroundService
         // out from under us would fault a task nobody is left to observe.
         var stdout = proc.StandardOutput.ReadToEndAsync();
         var stderr = proc.StandardError.ReadToEndAsync();
-        if (promptOnStdin)
+        // Closed at once, so claude sees the end of its input and starts. A child that dies before
+        // reading it is a failed run, which the exit code below already reports; one that never
+        // reads it runs into the timeout, which the wait below then acts on.
+        try
         {
-            // Closed at once, so claude sees the end of its input and starts. A child that dies before
-            // reading it is a failed run, which the exit code below already reports; one that never
-            // reads it runs into the timeout, which the wait below then acts on.
-            try
-            {
-                await proc.StandardInput.WriteAsync(prompt.AsMemory(), timeout.Token);
-                proc.StandardInput.Close();
-            }
-            catch (Exception ex) when (ex is IOException or OperationCanceledException) { }
+            await proc.StandardInput.WriteAsync(prompt.AsMemory(), timeout.Token);
+            proc.StandardInput.Close();
         }
+        catch (Exception ex) when (ex is IOException or OperationCanceledException) { }
         try
         {
             try

@@ -47,27 +47,7 @@ stop_unit() {
   fi
 }
 
-# The unit under its name from before the rename (claudeweb.service / com.claudeweb.server). One left
-# behind would start the old build at sign-in beside this one, and the two would fight over the port.
-# Its install folder is left alone: it is what a rollback would go back to.
-remove_legacy_unit() {
-  if [ "$platform" = linux ]; then
-    legacy="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/claudeweb.service"
-    [ -f "$legacy" ] || return 0
-    systemctl --user disable --now claudeweb.service 2> /dev/null || true
-    rm -f "$legacy"
-    systemctl --user daemon-reload
-  else
-    legacy="$HOME/Library/LaunchAgents/com.claudeweb.server.plist"
-    [ -f "$legacy" ] || return 0
-    launchctl bootout "gui/$(id -u)/com.claudeweb.server" 2> /dev/null || true
-    rm -f "$legacy"
-  fi
-  echo "Removed $legacy, the unit from before the rename. Running sessions keep running."
-}
-
 if [ "${1:-}" = "--uninstall" ]; then
-  remove_legacy_unit
   stop_unit
   rm -f "$(unit_path)"
   [ "$platform" = linux ] && systemctl --user daemon-reload
@@ -136,11 +116,9 @@ done
 IFS=$old_ifs
 set +f
 command -v claude > /dev/null 2>&1 || PATH=$daemon_path command -v claude > /dev/null 2>&1 \
-  || echo "warning: claude is not on PATH; set Sessions:ClaudeExecutable in $target/appsettings.json." >&2
+  || echo "warning: claude is not on PATH; set Sessions:ClaudeExecutable in $target/appsettings.Local.json." >&2
 
 # --- Unit ----------------------------------------------------------------------------------------
-# Stopped before the new unit starts, so the port is free for it.
-remove_legacy_unit
 unit=$(unit_path)
 mkdir -p "$(dirname "$unit")"
 if [ "$platform" = linux ]; then
@@ -213,8 +191,15 @@ EOF
   echo "==> Started $launchd_label (launchctl print gui/$(id -u)/$launchd_label)"
 fi
 
-port=$(sed -n 's/.*"Urls"[^,}]*:\([0-9][0-9]*\)".*/\1/p' "$target/appsettings.json" | head -n 1)
-echo "    Browse to http://localhost:${port:-5099}. Settings: $target/appsettings.json"
+# The port as the app reads it: appsettings.Local.json (this machine's own settings) over appsettings.json.
+port=
+for settings in "$target/appsettings.Local.json" "$target/appsettings.json"; do
+  [ -f "$settings" ] || continue
+  port=$(sed -n 's/.*"Urls"[^,}]*:\([0-9][0-9]*\)".*/\1/p' "$settings" | head -n 1)
+  if [ -n "$port" ]; then break; fi
+done
+echo "    Browse to http://127.0.0.1:${port:-5099}."
+echo "    Your settings: $target/appsettings.Local.json -- it overrides appsettings.json, and no update touches it."
 if [ -f "$target/Hangar.Tray" ]; then
   echo "    Tray app: $target/Hangar.Tray -- its menu's \"Start when I sign in\" keeps it in the menu bar or panel."
 fi

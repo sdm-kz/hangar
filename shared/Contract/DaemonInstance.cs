@@ -46,15 +46,7 @@ public sealed record DaemonInstance(
 
     public static string Folder => AppDataFolder.PathFor("instances");
 
-    /// <summary>
-    /// The same folder under the data folder's name from before the rename, which a tray or Snap of an
-    /// older build still looks in. The daemon writes its file there too until that is gone.
-    /// </summary>
-    private static string LegacyFolder => AppDataFolder.LegacyPathFor("instances");
-
     public static string PathFor(int port) => Path.Combine(Folder, $"{port}.json");
-
-    private static string LegacyPathFor(int port) => Path.Combine(LegacyFolder, $"{port}.json");
 
     /// <summary>
     /// Whether <see cref="LocalUrl"/> points at this machine. A client sends the token only there: any other
@@ -64,16 +56,7 @@ public sealed record DaemonInstance(
     public bool HasLoopbackUrl => Uri.TryCreate(LocalUrl, UriKind.Absolute, out var uri) && uri.IsLoopback;
 
     /// <summary>The instance file for a port, or null when there is none or it can't be read right now.</summary>
-    /// <remarks>
-    /// Looks in the folder from before the rename too, for a daemon of an older build — and takes its file
-    /// over a dead one here, which a crashed run of this build can leave behind.
-    /// </remarks>
-    public static DaemonInstance? Read(int port)
-    {
-        var current = Read(PathFor(port));
-        if (current is not null && current.ProcessAlive()) return current;
-        return Read(LegacyPathFor(port)) is { } legacy && legacy.ProcessAlive() ? legacy : current;
-    }
+    public static DaemonInstance? Read(int port) => Read(PathFor(port));
 
     private static DaemonInstance? Read(string path)
     {
@@ -105,12 +88,7 @@ public sealed record DaemonInstance(
     }
 
     /// <summary>Write the file atomically (a reader never sees half of it), readable by this user alone.</summary>
-    public void Write()
-    {
-        Write(Folder, PathFor(Port));
-        try { Write(LegacyFolder, LegacyPathFor(Port)); }
-        catch { /* only an older client reads it; the file that matters is written */ }
-    }
+    public void Write() => Write(Folder, PathFor(Port));
 
     private void Write(string folder, string path)
     {
@@ -149,14 +127,12 @@ public sealed record DaemonInstance(
     /// </summary>
     public static void Delete(int port, int pid)
     {
-        foreach (var path in new[] { PathFor(port), LegacyPathFor(port) })
+        var path = PathFor(port);
+        try
         {
-            try
-            {
-                if (Read(path) is { } current && current.Pid != pid) continue;
-                File.Delete(path);
-            }
-            catch { /* best effort — a leftover file is recognised by its dead pid */ }
+            if (Read(path) is { } current && current.Pid != pid) return;
+            File.Delete(path);
         }
+        catch { /* best effort — a leftover file is recognised by its dead pid */ }
     }
 }

@@ -19,7 +19,13 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
       await api.login(password);
       onSuccess();
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 401 ? "Incorrect password" : "Login failed");
+      // A 429 (too many attempts) and the 403 of an instance with no password set carry their own
+      // explanation; anything else unexpected is just a failed login.
+      setError(
+        err instanceof ApiError
+          ? err.status === 401 ? "Incorrect password" : err.message || "Login failed"
+          : "Login failed",
+      );
     } finally {
       setBusy(false);
     }

@@ -14,8 +14,9 @@
   daemon on its port -- it never starts one by itself -- so -NoTray gives a headless setup.
 
 .PARAMETER ExePath
-  Path to the daemon, Hangar.exe. Defaults to .\publish\Hangar.exe next to the repo. The tray is
-  expected beside it.
+  Path to the daemon, Hangar.exe. Defaults to the install folder's: $env:HANGAR_INSTALL_DIR, else
+  %LocalAppData%\Programs\Hangar (see scripts\_paths.ps1), where scripts\deploy.ps1 puts it. The
+  tray is expected beside it.
 
 .PARAMETER NoTray
   Register the daemon only (and remove a tray entry left from an earlier registration).
@@ -24,18 +25,23 @@
   Remove both autostart entries instead of adding them.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath "C:\apps\hangar\Hangar.exe"
+  powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1
+
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -ExePath "D:\apps\hangar\Hangar.exe" -NoTray
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\register-autostart.ps1 -Remove
 #>
 param(
-  [string]$ExePath = "$PSScriptRoot\..\publish\Hangar.exe",
+  [string]$ExePath,
   [string]$Name = "Hangar",
   [switch]$NoTray,
   [switch]$Remove
 )
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "_paths.ps1")
+if (-not $ExePath) { $ExePath = Join-Path (Get-HangarInstallDir) "Hangar.exe" }
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $trayName = "$Name.Tray"
 
@@ -56,7 +62,7 @@ if ($Remove) {
 
 $resolved = Resolve-Path $ExePath -ErrorAction SilentlyContinue
 if (-not $resolved -or -not (Test-Path $resolved.Path)) {
-  throw "Hangar.exe not found at '$ExePath'. Build it first (scripts\build.ps1) or pass -ExePath <path>."
+  throw "Hangar.exe not found at '$ExePath'. Install it first (scripts\deploy.ps1) or pass -ExePath <path>."
 }
 $daemon = $resolved.Path
 $tray = Join-Path (Split-Path -Parent $daemon) "Hangar.Tray.exe"

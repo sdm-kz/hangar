@@ -19,6 +19,8 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
+    "publisher": "Denis Silkov",
+    "copyright": "Copyright (c) 2026 Denis Silkov",
     "shortDescription": "Hangar in the tray: your sessions, the server, and screenshots sent to a session",
     "icon": [
       "icons/32x32.png",

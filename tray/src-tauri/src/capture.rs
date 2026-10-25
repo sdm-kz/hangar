@@ -245,11 +245,11 @@ fn place_elements(chain: Vec<Element>, window: &WindowBox, frame: &Frame) -> Vec
 }
 
 fn capture_monitor(m: &xcap::Monitor, rect: Rect) -> xcap::XCapResult<RgbaImage> {
-    // Debug builds only: HANGAR_TRAY_TEST_FRAMES (HANGAR_SNAP_TEST_FRAMES before the rename) stands a
-    // generated picture in for each screen, so the overlays and editor can be exercised where there is
-    // no screen to capture — a disconnected remote session, a CI machine.
+    // Debug builds only: HANGAR_TRAY_TEST_FRAMES stands a generated picture in for each screen, so the
+    // overlays and editor can be exercised where there is no screen to capture — a disconnected remote
+    // session, a CI machine.
     #[cfg(debug_assertions)]
-    if std::env::var_os("HANGAR_TRAY_TEST_FRAMES").or_else(|| std::env::var_os("HANGAR_SNAP_TEST_FRAMES")).is_some() {
+    if std::env::var_os("HANGAR_TRAY_TEST_FRAMES").is_some() {
         let scale = if cfg!(target_os = "macos") { m.scale_factor().unwrap_or(1.0) } else { 1.0 };
         let (w, h) = ((rect.width as f32 * scale) as u32, (rect.height as f32 * scale) as u32);
         return Ok(RgbaImage::from_fn(w.max(1), h.max(1), |x, y| {
@@ -330,12 +330,12 @@ mod tests {
         Element { rect: Rect::new(x, y, w, h), role: role.into(), name: name.into() }
     }
 
-    /// Against the real screen, without an overlay: `HANGAR_SNAP_PROBE=X,Y cargo test probe_screen --
+    /// Against the real screen, without an overlay: `HANGAR_TRAY_PROBE=X,Y cargo test probe_screen --
     /// --ignored --nocapture`, with X,Y a point on the primary monitor's frame.
     #[test]
     #[ignore]
     fn probe_screen() {
-        let p: Vec<f64> = std::env::var("HANGAR_SNAP_PROBE").unwrap().split(',').map(|v| v.parse().unwrap()).collect();
+        let p: Vec<f64> = std::env::var("HANGAR_TRAY_PROBE").unwrap().split(',').map(|v| v.parse().unwrap()).collect();
         let snapshot = take(Mode::Window).unwrap();
         let primary = snapshot.frames.iter().position(|f| f.primary).unwrap_or(0);
         for wait in [0, 1500] {

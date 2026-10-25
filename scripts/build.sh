@@ -6,7 +6,7 @@
 # The tray is a Tauri app, which builds only for the machine it is built on: it needs Rust, Node and
 # the platform's webview headers (see tray/README.md). So it comes along when the build is for this
 # machine's own platform and cargo is there, and is left out otherwise -- a cross-build from Windows
-# for the NAS, say, which has no desktop to put a tray on anyway. --no-tray leaves it out regardless.
+# for a headless server, say, which has no desktop to put a tray on anyway. --no-tray leaves it out regardless.
 #
 # Usage:  scripts/build.sh [--no-tray] [rid]
 #   rid: linux-x64 | linux-arm64 | osx-arm64 | osx-x64 -- defaults to this machine's.

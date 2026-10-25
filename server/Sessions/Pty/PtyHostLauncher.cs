@@ -245,8 +245,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// (or a service alongside a daemon started at logon) still has live hosts on would be destructive. Windows
     /// would refuse to delete a running exe anyway, but relying on a file lock to enforce that is a
     /// thin guarantee to hang sessions on. Best-effort throughout — a folder that won't delete is
-    /// simply retried on the next launch. The copies an older build made under the data folder's name
-    /// from before the rename go the same way, once their hosts are gone.
+    /// simply retried on the next launch.
     /// </remarks>
     private void PruneUnusedCopies(string keep)
     {
@@ -257,8 +256,8 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
                 if (state.BuildStamp is { Length: > 0 } stamp && PtyStateStore.HostAlive(state))
                     inUse.Add(stamp);
 
-            var roots = new[] { CopyRoot, AppDataFolder.LegacyPathFor("ptyhost") };
-            foreach (var dir in roots.Where(Directory.Exists).SelectMany(Directory.EnumerateDirectories))
+            if (!Directory.Exists(CopyRoot)) return;
+            foreach (var dir in Directory.EnumerateDirectories(CopyRoot))
             {
                 var stamp = Path.GetFileName(dir);
                 if (inUse.Contains(stamp)) continue;
@@ -277,7 +276,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
 
     /// <summary>This session's pty state file, whether or not a host is behind it.</summary>
     public PtyState? StateFor(string sessionId) =>
-        PtyStateStore.Read(PtyStateStore.Locate(InstanceKey, sessionId));
+        PtyStateStore.Read(PtyStateStore.PathFor(InstanceKey, sessionId));
 
     /// <summary>Wait for a session's host process to exit; false if it's still there when time runs out.</summary>
     public bool WaitForHostExit(string sessionId, TimeSpan timeout)
@@ -302,7 +301,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// </summary>
     public void KillHost(string sessionId)
     {
-        var path = PtyStateStore.Locate(InstanceKey, sessionId);
+        var path = PtyStateStore.PathFor(InstanceKey, sessionId);
         var state = PtyStateStore.Read(path);
         if (state is null || !PtyStateStore.HostAlive(state)) { PtyStateStore.Forget(path, state); return; }
         try

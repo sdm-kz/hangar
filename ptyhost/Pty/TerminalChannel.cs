@@ -179,7 +179,7 @@ public sealed partial class TerminalChannel : IDisposable
     // \w is Unicode-aware (it would match those marker bytes), so we spell the word class out in ASCII
     // ([^A-Za-z0-9_\r\n]) to keep the marker inside the "non-word leading run". Names can contain spaces
     // AND non-ASCII text, so the name is a lazy run of printable bytes INCLUDING the 0x80-0xFF halves of
-    // UTF-8 sequences — capturing printable ASCII alone cut "AB-6463 подписание" down to "AB-6463" at the
+    // UTF-8 sequences — capturing printable ASCII alone cut "AB-123 подписание" down to "AB-123" at the
     // first Cyrillic byte. It stops at a control byte (the line's own CR/LF), a 2+ space run, or the input
     // prompt ">", which the TUI positions on the next line via cursor moves (the line-aware strip now
     // breaks the line there, but the guard costs nothing and covers a move it doesn't classify, e.g.

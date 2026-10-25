@@ -8,10 +8,14 @@
     not supplied are omitted from the body, so the server applies its own defaults.
 
     The API key and base URL come from the environment unless passed explicitly:
-      HANGAR_API_KEY   key matching Auth:ApiKey in server/appsettings.json
-      HANGAR_URL       base URL of the server (default http://localhost:5099). Inside a session
+      HANGAR_API_KEY   the key from Auth:ApiKey (appsettings.Local.json or appsettings.json in the
+                       install folder), when one is set; sent as the X-Api-Key header. Without one
+                       the request goes without the header, and a server that wants a key answers 401.
+      HANGAR_URL       base URL of the server (default http://127.0.0.1:5099). Inside a session
                        Hangar sets it to itself, so a session launches into the server it runs under.
-    CLAUDE_WEB_API_KEY and CLAUDE_WEB_URL, their names from before the rename, still work.
+
+    To call it by name from anywhere, add the repo's scripts folder to your PATH (or call it by its
+    full path).
 
 .EXAMPLE
     .\hgr-new-session.ps1
@@ -82,9 +86,9 @@ param(
     [string] $NestUnderSessionId,
 
     # Nest under the session this script runs inside: -NestUnderSessionId filled in from
-    # HANGAR_SESSION_ID, which Hangar sets in every session it launches (CLAUDEWEB_SESSION_ID in one
-    # launched before the rename). With no session to nest under it stops rather than launching at the
-    # top level -- the one outcome nobody asked for. An explicit -NestUnderSessionId wins.
+    # HANGAR_SESSION_ID, which Hangar sets in every session it launches. With no session to nest under
+    # it stops rather than launching at the top level -- the one outcome nobody asked for. An explicit
+    # -NestUnderSessionId wins.
     [switch] $Child,
 
     # Let the hang watchdog auto-continue this session.
@@ -102,18 +106,13 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $BaseUrl) {
-    $BaseUrl = if ($env:HANGAR_URL) { $env:HANGAR_URL }
-               elseif ($env:CLAUDE_WEB_URL) { $env:CLAUDE_WEB_URL }
-               else { 'http://localhost:5099' }
+    # 127.0.0.1, not localhost: Windows tries localhost as ::1 first, and the server listens on IPv4.
+    $BaseUrl = if ($env:HANGAR_URL) { $env:HANGAR_URL } else { 'http://127.0.0.1:5099' }
 }
-if (-not $ApiKey) { $ApiKey = if ($env:HANGAR_API_KEY) { $env:HANGAR_API_KEY } else { $env:CLAUDE_WEB_API_KEY } }
-if (-not $ApiKey) {
-    Write-Error "No API key. Pass -ApiKey or set `$env:HANGAR_API_KEY (must match Auth:ApiKey in appsettings.json)."
-    exit 1
-}
+if (-not $ApiKey) { $ApiKey = $env:HANGAR_API_KEY }
 
 if ($Child -and -not $NestUnderSessionId) {
-    $NestUnderSessionId = if ($env:HANGAR_SESSION_ID) { $env:HANGAR_SESSION_ID } else { $env:CLAUDEWEB_SESSION_ID }
+    $NestUnderSessionId = $env:HANGAR_SESSION_ID
     if (-not $NestUnderSessionId) {
         Write-Error ("-Child, but no parent session. Run this from inside a Hangar session (it sets " +
             "`$env:HANGAR_SESSION_ID), or pass -NestUnderSessionId. Drop -Child for a top-level session.")
@@ -141,10 +140,14 @@ if ($PSBoundParameters.ContainsKey('RemoteControl')) { $payload.remoteControl = 
 $body = $payload | ConvertTo-Json -Depth 4
 Write-Verbose "POST $BaseUrl/api/external/sessions`n$body"
 
+# The key only when there is one: the server decides whether it needs it.
+$headers = @{}
+if ($ApiKey) { $headers['X-Api-Key'] = $ApiKey }
+
 try {
     $resp = Invoke-RestMethod -Method Post `
         -Uri "$BaseUrl/api/external/sessions" `
-        -Headers @{ 'X-Api-Key' = $ApiKey } `
+        -Headers $headers `
         -ContentType 'application/json' `
         -Body $body
 
@@ -156,5 +159,10 @@ try {
 catch {
     Write-Host "Failed to create session: $($_.Exception.Message)" -ForegroundColor Red
     if ($_.ErrorDetails.Message) { Write-Host $_.ErrorDetails.Message }
+    $status = try { [int]$_.Exception.Response.StatusCode } catch { 0 }
+    if ($status -eq 401 -and -not $ApiKey) {
+        Write-Host ("No API key was sent. Pass -ApiKey or set `$env:HANGAR_API_KEY to the server's " +
+            "Auth:ApiKey.") -ForegroundColor Yellow
+    }
     exit 1
 }

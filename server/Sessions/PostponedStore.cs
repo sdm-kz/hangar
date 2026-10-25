@@ -16,52 +16,9 @@ public static class PostponedStore
     /// <summary>Working-dir-relative path of a session's stashed-messages file.</summary>
     private static string RelPathFor(string sessionId) => $"{SessionDataFolder.Name}/postponed/{sessionId}.json";
 
-    /// <summary>
-    /// Sessions whose pool and marker have been looked for under <c>.claudeweb/</c> (the folder's name
-    /// before the rename) since this process started. Every way in moves them first, once per session
-    /// — the hub asks for the count every tick, and a second look would only find nothing again.
-    /// </summary>
-    private static readonly ConcurrentDictionary<string, bool> _moved = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Move the session's pool and auto-send marker from <c>.claudeweb/postponed/</c> to where they
-    /// live now, unless there is something there already. The images the messages name stay in
-    /// <c>.claudeweb/uploads/</c>: the pool holds their paths, and sending still accepts them there.
-    /// </summary>
-    private static void MoveFromLegacy(string workingDirectory, string sessionId)
-    {
-        if (!_moved.TryAdd(workingDirectory + "|" + sessionId, true)) return;
-        lock (_gate)
-        {
-            foreach (var (rel, legacyRel) in new[]
-            {
-                (RelPathFor(sessionId), $"{SessionDataFolder.LegacyName}/postponed/{sessionId}.json"),
-                (AutoRelPathFor(sessionId), $"{SessionDataFolder.LegacyName}/postponed/{sessionId}.auto"),
-            })
-            {
-                var legacy = SessionFileBrowser.ResolveSafe(workingDirectory, legacyRel);
-                var full = SessionFileBrowser.ResolveSafe(workingDirectory, rel);
-                if (legacy is null || full is null) continue;
-                try
-                {
-                    if (!File.Exists(legacy) || File.Exists(full)) continue;
-                    var dir = Path.GetDirectoryName(full)!;
-                    Directory.CreateDirectory(dir);
-                    SessionDataFolder.Claim(dir);
-                    File.Move(legacy, full);
-                }
-                catch
-                {
-                    _moved.TryRemove(workingDirectory + "|" + sessionId, out _); // held open: try again later
-                }
-            }
-        }
-    }
-
     /// <summary>The session's pool as stored (what the GET endpoint answers), or null if there is none.</summary>
     public static string? ReadJson(string workingDirectory, string sessionId)
     {
-        MoveFromLegacy(workingDirectory, sessionId);
         return SessionFileBrowser.ReadTextSafe(workingDirectory, RelPathFor(sessionId));
     }
 
@@ -72,7 +29,6 @@ public static class PostponedStore
     /// <summary>How many messages are stashed for the given session (0 if none/unreadable).</summary>
     public static int Count(string workingDirectory, string sessionId)
     {
-        MoveFromLegacy(workingDirectory, sessionId);
         var full = SessionFileBrowser.ResolveSafe(workingDirectory, RelPathFor(sessionId));
         if (full is null) return 0;
 
@@ -136,7 +92,6 @@ public static class PostponedStore
     /// </summary>
     public static bool Write(string workingDirectory, string sessionId, byte[] bytes)
     {
-        MoveFromLegacy(workingDirectory, sessionId);
         lock (_gate) return WriteAtomic(workingDirectory, RelPathFor(sessionId), bytes);
     }
 
@@ -164,7 +119,6 @@ public static class PostponedStore
     /// <summary>Whether the session's pool is on auto-send. Off unless someone switched it on.</summary>
     public static bool IsAutoSend(string workingDirectory, string sessionId)
     {
-        MoveFromLegacy(workingDirectory, sessionId);
         var full = SessionFileBrowser.ResolveSafe(workingDirectory, AutoRelPathFor(sessionId));
         if (full is null) return false;
         return _auto.GetOrAdd(full, f =>
@@ -180,7 +134,6 @@ public static class PostponedStore
     /// </summary>
     public static bool SetAutoSend(string workingDirectory, string sessionId, bool on)
     {
-        MoveFromLegacy(workingDirectory, sessionId);
         var full = SessionFileBrowser.ResolveSafe(workingDirectory, AutoRelPathFor(sessionId));
         if (full is null) return false;
         lock (_gate)
@@ -224,7 +177,6 @@ public static class PostponedStore
     public static AppendResult Append(string workingDirectory, string sessionId, string text,
         IReadOnlyList<(string Path, string FullPath)> images)
     {
-        MoveFromLegacy(workingDirectory, sessionId);
         var rel = RelPathFor(sessionId);
         var full = SessionFileBrowser.ResolveSafe(workingDirectory, rel);
         if (full is null) return AppendResult.Failed;
@@ -273,7 +225,6 @@ public static class PostponedStore
     /// </summary>
     public static IReadOnlyList<Item>? Read(string workingDirectory, string sessionId)
     {
-        MoveFromLegacy(workingDirectory, sessionId);
         var full = SessionFileBrowser.ResolveSafe(workingDirectory, RelPathFor(sessionId));
         if (full is null) return null;
         string json;
@@ -316,7 +267,6 @@ public static class PostponedStore
     /// </summary>
     public static bool Remove(string workingDirectory, string sessionId, IReadOnlyCollection<string> ids)
     {
-        MoveFromLegacy(workingDirectory, sessionId);
         lock (_gate) return RemoveLocked(workingDirectory, RelPathFor(sessionId), ids);
     }
 

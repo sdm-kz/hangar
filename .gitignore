@@ -31,5 +31,8 @@ Thumbs.db
 # Playwright MCP artifacts (screenshots/logs from browser-driven verification)
 .playwright-mcp/
 
-# Local helper with a hardcoded API key — never commit
-scripts/new-session.ps1
+# Claude Code: per-user settings, worktrees and locks, and review notes written by review sessions
+.claude/settings.local.json
+.claude/worktrees/
+.claude/*.lock
+.review/

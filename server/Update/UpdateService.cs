@@ -239,12 +239,9 @@ public sealed class UpdateService : BackgroundService
     public static void CaptureServiceManager()
     {
         if (OperatingSystem.IsWindows()) return;
-        // CLAUDEWEB_* is what a unit written before the rename sets.
-        var manager = Environment.GetEnvironmentVariable("HANGAR_SERVICE_MANAGER")
-                      ?? Environment.GetEnvironmentVariable("CLAUDEWEB_SERVICE_MANAGER");
-        var name = Environment.GetEnvironmentVariable("HANGAR_SERVICE_NAME")
-                   ?? Environment.GetEnvironmentVariable("CLAUDEWEB_SERVICE_NAME");
-        foreach (var variable in new[] { "HANGAR_SERVICE_MANAGER", "HANGAR_SERVICE_NAME", "CLAUDEWEB_SERVICE_MANAGER", "CLAUDEWEB_SERVICE_NAME" })
+        var manager = Environment.GetEnvironmentVariable("HANGAR_SERVICE_MANAGER");
+        var name = Environment.GetEnvironmentVariable("HANGAR_SERVICE_NAME");
+        foreach (var variable in new[] { "HANGAR_SERVICE_MANAGER", "HANGAR_SERVICE_NAME" })
             Environment.SetEnvironmentVariable(variable, null);
         if (manager is "systemd" or "launchd" && !string.IsNullOrWhiteSpace(name))
             (_serviceManager, _serviceName) = (manager, name);

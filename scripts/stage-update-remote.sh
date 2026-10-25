@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds Hangar for another machine and stages it there as a pending update, over ssh -- for a Linux or
-# macOS node (the NAS, a laptop) that has no .NET SDK or Node of its own. The build is made here, the
+# macOS node (a home server, a laptop) that has no .NET SDK or Node of its own. The build is made here, the
 # payload is copied into the node's own staging folder, and the node then offers it under its Update
 # button: on itself, and on its heading in the sidebar of every node paired with it. Nothing on the
 # node is stopped or restarted.
@@ -44,9 +44,8 @@ rid=${2:-}
 remote_info=$(ssh -o BatchMode=yes "$host" 'sh -s' <<'SH'
 uname -sm
 if [ "$(uname -s)" = Darwin ]; then data="$HOME/Library/Application Support"; else data=${XDG_DATA_HOME:-$HOME/.local/share}; fi
-# <data>/Hangar once a build from after the rename has run there, <data>/ClaudeWeb before -- where an older
-# build looks for its updates (as stage-update.sh decides it).
-if [ -d "$data/Hangar" ] || [ ! -d "$data/ClaudeWeb" ]; then echo "$data/Hangar/updates"; else echo "$data/ClaudeWeb/updates"; fi
+# The node's default staging folder, as stage-update.sh decides it.
+echo "$data/Hangar/updates"
 f="$HOME/.local/opt/hangar/build.json"
 [ -f "$f" ] && sed -n 's/.*"commit": *"\([^"]*\)".*/\1/p' "$f" | head -1
 exit 0

@@ -11,7 +11,8 @@ public sealed class AuthOptions
     /// Bootstrap-only plaintext password. Leave empty in steady state: when set, it is treated as a
     /// one-time set/rotate request — hashed to <c>%LocalAppData%\Hangar\auth.json</c> on startup
     /// and then ignored, so no recoverable secret lives in config. Clear it after the first launch.
-    /// When no hash has ever been persisted and this is empty, auth is disabled (localhost dev only).
+    /// When no hash has ever been persisted and this is empty, no login is asked for — and so only
+    /// requests made on this machine are answered (see <see cref="LocalRequest"/>).
     /// </summary>
     public string Password { get; set; } = "";
 
@@ -94,7 +95,10 @@ public sealed class TokenStore
 
     /// <summary>
     /// Whether this instance serves without a login. That is meant to describe a <b>never configured</b>
-    /// install (localhost dev): no auth.json, or one that has never carried a hash.
+    /// install: no auth.json, or one that has never carried a hash. Such an instance answers requests
+    /// made on this machine only — <see cref="TokenAuthMiddleware"/> turns everyone else away before
+    /// anything here is asked, which is what makes <see cref="Login"/> and <see cref="IsValid"/> waving
+    /// a caller through safe.
     /// </summary>
     /// <remarks>
     /// An auth.json we could not use is emphatically <em>not</em> that, however it failed. A file that
@@ -148,8 +152,15 @@ public sealed class TokenStore
     public bool CheckPassword(string? password) =>
         !AuthDisabled && !_authUnusable && password is not null && PasswordHasher.Verify(password, _passwordHash);
 
+    /// <remarks>
+    /// A token's age is checked here, not only when tokens.json is loaded: a daemon that runs for weeks
+    /// would otherwise keep honouring one long past <see cref="TokenTtl"/> — the more so for a token that
+    /// leaked, which is what an expiry is for.
+    /// </remarks>
     public bool IsValid(string? token) =>
-        AuthDisabled || (token is not null && (_tokens.ContainsKey(token) || IsLocalToken(token)));
+        AuthDisabled
+        || (token is not null
+            && ((_tokens.TryGetValue(token, out var issued) && DateTimeOffset.Now - issued < TokenTtl) || IsLocalToken(token)));
 
     /// <summary>
     /// Bearer token for local clients of this daemon — the tray. Minted per run and handed out only through
