@@ -360,6 +360,10 @@ function MermaidDiagram({ code }: { code: string }) {
           startOnLoad: false,
           securityLevel: "strict",
           theme: theme === "dark" ? "dark" : "default",
+          // Mermaid 12 re-lays out and recolours flowcharts, state and class diagrams by default;
+          // these keep the look diagrams had before.
+          look: "classic",
+          layout: "dagre",
         });
         // Validate first: parse() throws without side effects, whereas a failed render() leaves
         // its error "bomb" SVG appended to document.body.

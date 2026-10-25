@@ -57,7 +57,7 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md), not in public
   `claude` once in a terminal and log in before starting Hangar.
 - **Git**.
 - **.NET 10 SDK** (pinned by [`global.json`](global.json)).
-- **Node.js 20+** ([`.nvmrc`](.nvmrc) names 24).
+- **Node.js 22.12+** ([`.nvmrc`](.nvmrc) names 24).
 - **PowerShell** on Windows (Windows PowerShell 5.1 or PowerShell 7); **bash** on Linux and macOS.
 - Optional: **GitHub CLI (`gh`)**, signed in (`gh auth login`), for the pull-request features.
 - Optional, only for the **tray app**: **Rust** (cargo) plus the platform's webview toolchain: the MSVC

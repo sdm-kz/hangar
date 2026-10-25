@@ -17,7 +17,7 @@ for testing. The **pty host** (`Hangar.PtyHost`) is the small detached process t
 
 ## Setting up
 
-Prerequisites are listed in the [README](README.md#prerequisites): the .NET 10 SDK, Node 20+ (`.nvmrc`
+Prerequisites are listed in the [README](README.md#prerequisites): the .NET 10 SDK, Node 22.12+ (`.nvmrc`
 says 24), Git, a logged-in Claude Code CLI, and Rust only if you work on the tray.
 
 **Windows:**
