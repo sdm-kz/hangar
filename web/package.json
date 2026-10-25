@@ -46,6 +46,11 @@
     "three": "^0.186.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
+  "overrides": {
+    "@tailwindcss/typography": {
+      "postcss-selector-parser": "^7.1.6"
+    }
+  },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.20.0",
