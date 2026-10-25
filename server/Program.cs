@@ -539,7 +539,7 @@ internal static class Program
         // the UI's POST /api/sessions; auth is handled by TokenAuthMiddleware for /api/external/*.
         app.MapPost("/api/external/sessions", async (CreateSessionRequest req, SessionManager mgr) =>
         {
-            // Launching one session under another is what hgr-new-child-session.ps1 does, and the
+            // Launching one session under another is what hgr-new-session.ps1 -Child does, and the
             // id it nests under comes from a script's environment. A stale one would otherwise be
             // written as a link to nothing and the session would come out at the top level, looking
             // like the request was honoured — so it is refused here, where the caller can still see why.

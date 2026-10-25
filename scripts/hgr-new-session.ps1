@@ -25,9 +25,13 @@
     .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Continue -PassThru
 
 .EXAMPLE
-    .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -NestUnderSessionId $env:HANGAR_SESSION_ID
-    Starts a session nested under the one this script is running inside. hgr-new-child-session.ps1
-    does exactly this, and fails with something to read when there is no session to nest under.
+    .\hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Child -PermissionMode auto
+    Starts a session nested under the one this script is running inside, and fails with something to
+    read when there is no session to nest under.
+
+.EXAMPLE
+    .\hgr-new-session.ps1 -WorkingDirectory C:\Git\other -NestUnderSessionId 8f2c1b...
+    Nested under a session named explicitly -- what to use when this is not running inside one.
 
 .EXAMPLE
     $prompt = Get-Content .\task.md -Raw
@@ -74,8 +78,14 @@ param(
     # the list and nothing more — the new session gets its own conversation, so this is not a fork.
     # It does take that session's place in the list, though: its virtual folder, and its project when
     # no project claims the folder this one runs in — a row is only drawn under something in its own
-    # list. hgr-new-child-session.ps1 is the wrapper that fills it in from the session it runs inside.
+    # list.
     [string] $NestUnderSessionId,
+
+    # Nest under the session this script runs inside: -NestUnderSessionId filled in from
+    # HANGAR_SESSION_ID, which Hangar sets in every session it launches (CLAUDEWEB_SESSION_ID in one
+    # launched before the rename). With no session to nest under it stops rather than launching at the
+    # top level -- the one outcome nobody asked for. An explicit -NestUnderSessionId wins.
+    [switch] $Child,
 
     # Let the hang watchdog auto-continue this session.
     [switch] $WatchdogEnabled,
@@ -100,6 +110,15 @@ if (-not $ApiKey) { $ApiKey = if ($env:HANGAR_API_KEY) { $env:HANGAR_API_KEY } e
 if (-not $ApiKey) {
     Write-Error "No API key. Pass -ApiKey or set `$env:HANGAR_API_KEY (must match Auth:ApiKey in appsettings.json)."
     exit 1
+}
+
+if ($Child -and -not $NestUnderSessionId) {
+    $NestUnderSessionId = if ($env:HANGAR_SESSION_ID) { $env:HANGAR_SESSION_ID } else { $env:CLAUDEWEB_SESSION_ID }
+    if (-not $NestUnderSessionId) {
+        Write-Error ("-Child, but no parent session. Run this from inside a Hangar session (it sets " +
+            "`$env:HANGAR_SESSION_ID), or pass -NestUnderSessionId. Drop -Child for a top-level session.")
+        exit 1
+    }
 }
 
 if ($Name -and $NameTimestamp) {

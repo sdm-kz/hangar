@@ -46,7 +46,8 @@ so the server's own default applies — omit rather than guess.
 | `-Continue` | switch | off | Resume the folder's **most recent** conversation (`claude --continue`) instead of starting fresh. |
 | `-ResumeSessionId` | string | none | Resume one **specific** conversation by its Claude session id (`claude --resume <id>`). Takes precedence over `-Continue`; prefer it when you know the id, since one folder can hold many conversations. |
 | `-Color` | string | none | Session color name (same values `/color` accepts), for visual grouping in the list. |
-| `-NestUnderSessionId` | string | none | Draw the new session under this one in the sessions list (its `nestedUnderId`). An arrangement of the list only — the new session has its own conversation and is not a fork. An id no session answers to is a 400, not a silently top-level session. `hgr-new-child-session.ps1` is the wrapper that fills this in from `$env:HANGAR_SESSION_ID`. |
+| `-NestUnderSessionId` | string | none | Draw the new session under this one in the sessions list (its `nestedUnderId`). An arrangement of the list only — the new session has its own conversation and is not a fork. An id no session answers to is a 400, not a silently top-level session. |
+| `-Child` | switch | off | Nest under the session this runs inside: fills `-NestUnderSessionId` from `$env:HANGAR_SESSION_ID` (else `$env:CLAUDEWEB_SESSION_ID`). With neither set it exits 1 instead of launching at the top level. An explicit `-NestUnderSessionId` wins. Use this whenever you launch a session from inside one. |
 | `-WatchdogEnabled` | switch | off | Lets the hang watchdog auto-continue this session if it stalls. |
 | `-BaseUrl` | string | `$env:HANGAR_URL` (set inside a session), else `$env:CLAUDE_WEB_URL`, else `http://localhost:5099` | Server base URL — set it when targeting another machine. |
 | `-ApiKey` | string | `$env:HANGAR_API_KEY`, else `$env:CLAUDE_WEB_API_KEY` | Sent as the `X-Api-Key` header. |
@@ -106,6 +107,9 @@ hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Name nightly -NameTimest
 
 # Pick up where the folder left off
 hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Continue
+
+# Under the session you're running in (fails if there is none)
+hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -Child -PermissionMode auto
 
 # Resume one exact conversation
 hgr-new-session.ps1 -WorkingDirectory C:\Git\myproject -ResumeSessionId 3f2b1c8a-...
