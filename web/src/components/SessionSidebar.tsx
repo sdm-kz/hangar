@@ -3479,14 +3479,19 @@ function NodeHeading({
         title={online ? name : `${name}: ${error ?? state}`}
         className="flex min-w-0 flex-1 items-center gap-1 text-left hover:text-foreground"
       >
-        {collapsed ? (
-          <ChevronRight className="size-3.5 shrink-0" />
-        ) : (
-          <ChevronDown className="size-3.5 shrink-0" />
-        )}
-        <span className="relative inline-flex shrink-0">
+        {/* The machine's mark leads the line, with no chevron column ahead of it: the chevron is a badge
+            on the mark's lower corner instead, opposite the activity mark's upper one. So the mark lines
+            up with its folders' chevrons, and the name starts a step left of where it used to. */}
+        <span className="relative mr-0.5 inline-flex shrink-0">
           <OsIcon os={os} className="size-3.5" style={tint ? { color: tint } : undefined} />
           <HeadingActivityMark activity={online ? activity : null} />
+          <span className="pointer-events-none absolute -bottom-1 -right-1 rounded-full bg-background leading-none">
+            {collapsed ? (
+              <ChevronRight className="block size-2" strokeWidth={4} />
+            ) : (
+              <ChevronDown className="block size-2" strokeWidth={4} />
+            )}
+          </span>
         </span>
         <span
           className={cn(
