@@ -403,6 +403,11 @@ internal static class Program
         MapEndpoints(app);
         app.UseDefaultFiles();
         app.UseStaticFiles();
+        // An API path nothing answers is a 404, not the SPA: a script calling an endpoint this build
+        // doesn't have (a command newer than the server) would otherwise get 200 and a page of HTML.
+        // Most of /api stops at the token check first, but /api/self and /api/hooks don't.
+        app.MapFallback("/api/{**path}", () =>
+            Results.Json(new { error = "no such endpoint" }, statusCode: StatusCodes.Status404NotFound));
         app.MapFallbackToFile("index.html");
         return app;
     }
