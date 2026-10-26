@@ -13,6 +13,7 @@ import { presetFromSession, type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState, SSH_SHELLS } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
+import { forkDescendants } from "@/lib/sessionTree";
 import { failureLine, useDoneSessions, type ActivityDetail, type ActivityIds } from "@/lib/sessionActivity";
 import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
@@ -1288,18 +1289,45 @@ export function App() {
    * session that already died on its own is put away, which is the only way such a row keeps its
    * place in the list. Taking it out of the list altogether is `onRemove` below, from the same menu,
    * once it is sitting there closed.
+   *
+   * `withChildren` closes every session nested under it too, at any depth — the ones a closed parent
+   * still has running included.
    */
-  async function onStop(id: string, node: string | null = null) {
-    const s = sessionsOf(node).find((x) => x.id === id);
-    if (!s || s.state === "Restorable") return;
+  async function onStop(id: string, node: string | null = null, withChildren = false) {
+    const all = sessionsOf(node);
+    const s = all.find((x) => x.id === id);
+    if (!s) return;
+    const targets = (withChildren ? [s, ...forkDescendants(all, id)] : [s]).filter((x) => x.state !== "Restorable");
+    if (targets.length === 0) return;
     // Only a live process is worth asking about. A session that has already exited loses nothing
     // here — the row stays, and Reopen is one click away — so the click is the whole decision.
-    if (s.state === "Running") {
+    const running = targets.filter((x) => x.state === "Running");
+    if (running.length > 0) {
+      const name = <span className="font-medium text-foreground">{s.name}</span>;
+      const under = running.filter((x) => x.id !== s.id).length;
+      const nestedRunning = under === 1 ? "the session" : `the ${under} sessions`;
       const ok = await confirm({
-        title: "Stop session?",
-        description: (
+        title: running.length === 1 ? "Stop session?" : `Stop ${running.length} sessions?`,
+        description: withChildren ? (
           <>
-            This kills the <span className="font-medium text-foreground">{s.name}</span> process
+            This kills the processes of{" "}
+            {s.state !== "Running" ? (
+              <>
+                {nestedRunning} running under {name}
+              </>
+            ) : under > 0 ? (
+              <>
+                {name} and {nestedRunning} running under it
+              </>
+            ) : (
+              name
+            )}
+            {running.some((x) => x.remoteControl) && ", and ends their Remote Control sessions in the Claude Code app"}.
+            They stay in the list and can be reopened.
+          </>
+        ) : (
+          <>
+            This kills the {name} process
             {s.remoteControl && " and ends its Remote Control session in the Claude Code app"}. The
             session stays in the list and can be reopened.
           </>
@@ -1308,20 +1336,50 @@ export function App() {
       });
       if (!ok) return;
     }
-    const stopped = await attempt(() => apiFor(node).stopSession(id));
-    // Only on success. Drawing the row as closed after a failed call would be a lie with claude still
-    // running behind it, and the row would then offer a Reopen that does nothing. On failure the list
-    // is left as it is; the stream and the poll both carry the truth within a few seconds.
-    if (!stopped) return;
-    // Otherwise take the server's own row straight away rather than waiting for the hub's next frame,
-    // so it settles the moment the dialog goes.
-    if (node) mesh.patchSession(node, stopped);
-    else setSessions((prev) => prev.map((x) => (x.id === id ? stopped : x)));
+    const client = apiFor(node);
+    const stopped = (await Promise.all(targets.map((x) => attempt(() => client.stopSession(x.id))))).filter(
+      (x): x is SessionInfo => !!x
+    );
+    // Only the ones that succeeded. Drawing a row as closed after a failed call would be a lie with
+    // claude still running behind it, and the row would then offer a Reopen that does nothing. A failed
+    // one is left as it is; the stream and the poll both carry the truth within a few seconds.
+    if (stopped.length === 0) return;
+    // The rest take the server's own row straight away rather than waiting for the hub's next frame,
+    // so they settle the moment the dialog goes.
+    if (node) for (const x of stopped) mesh.patchSession(node, x);
+    else {
+      const byId = new Map(stopped.map((x) => [x.id, x]));
+      setSessions((prev) => prev.map((x) => byId.get(x.id) ?? x));
+    }
   }
 
-  /** Remove a session from the list for good. It lands in the Recent tab as a launch preset. */
-  async function onRemove(id: string, node: string | null = null) {
-    const s = sessionsOf(node).find((x) => x.id === id);
+  /**
+   * Remove a session from the list for good. It lands in the Recent tab as a launch preset.
+   * `withChildren` takes every session nested under it out too, at any depth.
+   */
+  async function onRemove(id: string, node: string | null = null, withChildren = false) {
+    const all = sessionsOf(node);
+    const s = all.find((x) => x.id === id);
+    if (withChildren && s) {
+      const branch = [s, ...forkDescendants(all, id)];
+      const running = branch.filter((x) => x.state === "Running").length;
+      // Always asked, unlike one closed row: it is several at once, and some of them may be off
+      // screen in a folded branch or behind the active-only filter.
+      const ok = await confirm({
+        title: `Remove ${branch.length} sessions?`,
+        description: (
+          <>
+            This takes <span className="font-medium text-foreground">{s.name}</span> and the{" "}
+            {branch.length - 1 === 1 ? "session" : `${branch.length - 1} sessions`} nested under it out of
+            the list{running > 0 && `, killing the ${running === 1 ? "one" : running} still running`}. They
+            stay in the Recent tab.
+          </>
+        ),
+        confirmLabel: "Remove",
+      });
+      if (ok) await onRemoveSessions(branch.map((x) => x.id), node);
+      return;
+    }
     // A session still running has to be stopped to be removed, and that is worth asking about; an
     // already-closed row is cheap to undo from the Recent tab, so it just goes.
     if (s?.state === "Running") {
@@ -1467,8 +1525,8 @@ export function App() {
         selectSession(id, p.id);
         onPicked?.();
       },
-      onStop: (id) => void onStop(id, p.id),
-      onRemove: (id) => void onRemove(id, p.id),
+      onStop: (id, withChildren) => void onStop(id, p.id, withChildren),
+      onRemove: (id, withChildren) => void onRemove(id, p.id, withChildren),
       onFork: forkSession,
       onRestore: (id) => void onRestore(id, p.id),
       onRename: (id, name) => void onRename(id, name, p.id),
@@ -1609,8 +1667,8 @@ export function App() {
                 onNewInFolder={newSessionInFolder}
                 onRevealFolder={revealFolderInFiles}
                 onNewInProject={newSessionInProject}
-                onStop={onStop}
-                onRemove={onRemove}
+                onStop={(id, withChildren) => void onStop(id, null, withChildren)}
+                onRemove={(id, withChildren) => void onRemove(id, null, withChildren)}
                 onClone={cloneSession}
                 onFork={forkSession}
                 onRestore={onRestore}
@@ -1681,8 +1739,8 @@ export function App() {
                     onNewInFolder={newSessionInFolder}
                     onRevealFolder={revealFolderInFiles}
                     onNewInProject={newSessionInProject}
-                    onStop={onStop}
-                    onRemove={onRemove}
+                    onStop={(id, withChildren) => void onStop(id, null, withChildren)}
+                    onRemove={(id, withChildren) => void onRemove(id, null, withChildren)}
                     onClone={cloneSession}
                     onFork={forkSession}
                     onRestore={onRestore}

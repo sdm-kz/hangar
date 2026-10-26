@@ -1543,8 +1543,8 @@ export interface PeerSidebar {
   onMarkSeen: (ids: Iterable<string>) => void;
   activeId: string | null;
   onSelect: (id: string) => void;
-  onStop: (id: string) => void;
-  onRemove: (id: string) => void;
+  onStop: (id: string, withChildren?: boolean) => void;
+  onRemove: (id: string, withChildren?: boolean) => void;
   onFork: (s: SessionInfo) => void;
   onRestore: (id: string) => void;
   onRename: (id: string, name: string) => void;
@@ -1644,10 +1644,12 @@ export function SessionSidebar({
   onRevealFolder?: (dir: string) => void; // show a folder in the whole-server Files tree
   // Start a session in a project: the create dialog opens with its linked folders offered as picks.
   onNewInProject?: (project: Project) => void;
-  // End a running session's process, leaving the row in the list as a closed session.
-  onStop: (id: string) => void;
-  // Take a session out of the list for good; it lands in the Recent tab as a launch preset.
-  onRemove: (id: string) => void;
+  // End a running session's process, leaving the row in the list as a closed session -- with
+  // `withChildren`, every session nested under it as well.
+  onStop: (id: string, withChildren?: boolean) => void;
+  // Take a session out of the list for good; it lands in the Recent tab as a launch preset. With
+  // `withChildren`, every session nested under it goes too.
+  onRemove: (id: string, withChildren?: boolean) => void;
   onClone?: (s: SessionInfo) => void;
   onFork: (s: SessionInfo) => void; // branch this session's conversation into a new one
   onRestore: (id: string) => void;
@@ -2784,8 +2786,9 @@ export function SessionSidebar({
                 }
                 onCopyMemory={onCarry ? () => onCarry(s, "memory") : undefined}
                 onRestore={() => onRestore(s.id)}
-                onStop={() => onStop(s.id)}
-                onRemove={() => onRemove(s.id)}
+                nestedUnder={() => forkDescendants(sessions, s.id)}
+                onStop={(withChildren) => onStop(s.id, withChildren)}
+                onRemove={(withChildren) => onRemove(s.id, withChildren)}
               />
             )}
           </span>
@@ -3564,6 +3567,7 @@ function RowActionsMenu({
   onContinueElsewhere,
   onCopyMemory,
   onRestore,
+  nestedUnder,
   onStop,
   onRemove,
 }: {
@@ -3604,8 +3608,13 @@ function RowActionsMenu({
   /** Copy what Claude remembers about this session's folder to another machine. */
   onCopyMemory?: () => void;
   onRestore: () => void;
-  onStop: () => void;
-  onRemove: () => void;
+  /**
+   * Every session nested under this one, at any depth -- what "with children" takes along. Asked for
+   * only while the menu is open: it walks the whole list, and every row has a menu.
+   */
+  nestedUnder: () => SessionInfo[];
+  onStop: (withChildren?: boolean) => void;
+  onRemove: (withChildren?: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   // Which level of the menu is showing. Reset on close, so reopening never lands you halfway down
@@ -3620,6 +3629,9 @@ function RowActionsMenu({
 
   const project = projects.find((p) => p.id === projectId) ?? null;
   const group = groups.find((g) => g.id === groupId) ?? null;
+  const children = open ? nestedUnder() : [];
+  // The ones with a process or an exited one still to put away: a closed child has nothing to stop.
+  const stoppableChildren = children.filter((c) => c.state !== "Restorable").length;
 
   // Rows near the bottom of the list would push the menu past it, so flip it upwards. The root level
   // is a fixed dozen entries now that the lists are behind submenus, so what counts as "near the
@@ -3884,9 +3896,20 @@ function RowActionsMenu({
                 item(
                   running ? "Stop session" : "Close session",
                   <Square className="size-3.5" />,
-                  onStop
+                  () => onStop()
                 )}
-              {item("Remove session", <X className="size-3.5" />, onRemove, true)}
+              {/* The whole branch at once, rather than row by row down a tree that may be folded or
+                  partly hidden by the active-only filter. Offered only where there is something under
+                  this row for it to reach; the count is of what it reaches. */}
+              {stoppableChildren > 0 &&
+                item(
+                  `${restorable ? "Stop children" : "Stop with children"} (${stoppableChildren})`,
+                  <Square className="size-3.5" />,
+                  () => onStop(true)
+                )}
+              {item("Remove session", <X className="size-3.5" />, () => onRemove(), true)}
+              {children.length > 0 &&
+                item(`Remove with children (${children.length})`, <X className="size-3.5" />, () => onRemove(true), true)}
             </>
           )}
         </div>
