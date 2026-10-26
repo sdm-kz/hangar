@@ -319,6 +319,34 @@ public sealed class SessionManager : IDisposable
     public bool Exists(string id) => _sessions.ContainsKey(id) || _restorable.ContainsKey(id);
 
     /// <summary>
+    /// Everything drawn under a session, live or Restorable, at any depth — each with the session it
+    /// sits directly under and how far down it is (a direct child is depth 1). Parents come before
+    /// their children; the root itself is not included. "Under" is what the list draws: the hand-made
+    /// nesting first, the fork link otherwise (see <see cref="ParentOf"/>).
+    /// </summary>
+    public IReadOnlyList<(string Id, string ParentId, int Depth)> Subtree(string rootId)
+    {
+        var children = _sessions.Keys.Concat(_restorable.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .Select(id => (Id: id, Parent: ParentOf(id)))
+            .Where(x => x.Parent is not null)
+            .ToLookup(x => x.Parent!, x => x.Id, StringComparer.Ordinal);
+
+        var result = new List<(string, string, int)>();
+        // Guarded against a loop rather than trusting SetParent kept them out: a bad sessions.json
+        // edit must not hang a request.
+        var seen = new HashSet<string>(StringComparer.Ordinal) { rootId };
+        var queue = new Queue<(string Id, int Depth)>([(rootId, 0)]);
+        while (queue.TryDequeue(out var at))
+            foreach (var child in children[at.Id].Where(seen.Add))
+            {
+                result.Add((child, at.Id, at.Depth + 1));
+                queue.Enqueue((child, at.Depth + 1));
+            }
+        return result;
+    }
+
+    /// <summary>
     /// The working directory of a session, live or Restorable; null when there is no such session.
     ///
     /// <see cref="Get"/> answers only for live ones, which is right for anything that needs a process

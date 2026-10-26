@@ -857,6 +857,114 @@ internal static class Program
             return SelectWorktree(mgr, id, body);
         });
 
+        // Self-list: the sessions drawn under the calling one, at any depth — what it launched (or
+        // forked) and what those launched in turn. This is the set POST /api/self/close may act on,
+        // so a command that closes "the review session" or "all children" resolves names to ids
+        // here first and closes by id, rather than the server guessing what a phrase meant.
+        app.MapGet("/api/self/children", (HttpContext ctx, TokenStore tokens, SessionManager mgr, ILoggerFactory lf) =>
+        {
+            if (SelfCaller(ctx, tokens, lf, "children") is not { } id)
+                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            if (mgr.GetAny(id) is not { } self) return Results.NotFound();
+
+            var all = mgr.List().ToDictionary(s => s.Id, StringComparer.Ordinal);
+            var busy = mgr.BusySessionIds().ToHashSet(StringComparer.Ordinal);
+            var children = mgr.Subtree(id)
+                .Where(t => all.ContainsKey(t.Id))
+                .Select(t => (Tree: t, Info: all[t.Id]))
+                .Select(x => new
+                {
+                    id = x.Info.Id, name = x.Info.Name, parentId = x.Tree.ParentId, depth = x.Tree.Depth,
+                    state = x.Info.State, busy = busy.Contains(x.Info.Id), folder = x.Info.WorkingDirectory,
+                    createdAt = x.Info.CreatedAt,
+                });
+            return Results.Ok(new { id, name = self.Name, children });
+        });
+
+        // Self-close: a session closes sessions under it — or itself — when the work they were for is
+        // done. Closing is the sidebar's: the process stops and the row stays, reopenable, unless
+        // `remove` takes the row out of the list too. The reach is the caller and its subtree only:
+        // the hook token is held by every session on the machine, so an endpoint that took any id
+        // would let any of them end any other. Closing a session takes everything under it with it,
+        // deepest first, since a child left running under a closed parent is work nobody is watching.
+        // A session mid-turn is skipped unless `force` says otherwise. The caller's own process goes
+        // last and only after the answer is out — it is the process waiting for the answer.
+        app.MapPost("/api/self/close", async (HttpContext ctx, SelfCloseRequest body, TokenStore tokens,
+            SessionManager mgr, Sessions.Shells.ShellManager shells, ILoggerFactory lf) =>
+        {
+            if (SelfCaller(ctx, tokens, lf, "close") is not { } caller)
+                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            if (mgr.GetAny(caller) is not { } self) return Results.NotFound();
+
+            var asked = (body.Id is null ? Enumerable.Empty<string>() : [body.Id])
+                .Concat(body.Ids ?? [])
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim() is var t && t.Equals("self", StringComparison.OrdinalIgnoreCase) ? caller : t)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (asked.Count == 0) return Results.BadRequest(new { error = "no session given" });
+
+            var depth = mgr.Subtree(caller).ToDictionary(t => t.Id, t => t.Depth, StringComparer.Ordinal);
+            depth[caller] = 0;
+            var skipped = new List<object>();
+            var targets = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var a in asked)
+            {
+                // Refused without saying whether the id exists elsewhere: that is not this session's business.
+                if (!depth.ContainsKey(a)) { skipped.Add(new { id = a, reason = "not this session or one under it" }); continue; }
+                targets.Add(a);
+                foreach (var d in mgr.Subtree(a)) targets.Add(d.Id);
+            }
+
+            var all = mgr.List().ToDictionary(s => s.Id, StringComparer.Ordinal);
+            var busy = mgr.BusySessionIds().ToHashSet(StringComparer.Ordinal);
+            var log = lf.CreateLogger("SelfApi");
+            var closed = new List<object>();
+            var removed = new List<object>();
+            var closeSelf = targets.Remove(caller);
+            foreach (var t in targets.OrderByDescending(t => depth[t]))
+            {
+                if (!all.TryGetValue(t, out var s)) continue; // gone since the subtree was read
+                if (busy.Contains(t) && !body.Force) { skipped.Add(new { id = t, name = s.Name, reason = "busy" }); continue; }
+                if (body.Remove)
+                {
+                    if (!mgr.Remove(t, stopProcess: true)) continue;
+                    removed.Add(new { id = t, name = s.Name });
+                }
+                else if (s.State == SessionState.Restorable)
+                {
+                    skipped.Add(new { id = t, name = s.Name, reason = "already closed" });
+                    continue;
+                }
+                else if (mgr.Stop(t) is null) continue;
+                else closed.Add(new { id = t, name = s.Name });
+                await shells.CloseForSessionAsync(t);
+                log.LogInformation("Session {Caller} ('{CallerName}') {Verb} session {Id} ('{Name}') via self-close",
+                    caller, self.Name, body.Remove ? "removed" : "closed", t, s.Name);
+            }
+
+            if (closeSelf)
+            {
+                var remove = body.Remove;
+                // After the response has gone, and off the request: stopping waits on the process,
+                // and the process is the one reading this response.
+                ctx.Response.OnCompleted(() =>
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(500);
+                        var done = remove ? mgr.Remove(caller, stopProcess: true) : mgr.Stop(caller) is not null;
+                        if (done) await shells.CloseForSessionAsync(caller);
+                        log.LogInformation("Session {Caller} ('{CallerName}') {Verb} itself via self-close",
+                            caller, self.Name, remove ? "removed" : "closed");
+                    });
+                    return Task.CompletedTask;
+                });
+            }
+
+            return Results.Ok(new { id = caller, closed, removed, skipped, self = closeSelf });
+        });
+
         // Resolve and store a session's worktree pick. A worktree that is the session's own folder is
         // stored as "" -- the same as asking for none -- so its header doesn't hold on to a path that
         // means "here".
@@ -2172,6 +2280,11 @@ internal record SelfOpenRequest(string? Path, string[]? Paths = null, bool Pin =
 /// session's tab bar — <c>Repo</c> ("owner/name"; absent for the session folder's own) and
 /// <c>Number</c>, or the PR's web address as <c>Url</c>, which names both.</summary>
 internal record SelfOpenPullRequest(string? Repo = null, int? Number = null, string? Url = null);
+
+/// <summary>Body for <c>POST /api/self/close</c>: the sessions to close — the caller's own id (or
+/// <c>"self"</c>) and ids from <c>GET /api/self/children</c> — whether to take their rows out of the
+/// list too, and whether to close one that is mid-turn.</summary>
+internal record SelfCloseRequest(string? Id = null, string[]? Ids = null, bool Remove = false, bool Force = false);
 /// <summary>Body for <c>POST /api/sessions/{id}/git/worktree</c> and <c>POST /api/self/worktree</c>:
 /// the worktree whose branch the session's header shows, named by its folder (<c>Path</c>, absolute
 /// or relative to the working directory) or by the branch checked out in it (<c>Branch</c>). Neither

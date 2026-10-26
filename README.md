@@ -908,8 +908,9 @@ browser's own route for this is `POST /api/sessions/{id}/message`, behind the be
 ### Self-service API for a running session
 
 A running session can act on **itself** — rename itself, open files or pull requests in its own tab
-bar, point its branch badge at a worktree — with no browser login and no API key: every session
-Hangar launches carries its own credentials in its environment, and they are all the calls take.
+bar, point its branch badge at a worktree, close itself and the sessions under it — with no browser
+login and no API key: every session Hangar launches carries its own credentials in its environment,
+and they are all the calls take.
 
 | Env var             | What it is                                                       |
 | ------------------- | ---------------------------------------------------------------- |
@@ -918,8 +919,9 @@ Hangar launches carries its own credentials in its environment, and they are all
 | `HANGAR_HOOK_TOKEN` | Local secret that authorizes the call (also used by the hooks)   |
 
 The session id comes from the header injected at launch, so a session can only ever act on itself —
-the endpoints can't be aimed at another session, and they stay shut to anything that can't read that
-session's environment. Same trust boundary as the `/api/hooks` callback. The token is minted once and
+the endpoints can't be aimed at another session (the one exception, closing, reaches no further than
+the sessions drawn under the caller), and they stay shut to anything that can't read that session's
+environment. Same trust boundary as the `/api/hooks` callback. The token is minted once and
 kept in `auth.json`, not regenerated per app run, because a session's environment is fixed when its
 `claude` process starts and that process outlives the app.
 
@@ -1033,6 +1035,59 @@ one given doesn't resolve (a folder that is not a worktree of the session's repo
 worktree has checked out, a session folder that isn't a repo), and `404` when the id names no
 session. The pick lives in the session's shared UI bag (`gitWorktree`), so every device shows it and
 it survives a reopen; a worktree removed later quietly falls back to the session's own branch.
+
+#### List the sessions under this one: `GET /api/self/children`
+
+Everything drawn under the calling session in the list, at any depth: what it launched as a child
+(`hgr-new-session.ps1 -Child`), what it forked, what was dragged under it by hand, and what those have
+under them in turn. Parents come before their children.
+
+```bash
+curl -s "$HANGAR_URL/api/self/children" \
+  -H "X-Session-Id: $HANGAR_SESSION_ID" \
+  -H "X-Hook-Token: $HANGAR_HOOK_TOKEN"
+# {"id":"664d6618…","name":"auth refactor","children":[
+#   {"id":"8f2c1b…","name":"auth refactor-review","parentId":"664d6618…","depth":1,"state":"Running",
+#    "busy":false,"folder":"C:\\src\\myproject","createdAt":"…"}]}
+```
+
+`state` is `Running`, `Exited`, `Failed`, or `Restorable` for a session that is closed but still in
+the list; `busy` says Claude is mid-turn there. `404` when the caller is no longer a session.
+
+#### Close: `POST /api/self/close`
+
+Closes sessions under the caller, or the caller itself, once the work they were for is done — a
+review session whose report is in, a batch of sub-tasks that have all finished. Name them by `id`
+(one) and/or `ids` (several), as `GET /api/self/children` lists them; `"self"` stands for the caller.
+
+```bash
+curl -s -X POST "$HANGAR_URL/api/self/close" \
+  -H "X-Session-Id: $HANGAR_SESSION_ID" \
+  -H "X-Hook-Token: $HANGAR_HOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ids":["8f2c1b…"]}'
+# {"id":"664d6618…","closed":[{"id":"8f2c1b…","name":"auth refactor-review"}],"removed":[],"skipped":[],"self":false}
+```
+
+Closing is what the sidebar's close does: the process stops and the row stays, in its folder and
+reopenable. `"remove": true` takes the rows out of the list as well (an already-closed session
+included), the way removing a closed row does. Rules:
+
+- **Only the caller and what is under it.** The hook token is shared by every session on the
+  machine, so an id outside the caller's subtree — a sibling, the caller's own parent, a session
+  somewhere else — is refused (`skipped`, reason `not this session or one under it`) rather than
+  closed. Closing anything else is for the UI, or for `DELETE /api/sessions/{id}` behind a login.
+- **A session takes its subtree with it**, deepest first, so nothing is left running under a closed
+  parent.
+- **A session mid-turn is skipped** (reason `busy`) unless `"force": true`, so "close all children"
+  can't cut off one that is still writing its result. One already closed is skipped as `already
+  closed`, unless removing.
+- **The caller goes last, after the answer.** With `"self"` (or its own id) in the list, the response
+  comes back with `"self": true` and the caller's own process is stopped half a second later.
+
+Every close is logged (`SelfApi`) with the session that asked for it. Responses are `200` with what
+happened to each session, `400` when no id was given, and `404` when the caller is no longer a
+session.
 
 ## Development
 
