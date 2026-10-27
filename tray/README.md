@@ -126,9 +126,10 @@ remembers what it was last set to.
   the view: what is sent is the capture at its own resolution.
 - The tool, colour and weight you used last are kept for the next capture.
 
-The **session picker** lists the server's running sessions, the ones you sent to most recently first.
-`Alt+↑/↓` changes the target from the message box. `/` searches by name, project or folder. Double-click
-a row to send straight to it.
+The **session picker** lists the running sessions of the server and of every paired machine it has
+online, the ones you sent to most recently first; a paired machine's session is marked with the
+machine's name. `Alt+↑/↓` changes the target from the message box. `/` searches by name, project, folder
+or machine. Double-click a row to send straight to it.
 
 ## Installing
 
@@ -223,7 +224,9 @@ The log (`…\logs`) records how long each overlay and editor took to come up.
   while idle.
 - The session picker shows each session's project as the server files it (`projectId` on
   `/api/sessions`) and its colours from the web UI's own table (`@web/lib/sessionColors`), so neither
-  rule has a second copy here.
+  rule has a second copy here. A paired machine's sessions are read, and its captures sent, through the
+  server's `/n/{node}/…` proxy, as the web UI reaches them: the tray signs in to the server alone. A
+  machine that doesn't answer within a few seconds is left out of the list.
 - The editor (`src/editor`) draws with Konva in the capture's own pixels. It exports the full-resolution
   PNGs and hands them back over IPC in one body, each after its length. `api.rs` uploads them one by one
   (`POST /api/sessions/{id}/fs/upload-image`) and sends the message with the uploaded paths

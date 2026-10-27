@@ -1,27 +1,27 @@
 import type { SessionItem } from "@/lib/tauri";
 
-/** Sessions whose name, project or folder holds every word of `query`, in the order given. */
+/** Sessions whose name, project, folder or machine holds every word of `query`, in the order given. */
 export function filterSessions(items: SessionItem[], query: string): SessionItem[] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return items;
   return items.filter((s) => {
-    const hay = `${s.name} ${s.project ?? ""} ${s.folder}`.toLowerCase();
+    const hay = `${s.name} ${s.project ?? ""} ${s.folder} ${s.nodeName ?? ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }
 
 /** The selection after the list changed: kept if still there, else the first (the most recent target). */
 export function keepSelection(items: SessionItem[], selected: string | null): string | null {
-  if (selected && items.some((s) => s.id === selected)) return selected;
-  return items[0]?.id ?? null;
+  if (selected && items.some((s) => s.key === selected)) return selected;
+  return items[0]?.key ?? null;
 }
 
 /** Move the selection `delta` rows, stopping at the ends. */
 export function stepSelection(items: SessionItem[], selected: string | null, delta: number): string | null {
   if (items.length === 0) return null;
-  const i = items.findIndex((s) => s.id === selected);
+  const i = items.findIndex((s) => s.key === selected);
   const next = i < 0 ? 0 : Math.min(items.length - 1, Math.max(0, i + delta));
-  return items[next].id;
+  return items[next].key;
 }
 
 /** "just now", "5m ago", "3h ago", "2d ago". */

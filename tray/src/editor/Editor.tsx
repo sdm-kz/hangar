@@ -430,7 +430,7 @@ export default function Editor({ id }: { id: string }) {
   const allItems = useMemo(() => (sessions.kind === "ready" ? sessions.items : []), [sessions]);
   const items = useMemo(() => filterSessions(allItems, query), [allItems, query]);
   useEffect(() => setTarget((t) => keepSelection(items, t)), [items]);
-  const targetItem = items.find((s) => s.id === target) ?? null;
+  const targetItem = items.find((s) => s.key === target) ?? null;
 
   // ---- Actions ----
   const onCommit = useCallback((next: Doc) => setHistory((h) => commit(h, next)), []);
@@ -580,8 +580,8 @@ export default function Editor({ id }: { id: string }) {
 
   // `postpone` puts it in the session's postponed messages instead of its prompt.
   const doSend = useCallback(
-    async (sessionId?: string, postpone = false) => {
-      const s = items.find((i) => i.id === (sessionId ?? target));
+    async (key?: string, postpone = false) => {
+      const s = items.find((i) => i.key === (key ?? target));
       if (!s || send.kind === "sending" || send.kind === "sent") return;
       setSend({ kind: "sending", postpone });
       try {

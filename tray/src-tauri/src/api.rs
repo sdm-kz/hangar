@@ -178,7 +178,12 @@ pub struct NewSession<'a> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionItem {
+    /// Tells the row apart from every other: the id, after the node's for a paired machine's session.
+    pub key: String,
     pub id: String,
+    /// The paired machine it runs on, reached through the server; None for the server's own.
+    pub node: Option<String>,
+    pub node_name: Option<String>,
     pub name: String,
     pub folder: String,
     pub color: Option<String>,
@@ -193,6 +198,9 @@ pub struct SessionItem {
 pub struct Client {
     http: reqwest::Client,
     creds: Credentials,
+    /// A paired machine whose API this client reaches through the server (`/n/{node}/…`), as the web
+    /// UI does: one sign-in, and only the server has to be reachable from here.
+    node: Option<String>,
 }
 
 impl Client {
@@ -204,7 +212,28 @@ impl Client {
             builder = builder.no_proxy();
         }
         let http = builder.build().expect("an HTTP client with timeouts always builds");
-        Self { http, creds }
+        Self { http, creds, node: None }
+    }
+
+    /// The same server's client for one of its paired machines. The server swaps its own token for the
+    /// peer's on the way through.
+    pub fn at_node(&self, node: &str) -> Self {
+        Self { http: self.http.clone(), creds: self.creds.clone(), node: Some(node.to_string()) }
+    }
+
+    /// `url` moved under the paired machine's prefix, when this client is for one. The node is encoded
+    /// whole, so whatever it holds stays one segment; a dot segment, which would step out of `/n/` even
+    /// encoded, is refused.
+    fn routed(&self, mut url: Url) -> Result<Url, ApiError> {
+        if let Some(node) = &self.node {
+            if matches!(node.as_str(), "" | "." | "..") {
+                return Err(ApiError::Failed(format!("There is no machine \"{node}\" to reach")));
+            }
+            let node = percent_encoding::utf8_percent_encode(node, percent_encoding::NON_ALPHANUMERIC);
+            let path = format!("/n/{node}{}", url.path());
+            url.set_path(&path);
+        }
+        Ok(url)
     }
 
     pub fn credentials(&self) -> &Credentials {
@@ -212,18 +241,18 @@ impl Client {
     }
 
     fn url(&self, path: &str) -> Result<Url, ApiError> {
-        self.creds.base.join(path).map_err(|e| ApiError::Failed(e.to_string()))
+        self.routed(self.creds.base.join(path).map_err(|e| ApiError::Failed(e.to_string()))?)
     }
 
     /// A URL under the session's own path, each segment percent-encoded.
     fn session_url(&self, session_id: &str, rest: &[&str]) -> Result<Url, ApiError> {
-        let mut url = self.url("/")?;
+        let mut url = self.creds.base.join("/").map_err(|e| ApiError::Failed(e.to_string()))?;
         url.path_segments_mut()
             .map_err(|_| ApiError::Failed("The server URL can't take a path".into()))?
             .clear()
             .extend(["api", "sessions", session_id])
             .extend(rest);
-        Ok(url)
+        self.routed(url)
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> Result<reqwest::RequestBuilder, ApiError> {
@@ -451,26 +480,54 @@ fn root_cause(e: &dyn std::error::Error) -> String {
     cur.to_string()
 }
 
-/// The picker's rows: running sessions only, the ones sent to most recently first, then the rest
-/// newest first.
-pub fn picker_items(
-    sessions: Vec<ServerSession>,
-    busy: &[String],
-    projects: &[ServerProject],
-    recents: &[Recent],
-    server: &str,
-) -> Vec<SessionItem> {
+/// One machine's sessions for the picker: the server's own (`node` None), or a paired machine's.
+pub struct PickerSource {
+    /// The paired machine's id and name.
+    pub node: Option<(String, String)>,
+    pub sessions: Vec<ServerSession>,
+    pub busy: Vec<String>,
+    pub projects: Vec<ServerProject>,
+}
+
+/// Where a session's recents are kept: under the server, or under the server's way to its peer.
+pub fn recents_key(server: &str, node: Option<&str>) -> String {
+    match node {
+        Some(node) => format!("{}/n/{node}", server.trim_end_matches('/')),
+        None => server.to_string(),
+    }
+}
+
+/// The picker's rows: running sessions only, the ones sent to most recently first, then the rest —
+/// the server's own before its paired machines', each newest first.
+pub fn picker_items(sources: Vec<PickerSource>, recents: &[Recent], server: &str) -> Vec<SessionItem> {
+    let mut rows: Vec<(SessionItem, Option<String>)> = Vec::new();
+    for source in sources {
+        rows.extend(source_rows(source, recents, server));
+    }
+    rows.sort_by(|(a, a_created), (b, b_created)| match (a.last_sent, b.last_sent) {
+        (Some(x), Some(y)) => y.cmp(&x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        // ISO-8601 timestamps sort as strings.
+        (None, None) => a.node.is_some().cmp(&b.node.is_some()).then_with(|| b_created.cmp(a_created)),
+    });
+    rows.into_iter().map(|(item, _)| item).collect()
+}
+
+fn source_rows(source: PickerSource, recents: &[Recent], server: &str) -> Vec<(SessionItem, Option<String>)> {
+    let PickerSource { node, sessions, busy, projects } = source;
+    let place = recents_key(server, node.as_ref().map(|(id, _)| id.as_str()));
     let last_sent = |s: &ServerSession| {
         recents
             .iter()
-            .filter(|r| r.server == server)
+            .filter(|r| r.server == place)
             .find(|r| {
                 r.session_id == s.id
                     || (s.claude_session_id.is_some() && r.claude_session_id == s.claude_session_id)
             })
             .map(|r| r.last_sent)
     };
-    let mut rows: Vec<(SessionItem, Option<String>)> = sessions
+    sessions
         .into_iter()
         .filter(|s| s.state.eq_ignore_ascii_case("running"))
         .map(|s| {
@@ -484,6 +541,12 @@ pub fn picker_items(
                 .unwrap_or_default()
                 .to_string();
             let item = SessionItem {
+                key: match &node {
+                    Some((node, _)) => format!("{node}/{}", s.id),
+                    None => s.id.clone(),
+                },
+                node: node.as_ref().map(|(id, _)| id.clone()),
+                node_name: node.as_ref().map(|(_, name)| name.clone()),
                 busy: busy.contains(&s.id),
                 last_sent: last_sent(&s),
                 project: project.map(|p| p.name.clone()),
@@ -496,15 +559,7 @@ pub fn picker_items(
             };
             (item, s.created_at)
         })
-        .collect();
-    rows.sort_by(|(a, a_created), (b, b_created)| match (a.last_sent, b.last_sent) {
-        (Some(x), Some(y)) => y.cmp(&x),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        // ISO-8601 timestamps from one server sort as strings.
-        (None, None) => b_created.cmp(a_created),
-    });
-    rows.into_iter().map(|(item, _)| item).collect()
+        .collect()
 }
 
 #[cfg(test)]
@@ -522,6 +577,10 @@ mod tests {
             created_at: Some(created.into()),
             project_id: None,
         }
+    }
+
+    fn own(sessions: Vec<ServerSession>, busy: &[&str], projects: Vec<ServerProject>) -> PickerSource {
+        PickerSource { node: None, sessions, busy: busy.iter().map(|s| s.to_string()).collect(), projects }
     }
 
     fn recent(server: &str, id: &str, conv: Option<&str>, at: i64) -> Recent {
@@ -543,7 +602,7 @@ mod tests {
             recent("other-srv", "old", None, 999),
         ];
         let ids: Vec<_> =
-            picker_items(sessions, &[], &[], &recents, "srv").into_iter().map(|i| i.id).collect();
+            picker_items(vec![own(sessions, &[], vec![])], &recents, "srv").into_iter().map(|i| i.id).collect();
         assert_eq!(ids, vec!["sent-just-now", "sent-long-ago", "new", "old"]);
     }
 
@@ -551,7 +610,7 @@ mod tests {
     fn picker_recognises_a_reopened_conversation() {
         let sessions = vec![session("reopened", "/home/me/x", "Running", "2026-10-01T00:00:00Z")];
         let recents = vec![recent("srv", "gone-id", Some("conv-reopened"), 50)];
-        let items = picker_items(sessions, &[], &[], &recents, "srv");
+        let items = picker_items(vec![own(sessions, &[], vec![])], &recents, "srv");
         assert_eq!(items[0].last_sent, Some(50));
     }
 
@@ -567,12 +626,64 @@ mod tests {
         b.project_id = Some("p-git".into());
         let mut c = session("c", "C:\\Gitlab", "Running", "3");
         c.project_id = Some("p-deleted".into());
-        let items = picker_items(vec![a, b, c], &["a".to_string()], &projects, &[], "srv");
+        let items = picker_items(vec![own(vec![a, b, c], &["a"], projects)], &[], "srv");
         let a = items.iter().find(|i| i.id == "a").unwrap();
         assert_eq!((a.project.as_deref(), a.folder.as_str(), a.busy), (Some("Home"), "myproject", true));
         let b = items.iter().find(|i| i.id == "b").unwrap();
         assert_eq!((b.project.as_deref(), b.project_color.as_deref(), b.folder.as_str()), (Some("Git"), Some("blue"), "other"));
         assert_eq!(items.iter().find(|i| i.id == "c").unwrap().project, None, "a project that's gone names nothing");
+    }
+
+    #[test]
+    fn picker_lists_paired_machines_after_the_servers_own_and_by_their_own_recents() {
+        let nas = |sessions| PickerSource {
+            node: Some(("nas-id".into(), "NAS".into())),
+            sessions,
+            busy: vec!["x".into()],
+            projects: vec![],
+        };
+        let sources = vec![
+            own(vec![session("here", "C:\\a", "Running", "2026-10-01T00:00:00Z")], &[], vec![]),
+            nas(vec![
+                session("x", "/srv/x", "Running", "2026-10-09T00:00:00Z"),
+                session("y", "/srv/y", "Running", "2026-10-08T00:00:00Z"),
+            ]),
+        ];
+        // Sent to y on the NAS; a recent under the server itself for "x" is another machine's.
+        let recents = vec![recent("http://srv:5099/n/nas-id", "y", None, 10), recent("http://srv:5099/", "x", None, 20)];
+        let items = picker_items(sources, &recents, "http://srv:5099/");
+        let keys: Vec<_> = items.iter().map(|i| i.key.as_str()).collect();
+        assert_eq!(keys, ["nas-id/y", "here", "nas-id/x"]);
+        let x = &items[2];
+        assert_eq!((x.id.as_str(), x.node.as_deref(), x.node_name.as_deref(), x.busy, x.last_sent), ("x", Some("nas-id"), Some("NAS"), true, None));
+        assert_eq!(items[1].node, None);
+    }
+
+    #[test]
+    fn a_node_stays_one_segment_under_n() {
+        let client = Client::new(Credentials { base: Url::parse("http://srv:5099/").unwrap(), token: None, local: false });
+        for node in ["a/../..", "%2e%2e", ".x"] {
+            let url = client.at_node(node).url("/api/sessions").unwrap();
+            let segments: Vec<_> = url.path_segments().unwrap().collect();
+            assert_eq!((segments.len(), segments[0], &segments[2..]), (4, "n", &["api", "sessions"][..]), "{node} -> {url}");
+        }
+        for node in ["", ".", ".."] {
+            assert!(client.at_node(node).url("/api/sessions").is_err(), "{node:?}");
+            assert!(client.at_node(node).session_url("s", &["message"]).is_err(), "{node:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_paired_machines_client_goes_through_the_server() {
+        let mut server = mockito::Server::new_async().await;
+        let sessions = server.mock("GET", "/n/nas%2Fid/api/sessions").with_body("[]").create_async().await;
+        let message = server.mock("POST", "/n/nas%2Fid/api/sessions/s%201/message").create_async().await;
+        let client = Client::new(Credentials { base: Url::parse(&server.url()).unwrap(), token: Some("tok".into()), local: false });
+        let nas = client.at_node("nas/id");
+        assert!(nas.sessions().await.unwrap().is_empty());
+        nas.message("s 1", "look", &[]).await.unwrap();
+        sessions.assert_async().await;
+        message.assert_async().await;
     }
 
     fn instances_dir_with(port: u16, body: &str) -> PathBuf {

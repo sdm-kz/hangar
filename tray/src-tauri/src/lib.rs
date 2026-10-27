@@ -485,9 +485,39 @@ async fn list_sessions(app: AppHandle) -> Result<SessionsView, ApiError> {
     // Busy dots and project names are garnish: the list is still worth showing without them.
     let busy = client.busy().await.unwrap_or_default();
     let projects = client.projects().await.unwrap_or_default();
+    let mut sources = vec![api::PickerSource { node: None, sessions, busy, projects }];
+    // Every paired machine the server has online, asked side by side through it. One that doesn't
+    // answer in time is left out rather than holding up the list.
+    let peers: Vec<_> = server::connection(&app).view().peers.into_iter().filter(|p| p.status == "online").collect();
+    let asks = peers.into_iter().map(|peer| {
+        let at = client.at_node(&peer.id);
+        async move {
+            let ask = async {
+                let sessions = at.sessions().await?;
+                let busy = at.busy().await.unwrap_or_default();
+                let projects = at.projects().await.unwrap_or_default();
+                Ok::<_, ApiError>(api::PickerSource { node: Some((peer.id.clone(), peer.name.clone())), sessions, busy, projects })
+            };
+            match tokio::time::timeout(PEER_PATIENCE, ask).await {
+                Ok(Ok(source)) => Some(source),
+                Ok(Err(e)) => {
+                    log::info!("Left {} out of the picker: {e}", peer.name);
+                    None
+                }
+                Err(_) => {
+                    log::info!("Left {} out of the picker: it didn't answer in time", peer.name);
+                    None
+                }
+            }
+        }
+    });
+    sources.extend(futures_util::future::join_all(asks).await.into_iter().flatten());
     let recents = state(&app).store.load_recents();
-    Ok(SessionsView { items: api::picker_items(sessions, &busy, &projects, &recents, &server), server })
+    Ok(SessionsView { items: api::picker_items(sources, &recents, &server), server })
 }
+
+/// How long the picker waits on a paired machine's sessions.
+const PEER_PATIENCE: std::time::Duration = std::time::Duration::from_secs(6);
 
 fn raw_body(request: &Request<'_>) -> Result<Vec<u8>, String> {
     match request.body() {
@@ -528,12 +558,18 @@ async fn send_capture(app: AppHandle, request: Request<'_>) -> Result<(), ApiErr
     let body = raw_body(&request).map_err(ApiError::Failed)?;
     let pngs = split_images(&body).map_err(ApiError::Failed)?;
     let session_id = header_text(&request, "x-session-id").ok_or(ApiError::Failed("No session chosen".into()))?;
+    // A paired machine's session, reached through the server.
+    let node = header_text(&request, "x-node").filter(|s| !s.is_empty());
     let claude_session_id = header_text(&request, "x-claude-session-id").filter(|s| !s.is_empty());
     let text = header_text(&request, "x-text").unwrap_or_default();
     // Into the session's postponed messages rather than its prompt.
     let postpone = header_text(&request, "x-postpone").is_some_and(|v| v == "1");
 
     let (client, server) = client(&app)?;
+    let client = match &node {
+        Some(node) => client.at_node(node),
+        None => client,
+    };
     // One at a time, in order: the paths go into the message in the order the pictures were in.
     let mut paths = Vec::with_capacity(pngs.len());
     for png in &pngs {
@@ -544,7 +580,8 @@ async fn send_capture(app: AppHandle, request: Request<'_>) -> Result<(), ApiErr
     } else {
         client.message(&session_id, text.trim(), &paths).await?;
     }
-    if let Err(e) = state(&app).store.touch_recent(&server, &session_id, claude_session_id.as_deref(), now_ms()) {
+    let place = api::recents_key(&server, node.as_deref());
+    if let Err(e) = state(&app).store.touch_recent(&place, &session_id, claude_session_id.as_deref(), now_ms()) {
         log::warn!("Could not remember the session: {e}");
     }
     Ok(())

@@ -31,7 +31,7 @@ export const MessageBox = forwardRef<
         creating
           ? "First prompt for the new session — what should Claude do with this?"
           : target
-            ? `Message to ${target.name} — what should Claude look at?`
+            ? `Message to ${target.name}${target.nodeName ? ` on ${target.nodeName}` : ""} — what should Claude look at?`
             : "Message to Claude…"
       }
       className="h-full min-h-0 w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-[13.5px] leading-relaxed outline-none placeholder:text-muted-foreground/70 focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
@@ -112,12 +112,12 @@ export function SessionPicker(props: {
         )}
         {items.map((s, i) => (
           <SessionRow
-            key={s.id}
+            key={s.key}
             s={s}
-            selected={s.id === selected}
+            selected={s.key === selected}
             firstOfRest={i > 0 && s.lastSent == null && items[i - 1].lastSent != null}
-            onClick={() => props.onSelect(s.id)}
-            onDoubleClick={() => props.onSend(s.id)}
+            onClick={() => props.onSelect(s.key)}
+            onDoubleClick={() => props.onSend(s.key)}
           />
         ))}
       </div>
@@ -145,10 +145,10 @@ function SessionRow({
       <div
         role="option"
         aria-selected={selected}
-        data-id={s.id}
+        data-id={s.key}
         onClick={onClick}
         onDoubleClick={onDoubleClick}
-        title={`Double-click to send to ${s.name}`}
+        title={`Double-click to send to ${s.name}${s.nodeName ? ` on ${s.nodeName}` : ""}`}
         className={clsx(
           "mx-1 flex cursor-default items-center gap-2.5 rounded-md px-2 py-1.5",
           selected ? "bg-accent/15 ring-1 ring-accent/50" : "hover:bg-muted",
@@ -164,6 +164,7 @@ function SessionRow({
             {s.busy && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok" title="Claude is working" />}
           </div>
           <div className="truncate text-[11.5px] text-muted-foreground">
+            {s.nodeName && <span className="font-medium text-foreground/70">{s.nodeName} · </span>}
             {s.project ? `${s.project} · ${s.folder}` : s.folder}
           </div>
         </div>
@@ -261,7 +262,7 @@ export function SendBar(props: {
                 ? `Start a session in ${folder}`
                 : "Choose a folder"
               : target
-                ? `Send to ${target.name}`
+                ? `Send to ${target.name}${target.nodeName ? ` on ${target.nodeName}` : ""}`
                 : "Choose a session"}
         </span>
         {send.kind !== "sent" && (creating ? !!folder : !!target) && <kbd className="shrink-0 border-white/30 bg-white/15 text-white">{props.mod}↵</kbd>}

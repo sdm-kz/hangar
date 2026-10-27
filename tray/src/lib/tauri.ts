@@ -48,7 +48,12 @@ export interface CaptureAdded {
 }
 
 export interface SessionItem {
+  /** Tells the row apart: the id, after the node's for a paired machine's session. */
+  key: string;
   id: string;
+  /** The paired machine it runs on, reached through the server; null for the server's own. */
+  node: string | null;
+  nodeName: string | null;
   name: string;
   folder: string;
   color: string | null;
@@ -154,6 +159,7 @@ export const api = {
     invoke<void>("send_capture", packImages(pngs), {
       headers: {
         "x-session-id": encodeURIComponent(session.id),
+        "x-node": encodeURIComponent(session.node ?? ""),
         "x-claude-session-id": encodeURIComponent(session.claudeSessionId ?? ""),
         "x-text": encodeURIComponent(text),
         "x-postpone": postpone ? "1" : "0",

@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { SessionItem } from "@/lib/tauri";
 import { ago, filterSessions, keepSelection, stepSelection } from "./sessions";
 
-const item = (id: string, name: string, project: string | null, folder: string): SessionItem => ({
+const item = (id: string, name: string, project: string | null, folder: string, nodeName: string | null = null): SessionItem => ({
+  key: nodeName ? `${nodeName}/${id}` : id,
   id,
+  node: nodeName,
+  nodeName,
   name,
   folder,
   project,
@@ -18,6 +21,7 @@ const items = [
   item("1", "Fix login", "Hangar", "myproject"),
   item("2", "Invoices", "Finance", "invoices"),
   item("3", "Snap app", "Hangar", "feat-snap"),
+  item("3", "Same id elsewhere", null, "far", "nas"),
 ];
 
 describe("filterSessions", () => {
@@ -26,6 +30,7 @@ describe("filterSessions", () => {
     expect(filterSessions(items, "HANGAR").map((s) => s.id)).toEqual(["1", "3"]);
     expect(filterSessions(items, "  ")).toBe(items);
     expect(filterSessions(items, "nothing")).toEqual([]);
+    expect(filterSessions(items, "nas").map((s) => s.key)).toEqual(["nas/3"]);
   });
 });
 
@@ -37,7 +42,8 @@ describe("selection", () => {
   });
   it("steps and stops at the ends", () => {
     expect(stepSelection(items, "1", 1)).toBe("2");
-    expect(stepSelection(items, "3", 1)).toBe("3");
+    expect(stepSelection(items, "3", 1)).toBe("nas/3");
+    expect(stepSelection(items, "nas/3", 1)).toBe("nas/3");
     expect(stepSelection(items, "1", -1)).toBe("1");
     expect(stepSelection(items, null, 1)).toBe("1");
     expect(stepSelection([], "1", 1)).toBeNull();
