@@ -138,6 +138,8 @@ chmod +x "$target/Hangar" "$target/Hangar.PtyHost" 2> /dev/null
 # A running tray keeps the old Hangar.Tray it has open; it sees the new one once it reconnects, and
 # restarts into it.
 [ -f "$target/Hangar.Tray" ] && chmod +x "$target/Hangar.Tray" 2> /dev/null
+# On macOS, Hangar.Tray starts the app bundle beside it (see build.sh), which is replaced as a whole.
+[ -d "$target/Hangar Tray App.app" ] && chmod +x "$target/Hangar Tray App.app/Contents/MacOS/"* 2> /dev/null
 
 # --- 3) Back up on its feet ------------------------------------------------------------------------
 start_app || fail "could not start the app"

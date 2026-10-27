@@ -136,11 +136,14 @@ or machine. Double-click a row to send straight to it.
 It ships with Hangar: `scripts\build.ps1` builds it into `publish\` as `Hangar.Tray.exe`, beside the
 server. `scripts\deploy.ps1` installs it with the server, the in-app updater replaces it along with
 the server, and `scripts\register-autostart.ps1` starts it at sign-in next to the server (`-NoTray`
-leaves it out). On Linux and macOS, `scripts/build.sh` builds it as `Hangar.Tray`
-when building for the machine it runs on (a Tauri app can't be cross-built) and `install-unix.sh`
-installs it with the rest.
+leaves it out). On Linux and macOS, `scripts/build.sh` builds it when building for the machine it
+runs on (a Tauri app can't be cross-built) and `install-unix.sh` installs it with the rest: on Linux
+as `Hangar.Tray`, on macOS as `Hangar Tray App.app`, the bundle that gives it its name and icon in
+Finder, Login Items and Activity Monitor. A `Hangar.Tray` script beside the bundle starts it, so
+`Hangar.Tray --capture` and a sign-in entry made by an older build keep working; the app re-points
+such an entry at the bundle the first time it starts from it.
 
-It is a single executable, with the pages compiled in. Settings and recents live in the app's local
+It is a single executable (a bundle around one on macOS), with the pages compiled in. Settings and recents live in the app's local
 data folder (`%LOCALAPPDATA%\io.github.sdm-kz.hangar.tray` on Windows,
 `~/Library/Application Support/io.github.sdm-kz.hangar.tray` on macOS,
 `~/.local/share/io.github.sdm-kz.hangar.tray` on Linux) and survive a reinstall. Starting at sign-in

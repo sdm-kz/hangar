@@ -28,6 +28,19 @@ fn exe() -> Option<&'static Path> {
     EXE.get().map(|(p, _)| p.as_path())
 }
 
+/// The folder the app is installed in, beside the server: the one this executable sits in — or, on
+/// macOS, the one its app bundle sits in, since there it runs from `Hangar Tray App.app/Contents/MacOS`.
+pub fn install_dir() -> Option<&'static Path> {
+    let dir = exe()?.parent()?;
+    if cfg!(target_os = "macos") && dir.ends_with("Contents/MacOS") {
+        let bundle = dir.parent()?.parent()?;
+        if bundle.extension().is_some_and(|e| e == "app") {
+            return bundle.parent();
+        }
+    }
+    Some(dir)
+}
+
 /// Whether process `pid` is running. A crashed server leaves its instance file behind; this is how
 /// that file is told apart from a live one.
 #[cfg(windows)]
@@ -87,7 +100,7 @@ pub fn starter() -> Option<Starter> {
         }
     }
     let name = if cfg!(windows) { "Hangar.exe" } else { "Hangar" };
-    let server = exe()?.parent()?.join(name);
+    let server = install_dir()?.join(name);
     server.is_file().then_some(Starter::Exe(server))
 }
 
@@ -156,7 +169,7 @@ fn detach(command: &mut Command) {
 
 /// Whether this tray is part of the install `instance`'s server runs from: the two side by side.
 fn same_install(instance: &Instance) -> bool {
-    let (Some(ours), Some(theirs)) = (exe().and_then(Path::parent), instance.exe_path.as_deref().map(Path::new).and_then(Path::parent))
+    let (Some(ours), Some(theirs)) = (install_dir(), instance.exe_path.as_deref().map(Path::new).and_then(Path::parent))
     else {
         return false;
     };

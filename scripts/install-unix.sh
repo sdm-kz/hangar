@@ -24,6 +24,8 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 systemd_unit=hangar.service
 launchd_label=com.hangar.server
+# The tray app on macOS (build.sh); elsewhere it is the Hangar.Tray executable alone.
+tray_app="Hangar Tray App.app"
 
 case "$(uname -s)" in
   Linux) platform=linux ;;
@@ -91,11 +93,17 @@ chmod +x "$target/Hangar" "$target/Hangar.PtyHost"
 if [ "$platform" = macos ]; then
   # A build made on another OS (or downloaded) arrives quarantined and, on Apple silicon, unsigned --
   # and macOS kills an unsigned arm64 binary on launch. An ad-hoc signature is all it needs.
-  for exe in Hangar Hangar.PtyHost Hangar.Tray; do
+  for exe in Hangar Hangar.PtyHost; do
     [ -f "$target/$exe" ] || continue
     xattr -d com.apple.quarantine "$target/$exe" 2> /dev/null || true
     codesign --verify "$target/$exe" 2> /dev/null || codesign --force --sign - "$target/$exe"
   done
+  # The tray: an app bundle, with Hangar.Tray beside it a script that starts it (see build.sh).
+  if [ -d "$target/$tray_app" ]; then
+    xattr -dr com.apple.quarantine "$target/$tray_app" 2> /dev/null || true
+    chmod +x "$target/$tray_app/Contents/MacOS/"*
+    codesign --verify --deep "$target/$tray_app" 2> /dev/null || codesign --force --deep --sign - "$target/$tray_app"
+  fi
 fi
 
 # The PATH the daemon -- and so every session and shell it starts -- will see. A unit starts with
@@ -200,6 +208,8 @@ for settings in "$target/appsettings.Local.json" "$target/appsettings.json"; do
 done
 echo "    Browse to http://127.0.0.1:${port:-5099}."
 echo "    Your settings: $target/appsettings.Local.json -- it overrides appsettings.json, and no update touches it."
-if [ -f "$target/Hangar.Tray" ]; then
+if [ -d "$target/$tray_app" ]; then
+  echo "    Tray app: $target/$tray_app -- its menu's \"Start when I sign in\" keeps it in the menu bar."
+elif [ -f "$target/Hangar.Tray" ]; then
   echo "    Tray app: $target/Hangar.Tray -- its menu's \"Start when I sign in\" keeps it in the menu bar or panel."
 fi

@@ -1115,6 +1115,30 @@ fn set_autostart(app: &AppHandle, on: bool) {
     }
 }
 
+/// macOS: the tray now runs from an app bundle, and a sign-in entry made by a build from before that
+/// still names the bare `Hangar.Tray` beside it, which macOS lists as a nameless executable with no
+/// icon. Re-made from here, it names the bundle's executable, and macOS shows the app instead. A no-op
+/// once it does, when it isn't on, and for a build not run from a bundle (`tauri dev`, say).
+#[cfg(target_os = "macos")]
+fn repoint_autostart(app: &AppHandle) {
+    const IN_BUNDLE: &str = ".app/Contents/MacOS/";
+    if !std::env::current_exe().is_ok_and(|e| e.to_string_lossy().contains(IN_BUNDLE)) {
+        return;
+    }
+    let Some(plist) = dirs::home_dir().map(|d| d.join("Library/LaunchAgents").join(format!("{AUTOSTART_NAME}.plist"))) else {
+        return;
+    };
+    // No file: not starting at sign-in, and nothing to re-point.
+    let Ok(entry) = std::fs::read_to_string(&plist) else { return };
+    if entry.contains(IN_BUNDLE) {
+        return;
+    }
+    match app.autolaunch().enable() {
+        Ok(()) => log::info!("Re-pointed the sign-in entry at the app bundle"),
+        Err(e) => log::warn!("Could not re-point the sign-in entry at the app bundle: {e}"),
+    }
+}
+
 fn build_tray(app: &AppHandle, hotkeys: &Hotkeys) -> tauri::Result<()> {
     let view = server::connection(app).view();
     let built = menu::build(app, hotkeys, &view)?;
@@ -1266,7 +1290,10 @@ pub fn run() {
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                repoint_autostart(app.handle());
+            }
 
             let dir = match test_config_dir() {
                 Some(d) => std::path::PathBuf::from(d),
@@ -1278,8 +1305,7 @@ pub fn run() {
             let store = Store::new(dir);
             let mut settings = store.load_settings();
             if first_run {
-                let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
-                settings.server_url = config::default_server_url(exe_dir.as_deref());
+                settings.server_url = config::default_server_url(host::install_dir());
                 // Written now, so "first run" (which opens settings) means the first run only, whether
                 // or not anything is changed and saved in them.
                 if let Err(e) = store.save_settings(&settings) {

@@ -89,11 +89,32 @@ if [ -n "$with_tray" ]; then
     echo "==> Building tray (tray) for $rid"
     # A tray that fails to build (the webview headers missing, say) is left out rather than taking the
     # server's build down with it. Chained with &&: set -e doesn't reach inside an if's condition.
-    # --no-bundle: the executable is all an install needs; .deb/.dmg are for handing it to others.
-    if (cd "$root/tray" && { [ -d node_modules ] || npm ci; } && npx tauri build --no-bundle); then
-      cp "$root/tray/src-tauri/target/release/hangar-tray" "$publish/Hangar.Tray"
+    # On Linux, --no-bundle: the executable is all an install needs; .deb/.AppImage are for handing it
+    # to others. On macOS the app bundle, which is what carries the app's name and icon: a bare
+    # executable is listed as a blank "Unix executable" in Login Items, Finder and Activity Monitor.
+    if [ "$host_os" = osx ]; then bundle_args="--bundles app"; else bundle_args="--no-bundle"; fi
+    # shellcheck disable=SC2086 # two words, on purpose
+    if (cd "$root/tray" && { [ -d node_modules ] || npm ci; } && npx tauri build $bundle_args); then
+      if [ "$host_os" = osx ]; then
+        tray_app="Hangar Tray App.app"
+        cp -R "$root/tray/src-tauri/target/release/bundle/macos/$tray_app" "$publish/$tray_app"
+        # Sealed as a whole, ad hoc: what the bundler leaves is the linker's signature on the executable
+        # alone, and a bundle whose resources aren't sealed is one macOS may refuse to attribute or open.
+        codesign --force --deep --sign - "$publish/$tray_app"
+        # Hangar.Tray stays, as a launcher for the bundle: a sign-in entry, a running tray restarting into
+        # its update, and a hotkey bound to `Hangar.Tray --capture` all name this path.
+        cat > "$publish/Hangar.Tray" << 'EOF'
+#!/bin/sh
+# The tray app is the bundle beside this file; this name is kept for whatever already starts it. By an
+# absolute path, which is how the app finds the install it belongs to.
+exec "$(cd "$(dirname "$0")" && pwd)/Hangar Tray App.app/Contents/MacOS/hangar-tray" "$@"
+EOF
+        tray_note="$publish/$tray_app"
+      else
+        cp "$root/tray/src-tauri/target/release/hangar-tray" "$publish/Hangar.Tray"
+        tray_note="$publish/Hangar.Tray"
+      fi
       chmod +x "$publish/Hangar.Tray"
-      tray_note="$publish/Hangar.Tray"
     else
       echo "warning: the tray did not build; the rest of the build goes on without it." >&2
       tray_note="left out: its build failed (see above)"

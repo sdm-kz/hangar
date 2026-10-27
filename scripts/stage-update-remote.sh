@@ -145,9 +145,13 @@ tar -C "$S/payload.in" -xf -
 mv "$S/payload.in/payload" "$S/payload.tmp"
 rmdir "$S/payload.in"
 chmod +x "$S/payload.tmp/Hangar" "$S/payload.tmp/Hangar.PtyHost"
+T="$S/payload.tmp/Hangar Tray App.app"
+if [ -f "$S/payload.tmp/Hangar.Tray" ]; then chmod +x "$S/payload.tmp/Hangar.Tray"; fi
+if [ -d "$T" ]; then chmod +x "$T/Contents/MacOS/"*; fi
 if [ "$(uname -s)" = Darwin ]; then
   xattr -dr com.apple.quarantine "$S/payload.tmp" 2> /dev/null || true
   codesign --force --sign - "$S/payload.tmp/Hangar" "$S/payload.tmp/Hangar.PtyHost"
+  if [ -d "$T" ]; then codesign --force --deep --sign - "$T"; fi
 fi
 rm -rf "$S/payload.old"
 if [ -d "$S/payload" ]; then mv "$S/payload" "$S/payload.old"; fi

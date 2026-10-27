@@ -10,7 +10,7 @@ assets/hangar-logo.png; without one, the icons are rebuilt from the master alrea
 import sys
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 MASTER = ROOT / "assets" / "hangar-logo.png"
@@ -34,6 +34,23 @@ def fit(logo: Image.Image, size: int, share: float, background=(0, 0, 0, 0)) -> 
     canvas = Image.new("RGBA", (size, size), background)
     part = logo.resize((w, h), Image.LANCZOS)
     canvas.alpha_composite(part, ((size - w) // 2, (size - h) // 2))
+    return canvas
+
+
+def mac_tile(logo: Image.Image, size: int = 1024) -> Image.Image:
+    """The web app's tile as a macOS app icon: white, rounded, inset on a transparent square."""
+    body, radius, scale = round(size * 824 / 1024), round(size * 185 / 1024), 4
+    # Drawn at 4x and scaled down: ImageDraw doesn't smooth the curve of a rounded corner.
+    mask = Image.new("L", (size * scale, size * scale), 0)
+    inset = (size - body) // 2 * scale
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (inset, inset, size * scale - inset - 1, size * scale - inset - 1), radius * scale, fill=255
+    )
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    canvas.paste(Image.new("RGBA", (size, size), TILE), mask=mask.resize((size, size), Image.LANCZOS))
+    # The logo takes the same share of the tile as it does of the web app's.
+    part = fit(logo, body, 0.6)
+    canvas.alpha_composite(part, ((size - body) // 2, (size - body) // 2))
     return canvas
 
 
@@ -77,7 +94,10 @@ def main() -> None:
     ico(lambda s: fit(logo, s, 0.98), icons / "icon.ico")
     for name, size in (("32x32.png", 32), ("128x128.png", 128), ("128x128@2x.png", 256), ("icon.png", 512)):
         fit(logo, size, 0.98).save(icons / name, optimize=True)
-    fit(logo, 1024, 0.9).save(icons / "icon.icns", format="ICNS")
+    # macOS draws an app's own icon everywhere it lists one (Finder, Login Items, Activity Monitor), with
+    # no tile of its own: the installed web app's white tile, cut to the rounded square of Apple's icon
+    # grid (an 824 px body on 1024, 100 px clear around it) so it sits level with the icons beside it.
+    mac_tile(logo).save(icons / "icon.icns", format="ICNS")
     # The tray icon, a picture per size: the app picks the one for the display's scaling, since a
     # picture the OS squeezes into the slot comes out blurred. The logo's own colours read on light and
     # dark taskbars alike.
