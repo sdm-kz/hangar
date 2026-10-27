@@ -3474,7 +3474,9 @@ function NodeHeading({
   return (
     <div
       {...navProps}
-      className="group/ph mt-1 flex w-full items-center gap-1 rounded px-1 py-1 text-muted-foreground first:mt-0"
+      // A band of the muted surface, which nothing else in the list wears: the machine reads as the
+      // container its projects and sessions sit in, not one more heading among theirs.
+      className="group/ph mt-1 flex w-full items-center gap-1 rounded-md bg-muted px-1.5 py-1 text-muted-foreground first:mt-0"
     >
       <button
         type="button"
@@ -3487,8 +3489,9 @@ function NodeHeading({
             up with its folders' chevrons, and the name starts a step left of where it used to. */}
         <span className="relative mr-0.5 inline-flex shrink-0">
           <OsIcon os={os} className="size-3.5" style={tint ? { color: tint } : undefined} />
-          <HeadingActivityMark activity={online ? activity : null} />
-          <span className="pointer-events-none absolute -bottom-1 -right-1 rounded-full bg-background leading-none">
+          {/* Both badges are cut out of the band they sit on, not the page behind it. */}
+          <HeadingActivityMark activity={online ? activity : null} className="bg-muted" />
+          <span className="pointer-events-none absolute -bottom-1 -right-1 rounded-full bg-muted leading-none">
             {collapsed ? (
               <ChevronRight className="block size-2" strokeWidth={4} />
             ) : (

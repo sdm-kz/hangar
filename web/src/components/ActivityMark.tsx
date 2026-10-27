@@ -26,10 +26,19 @@ import { cn } from "@/lib/utils";
  *
  * Expects a positioned parent: wrap the icon, not the row.
  */
-export function HeadingActivityMark({ activity, label }: { activity: Activity | null; label?: string }) {
+export function HeadingActivityMark({
+  activity,
+  label,
+  className,
+}: {
+  activity: Activity | null;
+  label?: string;
+  /** For a heading on a surface of its own: the badge's background, so it is cut out of that instead. */
+  className?: string;
+}) {
   if (!activity) return null;
   return (
-    <span className="pointer-events-none absolute -left-0.5 -top-0.5 rounded-full bg-background leading-none">
+    <span className={cn("pointer-events-none absolute -left-0.5 -top-0.5 rounded-full bg-background leading-none", className)}>
       <ActivityMark activity={activity} label={label} />
     </span>
   );
