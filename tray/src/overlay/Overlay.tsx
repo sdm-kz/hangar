@@ -10,6 +10,8 @@ import {
   polygonArea,
   rectBetween,
   toFrameRect,
+  WheelSteps,
+  wheelPixels,
   widen,
   windowAt,
   type Pick,
@@ -61,9 +63,9 @@ export default function Overlay({ frame }: { frame: number }) {
  * - window: hover to see which window, or which part of it, click to take it;
  * - freeform: trace a shape; letting go closes it.
  *
- * Where the window can say what is in it (Windows), hovering outlines the innermost part under the
- * cursor — a button, an image, a paragraph — and the wheel steps outwards through what holds it, out to
- * the window, and back in.
+ * Where the window can say what is in it (Windows, and macOS with the Accessibility permission),
+ * hovering outlines the innermost part under the cursor — a button, an image, a paragraph — and the
+ * wheel, a touchpad swipe or ↑/↓ steps outwards through what holds it, out to the window, and back in.
  *
  * Esc cancels from anywhere; a right-click drops a drag in progress, or cancels when there is none.
  */
@@ -82,6 +84,7 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
   const asking = useRef(false);
   const nextAsk = useRef<Point | null>(null);
   const lastAt = useRef<Point | null>(null);
+  const wheelSteps = useRef(new WheelSteps());
 
   useEffect(() => {
     // The window was just moved over its monitor, possibly resized with it.
@@ -149,6 +152,10 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
         (underWindow ? { rect: underWindow.rect, label: underWindow.title || underWindow.app } : undefined))
       : undefined;
 
+  // For the keys, which are listened to once rather than per pointer move.
+  const pickedRef = useRef(picked);
+  pickedRef.current = drag?.moved ? null : picked;
+
   const commit = useCallback(
     (selection: Selection) => {
       if (committed.current) return;
@@ -167,6 +174,12 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
       if (e.key === "Escape") cancel();
       else if (e.key === " ") spaceHeld.current = e.type === "keydown";
       else if (e.key === "Enter" && e.type === "keydown" && !drag) commit({ kind: "full" });
+      else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.type === "keydown") {
+        // The same steps as the wheel: up outwards, down back in.
+        e.preventDefault();
+        const current = pickedRef.current;
+        if (current) setPick(widen(current, e.key === "ArrowUp" ? 1 : -1));
+      }
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
@@ -246,10 +259,17 @@ function OverlayView({ frame, init }: { frame: number; init: OverlayInit }) {
     else if (mode === "region" || !snapsToWindows) commit({ kind: "full" });
   };
 
-  // Up (away from you) steps outwards, to what holds the outlined part; down steps back in.
+  // Up (away from you) steps outwards, to what holds the outlined part; down steps back in. One step
+  // per notch of a wheel, one per swipe of a touchpad (see WheelSteps). By the hand's direction, not
+  // the content's: macOS's natural scrolling turns a swipe away from you into a scroll down, and WebKit
+  // says so on the event.
   const onWheel = (e: React.WheelEvent) => {
-    if (!picked || drag?.moved || e.deltaY === 0) return;
-    setPick(widen(picked, e.deltaY < 0 ? 1 : -1));
+    if (!picked || drag?.moved) return;
+    const inverted = (e.nativeEvent as WheelEvent & { webkitDirectionInvertedFromDevice?: boolean })
+      .webkitDirectionInvertedFromDevice;
+    const deltaY = inverted ? -e.deltaY : e.deltaY;
+    const step = wheelSteps.current.push(wheelPixels(deltaY, e.deltaMode, view.height), e.timeStamp);
+    if (step !== 0) setPick(widen(picked, step));
   };
 
   if (error) {
@@ -419,7 +439,7 @@ function Hint({
   canWiden: boolean;
   hidden: boolean;
 }) {
-  const widen = canWiden ? " · scroll to widen" : "";
+  const widen = canWiden ? " · scroll or ↑↓ to widen" : "";
   const text =
     mode === "window"
       ? hasWindows

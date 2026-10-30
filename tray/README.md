@@ -73,15 +73,18 @@ own the same way, so the two can differ. Opening a session, or **Mark all seen**
 fires, so open menus, hover states and tooltips are captured as they were. A loupe shows the exact pixel
 under the pointer.
 
-On Windows, hovering outlines the innermost part of the window under the pointer: a button, an image, a
-paragraph, a table cell. Scrolling up steps outwards through what holds it (the card, the panel, the
-page) out to the whole window, and scrolling down steps back in. Browsers (Chrome, Edge, Brave and the
-other Chromium ones) answer for every element of the page; they build that tree in the second after the
-hotkey, so a pointer that lands at once may see only the window until then. Electron apps (VS Code,
-Slack, Teams) are not asked to build it, since some take that for a screen reader starting (VS Code
-switches to screen-reader mode), so they show only what they already expose, often just the window.
-Packaged apps that draw their content with WebView2 inside WinUI (the WhatsApp app) only show the whole
-window. macOS and Linux snap to whole windows.
+On Windows and macOS, hovering outlines the innermost part of the window under the pointer: a button, an
+image, a paragraph, a table cell. Scrolling up steps outwards through what holds it (the card, the
+panel, the page) out to the whole window, and scrolling down steps back in: one step per notch of a
+mouse wheel, one per two-finger swipe on a touchpad (away from you outwards, whichever way the system
+scrolls). `↑` and `↓` step the same way. Browsers (Chrome,
+Edge, Brave and the other Chromium ones, and Safari) answer for every element of the page; Chromium
+builds that tree in the second after the hotkey, so a pointer that lands at once may see only the window
+until then. Electron apps (VS Code, Slack, Teams) are not asked to build it, since some take that for a
+screen reader starting (VS Code switches to screen-reader mode), so they show only what they already
+expose, often just the window. On Windows, packaged apps that draw their content with WebView2 inside
+WinUI (the WhatsApp app) only show the whole window. On macOS this takes the *Accessibility* permission
+(see [Platform notes](#platform-notes)); without it, and on Linux, the overlay snaps to whole windows.
 
 The **editor** opens with the message box focused. The quickest path is: capture, type, `Ctrl+Enter`
 (`⌘↵` on a Mac).
@@ -169,7 +172,11 @@ a server on this machine.
 ## Platform notes
 
 - **macOS** asks for *Screen Recording* permission on the first capture (System Settings → Privacy &
-  Security). Without it, captures show only the wallpaper. The app runs in the menu bar, with no Dock icon.
+  Security). Without it, captures show only the wallpaper. After the first region or window capture it
+  also asks for *Accessibility*, which outlining the parts of a window takes (if the outlines don't show
+  right after you allow it, Quit the app from its menu and open it again). Each update is a new build
+  to macOS: if captures come out blank or the outlines stop, turn Hangar Tray App off and on again under
+  each of those permissions. The app runs in the menu bar, with no Dock icon.
 - **Linux, X11**: everything works. The tray needs `libayatana-appindicator3`.
 - **Linux, Wayland**: apps can't register global hotkeys or list windows, so bind
   `Hangar.Tray --capture region` (or `window`, `fullscreen`, `freeform`) in your desktop's keyboard

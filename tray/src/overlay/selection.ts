@@ -60,6 +60,56 @@ export function widen(pick: Pick, by: number): Pick {
   return { ...pick, level: Math.min(pick.boxes.length - 1, Math.max(0, pick.level + by)) };
 }
 
+/**
+ * Wheel events as steps of the pick: one per notch of a mouse wheel, and one per swipe of a touchpad,
+ * however many events the swipe sends and however long its momentum runs on after the fingers lift.
+ *
+ * A touchpad sends a stream of small deltas a few milliseconds apart; summed past `threshold` they make
+ * a step, and after it the stream counts for nothing until it pauses for `quiet` ms — the momentum is
+ * part of the same stream. A wheel notch is one big delta on its own (100 CSS pixels in Chromium and
+ * WebKit), and one at least `notchGap` ms after the event before it steps again even mid-stream, so a
+ * wheel turned notch by notch still steps every notch.
+ */
+export class WheelSteps {
+  private sum = 0;
+  private last = -Infinity;
+  private spent = false;
+
+  constructor(
+    private readonly threshold = 40,
+    private readonly quiet = 180,
+    private readonly notchGap = 30,
+  ) {}
+
+  /** The step `deltaY` (CSS pixels) at time `now` (ms) makes: 1 outwards (the wheel turned away from
+   *  you: up), -1 inwards, 0 none. */
+  push(deltaY: number, now: number): number {
+    const gap = now - this.last;
+    this.last = now;
+    if (gap > this.quiet) {
+      this.sum = 0;
+      this.spent = false;
+    }
+    if (deltaY === 0) return 0;
+    const notch = Math.abs(deltaY) >= this.threshold && gap >= this.notchGap;
+    if (this.spent && !notch) return 0;
+    if (Math.sign(deltaY) !== Math.sign(this.sum)) this.sum = 0;
+    this.sum += deltaY;
+    if (Math.abs(this.sum) < this.threshold) return 0;
+    const step = this.sum < 0 ? 1 : -1;
+    this.sum = 0;
+    this.spent = true;
+    return step;
+  }
+}
+
+/** A wheel event's vertical delta in CSS pixels, whatever unit it came in. */
+export function wheelPixels(deltaY: number, deltaMode: number, pageHeight: number): number {
+  if (deltaMode === 1) return deltaY * 16; // lines
+  if (deltaMode === 2) return deltaY * pageHeight; // pages
+  return deltaY;
+}
+
 /** Append `p` to a traced path unless it is within `minDistance` of the last point — a lasso at mouse
  *  rate is thousands of points, nearly all of them redundant. */
 export function extendPath(path: Point[], p: Point, minDistance = 2): Point[] {

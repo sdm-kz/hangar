@@ -1,11 +1,16 @@
 //! What is under a point inside a window: the button, the paragraph, the panel holding them, out to
 //! the window itself — so the overlay can snap to a part of a window as it snaps to windows.
 //!
-//! Windows only, through MSAA (`IAccessible`), which every kind of app answers: Win32 and WPF ones
+//! On Windows through MSAA (`IAccessible`), which every kind of app answers: Win32 and WPF ones
 //! directly, browsers (Chrome, Edge, Firefox) and Electron apps for every element of the page, UWP and
 //! WinUI ones through the system's bridge from UI Automation. MSAA rather than UI Automation for one
 //! thing: it hit-tests inside a given window (`accHitTest`). UI Automation only finds the element at a
 //! point on screen, and while picking, the point on screen is our own overlay.
+//!
+//! On macOS through the Accessibility API (`AXUIElement`), asked of the window's app rather than of
+//! the screen — the app hit-tests its own windows, so our overlay on top doesn't get in the way. It
+//! takes the *Accessibility* permission; without it every window is just the window. Linux has none
+//! of this: windows only.
 //!
 //! Queries go to the window's app and back, so they run on a thread of their own, never the UI's.
 
@@ -19,32 +24,61 @@ pub struct Element {
     pub name: String,
 }
 
-/// The elements under screen point (`x`, `y`) of the top-level window `hwnd`, innermost first and
-/// ending at the outermost the window reports. Empty when the window answers nothing.
+/// The elements under screen point (`x`, `y`) of the top-level window `window` (an HWND) of process
+/// `pid`, innermost first and ending at the outermost the window reports. Empty when the window
+/// answers nothing. Windows asks by the window, macOS by the process; each ignores the other.
 #[cfg(windows)]
-pub fn chain_at(hwnd: isize, x: i32, y: i32) -> Vec<Element> {
-    imp::chain_at(hwnd, x, y)
+pub fn chain_at(window: isize, _pid: u32, x: i32, y: i32) -> Vec<Element> {
+    imp::chain_at(window, x, y)
 }
 
-#[cfg(not(windows))]
-pub fn chain_at(_hwnd: isize, _x: i32, _y: i32) -> Vec<Element> {
+#[cfg(target_os = "macos")]
+pub fn chain_at(_window: isize, pid: u32, x: i32, y: i32) -> Vec<Element> {
+    imp::chain_at(pid, x, y)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn chain_at(_window: isize, _pid: u32, _x: i32, _y: i32) -> Vec<Element> {
     Vec::new()
 }
 
 /// Get a browser window (Chrome, Edge and the other Chromium browsers) to build the tree of its page.
-/// Chromium answers MSAA with the bare window until a UI Automation client looks into the page — a
-/// search for its document does it — and takes about a second after that.
+/// Chromium answers with the bare window until it is told someone is reading its page, and takes
+/// about a second after that. On Windows a UI Automation search for the page's document tells it; on
+/// macOS, setting `AXManualAccessibility` on the app.
 ///
-/// Browsers only, told by their executable. Electron apps are Chromium too, but some take the same
-/// signal for a screen reader starting: VS Code switches its editor to screen-reader mode. Other apps
-/// answer as they are, and a search through a big app's tree would cost it for nothing.
+/// Browsers only, told by their executable (Windows) or their app name (macOS, `app`). Electron apps
+/// are Chromium too, but some take the same signal for a screen reader starting: VS Code switches its
+/// editor to screen-reader mode. Other apps answer as they are, and a search through a big app's tree
+/// would cost it for nothing.
 #[cfg(windows)]
-pub fn wake(hwnd: isize) {
-    imp::wake(hwnd)
+pub fn wake(window: isize, _pid: u32, _app: &str) {
+    imp::wake(window)
 }
 
-#[cfg(not(windows))]
-pub fn wake(_hwnd: isize) {}
+#[cfg(target_os = "macos")]
+pub fn wake(_window: isize, pid: u32, app: &str) {
+    imp::wake(pid, app)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn wake(_window: isize, _pid: u32, _app: &str) {}
+
+/// Whether this app may ask other apps what is in their windows. Only macOS asks the person first.
+pub fn has_access() -> bool {
+    #[cfg(target_os = "macos")]
+    return imp::trusted();
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+/// macOS: have the system ask the person for the *Accessibility* permission, which reading what is in
+/// other apps' windows takes. It shows its own dialog, pointing to System Settings. Elsewhere,
+/// nothing.
+pub fn ask_for_access() {
+    #[cfg(target_os = "macos")]
+    imp::ask_for_access();
+}
 
 /// Keep what is worth snapping to: inside the window, not a sliver, not a text run (the words inside
 /// a button or a paragraph — the button or paragraph is what anyone means), and each one around the
@@ -274,6 +308,275 @@ mod imp {
             0x10 => "pane".into(),
             // Not one worth a word: an element without a name then goes unlabelled.
             _ => String::new(),
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod imp {
+    use super::Element;
+    use crate::geometry::Rect;
+    use std::ffi::c_void;
+    use std::ptr::null;
+    use std::sync::Once;
+
+    type CFTypeRef = *const c_void;
+    type AXError = i32;
+    const AX_SUCCESS: AXError = 0;
+    const AX_VALUE_CG_POINT: u32 = 1;
+    const AX_VALUE_CG_SIZE: u32 = 2;
+    const UTF8: u32 = 0x0800_0100;
+
+    /// Deep enough for any real page; a cycle in a misbehaving app's tree stops here.
+    const MAX_DEPTH: usize = 128;
+    /// How long an app may take over each question. The default is six seconds, and a hung app
+    /// would hold the overlay's asking that long for every pointer move.
+    const TIMEOUT_SECONDS: f32 = 0.5;
+    /// Chromium browsers, by the name their app goes by — and its Canary, Beta and Dev builds.
+    const BROWSERS: &[&str] =
+        &["Google Chrome", "Microsoft Edge", "Brave Browser", "Vivaldi", "Opera", "Chromium", "Arc", "Thorium"];
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct CGSize {
+        width: f64,
+        height: f64,
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        static kAXTrustedCheckOptionPrompt: CFTypeRef;
+        fn AXIsProcessTrusted() -> u8;
+        fn AXIsProcessTrustedWithOptions(options: CFTypeRef) -> u8;
+        fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
+        fn AXUIElementCreateSystemWide() -> CFTypeRef;
+        fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> AXError;
+        fn AXUIElementCopyElementAtPosition(app: CFTypeRef, x: f32, y: f32, element: *mut CFTypeRef) -> AXError;
+        fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> AXError;
+        fn AXUIElementSetAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: CFTypeRef) -> AXError;
+        fn AXValueGetValue(value: CFTypeRef, kind: u32, out: *mut c_void) -> u8;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        static kCFBooleanTrue: CFTypeRef;
+        static kCFTypeDictionaryKeyCallBacks: c_void;
+        static kCFTypeDictionaryValueCallBacks: c_void;
+        fn CFRelease(cf: CFTypeRef);
+        fn CFGetTypeID(cf: CFTypeRef) -> usize;
+        fn CFStringGetTypeID() -> usize;
+        fn CFStringCreateWithBytes(alloc: CFTypeRef, bytes: *const u8, len: isize, encoding: u32, external: u8) -> CFTypeRef;
+        fn CFStringGetLength(s: CFTypeRef) -> isize;
+        fn CFStringGetMaximumSizeForEncoding(len: isize, encoding: u32) -> isize;
+        fn CFStringGetCString(s: CFTypeRef, buf: *mut u8, size: isize, encoding: u32) -> u8;
+        fn CFDictionaryCreate(
+            alloc: CFTypeRef,
+            keys: *const CFTypeRef,
+            values: *const CFTypeRef,
+            count: isize,
+            key_callbacks: *const c_void,
+            value_callbacks: *const c_void,
+        ) -> CFTypeRef;
+    }
+
+    /// A Core Foundation object this code holds a reference to, released when dropped.
+    struct Owned(CFTypeRef);
+
+    impl Owned {
+        fn new(cf: CFTypeRef) -> Option<Self> {
+            (!cf.is_null()).then_some(Self(cf))
+        }
+    }
+
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            unsafe { CFRelease(self.0) }
+        }
+    }
+
+    fn cf_string(s: &str) -> Owned {
+        // Only ever called with attribute names, which always convert.
+        Owned::new(unsafe { CFStringCreateWithBytes(null(), s.as_ptr(), s.len() as isize, UTF8, 0) })
+            .expect("an attribute name converts to a CFString")
+    }
+
+    fn to_string(cf: CFTypeRef) -> Option<String> {
+        unsafe {
+            if CFGetTypeID(cf) != CFStringGetTypeID() {
+                return None;
+            }
+            let size = CFStringGetMaximumSizeForEncoding(CFStringGetLength(cf), UTF8) + 1;
+            let mut buf = vec![0u8; size.max(1) as usize];
+            if CFStringGetCString(cf, buf.as_mut_ptr(), buf.len() as isize, UTF8) == 0 {
+                return None;
+            }
+            let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            Some(String::from_utf8_lossy(&buf[..end]).into_owned())
+        }
+    }
+
+    /// The attribute names, made once per question rather than once per element asked.
+    struct Names {
+        parent: Owned,
+        role: Owned,
+        title: Owned,
+        description: Owned,
+        position: Owned,
+        size: Owned,
+    }
+
+    impl Names {
+        fn new() -> Self {
+            Self {
+                parent: cf_string("AXParent"),
+                role: cf_string("AXRole"),
+                title: cf_string("AXTitle"),
+                description: cf_string("AXDescription"),
+                position: cf_string("AXPosition"),
+                size: cf_string("AXSize"),
+            }
+        }
+    }
+
+    fn attribute(element: &Owned, name: &Owned) -> Option<Owned> {
+        let mut value: CFTypeRef = null();
+        let err = unsafe { AXUIElementCopyAttributeValue(element.0, name.0, &mut value) };
+        if err != AX_SUCCESS {
+            return None;
+        }
+        Owned::new(value)
+    }
+
+    fn string_attribute(element: &Owned, name: &Owned) -> Option<String> {
+        attribute(element, name).and_then(|v| to_string(v.0)).filter(|s| !s.trim().is_empty())
+    }
+
+    pub fn trusted() -> bool {
+        unsafe { AXIsProcessTrusted() != 0 }
+    }
+
+    pub fn ask_for_access() {
+        unsafe {
+            let keys = [kAXTrustedCheckOptionPrompt];
+            let values = [kCFBooleanTrue];
+            let Some(options) = Owned::new(CFDictionaryCreate(
+                null(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                1,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            )) else {
+                return;
+            };
+            AXIsProcessTrustedWithOptions(options.0);
+        }
+    }
+
+    /// The timeout for every question this process asks, set on the system-wide element (which is
+    /// what sets it for all of them).
+    fn limit_waiting() {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| unsafe {
+            if let Some(system) = Owned::new(AXUIElementCreateSystemWide()) {
+                AXUIElementSetMessagingTimeout(system.0, TIMEOUT_SECONDS);
+            }
+        });
+    }
+
+    pub fn chain_at(pid: u32, x: i32, y: i32) -> Vec<Element> {
+        if pid == 0 || !trusted() {
+            return Vec::new();
+        }
+        limit_waiting();
+        let Some(app) = Owned::new(unsafe { AXUIElementCreateApplication(pid as i32) }) else { return Vec::new() };
+        let mut hit: CFTypeRef = null();
+        // The point's centre, as the overlay's frame pixel covers it.
+        let err = unsafe { AXUIElementCopyElementAtPosition(app.0, x as f32 + 0.5, y as f32 + 0.5, &mut hit) };
+        let Some(mut node) = Owned::new(hit).filter(|_| err == AX_SUCCESS) else { return Vec::new() };
+        let names = Names::new();
+        let mut chain = Vec::new();
+        for _ in 0..MAX_DEPTH {
+            let role = string_attribute(&node, &names.role).unwrap_or_default();
+            if role == "AXApplication" {
+                break;
+            }
+            if let Some(e) = describe(&node, &role, &names) {
+                chain.push(e);
+            }
+            let Some(parent) = attribute(&node, &names.parent) else { break };
+            node = parent;
+        }
+        chain
+    }
+
+    fn describe(element: &Owned, role: &str, names: &Names) -> Option<Element> {
+        let mut at = CGPoint::default();
+        let mut size = CGSize::default();
+        let position = attribute(element, &names.position)?;
+        let extent = attribute(element, &names.size)?;
+        unsafe {
+            if AXValueGetValue(position.0, AX_VALUE_CG_POINT, &mut at as *mut CGPoint as *mut c_void) == 0
+                || AXValueGetValue(extent.0, AX_VALUE_CG_SIZE, &mut size as *mut CGSize as *mut c_void) == 0
+            {
+                return None;
+            }
+        }
+        if !(size.width >= 1.0 && size.height >= 1.0) {
+            return None;
+        }
+        // Outer edges outwards, so the box keeps the pixels its edge runs through.
+        let (x0, y0) = (at.x.floor(), at.y.floor());
+        let rect = Rect::new(
+            x0 as i32,
+            y0 as i32,
+            ((at.x + size.width).ceil() - x0) as u32,
+            ((at.y + size.height).ceil() - y0) as u32,
+        );
+        let name = string_attribute(element, &names.title)
+            .or_else(|| string_attribute(element, &names.description))
+            .unwrap_or_default();
+        Some(Element { rect, role: role_name(role).into(), name })
+    }
+
+    pub fn wake(pid: u32, app: &str) {
+        if pid == 0 || !BROWSERS.iter().any(|b| app.starts_with(b)) || !trusted() {
+            return;
+        }
+        limit_waiting();
+        let Some(element) = Owned::new(unsafe { AXUIElementCreateApplication(pid as i32) }) else { return };
+        let attribute = cf_string("AXManualAccessibility");
+        unsafe { AXUIElementSetAttributeValue(element.0, attribute.0, kCFBooleanTrue) };
+    }
+
+    /// The roles `tidy` and the overlay's label go by, in the words the Windows side uses.
+    fn role_name(role: &str) -> &'static str {
+        match role {
+            "AXStaticText" => "text",
+            "AXButton" | "AXPopUpButton" | "AXMenuButton" | "AXCheckBox" | "AXRadioButton" => "button",
+            "AXLink" => "link",
+            "AXImage" => "graphic",
+            "AXTextField" | "AXTextArea" | "AXComboBox" => "edit",
+            "AXWebArea" => "document",
+            "AXGroup" => "grouping",
+            "AXWindow" => "window",
+            "AXList" | "AXOutline" => "list",
+            "AXRow" => "row",
+            "AXCell" => "cell",
+            "AXTable" => "table",
+            "AXScrollArea" | "AXSplitGroup" => "pane",
+            "AXToolbar" => "toolbar",
+            "AXHeading" => "heading",
+            "AXTabGroup" => "tabs",
+            // Not one worth a word: an element without a name then goes unlabelled.
+            _ => "",
         }
     }
 }

@@ -230,6 +230,29 @@ fn finish(app: &AppHandle, snapshot: &Snapshot, index: usize, selection: &Select
     // Before the next capture may start: it could be another editor's, and set `adding_to` to that.
     return_to_editor(app);
     state(app).capturing.store(false, Ordering::SeqCst);
+    ask_for_element_access(app, snapshot.mode);
+}
+
+/// macOS: after a capture that could have outlined the parts of windows, have the system ask for the
+/// *Accessibility* permission that takes (see `elements`), unless the app has it. After the capture,
+/// not during it: the system's dialog would come up under the overlays and take their keys. And once
+/// per build of the app, not every capture, so a no is not asked again until the next update — which
+/// macOS takes for a new app to permit anyway, the build being signed ad hoc.
+fn ask_for_element_access(app: &AppHandle, mode: Mode) {
+    if !cfg!(target_os = "macos") || !matches!(mode, Mode::Region | Mode::Window) || elements::has_access() {
+        return;
+    }
+    let build = std::env::current_exe()
+        .and_then(std::fs::metadata)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_default();
+    if state(app).store.first_for("asked-accessibility", &build) {
+        log::info!("Asking for the Accessibility permission, to outline the parts of windows");
+        elements::ask_for_access();
+    }
 }
 
 /// Show again the editor a capture was being added to, now that it is over. Nothing when the capture
@@ -345,12 +368,12 @@ fn prewarm(app: &AppHandle) {
 /// End the capture in progress without a picture — unless someone else already ended it.
 fn cancel_capture(app: &AppHandle) {
     let st = state(app);
-    if st.snapshot.lock().unwrap().take().is_none() {
-        return;
-    }
+    // The mode only: the frames go now, not at the end.
+    let Some(mode) = st.snapshot.lock().unwrap().take().map(|s| s.mode) else { return };
     windows::hide_overlays(app);
     return_to_editor(app);
     st.capturing.store(false, Ordering::SeqCst);
+    ask_for_element_access(app, mode);
 }
 
 // ---- Overlay commands -----------------------------------------------------------------------------

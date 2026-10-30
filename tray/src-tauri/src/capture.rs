@@ -75,6 +75,9 @@ pub struct WindowBox {
     /// The OS's handle for it (an HWND on Windows), for asking it what is inside.
     #[serde(skip)]
     pub id: u32,
+    /// The process it belongs to: what macOS asks what is inside.
+    #[serde(skip)]
+    pub pid: u32,
     /// Where it is in the OS's units, whole, for placing what it reports on the frame.
     #[serde(skip)]
     pub screen: Rect,
@@ -123,7 +126,7 @@ pub fn windows_per_frame(frames: &[Frame], windows: &[RawWindow], own_pid: u32) 
                 .filter(|w| w.rect.width >= MIN_WINDOW_SIDE && w.rect.height >= MIN_WINDOW_SIDE)
                 .filter_map(|w| {
                     let rect = window_on_frame(&w.rect, &f.monitor, f.image.width(), f.image.height())?;
-                    Some(WindowBox { title: w.title.clone(), app: w.app.clone(), rect, id: w.id, screen: w.rect })
+                    Some(WindowBox { title: w.title.clone(), app: w.app.clone(), rect, id: w.id, pid: w.pid, screen: w.rect })
                 })
                 .collect()
         })
@@ -191,15 +194,21 @@ fn list_windows() -> Vec<RawWindow> {
 /// Have the windows on screen get ready to say what is in them, while the overlays come up: a browser
 /// takes a second to build the tree of its page the first time it is asked (see `elements::wake`).
 fn wake(placed: &[Vec<WindowBox>]) {
-    if !cfg!(windows) {
+    if !cfg!(any(windows, target_os = "macos")) {
         return;
     }
-    let mut targets: Vec<isize> = placed.iter().flatten().filter(|w| w.id != 0).map(|w| w.id as isize).collect();
+    // Per window on Windows; macOS wakes a whole app at once, so once per app there.
+    let mut targets: Vec<(isize, u32, String)> = placed
+        .iter()
+        .flatten()
+        .filter(|w| w.id != 0)
+        .map(|w| (if cfg!(windows) { w.id as isize } else { 0 }, w.pid, w.app.clone()))
+        .collect();
     targets.sort_unstable();
     targets.dedup();
     std::thread::spawn(move || {
-        for hwnd in targets {
-            elements::wake(hwnd);
+        for (window, pid, app) in targets {
+            elements::wake(window, pid, &app);
         }
     });
 }
@@ -217,7 +226,7 @@ pub fn elements_at(snapshot: &Snapshot, index: usize, x: f64, y: f64) -> Vec<Ele
     }
     let (sx, sy) = frame_scale(&frame.monitor, frame.image.width(), frame.image.height());
     let at = (frame.monitor.x + (x / sx).floor() as i32, frame.monitor.y + (y / sy).floor() as i32);
-    let chain = elements::chain_at(window.id as isize, at.0, at.1);
+    let chain = elements::chain_at(window.id as isize, window.pid, at.0, at.1);
     place_elements(chain, window, frame)
 }
 
@@ -358,6 +367,7 @@ mod tests {
             app: "chrome".into(),
             rect: Rect::new(80, 0, 1000, 700),
             id: 1,
+            pid: 7,
             screen: Rect::new(2000, -100, 1000, 800),
         };
         let chain = vec![

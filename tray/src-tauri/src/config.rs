@@ -100,6 +100,20 @@ impl Store {
         write_json(&self.dir.join("recents.json"), &recents)?;
         Ok(recents)
     }
+
+    /// True the first time it is asked about `what` for `key`, and false after that until the key
+    /// changes: for something to do once per build, say. Kept as a file named `what` holding the key.
+    pub fn first_for(&self, what: &str, key: &str) -> bool {
+        let path = self.dir.join(what);
+        if fs::read_to_string(&path).is_ok_and(|k| k == key) {
+            return false;
+        }
+        let _ = fs::create_dir_all(&self.dir);
+        if let Err(e) = fs::write(&path, key) {
+            log::warn!("Could not write {}: {e}", path.display());
+        }
+        true
+    }
 }
 
 /// `recents` with `session_id` moved to the front, stamped `now`. An entry for the same conversation

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { extendPath, nextPick, polygonArea, rectBetween, toFrameRect, widen, windowAt } from "./selection";
+import {
+  extendPath,
+  nextPick,
+  polygonArea,
+  rectBetween,
+  toFrameRect,
+  WheelSteps,
+  wheelPixels,
+  widen,
+  windowAt,
+} from "./selection";
 
 describe("rectBetween", () => {
   it("normalises a drag in any direction", () => {
@@ -88,5 +98,44 @@ describe("element picking", () => {
 
   it("has nothing to pick off every window", () => {
     expect(nextPick(null, [])).toBeNull();
+  });
+});
+
+describe("WheelSteps", () => {
+  /** The steps a run of [deltaY, ms since the last event] makes. */
+  function run(events: [number, number][]): number[] {
+    const steps = new WheelSteps();
+    let now = 1000;
+    return events.map(([delta, gap]) => steps.push(delta, (now += gap))).filter((s) => s !== 0);
+  }
+
+  it("steps once per mouse-wheel notch, up outwards and down inwards", () => {
+    expect(run([[-100, 0], [-100, 60], [-100, 60]])).toEqual([1, 1, 1]);
+    expect(run([[100, 0], [100, 400]])).toEqual([-1, -1]);
+  });
+
+  it("steps once per touchpad swipe, momentum and all", () => {
+    // Fingers on: small deltas every 8 ms, some of them big in a fast swipe; then the momentum.
+    const swipe: [number, number][] = [
+      ...Array.from({ length: 12 }, (): [number, number] => [-6, 8]),
+      [-55, 8],
+      [-70, 8],
+      ...Array.from({ length: 60 }, (_, i): [number, number] => [-Math.max(1, 40 - i), 16]),
+    ];
+    expect(run(swipe)).toEqual([1]);
+    // A pause, and the next swipe is a step of its own.
+    expect(run([...swipe, [-6, 400], ...swipe.slice(1)])).toEqual([1, 1]);
+  });
+
+  it("needs a swipe to go somewhere before it steps", () => {
+    expect(run([[-3, 0], [-3, 8], [-3, 8]])).toEqual([]);
+    // Back and forth: the sum starts over each way.
+    expect(run([[-30, 0], [30, 8], [-30, 8]])).toEqual([]);
+  });
+
+  it("reads lines and pages as pixels", () => {
+    expect(wheelPixels(-3, 1, 800)).toBe(-48);
+    expect(wheelPixels(1, 2, 800)).toBe(800);
+    expect(wheelPixels(-100, 0, 800)).toBe(-100);
   });
 });

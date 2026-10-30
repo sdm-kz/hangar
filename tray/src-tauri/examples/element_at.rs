@@ -1,6 +1,8 @@
 //! Prints the elements under a screen point, innermost first: `cargo run --example element_at -- X Y`.
-//! `--wake` first asks the window for its UI Automation tree and gives it two seconds (Chromium windows only); `--list` prints
-//! the windows on screen. For trying the element snapping against a real app without the overlay.
+//! `--wake` first asks the window for its tree and gives it two seconds (Chromium browsers only); `--list` prints
+//! the windows on screen (Windows). For trying the element snapping against a real app without the overlay.
+//! On macOS the point is in points from the main screen's top-left, and the terminal it runs from needs the
+//! Accessibility permission.
 
 fn main() {
     #[cfg(windows)]
@@ -46,17 +48,49 @@ fn main() {
         };
         if flags.iter().any(|f| f == "--wake") {
             let t = std::time::Instant::now();
-            hangar_tray_lib::elements::wake(top.0 as isize);
+            hangar_tray_lib::elements::wake(top.0 as isize, 0, "");
             println!("woke in {:?}", t.elapsed());
         }
         for round in 0..4 {
             let t = std::time::Instant::now();
-            let chain = hangar_tray_lib::elements::chain_at(top.0 as isize, x, y);
+            let chain = hangar_tray_lib::elements::chain_at(top.0 as isize, 0, x, y);
             println!("after {}ms: {} elements in {:?}", round * 500, chain.len(), t.elapsed());
             for e in chain.iter().take(6) {
                 println!("  {:>9} {:?}  {}", e.role, e.rect, e.name.chars().take(50).collect::<String>());
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let all: Vec<String> = std::env::args().skip(1).collect();
+        let args: Vec<i32> = all.iter().filter(|a| !a.starts_with("--")).filter_map(|a| a.parse().ok()).collect();
+        let [x, y] = args[..] else {
+            eprintln!("usage: element_at [--wake] X Y");
+            return;
+        };
+        println!("Accessibility permission: {}", hangar_tray_lib::elements::has_access());
+        let own = std::process::id();
+        let windows = xcap::Window::all().unwrap_or_default();
+        let Some(window) = windows.iter().find(|w| {
+            let (Ok(wx), Ok(wy), Ok(ww), Ok(wh)) = (w.x(), w.y(), w.width(), w.height()) else { return false };
+            w.pid().is_ok_and(|p| p != own) && x >= wx && y >= wy && x < wx + ww as i32 && y < wy + wh as i32
+        }) else {
+            eprintln!("no window at {x},{y}");
+            return;
+        };
+        let (pid, app) = (window.pid().unwrap_or(0), window.app_name().unwrap_or_default());
+        println!("{app} (pid {pid}): {}", window.title().unwrap_or_default());
+        if all.iter().any(|a| a == "--wake") {
+            hangar_tray_lib::elements::wake(0, pid, &app);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        let t = std::time::Instant::now();
+        let chain = hangar_tray_lib::elements::chain_at(0, pid, x, y);
+        println!("{} elements in {:?}", chain.len(), t.elapsed());
+        for e in &chain {
+            println!("  {:>9} {:?}  {}", e.role, e.rect, e.name.chars().take(50).collect::<String>());
         }
     }
 }
