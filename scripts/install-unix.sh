@@ -26,6 +26,7 @@ systemd_unit=hangar.service
 launchd_label=com.hangar.server
 # The tray app on macOS (build.sh); elsewhere it is the Hangar.Tray executable alone.
 tray_app="Hangar Tray App.app"
+tray_bundle_id=io.github.sdm-kz.hangar.tray # tray/src-tauri/tauri.conf.json's identifier
 
 case "$(uname -s)" in
   Linux) platform=linux ;;
@@ -164,12 +165,19 @@ EOF
   fi
 else
   xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+  # The daemon is a bare executable, which Login Items lists by its file name with the blank "exec"
+  # icon. With the tray app installed, the job is filed under that app instead: its name and icon.
+  associated=
+  if [ -d "$target/$tray_app" ]; then
+    associated="<key>AssociatedBundleIdentifiers</key><array><string>$tray_bundle_id</string></array>"
+  fi
   cat > "$unit" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$launchd_label</string>
+  $associated
   <key>ProgramArguments</key><array><string>$(xml "$target/Hangar")</string></array>
   <key>WorkingDirectory</key><string>$(xml "$target")</string>
   <key>EnvironmentVariables</key>
