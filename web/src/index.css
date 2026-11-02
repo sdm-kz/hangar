@@ -268,10 +268,10 @@
     height: var(--app-height, 100%);
   }
   #root {
-    /* Added to an iPhone's Home Screen the app runs full-screen (viewport-fit=cover with a
-       black-translucent status bar), so the page starts under the clock and ends under the home
-       indicator. Keep the app inside the safe area; the body's background fills the edges. On the
-       desktop every inset is 0, so nothing moves there. */
+    /* viewport-fit=cover lets the page run under the home indicator, and sideways under the notch.
+       Keep the app inside the safe area; the body's background fills the edges. The status bar
+       is opaque (see index.html), so the top inset is normally 0 and this is a backstop for it.
+       On the desktop every inset is 0, so nothing moves there. */
     box-sizing: border-box;
     padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
       env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);

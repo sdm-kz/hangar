@@ -15,7 +15,11 @@
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="theme-color" content="#0B1020" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- default, not black-translucent: with a see-through bar iOS 26 draws the clock over the page
+         but can still report env(safe-area-inset-top) as 0 (WebKit 301994), burying the header.
+         An opaque bar starts the page below it, and iOS colours it from the page's background.
+         iOS reads this only when the app is added, so an installed copy must be re-added. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Hangar" />
     <script>
       // Apply saved theme before render to avoid a flash. Default: light.
