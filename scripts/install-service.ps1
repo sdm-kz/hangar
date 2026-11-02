@@ -100,32 +100,77 @@ if ($serviceSid -ne $currentSid) {
   Write-Warning "The service runs as $UserName, not as the account running this prompt; make sure it can read '$InstallPath'."
 }
 
-# --- grant SeServiceLogonRight to the account (via secedit) ---
-function Grant-ServiceLogonRight([string]$account) {
-  $sid = Get-AccountSid $account
-  $tmp = Join-Path $env:TEMP "hangar-secpol-$PID"
-  $inf = "$tmp.inf"; $db = "$tmp.sdb"
-  try {
-    secedit /export /cfg $inf /areas USER_RIGHTS | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "secedit /export failed (exit $LASTEXITCODE)." }
-    $content = Get-Content $inf
-    $line = $content | Where-Object { $_ -match "^SeServiceLogonRight" }
-    if ($line) {
-      if ($line -notmatch [regex]::Escape($sid)) {
-        $content = $content -replace "^SeServiceLogonRight.*", "$line,*$sid"
-      } else {
-        Write-Host "Account already has 'Log on as a service'."; return
-      }
-    } else {
-      $content += "SeServiceLogonRight = *$sid"
-    }
-    $content | Set-Content $inf
-    secedit /configure /db $db /cfg $inf /areas USER_RIGHTS | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "secedit /configure failed (exit $LASTEXITCODE)." }
-    Write-Host "Granted 'Log on as a service' to $account."
-  } finally {
-    Remove-Item $inf, $db -ErrorAction SilentlyContinue
+# --- grant SeServiceLogonRight to the account ---
+# Through the LSA, one right to one account. Not secedit: /configure re-applies the whole user-rights
+# section from the exported template, and that template names some accounts by their localized name
+# (on a Russian Windows, Cyrillic ones) -- a round trip through it can drop those accounts' rights.
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class HangarLsa {
+  [StructLayout(LayoutKind.Sequential)]
+  struct LSA_UNICODE_STRING { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct LSA_OBJECT_ATTRIBUTES {
+    public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes;
+    public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService;
   }
+  [DllImport("advapi32.dll")] static extern uint LsaOpenPolicy(IntPtr system, ref LSA_OBJECT_ATTRIBUTES attrs, uint access, out IntPtr policy);
+  [DllImport("advapi32.dll")] static extern uint LsaAddAccountRights(IntPtr policy, byte[] sid, LSA_UNICODE_STRING[] rights, uint count);
+  [DllImport("advapi32.dll")] static extern uint LsaEnumerateAccountRights(IntPtr policy, byte[] sid, out IntPtr rights, out uint count);
+  [DllImport("advapi32.dll")] static extern uint LsaFreeMemory(IntPtr buffer);
+  [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr policy);
+  [DllImport("advapi32.dll")] static extern int LsaNtStatusToWinError(uint status);
+  const uint POLICY_CREATE_ACCOUNT = 0x10, POLICY_LOOKUP_NAMES = 0x800;
+  const uint STATUS_OBJECT_NAME_NOT_FOUND = 0xC0000034;
+
+  static IntPtr Open() {
+    var attrs = new LSA_OBJECT_ATTRIBUTES();
+    attrs.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES));
+    IntPtr policy;
+    Check(LsaOpenPolicy(IntPtr.Zero, ref attrs, POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES, out policy), "LsaOpenPolicy");
+    return policy;
+  }
+  static void Check(uint status, string what) {
+    if (status != 0) throw new System.ComponentModel.Win32Exception(LsaNtStatusToWinError(status), what + " failed");
+  }
+
+  public static bool Has(byte[] sid, string right) {
+    IntPtr policy = Open();
+    try {
+      IntPtr buffer; uint count;
+      uint status = LsaEnumerateAccountRights(policy, sid, out buffer, out count);
+      if (status == STATUS_OBJECT_NAME_NOT_FOUND) return false; // no rights at all
+      Check(status, "LsaEnumerateAccountRights");
+      try {
+        int size = Marshal.SizeOf(typeof(LSA_UNICODE_STRING));
+        for (int i = 0; i < count; i++) {
+          var s = (LSA_UNICODE_STRING)Marshal.PtrToStructure(new IntPtr(buffer.ToInt64() + i * size), typeof(LSA_UNICODE_STRING));
+          if (Marshal.PtrToStringUni(s.Buffer, s.Length / 2) == right) return true;
+        }
+        return false;
+      } finally { LsaFreeMemory(buffer); }
+    } finally { LsaClose(policy); }
+  }
+
+  public static void Add(byte[] sid, string right) {
+    IntPtr policy = Open();
+    var s = new LSA_UNICODE_STRING();
+    s.Buffer = Marshal.StringToHGlobalUni(right);
+    s.Length = (ushort)(right.Length * 2);
+    s.MaximumLength = (ushort)(s.Length + 2);
+    try { Check(LsaAddAccountRights(policy, sid, new[] { s }, 1), "LsaAddAccountRights"); }
+    finally { Marshal.FreeHGlobal(s.Buffer); LsaClose(policy); }
+  }
+}
+"@
+function Grant-ServiceLogonRight([string]$account) {
+  $sid = New-Object System.Security.Principal.SecurityIdentifier (Get-AccountSid $account)
+  $bytes = New-Object byte[] $sid.BinaryLength
+  $sid.GetBinaryForm($bytes, 0)
+  if ([HangarLsa]::Has($bytes, "SeServiceLogonRight")) { Write-Host "Account already has 'Log on as a service'."; return }
+  [HangarLsa]::Add($bytes, "SeServiceLogonRight")
+  Write-Host "Granted 'Log on as a service' to $account."
 }
 Grant-ServiceLogonRight $UserName
 
