@@ -14,7 +14,7 @@ import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { readUrlState, patchUrlState, SSH_SHELLS } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
 import { forkDescendants } from "@/lib/sessionTree";
-import { failureLine, useDoneSessions, type ActivityDetail, type ActivityIds } from "@/lib/sessionActivity";
+import { countsInTotals, failureLine, useDoneSessions, type ActivityDetail, type ActivityIds } from "@/lib/sessionActivity";
 import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
 import { projectForDir } from "@/lib/projects";
@@ -484,9 +484,12 @@ export function App() {
   // the per-session sidebar dot — because it's the one asking for you to come back.
   // Compacting counts as busy here: a manual /compact runs from an idle prompt, so the hook-derived
   // busy set is empty throughout and the tab would otherwise claim nothing is happening.
+  // A session whose activity is paused is left out, as the headings leave it out (countsInTotals).
   useEffect(() => {
+    const counted = new Set(everywhere.sessions.filter(countsInTotals).map((s) => s.id));
+    const any = (ids: Set<string>) => [...ids].some((id) => counted.has(id));
     const { waiting, busy, compacting } = everywhere;
-    setFaviconStatus(waiting.size > 0 ? "waiting" : busy.size > 0 || compacting.size > 0 ? "busy" : "idle");
+    setFaviconStatus(any(waiting) ? "waiting" : any(busy) || any(compacting) ? "busy" : "idle");
   }, [everywhere]);
 
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes

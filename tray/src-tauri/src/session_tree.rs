@@ -37,11 +37,21 @@ pub struct HubSession {
     /// The watchdog's view of it: `healthy`, `recovering` or `attention`.
     #[serde(default)]
     pub watchdog_status: Option<String>,
+    /// Its activity is paused: left out of the Activity menu, as the web app leaves it out of its
+    /// headings and totals. Absent from a server on an older build.
+    #[serde(default)]
+    pub activity_paused: bool,
 }
 
 impl HubSession {
     pub fn running(&self) -> bool {
         self.state.eq_ignore_ascii_case("running")
+    }
+
+    /// Whether it counts in the Activity menu: running, and its activity not paused. A paused session
+    /// works on a clock — a chat checked every few minutes — and none of its runs is news.
+    pub fn counts_in_activity(&self) -> bool {
+        self.running() && !self.activity_paused
     }
 }
 
@@ -305,6 +315,7 @@ mod tests {
             group_id: None,
             project_id: None,
             watchdog_status: None,
+            activity_paused: false,
         }
     }
 

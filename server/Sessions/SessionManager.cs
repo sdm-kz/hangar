@@ -64,6 +64,7 @@ public sealed class SessionManager : IDisposable
     private readonly HookEventStore _hooks;
     private readonly RecentsStore _recents;
     private readonly PinStore _pins;
+    private readonly ActivityPauseStore _activityPaused;
     private readonly ProjectStore _projects;
     private readonly SessionUiStore _sessionUi;
     // The launch preset each live session came from, so the Claude conversation id can be stamped back
@@ -112,7 +113,7 @@ public sealed class SessionManager : IDisposable
 
     public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, Pty.PtyHostOptions ptyHost,
         TokenStore tokens, HookEventStore hooks, RecentsStore recents, PinStore pins,
-        ProjectStore projects, SessionUiStore sessionUi, ILoggerFactory loggerFactory)
+        ActivityPauseStore activityPaused, ProjectStore projects, SessionUiStore sessionUi, ILoggerFactory loggerFactory)
     {
         _options = options;
         _watchdog = watchdog;
@@ -122,6 +123,7 @@ public sealed class SessionManager : IDisposable
         _hooks = hooks;
         _recents = recents;
         _pins = pins;
+        _activityPaused = activityPaused;
         _projects = projects;
         _sessionUi = sessionUi;
         _hooks.ClaudeSessionIdCaptured += OnClaudeSessionIdCaptured;
@@ -147,6 +149,7 @@ public sealed class SessionManager : IDisposable
             .Select(s => s.ToInfo(ConversationId(s)) with
             {
                 Pinned = IsPinned(ConversationId(s), s.Id),
+                ActivityPaused = IsActivityPaused(ConversationId(s), s.Id),
                 UiRev = UiRev(ConversationId(s), s.Id),
                 GroupId = GroupIdOf(ConversationId(s), s.Id),
                 ScheduleId = ScheduleOf(ConversationId(s), s.Id)?.Id,
@@ -155,6 +158,7 @@ public sealed class SessionManager : IDisposable
             .Concat(_restorable.Values.Select(p => ClaudeSession.RestorableInfo(p) with
             {
                 Pinned = IsPinned(p.ClaudeSessionId, p.Id),
+                ActivityPaused = IsActivityPaused(p.ClaudeSessionId, p.Id),
                 UiRev = UiRev(p.ClaudeSessionId, p.Id),
                 GroupId = GroupIdOf(p.ClaudeSessionId, p.Id),
                 ScheduleId = ScheduleOf(p.ClaudeSessionId, p.Id)?.Id,
@@ -223,6 +227,10 @@ public sealed class SessionManager : IDisposable
     /// </summary>
     private bool IsPinned(string? conversationId, string sessionId) =>
         _pins.IsPinned(conversationId) || _pins.IsPinned(PinStore.SessionKey(sessionId));
+
+    /// <summary>Whether a session's activity is paused, keyed as a pin is. See <see cref="ActivityPauseStore"/>.</summary>
+    private bool IsActivityPaused(string? conversationId, string sessionId) =>
+        _activityPaused.Has(conversationId) || _activityPaused.Has(ActivityPauseStore.SessionKey(sessionId));
 
     /// <summary>
     /// The virtual folder a session has been filed into, under whichever key holds the membership —
@@ -623,19 +631,28 @@ public sealed class SessionManager : IDisposable
     /// new session id) and reaches every browser through the session list. Returns false when there
     /// is no such session.
     /// </summary>
-    public bool SetPinned(string id, bool pinned)
+    public bool SetPinned(string id, bool pinned) => SetFlag(_pins, id, pinned);
+
+    /// <summary>
+    /// Pause or resume a session's activity — whether it counts in the marks and totals above it (see
+    /// <see cref="ActivityPauseStore"/>). Keyed by conversation, as a pin is. Returns false when there
+    /// is no such session.
+    /// </summary>
+    public bool SetActivityPaused(string id, bool paused) => SetFlag(_activityPaused, id, paused);
+
+    private bool SetFlag(ConversationFlagStore store, string id, bool on)
     {
         string? key = null;
         if (_sessions.TryGetValue(id, out var live)) key = ConversationId(live);
         else if (_restorable.TryGetValue(id, out var p)) key = p.ClaudeSessionId;
         else if (!_sessions.ContainsKey(id)) return false;
 
-        // No conversation id yet (a session in its first seconds): pin under the fallback key, which
+        // No conversation id yet (a session in its first seconds): set it under the fallback key, which
         // OnClaudeSessionIdCaptured swaps for the real one as soon as the first hook arrives.
-        if (_pins.Set(key ?? PinStore.SessionKey(id), pinned)) RaiseChanged();
-        // Unpinning has to clear both keys — a pin set before the id arrived may still sit under the
+        if (store.Set(key ?? ConversationFlagStore.SessionKey(id), on)) RaiseChanged();
+        // Clearing has to clear both keys — a mark set before the id arrived may still sit under the
         // fallback if the session never reported one.
-        if (!pinned && key is not null && _pins.Set(PinStore.SessionKey(id), false)) RaiseChanged();
+        if (!on && key is not null && store.Set(ConversationFlagStore.SessionKey(id), false)) RaiseChanged();
         return true;
     }
 
@@ -1398,6 +1415,7 @@ public sealed class SessionManager : IDisposable
             // A pin set before this id existed is keyed by the session; move it onto the conversation
             // so it outlives the session id it was made under.
             _pins.Rekey(PinStore.SessionKey(sessionId), claudeSessionId);
+            _activityPaused.Rekey(ActivityPauseStore.SessionKey(sessionId), claudeSessionId);
             // Same for the UI state (open file tabs, view mode): written under the session while the
             // conversation had no id, it belongs to the conversation now.
             _sessionUi.Rekey(SessionUiStore.SessionKey(sessionId), claudeSessionId);
@@ -1846,6 +1864,7 @@ public sealed class SessionManager : IDisposable
         return ClaudeSession.RestorableInfo(persisted) with
         {
             Pinned = IsPinned(persisted.ClaudeSessionId, persisted.Id),
+            ActivityPaused = IsActivityPaused(persisted.ClaudeSessionId, persisted.Id),
             UiRev = UiRev(persisted.ClaudeSessionId, persisted.Id),
             GroupId = GroupIdOf(persisted.ClaudeSessionId, persisted.Id),
         };

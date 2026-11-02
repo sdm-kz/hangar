@@ -82,7 +82,7 @@ impl Builder<'_> {
         let names: HashMap<&str, &str> = view.peers.iter().map(|p| (p.id.as_str(), p.name.as_str())).collect();
         let mut rows: Vec<(progress::Activity, Key, String)> = Vec::new();
         for m in &machines {
-            for s in m.sessions.iter().filter(|s| s.running()) {
+            for s in m.sessions.iter().filter(|s| s.counts_in_activity()) {
                 let key = (m.node.map(String::from), s.id.clone());
                 let Some(activity) = progress::activity(s, m.ids, view.done.contains(&key)) else { continue };
                 let place = match m.node {

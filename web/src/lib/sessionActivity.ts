@@ -39,6 +39,16 @@ export interface ActivityIds {
 }
 
 /**
+ * Whether a session counts in what sums sessions up: a heading's mark and fraction, the branch mark on
+ * the session it is nested under, the activity filter, the Sessions tab's count, the favicon. A closed
+ * session isn't running. One whose activity the user has paused works on a clock — a chat checked
+ * every few minutes — and each of its runs is no news; its own row still shows what it is doing.
+ */
+export function countsInTotals(s: SessionInfo): boolean {
+  return s.state !== "Restorable" && !s.activityPaused;
+}
+
+/**
  * One line for why a turn ended badly: Claude's own parting message when it left one, and failing
  * that the hook's error name spelled out — `rate_limit` is a phrase, not a sentence. Mirrors the
  * server's `PushNotifier.FailureLine`, so the alert you get on the phone and the one you get in the
@@ -190,6 +200,9 @@ export function useDoneSessions({
     // Compacting is work: a session mid-compact hasn't finished anything, and treating it as idle
     // would tick it the moment the compaction started.
     const working = new Set([...busyIds, ...compactingIds]);
+    // A paused session's turns are routine (see countsInTotals): one ending is no news, so it gets no
+    // tick, and pausing one that has a tick takes it away.
+    const paused = new Set(sessions.flatMap((s) => (s.activityPaused ? [s.id] : [])));
     const prev = prevWorking.current;
     prevWorking.current = working;
 
@@ -210,13 +223,20 @@ export function useDoneSessions({
           // is the thing to show there, and it outranks this one anyway. Nor is stopping because the
           // turn errored out: a green tick on a session that hit its rate limit is a lie, and the
           // red mark it gets instead is the one you want to see.
-          if (!working.has(id) && !waitingIds.has(id) && !failedIds.has(id) && !justAttached(id) && isListed(id))
+          if (
+            !working.has(id) &&
+            !waitingIds.has(id) &&
+            !failedIds.has(id) &&
+            !paused.has(id) &&
+            !justAttached(id) &&
+            isListed(id)
+          )
             next.add(id);
         }
       }
       for (const id of next) {
         // A new turn (or a prompt to answer, or a turn that died) supersedes the last one's result.
-        if (working.has(id) || waitingIds.has(id) || failedIds.has(id)) next.delete(id);
+        if (working.has(id) || waitingIds.has(id) || failedIds.has(id) || paused.has(id)) next.delete(id);
         // Prune sessions that have exited or been closed since — but only against a list we
         // actually have. Before the first fetch lands `sessions` is empty, and pruning against it
         // would throw away everything restored from storage.

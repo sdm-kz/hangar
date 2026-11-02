@@ -102,6 +102,13 @@ public sealed record SessionInfo(
     /// </summary>
     bool Pinned = false,
     /// <summary>
+    /// Whether the user has paused this session's activity: its own row still shows what it is doing,
+    /// but it is left out of everything that sums sessions up — the headings above it, the session it
+    /// is nested under, the Sessions tab's count, the favicon, the tray's Activity menu. Stamped on by
+    /// the manager from <c>ActivityPauseStore</c>, keyed by conversation like a pin.
+    /// </summary>
+    bool ActivityPaused = false,
+    /// <summary>
     /// Revision of this session's saved UI state (see <c>SessionUiStore</c>), or 0 when it has
     /// none. Only the number rides the list: a browser holding an older revision knows to re-fetch the
     /// bag, which is how one browser's tab changes reach the others without the state itself being

@@ -89,6 +89,8 @@ import {
   GitPullRequest,
   Image as ImageIcon,
   Info,
+  CirclePause,
+  CirclePlay,
   Loader2,
   Menu,
   MoreVertical,
@@ -1665,6 +1667,8 @@ function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTic
 }
 
 function SessionInfoList({ session, nowTick }: { session: SessionInfo; nowTick: number }) {
+  const api = useApi();
+  const paused = !!session.activityPaused;
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
       <InfoRow label="State">{session.state}</InfoRow>
@@ -1684,6 +1688,26 @@ function SessionInfoList({ session, nowTick }: { session: SessionInfo; nowTick: 
       {session.permissionMode && <InfoRow label="Permissions">{session.permissionMode}</InfoRow>}
       <InfoRow label="Remote Control">{session.remoteControl ? "on" : "off"}</InfoRow>
       <InfoRow label="Watchdog">{session.watchdogEnabled ? "on" : "off"}</InfoRow>
+      {/* Paused: what it does shows on its own row and nowhere above it. No optimistic flip -- the
+          session list pushed back after the write carries it, here and in every other browser. */}
+      <InfoRow label="Activity">
+        <span className="flex flex-wrap items-center gap-x-2">
+          {paused ? "paused" : "counted"}
+          <button
+            type="button"
+            onClick={() => void api.setActivityPaused(session.id, !paused).catch(() => {})}
+            title={
+              paused
+                ? "Count this session's activity again in the groups above it and in the totals"
+                : "Stop counting this session's activity in the groups above it and in the totals; its own row still shows it"
+            }
+            className="inline-flex items-center gap-1 rounded px-1 font-sans text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {paused ? <CirclePlay className="size-3" /> : <CirclePause className="size-3" />}
+            {paused ? "Resume" : "Pause"}
+          </button>
+        </span>
+      </InfoRow>
       <InfoRow label="Started">{new Date(session.createdAt).toLocaleString()}</InfoRow>
       {session.state === "Running" && (
         <InfoRow label="Uptime">{formatUptime(nowTick - new Date(session.createdAt).getTime())}</InfoRow>

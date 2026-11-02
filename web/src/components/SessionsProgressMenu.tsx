@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { HeadingProgress } from "@/components/SessionSidebar";
 import { ActivityMark, activityDetail, sessionActivity, type Activity } from "@/components/ActivityMark";
 import { useDismissable } from "@/lib/useDismissable";
-import type { ActivityIds } from "@/lib/sessionActivity";
+import { countsInTotals, type ActivityIds } from "@/lib/sessionActivity";
 import type { SessionInfo } from "@/types";
 
 /**
@@ -90,7 +90,7 @@ export function SessionsProgressMenu({ triggerClassName }: { triggerClassName?: 
   const rows =
     open && activityIds
       ? sessions
-          .filter((s) => s.state !== "Restorable") // as folderProgress: a closed session isn't running
+          .filter(countsInTotals) // as folderProgress: a closed session isn't running, a paused one isn't counted
           .map((s) => ({ s, activity: sessionActivity(s, activityIds) }))
           .filter((r): r is { s: SessionInfo; activity: Activity } => r.activity !== null)
       : [];

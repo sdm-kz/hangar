@@ -335,6 +335,9 @@ internal static class Program
         // Pinned sessions, keyed by conversation id so a pin survives a reopen and follows the user
         // between browsers (it rides the session list as SessionInfo.Pinned).
         builder.Services.AddSingleton<PinStore>();
+        // Sessions whose activity is paused — left out of the marks and totals above them — keyed and
+        // carried the same way (SessionInfo.ActivityPaused).
+        builder.Services.AddSingleton<ActivityPauseStore>();
         // How each session was last being looked at (view tab, open file tabs, tree state), keyed by
         // conversation id like the pins, so it follows the user between browsers and devices.
         builder.Services.AddSingleton<SessionUiStore>();
@@ -1016,6 +1019,11 @@ internal static class Program
         // only ever names a session, and reads the result back off the session list.
         app.MapPost("/api/sessions/{id}/pin", (string id, PinRequest body, SessionManager mgr) =>
             mgr.SetPinned(id, body.Pinned) ? Results.Ok() : Results.NotFound());
+
+        // Pause/resume a session's activity: whether it counts in the marks and totals above it. Keyed
+        // like a pin, and read back off the session list the same way.
+        app.MapPost("/api/sessions/{id}/activity-paused", (string id, ActivityPausedRequest body, SessionManager mgr) =>
+            mgr.SetActivityPaused(id, body.Paused) ? Results.Ok() : Results.NotFound());
 
         // How a session was last being looked at. GET seeds a browser on load; POST merges a patch
         // into the saved bag and answers with the merged result, so the caller adopts the server's
@@ -2265,6 +2273,7 @@ internal record LoginRequest(string? Password);
 internal record StopOrphansRequest(string? SessionId);
 internal record WatchdogRequest(bool Enabled);
 internal record PinRequest(bool Pinned);
+internal record ActivityPausedRequest(bool Paused);
 internal record PostponedAutoRequest(bool Enabled);
 /// <summary>Body for <c>POST /api/sessions/{id}/ui</c>: the UI-state fields to merge (a null value
 /// removes that field). The shape of the bag belongs to the client; the server only merges it.

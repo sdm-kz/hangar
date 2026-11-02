@@ -116,8 +116,13 @@ impl Tracker {
         self.opened.retain(|_, at| at.elapsed() < OPEN_SETTLE);
         for m in machines {
             let node = m.node.map(String::from);
-            let working: HashSet<String> =
-                m.sessions.iter().filter(|s| m.ids.working(&s.id)).map(|s| s.id.clone()).collect();
+            // A paused session never counts as working, so its turns ending tick nothing.
+            let working: HashSet<String> = m
+                .sessions
+                .iter()
+                .filter(|s| !s.activity_paused && m.ids.working(&s.id))
+                .map(|s| s.id.clone())
+                .collect();
             if let Some(prev) = self.working.get(&node) {
                 // Stopping to wait on you, or on an error, isn't finishing: those have marks of their own.
                 for id in prev {
@@ -139,7 +144,7 @@ impl Tracker {
                     || (!m.ids.working(id)
                         && !m.ids.waiting.contains(id)
                         && !m.ids.failed.contains(id)
-                        && (m.sessions.is_empty() || m.sessions.iter().any(|s| s.id == *id && s.running())))
+                        && (m.sessions.is_empty() || m.sessions.iter().any(|s| s.id == *id && s.counts_in_activity())))
             });
             self.working.insert(node, working);
         }
@@ -166,7 +171,7 @@ pub fn fraction(machines: &[Machine], done: &BTreeSet<Key>) -> (usize, usize) {
     let mut finished = 0;
     let mut active = 0;
     for m in machines {
-        for s in m.sessions.iter().filter(|s| s.running()) {
+        for s in m.sessions.iter().filter(|s| s.counts_in_activity()) {
             let key = (m.node.map(String::from), s.id.clone());
             match activity(s, m.ids, done.contains(&key)) {
                 Some(Activity::Done) => {
@@ -227,6 +232,22 @@ mod tests {
         let after_open = t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]);
         assert!(after_open.is_empty(), "the repaint of opening it isn't a turn");
         sessions[0].state = "Restorable".into();
+        assert!(t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]).is_empty());
+    }
+
+    #[test]
+    fn a_paused_session_is_neither_counted_nor_ticked() {
+        let mut sessions = vec![session("a"), session("b")];
+        sessions[1].activity_paused = true;
+        let mut t = Tracker::default();
+        let both = ids(&["a", "b"], &[]);
+        t.observe(&[Machine { node: None, sessions: &sessions, ids: &both }]);
+        assert_eq!(fraction(&[Machine { node: None, sessions: &sessions, ids: &both }], &BTreeSet::new()), (0, 1), "b works unseen");
+        let done = t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]);
+        assert_eq!(done, BTreeSet::from([own("a")]), "b finishing is no news");
+
+        // Paused after it finished: its tick goes.
+        sessions[0].activity_paused = true;
         assert!(t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]).is_empty());
     }
 

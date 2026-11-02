@@ -39,6 +39,10 @@ export interface SessionInfo {
   // Pinned to the top of its folder. Server-side and keyed by conversation id, so a pin survives a
   // reopen (which mints a new session id) and is the same in every browser.
   pinned: boolean;
+  // Its activity is paused: its own row still shows what it is doing, but it is left out of the marks
+  // and counts above it (headings, the session it is nested under, the Sessions tab's fraction, the
+  // favicon). Server-side and keyed like a pin. Absent from a peer on an older build.
+  activityPaused?: boolean;
   // Revision of this session's server-side UI state (open file tabs, view mode, tree state). Only the
   // number rides the list; a browser holding an older one re-fetches the bag. See lib/sessionUi.ts.
   uiRev: number;

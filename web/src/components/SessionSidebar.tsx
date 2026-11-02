@@ -30,7 +30,7 @@ import {
   type SessionOrder,
 } from "@/lib/sessionOrder";
 import { useDragReorder } from "@/lib/useDragReorder";
-import { type ActivityIds } from "@/lib/sessionActivity";
+import { countsInTotals, type ActivityIds } from "@/lib/sessionActivity";
 import {
   ACTIVITY_MARK,
   ActivityMark,
@@ -93,6 +93,8 @@ import {
   PencilLine,
   Pin,
   PinOff,
+  CirclePause,
+  CirclePlay,
   Terminal,
   SquareTerminal,
   Trash2,
@@ -249,7 +251,7 @@ export function folderProgress(items: SessionInfo[], ids: ActivityIds): { done: 
   let done = 0;
   let active = 0;
   for (const s of items) {
-    if (s.state === "Restorable") continue; // a closed session isn't part of anything running
+    if (!countsInTotals(s)) continue; // a closed session isn't part of anything running, nor a paused one
     const a = sessionActivity(s, ids);
     if (!a) continue;
     active++;
@@ -328,16 +330,19 @@ function MiddleTruncated({ text }: { text: string }) {
 function folderActivity(items: SessionInfo[], ids: ActivityIds): Activity | null {
   let top: Activity | null = null;
   for (const s of items) {
-    if (s.state === "Restorable") continue; // a closed session isn't doing anything
+    if (!countsInTotals(s)) continue; // a closed session isn't doing anything; a paused one doesn't say
     const a = sessionActivity(s, ids);
     if (a && (!top || FOLDER_URGENCY[a] > FOLDER_URGENCY[top])) top = a;
   }
   return top;
 }
 
-/** Whether a row is showing an activity mark. A closed session isn't, whatever the sets say. */
+/**
+ * Whether a row counts as showing an activity mark. A closed session isn't, whatever the sets say, and
+ * a paused one is left out as the headings leave it out.
+ */
 function hasMark(s: SessionInfo, ids: ActivityIds): boolean {
-  return s.state !== "Restorable" && sessionActivity(s, ids) !== null;
+  return countsInTotals(s) && sessionActivity(s, ids) !== null;
 }
 
 /**
@@ -1747,6 +1752,10 @@ export function SessionSidebar({
   const togglePin = (id: string, pinned: boolean) => {
     void api.setPinned(id, pinned).catch(() => {});
   };
+  // Pausing a session's activity takes the same road as a pin: the list pushed back carries it.
+  const toggleActivityPaused = (id: string, paused: boolean) => {
+    void api.setActivityPaused(id, paused).catch(() => {});
+  };
 
   // Drop of a dragged row: rewrite that folder's order from what is on screen, so every row in it
   // gets an explicit place. A session created later isn't in the list and lands back on top.
@@ -2702,6 +2711,12 @@ export function SessionSidebar({
             {pinned.has(s.id) && editingId !== s.id && (
               <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="pinned" />
             )}
+            {/* Why its mark stops at the row: nothing above it hears what it is doing. */}
+            {s.activityPaused && editingId !== s.id && (
+              <span title="Activity paused: not counted in the groups above or in the totals" className="shrink-0">
+                <CirclePause className="size-3 text-muted-foreground" aria-label="activity paused" />
+              </span>
+            )}
           </span>
           <span className="ml-auto flex shrink-0 items-center gap-1.5">
             {/* This row's own tick, cleared where it is drawn. A heading has been able to do this
@@ -2755,6 +2770,7 @@ export function SessionSidebar({
                 restorable={restorable}
                 running={s.state === "Running"}
                 pinned={pinned.has(s.id)}
+                activityPaused={!!s.activityPaused}
                 dir={s.workingDirectory}
                 projects={projects}
                 projectId={projectForDir(s.workingDirectory, projects)?.id ?? null}
@@ -2771,6 +2787,7 @@ export function SessionSidebar({
                 }}
                 onRevealFolder={onRevealFolder ? () => onRevealFolder(s.workingDirectory) : undefined}
                 onTogglePin={() => togglePin(s.id, !pinned.has(s.id))}
+                onToggleActivityPaused={() => toggleActivityPaused(s.id, !s.activityPaused)}
                 onRename={() => setEditingId(s.id)}
                 onClone={onClone ? () => onClone(s) : undefined}
                 onFork={() => onFork(s)}
@@ -3552,6 +3569,7 @@ function RowActionsMenu({
   restorable,
   running,
   pinned,
+  activityPaused,
   dir,
   projects,
   projectId,
@@ -3563,6 +3581,7 @@ function RowActionsMenu({
   onNewGroup,
   onRevealFolder,
   onTogglePin,
+  onToggleActivityPaused,
   onRename,
   onClone,
   onFork,
@@ -3582,6 +3601,8 @@ function RowActionsMenu({
   /** Whether there is a live process to stop. False for a closed row and for one that already exited. */
   running: boolean;
   pinned: boolean;
+  /** Whether its activity is kept out of the headings and totals above it. */
+  activityPaused: boolean;
   /** The session's folder — what "move to project" actually moves. */
   dir: string;
   projects: readonly Project[];
@@ -3596,6 +3617,7 @@ function RowActionsMenu({
   /** Absent where the folder isn't on this machine's disk — a peer's session. */
   onRevealFolder?: () => void;
   onTogglePin: () => void;
+  onToggleActivityPaused: () => void;
   onRename: () => void;
   /** Absent where a session can't be started from here — a peer's, until the node picker (phase 5). */
   onClone?: () => void;
@@ -3814,6 +3836,9 @@ function RowActionsMenu({
               {pinned
                 ? item("Unpin", <PinOff className="size-3.5" />, onTogglePin)
                 : item("Pin to top", <Pin className="size-3.5" />, onTogglePin)}
+              {activityPaused
+                ? item("Resume activity", <CirclePlay className="size-3.5" />, onToggleActivityPaused)
+                : item("Pause activity", <CirclePause className="size-3.5" />, onToggleActivityPaused)}
               {item("Rename", <Pencil className="size-3.5" />, onRename)}
               {onClone && item("Clone", <Copy className="size-3.5" />, onClone)}
               {/* Always listed, greyed until it can run. Forking needs Claude's own conversation id,

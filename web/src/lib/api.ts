@@ -287,6 +287,13 @@ function createApi(base: string) {
         body: JSON.stringify({ pinned }),
       });
     },
+    /** Pause/resume a session's activity. Keyed and carried back as a pin is — see setPinned. */
+    setActivityPaused(id: string, paused: boolean): Promise<void> {
+      return request(`/api/sessions/${id}/activity-paused`, {
+        method: "POST",
+        body: JSON.stringify({ paused }),
+      });
+    },
     /**
      * How a session was last being looked at — its open file tabs, view mode and tree state. Kept
      * server-side (keyed by conversation) so it is the same on every browser; see lib/sessionUi.ts,
