@@ -41,6 +41,10 @@
         var apply = function () {
           var h = Math.round(vv.height * vv.scale);
           if (h > 0) document.documentElement.style.setProperty("--app-height", h + "px");
+          // The keyboard covers the home indicator, so #root's bottom safe-area padding would only
+          // leave a gap between the composer and the keys. iOS keeps innerHeight at full height
+          // while the keyboard is up, so a visual viewport well short of it means a keyboard.
+          document.documentElement.toggleAttribute("data-keyboard", window.innerHeight - h > 150);
         };
         vv.addEventListener("resize", apply);
         apply();

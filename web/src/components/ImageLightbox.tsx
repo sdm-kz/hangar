@@ -44,7 +44,7 @@ export function ImageLightbox({ src, name, onClose }: { src: string; name: strin
   }
 
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col bg-black/90 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[100] flex flex-col bg-black/90 safe-area-pad backdrop-blur-sm">
       <div className="flex items-center justify-between gap-2 px-4 py-2 text-white">
         <span className="truncate text-sm">{name}</span>
         <div className="flex items-center gap-1">

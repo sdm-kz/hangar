@@ -1709,7 +1709,9 @@ export function App() {
         {sidebarOpen && (
           <div className="fixed inset-0 z-40 md:hidden">
             <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
-            <aside className="absolute left-0 top-0 h-full w-72 border-r border-popover-border shadow-xl">
+            {/* Fixed to the viewport, so outside #root's safe-area padding: pad it itself, or the
+                Home Screen app puts the sidebar's header under the status bar. */}
+            <aside className="absolute left-0 top-0 h-full w-72 border-r border-popover-border bg-card pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] shadow-xl">
               <AppSidebar
                 tab={sidebarTab}
                 onTabChange={setSidebarTab}

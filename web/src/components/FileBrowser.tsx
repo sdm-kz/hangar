@@ -2895,7 +2895,7 @@ function FilePreview({
       tabIndex={-1}
       className={cn(
         "flex flex-col outline-none",
-        fullscreen ? "fixed inset-0 z-50 bg-background" : "h-full"
+        fullscreen ? "fixed inset-0 z-50 bg-background safe-area-pad" : "h-full"
       )}
     >
       <header ref={headerRef} className="flex items-center gap-2 border-b px-4 py-2">

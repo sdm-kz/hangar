@@ -267,6 +267,18 @@
        the app rather than covering the composer at its bottom; 100% is the pre-script fallback. */
     height: var(--app-height, 100%);
   }
+  #root {
+    /* Added to an iPhone's Home Screen the app runs full-screen (viewport-fit=cover with a
+       black-translucent status bar), so the page starts under the clock and ends under the home
+       indicator. Keep the app inside the safe area; the body's background fills the edges. On the
+       desktop every inset is 0, so nothing moves there. */
+    box-sizing: border-box;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  :root[data-keyboard] #root {
+    padding-bottom: 0;
+  }
   html, body {
     /* The app is a fixed-height SPA; the document never scrolls. Kill browser overscroll so an
        upward drag (e.g. in the terminal) can't trigger iOS/Android pull-to-refresh. */
@@ -295,6 +307,15 @@
   border-width: var(--hairline, 1px);
   border-style: solid;
   border-color: var(--input);
+}
+
+/*
+ * #root's safe-area padding (see the base layer) for a full-screen surface fixed to the viewport,
+ * which sits outside #root's padding: a fullscreen viewer, the image lightbox.
+ */
+@utility safe-area-pad {
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
 @utility popover-edge {

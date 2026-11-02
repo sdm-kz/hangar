@@ -484,7 +484,7 @@ export function ServerFileViewer({
       tabIndex={-1}
       className={cn(
         "flex flex-col outline-none",
-        fullscreen ? "fixed inset-0 z-50 bg-background" : "h-full"
+        fullscreen ? "fixed inset-0 z-50 bg-background safe-area-pad" : "h-full"
       )}
     >
       <header className="flex items-center gap-2 border-b px-3 py-2">
