@@ -151,7 +151,8 @@ data folder (`%LOCALAPPDATA%\io.github.sdm-kz.hangar.tray` on Windows,
 `~/Library/Application Support/io.github.sdm-kz.hangar.tray` on macOS,
 `~/.local/share/io.github.sdm-kz.hangar.tray` on Linux) and survive a reinstall. Starting at sign-in
 is a toggle in the tray menu (*Start when I sign in*) and in Settings: the same `Hangar.Tray` entry
-`register-autostart.ps1` writes.
+`register-autostart.ps1` writes. On macOS that entry also has launchd start the tray again if it
+crashes (`KeepAlive` on an unsuccessful exit); quitting it from the menu leaves it stopped.
 
 An update replaces it with the rest of the install. On Windows a running exe can't be overwritten, so
 when the server says an update is being applied the tray exits and a hidden PowerShell starts it again

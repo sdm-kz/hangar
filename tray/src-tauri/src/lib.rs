@@ -1133,33 +1133,71 @@ fn confirm_stop_orphans(app: &AppHandle) {
 fn set_autostart(app: &AppHandle, on: bool) {
     let autolaunch = app.autolaunch();
     let result = if on { autolaunch.enable() } else { autolaunch.disable() };
-    if let Err(e) = result {
-        notify_error(app, format!("Could not change starting at sign-in: {e}"));
+    match result {
+        Err(e) => notify_error(app, format!("Could not change starting at sign-in: {e}")),
+        #[cfg(target_os = "macos")]
+        Ok(()) if on => keep_alive_on_crash(),
+        Ok(()) => {}
     }
 }
 
 /// macOS: the tray now runs from an app bundle, and a sign-in entry made by a build from before that
 /// still names the bare `Hangar.Tray` beside it, which macOS lists as a nameless executable with no
-/// icon. Re-made from here, it names the bundle's executable, and macOS shows the app instead. A no-op
-/// once it does, when it isn't on, and for a build not run from a bundle (`tauri dev`, say).
+/// icon. Re-made from here, it names the bundle's executable, and macOS shows the app instead. An entry
+/// from before the restart after a crash gets that too. A no-op once it has both, when it isn't on, and
+/// for a build not run from a bundle (`tauri dev`, say).
 #[cfg(target_os = "macos")]
 fn repoint_autostart(app: &AppHandle) {
     const IN_BUNDLE: &str = ".app/Contents/MacOS/";
     if !std::env::current_exe().is_ok_and(|e| e.to_string_lossy().contains(IN_BUNDLE)) {
         return;
     }
-    let Some(plist) = dirs::home_dir().map(|d| d.join("Library/LaunchAgents").join(format!("{AUTOSTART_NAME}.plist"))) else {
-        return;
-    };
+    let Some(plist) = launch_agent_plist() else { return };
     // No file: not starting at sign-in, and nothing to re-point.
     let Ok(entry) = std::fs::read_to_string(&plist) else { return };
-    if entry.contains(IN_BUNDLE) {
-        return;
+    if !entry.contains(IN_BUNDLE) {
+        match app.autolaunch().enable() {
+            Ok(()) => log::info!("Re-pointed the sign-in entry at the app bundle"),
+            Err(e) => {
+                log::warn!("Could not re-point the sign-in entry at the app bundle: {e}");
+                return;
+            }
+        }
     }
-    match app.autolaunch().enable() {
-        Ok(()) => log::info!("Re-pointed the sign-in entry at the app bundle"),
-        Err(e) => log::warn!("Could not re-point the sign-in entry at the app bundle: {e}"),
+    keep_alive_on_crash();
+}
+
+/// macOS: the launch agent that starts the tray at sign-in.
+#[cfg(target_os = "macos")]
+fn launch_agent_plist() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|d| d.join("Library/LaunchAgents").join(format!("{AUTOSTART_NAME}.plist")))
+}
+
+/// macOS: have launchd start the tray again when it crashes — WebKit has taken it down — rather than
+/// leave the menu bar without it until the next sign-in. Quit, the update's hand-off and a second copy
+/// all exit 0, so they stay stopped. The autostart plugin writes the launch agent with no way to add
+/// this, so it goes into the file afterwards; launchd reads it at the next sign-in.
+#[cfg(target_os = "macos")]
+fn keep_alive_on_crash() {
+    let Some(plist) = launch_agent_plist() else { return };
+    let Ok(entry) = std::fs::read_to_string(&plist) else { return };
+    let Some(patched) = with_keep_alive(&entry) else { return };
+    match std::fs::write(&plist, patched) {
+        Ok(()) => log::info!("The sign-in entry now restarts the tray after a crash"),
+        Err(e) => log::warn!("Could not have the sign-in entry restart the tray after a crash: {e}"),
     }
+}
+
+/// The launch agent `entry` with launchd told to restart the job when it exits unsuccessfully (a crash
+/// is a signal, a panic a non-zero status). `None` when it already says so, or has no `</dict>` to end.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn with_keep_alive(entry: &str) -> Option<String> {
+    if entry.contains("<key>KeepAlive</key>") {
+        return None;
+    }
+    let end = entry.rfind("</dict>")?;
+    let (head, tail) = entry.split_at(end);
+    Some(format!("{head}<key>KeepAlive</key>\n  <dict><key>SuccessfulExit</key><false/></dict>\n  {tail}"))
 }
 
 fn build_tray(app: &AppHandle, hotkeys: &Hotkeys) -> tauri::Result<()> {
@@ -1442,5 +1480,21 @@ mod tests {
         assert_eq!(capture_arg(&args(&["snap", "--capture"])), Some(Mode::Region));
         assert_eq!(capture_arg(&args(&["snap", "--autostart"])), None);
         assert_eq!(capture_arg(&args(&["snap", "--capture", "bogus"])), None);
+    }
+
+    #[test]
+    fn launch_agent_restarts_the_tray_after_a_crash() {
+        // As the autostart plugin writes it.
+        let entry = "<plist version=\"1.0\">\n  <dict>\n  <key>Label</key>\n  <string>Hangar.Tray</string>\n  \
+                     <key>RunAtLoad</key>\n  <true/>\n  </dict>\n</plist>";
+        let patched = with_keep_alive(entry).unwrap();
+        assert!(
+            patched.ends_with(
+                "<true/>\n  <key>KeepAlive</key>\n  <dict><key>SuccessfulExit</key><false/></dict>\n  </dict>\n</plist>"
+            ),
+            "inside the top-level dict: {patched}"
+        );
+        assert_eq!(with_keep_alive(&patched), None, "added once");
+        assert_eq!(with_keep_alive("<plist/>"), None, "no dict to add it to");
     }
 }
