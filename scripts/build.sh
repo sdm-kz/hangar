@@ -98,9 +98,18 @@ if [ -n "$with_tray" ]; then
       if [ "$host_os" = osx ]; then
         tray_app="Hangar Tray App.app"
         cp -R "$root/tray/src-tauri/target/release/bundle/macos/$tray_app" "$publish/$tray_app"
-        # Sealed as a whole, ad hoc: what the bundler leaves is the linker's signature on the executable
-        # alone, and a bundle whose resources aren't sealed is one macOS may refuse to attribute or open.
-        codesign --force --deep --sign - "$publish/$tray_app"
+        # Sealed as a whole: what the bundler leaves is the linker's signature on the executable alone,
+        # and a bundle whose resources aren't sealed is one macOS may refuse to attribute or open. With
+        # this Mac's own identity when it has one (setup-macos-signing.sh), so the permissions granted to
+        # the tray survive the update; ad hoc otherwise.
+        signing="$HOME/Library/Application Support/Hangar/codesign"
+        if [ -s "$signing/identity" ] \
+          && security unlock-keychain -p "$(cat "$signing/keychain-password")" "$signing/signing.keychain-db"; then
+          codesign --force --deep --keychain "$signing/signing.keychain-db" --sign "$(cat "$signing/identity")" \
+            "$publish/$tray_app"
+        else
+          codesign --force --deep --sign - "$publish/$tray_app"
+        fi
         # Hangar.Tray stays, as a launcher for the bundle: a sign-in entry, a running tray restarting into
         # its update, and a hotkey bound to `Hangar.Tray --capture` all name this path.
         cat > "$publish/Hangar.Tray" << 'EOF'

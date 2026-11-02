@@ -175,9 +175,11 @@ a server on this machine.
 - **macOS** asks for *Screen Recording* permission on the first capture (System Settings → Privacy &
   Security). Without it, captures show only the wallpaper. After the first region or window capture it
   also asks for *Accessibility*, which outlining the parts of a window takes (if the outlines don't show
-  right after you allow it, Quit the app from its menu and open it again). Each update is a new build
-  to macOS: if captures come out blank or the outlines stop, turn Hangar Tray App off and on again under
-  each of those permissions. The app runs in the menu bar, with no Dock icon.
+  right after you allow it, Quit the app from its menu and open it again). Signed ad hoc, each update is
+  a new app to macOS, and captures come out blank or the outlines stop until Hangar Tray App is removed
+  from those lists (**−**) and allowed again. `scripts/setup-macos-signing.sh`, run once on the Mac, signs
+  the builds with a certificate of its own instead, and the permissions then survive updates. The app
+  runs in the menu bar, with no Dock icon.
 - **Linux, X11**: everything works. The tray needs `libayatana-appindicator3`.
 - **Linux, Wayland**: apps can't register global hotkeys or list windows, so bind
   `Hangar.Tray --capture region` (or `window`, `fullscreen`, `freeform`) in your desktop's keyboard

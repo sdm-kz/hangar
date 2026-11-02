@@ -126,6 +126,11 @@ Then open **http://localhost:5099**.
   installing tools somewhere new.
 - A macOS build made on another OS comes out unsigned; `install-unix.sh` removes the quarantine flag and
   signs the binaries ad hoc when it installs them.
+- On macOS, run `scripts/setup-macos-signing.sh` once to keep the tray's *Screen Recording* and
+  *Accessibility* permissions across updates. An ad-hoc build is a new app to macOS each time, and its
+  captures come out blank until the permission is granted again. The script makes a self-signed
+  code-signing certificate on the Mac, and `build.sh` and `stage-update-remote.sh` sign with it from then
+  on. Its header has the details and the trade-off.
 
 More in [Linux and macOS details](#linux-and-macos-details).
 
@@ -1165,8 +1170,11 @@ port nothing listens on: Hangar is stopped or uninstalled, or was moved to anoth
 the server's own start: at sign-in (with autologin for an unattended machine), a service, or a lingering
 systemd user unit.
 
-**macOS captures show only the wallpaper.** Grant the tray *Screen Recording* permission (System
-Settings → Privacy & Security). See [tray/README.md](tray/README.md#platform-notes) for Wayland.
+**macOS captures show only the wallpaper, or come out blank.** Grant the tray *Screen Recording*
+permission (System Settings → Privacy & Security), then quit and reopen it. Switched on but blank after
+an update: the permission belongs to the build before. Remove Hangar Tray App from the list with **−**,
+capture again and allow it, and run `scripts/setup-macos-signing.sh` so the next update keeps it. See
+[tray/README.md](tray/README.md#platform-notes) for Wayland.
 
 **Update button never appears.** The staging folder the script used is not the one the app watches.
 Check `Update:StagingPath` in the install's `appsettings.Local.json` / `appsettings.json`, or pass

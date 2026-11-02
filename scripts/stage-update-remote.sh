@@ -134,8 +134,10 @@ JS
 # Copied beside the live payload and swapped in at the end, as stage-update.sh does it, so the node's
 # updater never sees half an update. A build made on Windows has no executable bits to carry over, and one
 # for a Mac made anywhere but a Mac is unsigned, which Apple silicon refuses to run: both are put right on
-# the node, as install-unix.sh does it, so the payload is a runnable build. Run through sh with the folder
-# as its argument -- not the login shell, which may be fish -- and with stdin left to the tar stream.
+# the node, as install-unix.sh does it, so the payload is a runnable build. A Mac signs it with its own
+# identity when it has one (setup-macos-signing.sh), so the tray keeps the permissions granted to it, and
+# ad hoc otherwise. Run through sh with the folder as its argument -- not the login shell, which may be
+# fish -- and with stdin left to the tar stream.
 swap='set -e
 S=$1
 mkdir -p "$S"
@@ -150,8 +152,13 @@ if [ -f "$S/payload.tmp/Hangar.Tray" ]; then chmod +x "$S/payload.tmp/Hangar.Tra
 if [ -d "$T" ]; then chmod +x "$T/Contents/MacOS/"*; fi
 if [ "$(uname -s)" = Darwin ]; then
   xattr -dr com.apple.quarantine "$S/payload.tmp" 2> /dev/null || true
-  codesign --force --sign - "$S/payload.tmp/Hangar" "$S/payload.tmp/Hangar.PtyHost"
-  if [ -d "$T" ]; then codesign --force --deep --sign - "$T"; fi
+  K="$HOME/Library/Application Support/Hangar/codesign"
+  set -- --sign -
+  if [ -s "$K/identity" ] && security unlock-keychain -p "$(cat "$K/keychain-password")" "$K/signing.keychain-db"; then
+    set -- --keychain "$K/signing.keychain-db" --sign "$(cat "$K/identity")"
+  fi
+  codesign --force "$@" "$S/payload.tmp/Hangar" "$S/payload.tmp/Hangar.PtyHost"
+  if [ -d "$T" ]; then codesign --force --deep "$@" "$T"; fi
 fi
 rm -rf "$S/payload.old"
 if [ -d "$S/payload" ]; then mv "$S/payload" "$S/payload.old"; fi
