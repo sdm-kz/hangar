@@ -26,11 +26,15 @@ pub struct Ids {
     pub compacting: HashSet<String>,
     /// The last turn ended on an API error rather than an answer.
     pub failed: HashSet<String>,
+    /// Claude's turn is over but shells it started are still running, with how many.
+    pub background: HashMap<String, u32>,
 }
 
 impl Ids {
+    // Shells left running count: the turn is over, but what you are waiting on isn't, and the tick
+    // comes when it is.
     fn working(&self, id: &str) -> bool {
-        self.busy.contains(id) || self.compacting.contains(id)
+        self.busy.contains(id) || self.compacting.contains(id) || self.background.contains_key(id)
     }
 }
 
@@ -45,6 +49,7 @@ pub enum Activity {
     Attention,
     Recovering,
     Failed,
+    Background,
     Done,
 }
 
@@ -64,6 +69,8 @@ pub fn activity(s: &HubSession, ids: &Ids, done: bool) -> Option<Activity> {
         Some(Activity::Recovering)
     } else if ids.failed.contains(&s.id) {
         Some(Activity::Failed)
+    } else if ids.background.contains_key(&s.id) {
+        Some(Activity::Background)
     } else if done {
         Some(Activity::Done)
     } else {
@@ -74,7 +81,7 @@ pub fn activity(s: &HubSession, ids: &Ids, done: bool) -> Option<Activity> {
 /// The dropdown's groups, most urgent first; every activity falls in exactly one.
 pub const GROUPS: [(&str, &[Activity]); 3] = [
     ("Waiting on you", &[Activity::Waiting, Activity::Attention, Activity::Failed]),
-    ("Working", &[Activity::Busy, Activity::Compacting, Activity::Recovering]),
+    ("Working", &[Activity::Busy, Activity::Compacting, Activity::Recovering, Activity::Background]),
     ("Finished", &[Activity::Done]),
 ];
 
@@ -252,6 +259,19 @@ mod tests {
     }
 
     #[test]
+    fn shells_left_running_hold_the_tick_until_they_end() {
+        let sessions = [session("a")];
+        let mut t = Tracker::default();
+        t.observe(&[Machine { node: None, sessions: &sessions, ids: &ids(&["a"], &[]) }]);
+        let shells = Ids { background: HashMap::from([("a".into(), 2)]), ..Ids::default() };
+        assert!(t.observe(&[Machine { node: None, sessions: &sessions, ids: &shells }]).is_empty(), "the turn ended, the shells didn't");
+        assert_eq!(activity(&sessions[0], &shells, false), Some(Activity::Background));
+        assert_eq!(fraction(&[Machine { node: None, sessions: &sessions, ids: &shells }], &BTreeSet::new()), (0, 1));
+        let done = t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]);
+        assert_eq!(done, BTreeSet::from([own("a")]));
+    }
+
+    #[test]
     fn a_peer_away_keeps_its_ticks_and_a_reconnect_ticks_nothing() {
         let sessions = [session("x")];
         let mut t = Tracker::default();
@@ -280,6 +300,7 @@ mod tests {
             waiting: HashSet::from(["a".into()]),
             compacting: HashSet::from(["a".into()]),
             failed: HashSet::from(["a".into()]),
+            background: HashMap::from([("a".into(), 2)]),
         };
         assert_eq!(activity(&s, &all, true), Some(Activity::Compacting));
         s.watchdog_status = Some("attention".into());

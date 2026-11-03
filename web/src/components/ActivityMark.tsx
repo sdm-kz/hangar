@@ -87,7 +87,15 @@ export function ActivityMark({
  * What an activity mark can say, and how it looks — one definition, so a session row and the folder
  * header above it can never disagree about what amber means.
  */
-export type Activity = "busy" | "compacting" | "waiting" | "failed" | "attention" | "recovering" | "done";
+export type Activity =
+  | "busy"
+  | "compacting"
+  | "background"
+  | "waiting"
+  | "failed"
+  | "attention"
+  | "recovering"
+  | "done";
 export const ACTIVITY_MARK: Record<
   Activity,
   {
@@ -110,6 +118,14 @@ export const ACTIVITY_MARK: Record<
     className: "bg-teal-400 animate-pulse [animation-duration:2s]",
     hollowClassName: "border-teal-400 animate-pulse [animation-duration:2s]",
     label: "Claude is compacting the conversation",
+  },
+  // Still working, but not Claude: its turn is over and what it left running isn't. Out of the green
+  // family so it doesn't read as "Claude is generating", and on the slowest pulse of all, because
+  // what it says is "come back later" — a benchmark that takes a quarter of an hour.
+  background: {
+    className: "bg-sky-500 animate-pulse [animation-duration:3s]",
+    hollowClassName: "border-sky-500 animate-pulse [animation-duration:3s]",
+    label: "Claude’s turn is over, but shells it started are still running",
   },
   waiting: {
     className: "bg-amber-400 animate-pulse ring-2 ring-amber-400/40",
@@ -153,6 +169,9 @@ export function sessionActivity(s: SessionInfo, ids: ActivityIds): Activity | nu
   // newer fact, and the one that says whether you have to do anything about the error yourself.
   if (s.watchdogStatus === "recovering") return "recovering";
   if (ids.failed.has(s.id)) return "failed";
+  // Ahead of the tick: the turn finished, but the work it started hasn't, and that is what you are
+  // waiting on. useDoneSessions holds the tick back until the shells end anyway.
+  if (ids.background.has(s.id)) return "background";
   // Last, because it is the only one in past tense: anything the session is doing *now* is the more
   // useful thing to say about it, and a finished turn keeps its tick until you go and look.
   if (ids.done.has(s.id)) return "done";
@@ -169,6 +188,10 @@ export function sessionActivity(s: SessionInfo, ids: ActivityIds): Activity | nu
  * sidebar would reflow the list every time a permission dialog opened.
  */
 export function activityDetail(activity: Activity, id: string, ids: ActivityIds): string | null {
+  if (activity === "background") {
+    const n = ids.background.get(id) ?? 0;
+    return `Claude’s turn is over; ${n} shell${n === 1 ? "" : "s"} it started ${n === 1 ? "is" : "are"} still running`;
+  }
   const detail = ids.detail[id];
   if (!detail) return null;
   if (activity === "waiting") return detail.waitingOn ?? null;

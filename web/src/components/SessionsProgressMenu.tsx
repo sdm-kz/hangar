@@ -44,7 +44,7 @@ export const SessionsProgressContext = createContext<SessionsProgress>({
  */
 const GROUPS: { title: string; activities: Activity[] }[] = [
   { title: "Waiting on you", activities: ["waiting", "attention", "failed"] },
-  { title: "Working", activities: ["busy", "compacting", "recovering"] },
+  { title: "Working", activities: ["busy", "compacting", "recovering", "background"] },
   { title: "Finished", activities: ["done"] },
 ];
 

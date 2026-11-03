@@ -215,15 +215,18 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
  * prompt behind a session that happens to be generating — the whole point of surfacing it up here.
  */
 const FOLDER_URGENCY: Record<Activity, number> = {
-  waiting: 6,
-  attention: 5,
-  recovering: 4,
+  waiting: 7,
+  attention: 6,
+  recovering: 5,
   // Above the working states, unlike the tick below them: a finished turn resolves itself the moment
   // you look at it, while a turn that died on an error stays dead until someone retries it. A folder
   // must not hide that behind a session that happens to be generating.
-  failed: 3,
-  compacting: 2,
-  busy: 1,
+  failed: 4,
+  compacting: 3,
+  busy: 2,
+  // Below Claude working: a heading says what is most likely to need you soon, and a turn in progress
+  // will end before a shell left running in the background does.
+  background: 1,
   // Bottom of the pile, which is exactly the rule asked of it: a heading only ticks once nothing
   // inside it is still going. A folder with one session finished and another still working has
   // more to say than "something finished" — and the tick will be there when the work stops.

@@ -758,6 +758,21 @@ public sealed class SessionManager : IDisposable
             .ToArray();
 
     /// <summary>
+    /// Live sessions whose footer counts shells Claude left running — a benchmark, a dev server — with
+    /// how many. Its turn may be over, but the work it started isn't, so it shouldn't read as finished.
+    /// Read off the screen; see <see cref="Pty.ClaudeInputBox"/>. Skipped while starting up, like
+    /// compacting: a <c>--resume</c> replays an old screen.
+    /// </summary>
+    public IReadOnlyDictionary<string, int> BackgroundTaskCounts()
+    {
+        var counts = new Dictionary<string, int>();
+        foreach (var s in _sessions.Values)
+            if (s.State == SessionState.Running && !StillStartingUp(s) && s.Terminal is { BackgroundTasks: > 0 and var n })
+                counts[s.Id] = n;
+        return counts;
+    }
+
+    /// <summary>
     /// Ids of live sessions that appear to be waiting on the user — a permission/confirmation dialog
     /// or numbered selection menu is on screen and Claude isn't emitting. Best-effort (keys off the
     /// same on-screen prompt patterns as the watchdog guard); reliable for dialogs, not for

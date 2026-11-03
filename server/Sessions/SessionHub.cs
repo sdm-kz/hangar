@@ -224,6 +224,9 @@ public sealed class SessionHub : BackgroundService
                 failed = _mgr.FailedSessionIds(),
                 // Not an activity: text typed into a session's input box and left there unsent.
                 drafts = _mgr.DraftSessionIds(),
+                // Shells Claude left running when its turn ended, per session: only the sessions that
+                // have any, so on a quiet machine it is an empty object.
+                background = _mgr.BackgroundTaskCounts(),
                 // Only the sessions with something to say are in here, so on a quiet machine it is an
                 // empty object and the snapshot is the size it always was.
                 activity = _mgr.ActivityDetails(),

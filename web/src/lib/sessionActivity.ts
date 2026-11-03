@@ -32,6 +32,11 @@ export interface ActivityIds {
    * that finished both just stop printing. Cleared by the next prompt.
    */
   failed: Set<string>;
+  /**
+   * Claude's turn is over but shells it started are still running — a benchmark, a test run — with
+   * how many, as the footer under its input box counts them. Read off the screen.
+   */
+  background: Map<string, number>;
   /** Claude has finished a turn here and you haven't looked since. See useDoneSessions. */
   done: Set<string>;
   /** What the waiting/failed marks are about, keyed by session id — only the ones with anything to say. */
@@ -142,6 +147,7 @@ export function useDoneSessions({
   waitingIds,
   compactingIds,
   failedIds,
+  backgroundIds,
   shownSessionId,
   streamUp,
   isListed = everyId,
@@ -155,6 +161,11 @@ export function useDoneSessions({
    * "finished" is the one thing they didn't do — and the red mark they carry instead says more.
    */
   failedIds: Set<string>;
+  /**
+   * Sessions with shells Claude left running. Still working, as far as a tick goes: the turn is over,
+   * but what you are waiting on — the benchmark it started — is not, and the tick comes when it is.
+   */
+  backgroundIds: Map<string, number>;
   /**
    * The session whose terminal is actually on screen — null while a file or a folder's shells have
    * the main area, which they take without changing the selected session. Having a session selected
@@ -198,8 +209,8 @@ export function useDoneSessions({
 
   useEffect(() => {
     // Compacting is work: a session mid-compact hasn't finished anything, and treating it as idle
-    // would tick it the moment the compaction started.
-    const working = new Set([...busyIds, ...compactingIds]);
+    // would tick it the moment the compaction started. So are shells left running in the background.
+    const working = new Set([...busyIds, ...compactingIds, ...backgroundIds.keys()]);
     // A paused session's turns are routine (see countsInTotals): one ending is no news, so it gets no
     // tick, and pausing one that has a tick takes it away.
     const paused = new Set(sessions.flatMap((s) => (s.activityPaused ? [s.id] : [])));
@@ -245,7 +256,7 @@ export function useDoneSessions({
       }
       return sameSet(next, cur) ? cur : next;
     });
-  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, streamUp, isListed]);
+  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, backgroundIds, streamUp, isListed]);
 
   useEffect(() => {
     saveDone(done);

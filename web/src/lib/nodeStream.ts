@@ -17,6 +17,8 @@ export interface NodeSnapshot {
   waiting: Set<string>;
   compacting: Set<string>;
   failed: Set<string>;
+  /** Shells Claude left running when its turn ended, by session — see ActivityIds.background. */
+  background: Map<string, number>;
   drafts: Set<string>;
   activity: Record<string, ActivityDetail>;
   shellsRev: number;
@@ -78,6 +80,7 @@ interface HubMessage {
   waiting?: string[];
   compacting?: string[];
   failed?: string[];
+  background?: Record<string, number>;
   drafts?: string[];
   activity?: Record<string, ActivityDetail>;
   shellsRev?: number;
@@ -92,6 +95,7 @@ export const EMPTY_SNAPSHOT: NodeSnapshot = {
   waiting: new Set(),
   compacting: new Set(),
   failed: new Set(),
+  background: new Map(),
   drafts: new Set(),
   activity: {},
   shellsRev: 0,
@@ -134,6 +138,7 @@ function parse(nodeId: string, msg: HubMessage, prev: NodeSnapshot | null): Node
     waiting: new Set(msg.waiting ?? []),
     compacting: new Set(msg.compacting ?? []),
     failed: new Set(msg.failed ?? []),
+    background: new Map(Object.entries(msg.background ?? {})),
     drafts: new Set(msg.drafts ?? []),
     activity: msg.activity ?? {},
     shellsRev: msg.shellsRev ?? 0,

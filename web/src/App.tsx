@@ -79,6 +79,8 @@ export function App() {
   const [waitingIds, setWaitingIds] = useState<Set<string>>(() => new Set()); // waiting on a prompt
   const [compactingIds, setCompactingIds] = useState<Set<string>>(() => new Set()); // compacting the conversation
   const [failedIds, setFailedIds] = useState<Set<string>>(() => new Set()); // last turn died on an API error
+  // Shells Claude left running when its turn ended, by session, with how many.
+  const [backgroundIds, setBackgroundIds] = useState<Map<string, number>>(() => new Map());
   // Something typed into claude's input box and not sent. Not an activity, so not in the bag below.
   const [draftIds, setDraftIds] = useState<Set<string>>(() => new Set());
   // What the waiting/failed marks are about, keyed by session id — see SessionActivityDetail on the
@@ -379,6 +381,7 @@ export function App() {
       waiting: new Set(waitingIds),
       compacting: new Set(compactingIds),
       failed: new Set(failedIds),
+      background: new Map(backgroundIds),
       detail: { ...activityDetail } as Record<string, ActivityDetail>,
       // The machines whose sessions are in it: "" for this one, and every peer online.
       nodes: new Set([""]),
@@ -393,10 +396,11 @@ export function App() {
       for (const id of snap.waiting) out.waiting.add(key(id));
       for (const id of snap.compacting) out.compacting.add(key(id));
       for (const id of snap.failed) out.failed.add(key(id));
+      for (const [id, n] of snap.background) out.background.set(key(id), n);
       for (const [id, d] of Object.entries(snap.activity)) out.detail[key(id)] = d;
     }
     return out;
-  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, activityDetail, mesh.peers]);
+  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, backgroundIds, activityDetail, mesh.peers]);
 
   // A session's machine is in `everywhere` — this one always; a peer once the stream has named the peers and
   // it is online.
@@ -414,6 +418,7 @@ export function App() {
     waitingIds: everywhere.waiting,
     compactingIds: everywhere.compacting,
     failedIds: everywhere.failed,
+    backgroundIds: everywhere.background,
     // A file or a folder's shells take the main area from the session pane without touching the
     // selection, so `activeId` alone would clear the mark of a session you never actually saw.
     shownSessionId: openFile || shellView || terminalShownKey !== activeKey ? null : activeKey,
@@ -429,10 +434,11 @@ export function App() {
       waiting: waitingIds,
       compacting: compactingIds,
       failed: failedIds,
+      background: backgroundIds,
       done: doneIds,
       detail: activityDetail,
     }),
-    [busyIds, waitingIds, compactingIds, failedIds, doneIds, activityDetail]
+    [busyIds, waitingIds, compactingIds, failedIds, backgroundIds, doneIds, activityDetail]
   );
 
   // Every shell there is, for the Shells tab and the count on it.
@@ -445,6 +451,7 @@ export function App() {
       waiting: everywhere.waiting,
       compacting: everywhere.compacting,
       failed: everywhere.failed,
+      background: everywhere.background,
       done: doneKeys,
       detail: everywhere.detail,
     }),
@@ -463,6 +470,7 @@ export function App() {
         waiting: snap.waiting,
         compacting: snap.compacting,
         failed: snap.failed,
+        background: snap.background,
         done: new Set([...doneKeys].flatMap((k) => (k.startsWith(prefix) ? [k.slice(prefix.length)] : []))),
         detail: snap.activity,
       });
@@ -519,6 +527,7 @@ export function App() {
             waiting?: string[];
             compacting?: string[];
             failed?: string[];
+            background?: Record<string, number>;
             drafts?: string[];
             activity?: Record<string, ActivityDetail>;
             update?: UpdateStatus;
@@ -543,6 +552,7 @@ export function App() {
           setWaitingIds(new Set(msg.waiting ?? []));
           setCompactingIds(new Set(msg.compacting ?? []));
           setFailedIds(new Set(msg.failed ?? []));
+          setBackgroundIds(new Map(Object.entries(msg.background ?? {})));
           setDraftIds(new Set(msg.drafts ?? []));
           setActivityDetail(msg.activity ?? {});
           // Only the revision travels; the open session re-fetches its own tabs when it moves (see
@@ -2023,6 +2033,7 @@ const NO_ACTIVITY: ActivityIds = {
   waiting: NO_IDS,
   compacting: NO_IDS,
   failed: NO_IDS,
+  background: new Map(),
   done: NO_IDS,
   detail: {},
 };

@@ -83,6 +83,12 @@ public interface ITerminal : IDisposable
     /// </summary>
     bool HasInputDraft { get; }
 
+    /// <summary>
+    /// How many shells Claude started and left running, as the footer under its input box counts them.
+    /// Read off the screen like <see cref="HasInputDraft"/>.
+    /// </summary>
+    int BackgroundTasks { get; }
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     bool IsCompacting { get; }
 

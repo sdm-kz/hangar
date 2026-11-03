@@ -93,6 +93,22 @@ public sealed class PtyHostClient : ITerminal
 
     public bool HasInputDraft { get { lock (_lock) return ClaudeInputBox.HasDraft(_screen); } }
 
+    // The last count the footer showed. Opening Claude's list of its shells hides the box, and reading
+    // that as "none left" would tick the session finished while they are still running.
+    private int _backgroundTasks;
+
+    public int BackgroundTasks
+    {
+        get
+        {
+            lock (_lock)
+            {
+                if (ClaudeInputBox.BackgroundTasks(_screen) is { } n) _backgroundTasks = n;
+                return _backgroundTasks;
+            }
+        }
+    }
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     public bool IsCompacting { get { lock (_lock) return _compacting; } }
 
