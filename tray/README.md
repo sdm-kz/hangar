@@ -109,9 +109,15 @@ are one click away; with a local server, Browse opens a folder picker) and a gro
 yet is linked into the chosen project; one that is already another project's is refused. The form
 remembers what it was last set to.
 
-- Tools: select `V`, arrow `A`, rectangle `R`, ellipse `E`, line `L`, pen `P`, highlighter `H`,
-  text `T`, numbered step `N`, pixelate `B`, crop `C`. These single-letter keys work while focus isn't in
-  a text box; `Esc` leaves the message box.
+- Tools: select `V`, area `M`, free-form area `Q`, arrow `A`, rectangle `R`, ellipse `E`, line `L`, pen
+  `P`, highlighter `H`, text `T`, numbered step `N`, pixelate `B`, eraser `X`, crop `C`. These
+  single-letter keys work while focus isn't in a text box; `Esc` leaves the message box.
+- Areas of the picture: drag a rectangle (`M`) or trace an outline (`Q`). Drag inside it to move what
+  shows there, marks included, leaving white behind (`Shift` keeps the move straight); drag it again to
+  move it further. `F` or the paint bucket fills it with the colour, `Delete` clears it to white, `Esc`
+  lets go of it.
+- Eraser: brushes off what was added — marks, fills, moved areas — back to the capture as it was taken;
+  the weight sets how broad it is.
 - Crop: drag the area to keep; it can be moved and resized while the crop tool is out. `Enter`, the
   green ✓ or a double-click inside it applies it, and the picture becomes just that area, to draw on and
   send; `Ctrl+Z` brings the rest back. × drops a crop being set, or shows the whole picture again.

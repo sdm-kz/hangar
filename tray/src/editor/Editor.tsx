@@ -137,6 +137,8 @@ export default function Editor({ id }: { id: string }) {
   const [confirmClose, setConfirmClose] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const canvasRef = useRef<CanvasHandle>(null);
+  // An area of the picture selected on the canvas (the area and lasso tools), to fill or move.
+  const [hasArea, setHasArea] = useState(false);
   const messageRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
@@ -750,9 +752,17 @@ export default function Editor({ id }: { id: string }) {
         setSelectedId(null);
         return;
       }
+      // A selected area: Delete clears it to white, F fills it with the colour.
+      const area = !!canvasRef.current?.hasArea();
+      if (area && (e.key === "Delete" || e.key === "Backspace" || (e.code === "KeyF" && !e.altKey && !e.shiftKey))) {
+        e.preventDefault();
+        canvasRef.current?.fillArea(e.code === "KeyF" ? color : "#ffffff");
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         if (selectedId) setSelectedId(null);
+        else if (area) canvasRef.current?.dropArea();
         else requestClose();
         return;
       }
@@ -780,7 +790,7 @@ export default function Editor({ id }: { id: string }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirmClose, close, doSend, items, query, copy, save, selectedId, doc, tool, onCommit, requestClose, zoomStep, actualSize, addCapture, stepPage]);
+  }, [confirmClose, close, doSend, items, query, copy, save, selectedId, doc, tool, onCommit, requestClose, zoomStep, actualSize, addCapture, stepPage, color]);
 
   if (loadError) {
     return <div className="flex h-full items-center justify-center text-muted-foreground">{loadError}</div>;
@@ -803,6 +813,8 @@ export default function Editor({ id }: { id: string }) {
         onRedo={() => setHistory(redo)}
         crop={doc.crop ? "set" : image && isCropped(doc, image.naturalWidth, image.naturalHeight) ? "applied" : "none"}
         onApplyCrop={() => onCommit(applyCrop(doc))}
+        area={hasArea}
+        onFillArea={() => canvasRef.current?.fillArea(color)}
         onClearCrop={() =>
           onCommit(doc.crop ? { ...doc, crop: null } : image ? uncrop(doc, image.naturalWidth, image.naturalHeight, FIT_MARGIN * captureScale, measureText) : doc)
         }
@@ -863,6 +875,7 @@ export default function Editor({ id }: { id: string }) {
               selectedId={selectedId}
               onSelect={setSelectedId}
               onCommit={onCommit}
+              onArea={setHasArea}
             />
           </div>
         )}

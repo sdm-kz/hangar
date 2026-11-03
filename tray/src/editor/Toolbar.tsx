@@ -6,15 +6,19 @@ import {
   Copy,
   Crop,
   Download,
+  Eraser,
   Grid3x3,
   Highlighter,
   ImagePlus,
+  Lasso,
   Minus,
   MousePointer2,
   MoveUpRight,
+  PaintBucket,
   Pencil,
   Redo2,
   Square,
+  SquareDashed,
   Type,
   Undo2,
   X,
@@ -25,6 +29,8 @@ import { COLORS, TOOLS, WEIGHTS, type Tool, type Weight } from "./model";
 
 const ICONS: Record<Tool, ReactNode> = {
   select: <MousePointer2 size={17} />,
+  area: <SquareDashed size={17} />,
+  lasso: <Lasso size={17} />,
   arrow: <MoveUpRight size={17} />,
   rect: <Square size={17} />,
   ellipse: <Circle size={17} />,
@@ -34,6 +40,7 @@ const ICONS: Record<Tool, ReactNode> = {
   text: <Type size={17} />,
   step: <StepIcon />,
   blur: <Grid3x3 size={17} />,
+  eraser: <Eraser size={17} />,
   crop: <Crop size={17} />,
 };
 
@@ -61,6 +68,9 @@ export function Toolbar(props: {
   onApplyCrop(): void;
   /** Drop the crop being set, or else show the whole picture again. */
   onClearCrop(): void;
+  /** An area of the picture is selected (the area or lasso tool), to fill. */
+  area: boolean;
+  onFillArea(): void;
   onCopy(): void;
   onSave(): void;
   /** Take another capture into this editor, to send with this one. */
@@ -98,6 +108,18 @@ export function Toolbar(props: {
           </IconButton>
         ))}
       </div>
+      {props.area && (
+        <IconButton
+          title="Fill the selected area with the colour (F) · Delete fills it white · drag it to move it"
+          onClick={props.onFillArea}
+        >
+          <span className="relative flex flex-col items-center">
+            <PaintBucket size={16} />
+            {/* The colour it fills with; ringed, so white shows on a light panel. */}
+            <span className="mt-0.5 h-[3px] w-4 rounded-full" style={{ background: color, boxShadow: "0 0 0 0.5px rgba(127,127,127,0.6)" }} />
+          </span>
+        </IconButton>
+      )}
       {props.crop === "set" && (
         <IconButton
           title="Apply the crop: keep only what is inside it (Enter, or double-click it) · undo brings the rest back"

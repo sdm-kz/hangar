@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  finishRegion,
+  moveRegion,
+  pixelBounds,
+  reach,
+  regionBounds,
+  regionContains,
+  type Region,
   addShape,
   arrowPolygon,
   commit,
@@ -198,5 +205,47 @@ describe("growing the picture to fit a shape", () => {
     const cut = { shapes: [rect(90, 10, 30, 10)], crop: null, frame: { x: 10, y: 10, width: 20, height: 20 } };
     expect(uncrop(cut, W, H, 0, width).frame).toEqual(grown.frame);
     expect(uncrop({ ...empty, frame: { x: 10, y: 10, width: 20, height: 20 } }, W, H, 0, width).frame).toBeNull();
+  });
+});
+
+describe("regions of the picture", () => {
+  const square: Region = { kind: "rect", x: 10, y: 10, w: 20, h: 20 };
+  // A triangle with its point at the top.
+  const triangle: Region = { kind: "poly", points: [50, 0, 100, 100, 0, 100] };
+
+  it("tells inside from outside, for a rectangle and a traced outline", () => {
+    expect(regionContains(square, 15, 15)).toBe(true);
+    expect(regionContains(square, 31, 15)).toBe(false);
+    expect(regionContains(triangle, 50, 60)).toBe(true);
+    expect(regionContains(triangle, 10, 20)).toBe(false); // inside the bounds, outside the outline
+  });
+
+  it("bounds an outline, and rounds those outwards to whole pixels", () => {
+    expect(regionBounds(triangle)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+    expect(pixelBounds({ kind: "poly", points: [1.5, 2.2, 10.1, 2.2, 10.1, 9.7] })).toEqual({ x: 1, y: 2, width: 10, height: 8 });
+  });
+
+  it("moves either kind", () => {
+    expect(moveRegion(square, 5, -5)).toEqual({ kind: "rect", x: 15, y: 5, w: 20, h: 20 });
+    expect(moveRegion(triangle, 1, 2)).toEqual({ kind: "poly", points: [51, 2, 101, 102, 1, 102] });
+  });
+
+  it("makes a dragged rectangle whole pixels, and drops a click", () => {
+    expect(finishRegion({ kind: "rect", x: 10.4, y: 10.6, w: 20.2, h: 5 }, 3)).toEqual({ kind: "rect", x: 10, y: 11, w: 21, h: 5 });
+    expect(finishRegion({ kind: "rect", x: 10, y: 10, w: 2, h: 40 }, 3)).toBeNull();
+    expect(finishRegion({ kind: "poly", points: [0, 0, 20, 0] }, 3)).toBeNull();
+    expect(finishRegion(triangle, 3)).toBe(triangle);
+  });
+
+  it("takes fills, patches and eraser strokes into the shape operations", () => {
+    const fill = { id: "f", kind: "fill" as const, region: square, color: "#fff" };
+    expect(moveShape(fill, 1, 1)).toMatchObject({ region: { x: 11, y: 11 } });
+    expect(restyle(fill, { color: "#000" })).toBe(fill);
+    expect(reach(fill, () => 0)).toEqual({ x: 10, y: 10, width: 20, height: 20 });
+    const pixels = {} as HTMLCanvasElement;
+    expect(reach({ id: "p", kind: "patch", x: -5, y: 0, w: 10, h: 10, pixels }, () => 0)).toEqual({ x: -5, y: 0, width: 10, height: 10 });
+    const eraser = { id: "e", kind: "eraser" as const, points: [5, 5], width: 20 };
+    expect(isMeaningful(eraser, 3)).toBe(true);
+    expect(reach(eraser, () => 0)).toBeNull();
   });
 });

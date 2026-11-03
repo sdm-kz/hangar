@@ -5,6 +5,8 @@ import type { Rect } from "@/lib/tauri";
 
 export type Tool =
   | "select"
+  | "area"
+  | "lasso"
   | "arrow"
   | "rect"
   | "ellipse"
@@ -14,10 +16,13 @@ export type Tool =
   | "text"
   | "step"
   | "blur"
+  | "eraser"
   | "crop";
 
 export const TOOLS: { tool: Tool; key: string; label: string }[] = [
   { tool: "select", key: "v", label: "Select" },
+  { tool: "area", key: "m", label: "Select an area of the picture" },
+  { tool: "lasso", key: "q", label: "Select a free-form area of the picture" },
   { tool: "arrow", key: "a", label: "Arrow" },
   { tool: "rect", key: "r", label: "Rectangle" },
   { tool: "ellipse", key: "e", label: "Ellipse" },
@@ -27,6 +32,7 @@ export const TOOLS: { tool: Tool; key: string; label: string }[] = [
   { tool: "text", key: "t", label: "Text" },
   { tool: "step", key: "n", label: "Numbered step" },
   { tool: "blur", key: "b", label: "Pixelate" },
+  { tool: "eraser", key: "x", label: "Eraser: takes off what was added, back to the capture" },
   { tool: "crop", key: "c", label: "Crop" },
 ];
 
@@ -45,13 +51,24 @@ export const WEIGHTS = { s: 2, m: 4, l: 7 } as const;
 export type Weight = keyof typeof WEIGHTS;
 
 type Styled = { id: string; color: string; width: number };
+
+/** A part of the picture picked with the area or lasso tool: a rectangle, or a closed outline (flat
+ *  list of x, y). */
+export type Region = { kind: "rect"; x: number; y: number; w: number; h: number } | { kind: "poly"; points: number[] };
 export type Shape =
   | (Styled & { kind: "arrow" | "line"; points: [number, number, number, number] })
   | (Styled & { kind: "rect" | "ellipse"; x: number; y: number; w: number; h: number })
   | (Styled & { kind: "pen" | "marker"; points: number[] })
   | (Styled & { kind: "text"; x: number; y: number; text: string; fontSize: number })
   | (Styled & { kind: "step"; x: number; y: number; n: number })
-  | { id: string; kind: "blur"; x: number; y: number; w: number; h: number };
+  | { id: string; kind: "blur"; x: number; y: number; w: number; h: number }
+  // Edits to the picture itself. A region filled with a colour (white is where a moved part was).
+  | { id: string; kind: "fill"; region: Region; color: string }
+  // A part of the picture lifted and put down elsewhere: its pixels, as they showed when it was lifted,
+  // and for a free-form one its outline, from its top-left corner (outside it the pixels are clear).
+  | { id: string; kind: "patch"; x: number; y: number; w: number; h: number; pixels: HTMLCanvasElement; outline?: Region }
+  // A brush stroke `width` across that takes off whatever was added under it, back to the capture.
+  | { id: string; kind: "eraser"; points: number[]; width: number };
 
 /** `crop` is a crop being set, shaded round on the picture; `frame` is one applied, and the picture
  *  shows only that much. Applying is an edit like any other, so undo puts the rest back. */
@@ -97,7 +114,10 @@ export function moveShape(shape: Shape, dx: number, dy: number): Shape {
     }
     case "pen":
     case "marker":
+    case "eraser":
       return { ...shape, points: shape.points.map((v, i) => v + (i % 2 === 0 ? dx : dy)) };
+    case "fill":
+      return { ...shape, region: moveRegion(shape.region, dx, dy) };
     default:
       return { ...shape, x: shape.x + dx, y: shape.y + dy };
   }
@@ -106,7 +126,7 @@ export function moveShape(shape: Shape, dx: number, dy: number): Shape {
 /** Restyle a shape with what was just picked in the toolbar — the colour or the weight, leaving the
  *  other as the shape has it (a text resized by hand keeps its size when only its colour changes). */
 export function restyle(shape: Shape, change: { color?: string; width?: number }): Shape {
-  if (shape.kind === "blur") return shape;
+  if (shape.kind === "blur" || shape.kind === "fill" || shape.kind === "patch" || shape.kind === "eraser") return shape;
   const color = change.color ?? shape.color;
   if (shape.kind === "text") {
     return { ...shape, color, fontSize: change.width !== undefined ? fontSizeFor(change.width) : shape.fontSize };
@@ -205,9 +225,13 @@ export function isMeaningful(shape: Shape, minSize: number): boolean {
     case "pen":
     case "marker":
       return shape.points.length >= 4;
+    case "eraser":
+      return shape.points.length >= 2;
     case "text":
       return shape.text.trim().length > 0;
     case "step":
+    case "fill":
+    case "patch":
       return true;
   }
 }
@@ -297,7 +321,14 @@ export function reach(shape: Shape, textWidth: TextWidth): Rect | null {
     }
     case "step":
       return box([shape.x, shape.y], stepRadius(shape.width) * 1.12);
+    case "fill": {
+      const b = regionBounds(shape.region);
+      return { x: b.x, y: b.y, width: b.width, height: b.height };
+    }
+    case "patch":
+      return { x: shape.x, y: shape.y, width: shape.w, height: shape.h };
     case "blur":
+    case "eraser":
       return null;
   }
 }
@@ -340,6 +371,80 @@ export function exportArea(doc: Doc, width: number, height: number): Rect {
 /** The crop being set made the picture's edges. */
 export function applyCrop(doc: Doc): Doc {
   return doc.crop ? { ...doc, frame: doc.crop, crop: null } : doc;
+}
+
+/** The smallest rectangle around a region. */
+export function regionBounds(region: Region): Rect {
+  if (region.kind === "rect") return { x: region.x, y: region.y, width: region.w, height: region.h };
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (let i = 0; i + 1 < region.points.length; i += 2) {
+    x0 = Math.min(x0, region.points[i]);
+    x1 = Math.max(x1, region.points[i]);
+    y0 = Math.min(y0, region.points[i + 1]);
+    y1 = Math.max(y1, region.points[i + 1]);
+  }
+  return x0 === Infinity ? { x: 0, y: 0, width: 0, height: 0 } : { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+}
+
+/** The whole pixels a region touches: its bounds, edges rounded outwards. */
+export function pixelBounds(region: Region): Rect {
+  const b = regionBounds(region);
+  const x = Math.floor(b.x);
+  const y = Math.floor(b.y);
+  return { x, y, width: Math.ceil(b.x + b.width) - x, height: Math.ceil(b.y + b.height) - y };
+}
+
+export function moveRegion(region: Region, dx: number, dy: number): Region {
+  return region.kind === "rect"
+    ? { ...region, x: region.x + dx, y: region.y + dy }
+    : { ...region, points: region.points.map((v, i) => v + (i % 2 === 0 ? dx : dy)) };
+}
+
+/** Whether (x, y) is inside a region: in the rectangle, or inside the outline by the even-odd rule. */
+export function regionContains(region: Region, x: number, y: number): boolean {
+  if (region.kind === "rect") return x >= region.x && y >= region.y && x <= region.x + region.w && y <= region.y + region.h;
+  const p = region.points;
+  let inside = false;
+  for (let i = 0, j = p.length - 2; i + 1 < p.length; j = i, i += 2) {
+    const [xi, yi, xj, yj] = [p[i], p[i + 1], p[j], p[j + 1]];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** A region dragged out as a selection, made whole pixels (a rectangle) or kept as traced (an outline);
+ *  null when it is too small to be anything, a click rather than a drag. */
+export function finishRegion(region: Region, minSize: number): Region | null {
+  const b = regionBounds(region);
+  if (b.width < minSize || b.height < minSize) return null;
+  if (region.kind === "poly") return region.points.length >= 6 ? region : null;
+  const x = Math.round(region.x);
+  const y = Math.round(region.y);
+  return { kind: "rect", x, y, w: Math.round(region.x + region.w) - x, h: Math.round(region.y + region.h) - y };
+}
+
+/** Trace a region as a path on a canvas context — the browser's or Konva's, which share these calls. */
+export function traceRegion(
+  ctx: { beginPath(): void; rect(x: number, y: number, w: number, h: number): void; moveTo(x: number, y: number): void; lineTo(x: number, y: number): void; closePath(): void },
+  region: Region,
+): void {
+  ctx.beginPath();
+  if (region.kind === "rect") {
+    ctx.rect(region.x, region.y, region.w, region.h);
+    return;
+  }
+  const p = region.points;
+  ctx.moveTo(p[0], p[1]);
+  for (let i = 2; i + 1 < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
+  ctx.closePath();
+}
+
+/** How wide the eraser is at a stroke weight: broad, as an eraser is, and S/M/L still mean something. */
+export function eraserWidth(strokeWidth: number): number {
+  return strokeWidth * 5;
 }
 
 let counter = 0;
