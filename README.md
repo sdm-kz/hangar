@@ -913,7 +913,7 @@ browser's own route for this is `POST /api/sessions/{id}/message`, behind the be
 ### Self-service API for a running session
 
 A running session can act on **itself** — rename itself, open files or pull requests in its own tab
-bar, point its branch badge at a worktree, close itself and the sessions under it — with no browser
+bar, point its branch badge at a worktree, send you a notification, close itself and the sessions under it — with no browser
 login and no API key: every session Hangar launches carries its own credentials in its environment,
 and they are all the calls take.
 
@@ -953,6 +953,25 @@ The effect is exactly the sidebar rename: the display name changes everywhere an
 is injected into the session's terminal so Claude's own conversation title follows. A session that
 renames itself *mid-turn* has that `/rename` land in its own input queue, so Claude runs it once the
 current turn finishes.
+
+#### Notify: `POST /api/self/notify`
+
+Puts a message in front of you on purpose: Claude saying *the benchmark finished, accuracy held*
+instead of you finding the session gone quiet and reading back to see why. It goes out as a Web Push to
+every subscribed device and as an OS notification in every open tab, titled with the session's name
+(and `title`, when given). Tapping it opens the session.
+
+```bash
+curl -s -X POST "$HANGAR_URL/api/self/notify"   -H "X-Session-Id: $HANGAR_SESSION_ID"   -H "X-Hook-Token: $HANGAR_HOOK_TOKEN"   -H "Content-Type: application/json"   -d '{"title":"Benchmark done","message":"Accuracy 97.8% (was 97.6%), 14 min."}'
+# {"id":"3f9a1c0e7b2d","devices":2}
+```
+
+`devices` is how many devices the push went to; `0` means only an open tab will show it. The title is
+cut to 120 characters and the message to 1000. Responses are `400` when the message is empty, `404`
+when the id names no session, and `429` after six notifications from the same session within a
+minute (or twenty from all of them). To be told when something you leave running in the background ends, chain the call after
+it, so it fires whether or not Claude is around to notice:
+`./bench.sh; curl … -d "{\"message\":\"bench exited $?\"}"`.
 
 #### Open files: `POST /api/self/open`
 

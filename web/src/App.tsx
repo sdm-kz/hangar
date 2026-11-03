@@ -18,7 +18,7 @@ import { countsInTotals, failureLine, useDoneSessions, type ActivityDetail, type
 import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
 import { projectForDir } from "@/lib/projects";
-import type { Project, RemoteConnection, SessionInfo, SessionRemote, ShellInfo, UpdateStatus } from "@/types";
+import type { Project, RemoteConnection, SessionInfo, SessionNotice, SessionRemote, ShellInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
 import {
   SessionSidebar,
@@ -104,6 +104,8 @@ export function App() {
   // What the commands in the session shells are doing, from the same snapshot: a running command, or
   // how the last one ended. Null until the first snapshot, so nothing is pruned on an empty guess.
   const [shellActivity, setShellActivity] = useState<Record<string, ShellActivity> | null>(null);
+  // What this node's sessions asked to tell you lately (POST /api/self/notify).
+  const [notices, setNotices] = useState<SessionNotice[]>([]);
   // Latched once an update starts installing, so the overlay survives the server going away — the
   // hub and the polls both fail while it's down, and this is what says "that's expected, wait".
   const [installing, setInstalling] = useState<string | null>(null); // build id being installed
@@ -383,6 +385,9 @@ export function App() {
       failed: new Set(failedIds),
       background: new Map(backgroundIds),
       detail: { ...activityDetail } as Record<string, ActivityDetail>,
+      // Each with its session keyed as the rest are, and its own id prefixed the same way: a notice id is
+      // only unique on the machine that minted it.
+      notices: notices.map((n) => ({ ...n, key: n.id })),
       // The machines whose sessions are in it: "" for this one, and every peer online.
       nodes: new Set([""]),
     };
@@ -397,10 +402,11 @@ export function App() {
       for (const id of snap.compacting) out.compacting.add(key(id));
       for (const id of snap.failed) out.failed.add(key(id));
       for (const [id, n] of snap.background) out.background.set(key(id), n);
+      for (const n of snap.notices) out.notices.push({ ...n, sessionId: key(n.sessionId), key: key(n.id) });
       for (const [id, d] of Object.entries(snap.activity)) out.detail[key(id)] = d;
     }
     return out;
-  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, backgroundIds, activityDetail, mesh.peers]);
+  }, [sessions, busyIds, waitingIds, compactingIds, failedIds, backgroundIds, activityDetail, notices, mesh.peers]);
 
   // A session's machine is in `everywhere` — this one always; a peer once the stream has named the peers and
   // it is online.
@@ -534,6 +540,7 @@ export function App() {
             shellsRev?: number;
             projectsRev?: number;
             shells?: Record<string, ShellActivity>;
+            notices?: SessionNotice[];
             node?: SelfNode;
             nodes?: MeshNodeMessage[];
           };
@@ -555,6 +562,11 @@ export function App() {
           setBackgroundIds(new Map(Object.entries(msg.background ?? {})));
           setDraftIds(new Set(msg.drafts ?? []));
           setActivityDetail(msg.activity ?? {});
+          // Kept as the same array while nothing new arrives, so the effect that raises them stays put.
+          const nextNotices = msg.notices ?? [];
+          setNotices((cur) =>
+            cur.length === nextNotices.length && cur.every((n, i) => n.id === nextNotices[i].id) ? cur : nextNotices
+          );
           // Only the revision travels; the open session re-fetches its own tabs when it moves (see
           // SessionView). A server that predates shells sends none, which reads as "never changed".
           setShellsRev(msg.shellsRev ?? 0);
@@ -758,6 +770,35 @@ export function App() {
         body: failureLine(everywhere.detail[s.id]),
         tag: alertTag("failed", s.id),
       })),
+      openFromNotification
+    );
+  }, [everywhere, auth, selfNode]);
+
+  // Raise what a session asked to tell you (POST /api/self/notify), each notice once. Seeded on the first
+  // frame like the alerts above, so a reload doesn't replay the last few minutes' worth; a peer's are
+  // seeded the same way when it comes online. Tagged like the push of the same notice, so a device that
+  // gets both shows one.
+  const shownNoticesRef = useRef<{ keys: Set<string>; nodes: Set<string> } | null>(null);
+  useEffect(() => {
+    if (auth !== "authed" || !selfNode) return;
+    const prev = shownNoticesRef.current;
+    // Only the notices in this frame: one that has aged out of the hub's few minutes never comes back.
+    shownNoticesRef.current = { keys: new Set(everywhere.notices.map((n) => n.key)), nodes: everywhere.nodes };
+    if (prev === null) return; // first run: seed only
+
+    const fresh = everywhere.notices.filter((n) => !prev.keys.has(n.key) && wasListed(n.key, prev.nodes));
+    osNotify(
+      fresh.map((n) => {
+        const s = everywhere.sessions.find((x) => x.id === n.sessionId);
+        const name = s ? alertName(s) : "Session";
+        const { node, id } = splitSessionKey(n.key);
+        return {
+          id: n.sessionId,
+          title: n.title ? `${name} — ${n.title}` : name,
+          body: n.message,
+          tag: `notice-${node ?? selfNode.id}:${id}`,
+        };
+      }),
       openFromNotification
     );
   }, [everywhere, auth, selfNode]);

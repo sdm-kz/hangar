@@ -85,6 +85,7 @@ public sealed class SessionHub : BackgroundService
     private readonly HookEventStore _hooks;
     private readonly UpdateService _updates;
     private readonly Shells.ShellManager _shells;
+    private readonly SessionNoticeStore _notices;
     private readonly ProjectStore _projects;
     private readonly NodeMesh _mesh;
     private readonly NodeIdentityStore _identity;
@@ -105,13 +106,14 @@ public sealed class SessionHub : BackgroundService
     }
 
     public SessionHub(SessionManager mgr, HookEventStore hooks, UpdateService updates,
-        Shells.ShellManager shells, ProjectStore projects, NodeMesh mesh, NodeIdentityStore identity,
-        ILogger<SessionHub> log)
+        Shells.ShellManager shells, SessionNoticeStore notices, ProjectStore projects, NodeMesh mesh,
+        NodeIdentityStore identity, ILogger<SessionHub> log)
     {
         _mgr = mgr;
         _hooks = hooks;
         _updates = updates;
         _shells = shells;
+        _notices = notices;
         _projects = projects;
         _mesh = mesh;
         _identity = identity;
@@ -129,6 +131,8 @@ public sealed class SessionHub : BackgroundService
         // ...and a command starting or ending in one of them is what lights its tab and its session's
         // row, so it goes out at once too.
         _shells.ActivityChanged += Poke;
+        // A session notifying you is the one thing here that is all about arriving now.
+        _notices.Changed += Poke;
         // A peer's snapshot or status moving is news for every browser here (never a keep-alive: the mesh
         // drops those) — but not about this node, whose own picture is reused rather than rebuilt for it.
         _mesh.Changed += PokePeers;
@@ -227,6 +231,9 @@ public sealed class SessionHub : BackgroundService
                 // Shells Claude left running when its turn ended, per session: only the sessions that
                 // have any, so on a quiet machine it is an empty object.
                 background = _mgr.BackgroundTaskCounts(),
+                // What sessions asked to tell you through /api/self/notify, for a few minutes: every open
+                // tab raises each one it hasn't shown yet. Empty unless one just did.
+                notices = _notices.Recent(),
                 // Only the sessions with something to say are in here, so on a quiet machine it is an
                 // empty object and the snapshot is the size it always was.
                 activity = _mgr.ActivityDetails(),
@@ -332,6 +339,7 @@ public sealed class SessionHub : BackgroundService
         _mgr.Changed -= Poke;
         _hooks.Changed -= Poke;
         _updates.Changed -= Poke;
+        _notices.Changed -= Poke;
         _mesh.Changed -= PokePeers;
         base.Dispose();
     }

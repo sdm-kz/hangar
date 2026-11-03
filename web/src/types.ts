@@ -1,5 +1,19 @@
 export type SessionState = "Running" | "Exited" | "Failed" | "Restorable";
 
+/**
+ * A message a session sent you on purpose through POST /api/self/notify (SessionNotice on the server).
+ * The hub carries the last few minutes of them; each one is raised once as an OS notification.
+ */
+export interface SessionNotice {
+  id: string;
+  sessionId: string;
+  /** What the session called it; null to go by the session's name alone. */
+  title: string | null;
+  message: string;
+  /** Unix ms. */
+  at: number;
+}
+
 export interface SessionInfo {
   id: string;
   /**

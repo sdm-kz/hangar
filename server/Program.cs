@@ -335,6 +335,7 @@ internal static class Program
         // Pinned sessions, keyed by conversation id so a pin survives a reopen and follows the user
         // between browsers (it rides the session list as SessionInfo.Pinned).
         builder.Services.AddSingleton<PinStore>();
+        builder.Services.AddSingleton<SessionNoticeStore>();
         // Sessions whose activity is paused — left out of the marks and totals above them — keyed and
         // carried the same way (SessionInfo.ActivityPaused).
         builder.Services.AddSingleton<ActivityPauseStore>();
@@ -853,6 +854,27 @@ internal static class Program
             return key is null
                 ? Results.NotFound()
                 : Results.Ok(new { id, repo = repo ?? own.NameWithOwner, number, title = found.Title, key });
+        });
+
+        // Self-notify: a session puts a message in front of you on purpose — "the benchmark finished,
+        // accuracy held" — instead of you finding it gone quiet and reading back to see why. It goes out
+        // as a Web Push to every subscribed device and an OS notification in every open tab, titled with
+        // the session's name. Rate-limited per session and overall (429), so a loop that notifies on every pass
+        // can't buzz the phone until someone notices. Answers with how many devices get the push, so a
+        // caller can say when nothing would reach a phone.
+        app.MapPost("/api/self/notify", (HttpContext ctx, SelfNotifyRequest body, TokenStore tokens,
+            SessionManager mgr, SessionNoticeStore notices, PushSubscriptionStore subs, VapidKeyStore vapid,
+            ILoggerFactory lf) =>
+        {
+            if (SelfCaller(ctx, tokens, lf, "notify") is not { } id)
+                return Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
+            if (string.IsNullOrWhiteSpace(body.Message)) return Results.BadRequest(new { error = "message is empty" });
+            if (mgr.Get(id) is null) return Results.NotFound();
+            if (notices.Add(id, body.Title, body.Message) is not { } notice)
+                return Results.Json(new { error = "too many notifications from this session; try again in a minute" },
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            // None on a stand-in signing key: nothing can be sent to anyone (see VapidKeyStore).
+            return Results.Ok(new { id = notice.Id, devices = vapid.Ephemeral ? 0 : subs.All().Count });
         });
 
         // Self-select a worktree: a session that has just started a task in a worktree of its own
@@ -2290,6 +2312,7 @@ internal record MessageRequest(string? Text, string[]? Images = null);
 /// <c>Pin</c> (the default) gives each file a tab of its own — false puts it in the single transient
 /// "preview" slot that a click in the tree reuses.</summary>
 internal record SelfOpenRequest(string? Path, string[]? Paths = null, bool Pin = true);
+internal record SelfNotifyRequest(string? Message, string? Title = null);
 /// <summary>Body for <c>POST /api/self/open-pr</c>: the pull request to open as a tab in the calling
 /// session's tab bar — <c>Repo</c> ("owner/name"; absent for the session folder's own) and
 /// <c>Number</c>, or the PR's web address as <c>Url</c>, which names both.</summary>

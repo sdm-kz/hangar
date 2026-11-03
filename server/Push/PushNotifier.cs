@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Hangar.Server.Nodes;
 using Hangar.Server.Sessions;
@@ -34,6 +36,7 @@ public sealed class PushNotifier : BackgroundService
 
     private readonly SessionManager _mgr;
     private readonly HookEventStore _hooks;
+    private readonly SessionNoticeStore _notices;
     private readonly PushSubscriptionStore _subs;
     private readonly VapidKeyStore _vapid;
     private readonly NodeMesh _mesh;
@@ -44,7 +47,9 @@ public sealed class PushNotifier : BackgroundService
     private readonly SemaphoreSlim _wake = new(0, 1);
 
     /// <summary>The marks a node's sessions carried at the last check — the state a transition is measured from.</summary>
-    private sealed record Marks(HashSet<string> Attention, HashSet<string> Waiting, HashSet<string> Failed);
+    // Notices are the ids of the ones already sent: unlike the rest, each is an event, not a state.
+    private sealed record Marks(HashSet<string> Attention, HashSet<string> Waiting, HashSet<string> Failed,
+        HashSet<string> Notices);
 
     /// <summary>A session as far as an alert needs it, whichever node it is on.</summary>
     private sealed record Row(string Id, string Name, string? WatchdogStatus, bool WatchdogEnabled);
@@ -53,11 +58,15 @@ public sealed class PushNotifier : BackgroundService
     // Per peer, from its first snapshot after it came online: a peer that was away (or this node, starting) doesn't
     // alert for everything that is already waiting there.
     private readonly Dictionary<string, Marks> _prevPeers = new();
+    // When each peer dropped out of the mesh's picture (Unix ms), so its notices from the gap are sent on its return.
+    private readonly Dictionary<string, long> _peerGoneAt = new();
 
     public PushNotifier(SessionManager mgr, HookEventStore hooks, PushSubscriptionStore subs,
-        VapidKeyStore vapid, NodeMesh mesh, NodeIdentityStore identity, ILogger<PushNotifier> log)
+        VapidKeyStore vapid, NodeMesh mesh, NodeIdentityStore identity, SessionNoticeStore notices,
+        ILogger<PushNotifier> log)
     {
         _mgr = mgr;
+        _notices = notices;
         _hooks = hooks;
         _subs = subs;
         _vapid = vapid;
@@ -67,6 +76,7 @@ public sealed class PushNotifier : BackgroundService
         _mgr.Changed += Poke;
         _hooks.Changed += Poke;
         _mesh.Changed += Poke;
+        _notices.Changed += Poke;
     }
 
     private void Poke()
@@ -99,14 +109,15 @@ public sealed class PushNotifier : BackgroundService
         // is most of the value — "Wants to run Bash: git push --force" is a decision you can take from
         // the lock screen; "Waiting on a prompt." only tells you to go and look.
         var details = _mgr.ActivityDetails();
+        var notices = _notices.Recent();
 
         var prev = _prev;
-        var now = new Marks(attention, waiting, failed);
+        var now = new Marks(attention, waiting, failed, notices.Select(n => n.Id).ToHashSet());
         _prev = now;
         if (prev is null) return; // first tick: seed only
 
         await AlertAsync(_identity.Current.Id, null, sessions.Select(s => new Row(s.Id, s.Name, s.WatchdogStatus, s.WatchdogEnabled)),
-            now, prev, id => details.GetValueOrDefault(id));
+            now, prev, id => details.GetValueOrDefault(id), notices);
     }
 
     /// <summary>The same transitions on every peer the mesh holds a snapshot of, alerted from here.</summary>
@@ -119,26 +130,51 @@ public sealed class PushNotifier : BackgroundService
             online.Add(node.Id);
             var rows = Rows(snap);
             var attention = rows.Where(r => r.WatchdogStatus == "attention").Select(r => r.Id).ToHashSet();
-            var now = new Marks(attention, Ids(snap, "waiting"), Ids(snap, "failed"));
+            var notices = Notices(snap);
+            var now = new Marks(attention, Ids(snap, "waiting"), Ids(snap, "failed"), notices.Select(n => n.Id).ToHashSet());
             var hadPrev = _prevPeers.TryGetValue(node.Id, out var prev);
             _prevPeers[node.Id] = now;
-            if (!hadPrev) continue;
+            if (!hadPrev)
+            {
+                // Back after a gap: its states are seeded, as on first sight — but a notice is an event,
+                // and one it sent while the link was down is still news. Those, and only those, go out.
+                if (!_peerGoneAt.Remove(node.Id, out var goneAt)) continue;
+                prev = now with { Notices = notices.Where(n => n.At <= goneAt).Select(n => n.Id).ToHashSet() };
+            }
             var details = Details(snap);
-            await AlertAsync(node.Id, node.Name, rows, now, prev!, id => details.GetValueOrDefault(id));
+            await AlertAsync(node.Id, node.Name, rows, now, prev!, id => details.GetValueOrDefault(id), notices);
         }
-        // Gone, offline or forgotten: it seeds again when it is back.
-        foreach (var id in _prevPeers.Keys.Where(id => !online.Contains(id)).ToList()) _prevPeers.Remove(id);
+        // Gone, offline or forgotten: it seeds again when it is back, noting when it went for its notices.
+        foreach (var id in _prevPeers.Keys.Where(id => !online.Contains(id)).ToList())
+        {
+            _prevPeers.Remove(id);
+            _peerGoneAt[id] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        }
+        // A peer that never comes back is forgotten with its notices' lifetime.
+        var stale = DateTimeOffset.UtcNow.AddMinutes(-15).ToUnixTimeMilliseconds();
+        foreach (var id in _peerGoneAt.Where(kv => kv.Value < stale).Select(kv => kv.Key).ToList()) _peerGoneAt.Remove(id);
     }
 
     /// <param name="nodeName">The peer's name, to put in front of the session's; null for this node's own.</param>
     private async Task AlertAsync(string nodeId, string? nodeName, IEnumerable<Row> sessions, Marks now, Marks prev,
-        Func<string, SessionActivityDetail?> detailOf)
+        Func<string, SessionActivityDetail?> detailOf, IReadOnlyList<SessionNotice> notices)
     {
         // No subscriptions => nothing to send; the marks above are still kept current, so the first transition
         // after a subscribe doesn't retroactively fire for a pre-existing state.
         if (_subs.All().Count == 0) return;
 
-        foreach (var s in sessions)
+        // What a session asked to tell you, each once. Under the session's name, as every alert here is,
+        // and tagged by the notice rather than the session: two of them are two things to read.
+        var rows = sessions.ToList();
+        foreach (var n in notices.Where(n => !prev.Notices.Contains(n.Id)))
+        {
+            var session = rows.FirstOrDefault(r => r.Id == n.SessionId)?.Name ?? "Session";
+            var name = nodeName is null ? session : $"{nodeName} · {session}";
+            await SendToAllAsync(n.Title is null ? name : $"{name} — {n.Title}", n.Message,
+                $"notice-{nodeId}:{n.Id}", n.SessionId, nodeName is null ? null : nodeId);
+        }
+
+        foreach (var s in rows)
         {
             var name = nodeName is null ? s.Name : $"{nodeName} · {s.Name}";
             // Tagged by node as well as session: two machines can mint the same id, and a phone hearing about a
@@ -189,6 +225,25 @@ public sealed class PushNotifier : BackgroundService
         return rows;
     }
 
+    // A peer's notices, each checked as a session row is: an id the length a notice id is, and text cut to
+    // what this node would have accepted itself.
+    private static List<SessionNotice> Notices(JsonElement snap)
+    {
+        var list = new List<SessionNotice>();
+        if (!snap.TryGetProperty("notices", out var all) || all.ValueKind != JsonValueKind.Array) return list;
+        foreach (var n in all.EnumerateArray())
+        {
+            if (n.ValueKind != JsonValueKind.Object
+                || Str(n, "id") is not { Length: > 0 and <= 32 } id
+                || Str(n, "sessionId") is not { Length: > 0 and <= 64 } sessionId
+                || Str(n, "message") is not { Length: > 0 } message) continue;
+            var title = Str(n, "title") is { Length: > 0 } t ? Clip(t, SessionNoticeStore.MaxTitle) : null;
+            var at = n.TryGetProperty("at", out var a) && a.ValueKind == JsonValueKind.Number && a.TryGetInt64(out var ms) ? ms : 0;
+            list.Add(new SessionNotice(id, sessionId, title, Clip(message, SessionNoticeStore.MaxMessage), at));
+        }
+        return list;
+    }
+
     private static HashSet<string> Ids(JsonElement snap, string field)
     {
         var ids = new HashSet<string>();
@@ -228,6 +283,23 @@ public sealed class PushNotifier : BackgroundService
             var other => $"The turn ended on an error ({other}).",
         };
 
+    private static readonly JsonSerializerOptions PayloadJson = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    // Cut to at most this many UTF-8 bytes, never through a character (a surrogate pair counts as one).
+    private static string ClipBytes(string value, int maxBytes)
+    {
+        if (Encoding.UTF8.GetByteCount(value) <= maxBytes) return value;
+        var bytes = 0;
+        var end = 0;
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (bytes + rune.Utf8SequenceLength > maxBytes - 3) break; // room for the ellipsis
+            bytes += rune.Utf8SequenceLength;
+            end += rune.Utf16SequenceLength;
+        }
+        return value[..end] + "…";
+    }
+
     /// <param name="node">The peer the session is on; null for one of this node's own.</param>
     private async Task SendToAllAsync(string title, string body, string tag, string sessionId, string? node)
     {
@@ -235,7 +307,12 @@ public sealed class PushNotifier : BackgroundService
         // which every stored subscription would reject with a 403 — and a 403 isn't a prune, so the
         // only thing sending would achieve is one failed request per device per notification.
         if (_vapid.Ephemeral) return;
-        var payload = JsonSerializer.Serialize(new { title, body, tag, sessionId, node });
+        // A push carries about 4 KB, and the default encoder writes every non-ASCII character as a six-byte
+        // escape: a long Russian message would come out at three times its size and be refused by the push
+        // service, quietly, per device. Written as UTF-8 instead (it never lands in HTML), and the text cut
+        // to a byte budget that leaves room for the rest.
+        var payload = JsonSerializer.Serialize(
+            new { title = ClipBytes(title, 300), body = ClipBytes(body, 2400), tag, sessionId, node }, PayloadJson);
         var vapid = new VapidDetails(_vapid.Keys.Subject, _vapid.Keys.PublicKey, _vapid.Keys.PrivateKey);
 
         foreach (var entry in _subs.All())
@@ -268,6 +345,7 @@ public sealed class PushNotifier : BackgroundService
         _mgr.Changed -= Poke;
         _hooks.Changed -= Poke;
         _mesh.Changed -= Poke;
+        _notices.Changed -= Poke;
         _client.Dispose();
         base.Dispose();
     }

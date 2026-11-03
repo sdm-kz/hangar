@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BuildStamp, Project, SessionInfo, UpdateStatus } from "@/types";
+import type { BuildStamp, Project, SessionInfo, SessionNotice, UpdateStatus } from "@/types";
 import { apiFor } from "./api";
 import type { ActivityDetail } from "./sessionActivity";
 import type { ShellActivity } from "./shellActivity";
@@ -23,6 +23,8 @@ export interface NodeSnapshot {
   activity: Record<string, ActivityDetail>;
   shellsRev: number;
   shellActivity: Record<string, ShellActivity> | null;
+  /** What its sessions asked to tell you, for the last few minutes — see SessionNotice. */
+  notices: SessionNotice[];
   projects: Project[];
   /** Its updater, for the update button on its heading. */
   update: UpdateStatus | null;
@@ -86,6 +88,7 @@ interface HubMessage {
   shellsRev?: number;
   projectsRev?: number;
   shells?: Record<string, ShellActivity>;
+  notices?: SessionNotice[];
   update?: unknown;
 }
 
@@ -100,6 +103,7 @@ export const EMPTY_SNAPSHOT: NodeSnapshot = {
   activity: {},
   shellsRev: 0,
   shellActivity: null,
+  notices: [],
   projects: [],
   update: null,
 };
@@ -127,6 +131,21 @@ export function peerError(peer: PeerNode | undefined): string | null {
   }
 }
 
+// A peer on another build may send these in another shape; one that isn't a notice is dropped here rather
+// than taking the page down where they are read.
+function validNotices(raw: unknown): SessionNotice[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (n): n is SessionNotice =>
+      typeof n === "object" &&
+      n !== null &&
+      typeof n.id === "string" &&
+      typeof n.sessionId === "string" &&
+      typeof n.message === "string" &&
+      (n.title == null || typeof n.title === "string")
+  );
+}
+
 function parse(nodeId: string, msg: HubMessage, prev: NodeSnapshot | null): NodeSnapshot {
   const shells = msg.shells ?? {};
   return {
@@ -144,6 +163,7 @@ function parse(nodeId: string, msg: HubMessage, prev: NodeSnapshot | null): Node
     shellsRev: msg.shellsRev ?? 0,
     shellActivity:
       prev?.shellActivity && JSON.stringify(prev.shellActivity) === JSON.stringify(shells) ? prev.shellActivity : shells,
+    notices: validNotices(msg.notices),
     projects: prev?.projects ?? [],
     update: updateStatus(msg.update),
   };
