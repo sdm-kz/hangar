@@ -36,6 +36,13 @@ impl Ids {
     fn working(&self, id: &str) -> bool {
         self.busy.contains(id) || self.compacting.contains(id) || self.background.contains_key(id)
     }
+
+    // A turn, as opposed to a compaction alone. Claude compacts an idle conversation on its own, and
+    // that ending is housekeeping finishing, not anything you asked for: it neither ticks a session
+    // nor takes away the tick of the turn before it. The web app draws the same line (`useDoneSessions`).
+    fn ran(&self, id: &str) -> bool {
+        self.busy.contains(id) || self.background.contains_key(id)
+    }
 }
 
 /// A session, wherever it runs: its node (None for the server's own) and its id.
@@ -99,10 +106,11 @@ const OPEN_SETTLE: Duration = Duration::from_secs(5);
 
 /// Which sessions have finished a turn the tray hasn't shown you since. A turn finishing is a
 /// transition — a session dropping out of the working set — so it can't be read off one snapshot;
-/// this remembers the last one's working set per machine.
+/// this remembers the last one's working set per machine — each session in it with whether that
+/// stretch of work had a turn in it, or was only a compaction.
 #[derive(Default)]
 pub struct Tracker {
-    working: HashMap<Option<String>, HashSet<String>>,
+    working: HashMap<Option<String>, HashMap<String, bool>>,
     done: BTreeSet<Key>,
     opened: HashMap<Key, Instant>,
 }
@@ -124,17 +132,22 @@ impl Tracker {
         for m in machines {
             let node = m.node.map(String::from);
             // A paused session never counts as working, so its turns ending tick nothing.
-            let working: HashSet<String> = m
+            let prev = self.working.get(&node);
+            let working: HashMap<String, bool> = m
                 .sessions
                 .iter()
                 .filter(|s| !s.activity_paused && m.ids.working(&s.id))
-                .map(|s| s.id.clone())
+                .map(|s| {
+                    let ran = m.ids.ran(&s.id) || prev.and_then(|p| p.get(&s.id)).copied().unwrap_or(false);
+                    (s.id.clone(), ran)
+                })
                 .collect();
-            if let Some(prev) = self.working.get(&node) {
+            if let Some(prev) = prev {
                 // Stopping to wait on you, or on an error, isn't finishing: those have marks of their own.
-                for id in prev {
+                for (id, &ran) in prev {
                     let key = (node.clone(), id.clone());
-                    if !working.contains(id)
+                    if ran
+                        && !working.contains_key(id)
                         && !m.ids.waiting.contains(id)
                         && !m.ids.failed.contains(id)
                         && !self.opened.contains_key(&key)
@@ -148,7 +161,7 @@ impl Tracker {
             // didn't read has none, which says nothing about its sessions.
             self.done.retain(|(n, id)| {
                 *n != node
-                    || (!m.ids.working(id)
+                    || (!m.ids.ran(id)
                         && !m.ids.waiting.contains(id)
                         && !m.ids.failed.contains(id)
                         && (m.sessions.is_empty() || m.sessions.iter().any(|s| s.id == *id && s.counts_in_activity())))
@@ -269,6 +282,27 @@ mod tests {
         assert_eq!(fraction(&[Machine { node: None, sessions: &sessions, ids: &shells }], &BTreeSet::new()), (0, 1));
         let done = t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]);
         assert_eq!(done, BTreeSet::from([own("a")]));
+    }
+
+    #[test]
+    fn compacting_on_its_own_neither_ticks_nor_clears_a_tick() {
+        let sessions = [session("a"), session("b")];
+        let mut t = Tracker::default();
+        let compacting = |id: &str| Ids { compacting: HashSet::from([id.to_string()]), ..Ids::default() };
+        t.observe(&[Machine { node: None, sessions: &sessions, ids: &ids(&["a"], &[]) }]);
+        assert_eq!(t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]), BTreeSet::from([own("a")]));
+        // b compacts while idle; a, already ticked, does too.
+        t.observe(&[Machine { node: None, sessions: &sessions, ids: &compacting("b") }]);
+        t.observe(&[Machine { node: None, sessions: &sessions, ids: &compacting("a") }]);
+        let done = t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]);
+        assert_eq!(done, BTreeSet::from([own("a")]), "b only compacted; a's turn is still unread");
+
+        // A compaction inside a turn belongs to the turn: its end is the turn's end.
+        t.seen(&[own("a")]);
+        t.observe(&[Machine { node: None, sessions: &sessions, ids: &ids(&["b"], &[]) }]);
+        t.observe(&[Machine { node: None, sessions: &sessions, ids: &compacting("b") }]);
+        let done = t.observe(&[Machine { node: None, sessions: &sessions, ids: &Ids::default() }]);
+        assert_eq!(done, BTreeSet::from([own("b")]));
     }
 
     #[test]

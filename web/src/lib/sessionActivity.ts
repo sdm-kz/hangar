@@ -187,8 +187,9 @@ export function useDoneSessions({
 }): { done: Set<string>; markSeen: (ids: Iterable<string>) => void } {
   const [done, setDone] = useState<Set<string>>(loadDone);
   // The working set as of the previous frame. A turn has finished when an id drops out of it, which
-  // is a transition — it cannot be read off any single snapshot.
-  const prevWorking = useRef<Set<string> | null>(null);
+  // is a transition — it cannot be read off any single snapshot. Each id carries whether this stretch
+  // of work had a turn in it (see `ran` below), not just a compaction.
+  const prevWorking = useRef<Map<string, boolean> | null>(null);
 
   // When we last attached to a session, and which. Opening one makes its terminal repaint, and a
   // repaint can read as a turn: where the server has no hook status for a session it scrapes the
@@ -211,11 +212,16 @@ export function useDoneSessions({
     // Compacting is work: a session mid-compact hasn't finished anything, and treating it as idle
     // would tick it the moment the compaction started. So are shells left running in the background.
     const working = new Set([...busyIds, ...compactingIds, ...backgroundIds.keys()]);
+    // A turn, as opposed to a compaction alone: Claude generating, or shells it left running. Claude
+    // compacts an idle conversation on its own ("Compacted while idle"), and that stretch ending is
+    // housekeeping finishing, not anything you asked for — so it ticks nothing. A compaction inside a
+    // turn still ends in a tick, because the stretch it belongs to had the turn in it.
+    const ran = (id: string) => busyIds.has(id) || backgroundIds.has(id);
     // A paused session's turns are routine (see countsInTotals): one ending is no news, so it gets no
     // tick, and pausing one that has a tick takes it away.
     const paused = new Set(sessions.flatMap((s) => (s.activityPaused ? [s.id] : [])));
     const prev = prevWorking.current;
-    prevWorking.current = working;
+    prevWorking.current = new Map([...working].map((id) => [id, ran(id) || prev?.get(id) === true]));
 
     setDone((cur) => {
       const next = new Set(cur);
@@ -229,12 +235,13 @@ export function useDoneSessions({
       // nothing — better a missing tick for the length of a reconnect than a green one on a session
       // that is really sitting on a permission prompt.
       if (prev && streamUp) {
-        for (const id of prev) {
+        for (const [id, hadTurn] of prev) {
           // Stopping because Claude is now blocked on you is not finishing — the amber waiting dot
           // is the thing to show there, and it outranks this one anyway. Nor is stopping because the
           // turn errored out: a green tick on a session that hit its rate limit is a lie, and the
           // red mark it gets instead is the one you want to see.
           if (
+            hadTurn &&
             !working.has(id) &&
             !waitingIds.has(id) &&
             !failedIds.has(id) &&
@@ -246,8 +253,9 @@ export function useDoneSessions({
         }
       }
       for (const id of next) {
-        // A new turn (or a prompt to answer, or a turn that died) supersedes the last one's result.
-        if (working.has(id) || waitingIds.has(id) || failedIds.has(id) || paused.has(id)) next.delete(id);
+        // A new turn (or a prompt to answer, or a turn that died) supersedes the last one's result. An
+        // idle compaction doesn't: the turn it follows is still the one you haven't read.
+        if (ran(id) || waitingIds.has(id) || failedIds.has(id) || paused.has(id)) next.delete(id);
         // Prune sessions that have exited or been closed since — but only against a list we
         // actually have. Before the first fetch lands `sessions` is empty, and pruning against it
         // would throw away everything restored from storage.
