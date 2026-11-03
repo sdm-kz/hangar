@@ -82,6 +82,20 @@ export async function enablePush(): Promise<PushState> {
   return "subscribed";
 }
 
+/**
+ * Whether this browser gets Web Push from the server: then a push is how it hears about everything,
+ * and the page raising a notification of its own would be the second one (see osNotify).
+ */
+export async function hasPushSubscription(): Promise<boolean> {
+  if (!isPushSupported() || Notification.permission !== "granted") return false;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    return !!(await reg?.pushManager.getSubscription());
+  } catch {
+    return false;
+  }
+}
+
 /** Unsubscribe this device and tell the server to forget it. */
 export async function disablePush(): Promise<PushState> {
   const reg = await navigator.serviceWorker.getRegistration();

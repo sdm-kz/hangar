@@ -1,12 +1,18 @@
+import { hasPushSubscription } from "./push";
+
 /**
  * Raise OS notifications for a batch of sessions that just changed state — the in-page half of the
  * alerting the server does with Web Push, for the case where a tab of the app is actually open.
  *
- * One place for the three things every one of these alerts wants and none of them is interesting
- * for: asking for permission if it hasn't been granted yet (and firing once it is, rather than
- * dropping the first alert of the session on the floor), swallowing the failures — a notification
- * nobody sees must never break the page it was about — and wiring the click to open the session the
- * alert is about.
+ * One place for the things every one of these alerts wants and none of them is interesting for:
+ * asking for permission if it hasn't been granted yet (and firing once it is, rather than dropping the
+ * first alert of the session on the floor), swallowing the failures — a notification nobody sees must
+ * never break the page it was about — and wiring the click to open the session the alert is about.
+ *
+ * And standing aside where the push covers it: a browser subscribed to Web Push gets every one of
+ * these from the server as well, and the service worker always shows those, so raising one here too
+ * would be the second of each. The two can't be made to collapse into one reliably — iOS keeps both,
+ * tag or no tag — so a device gets exactly one source: the push when it is subscribed, this when not.
  */
 export interface SessionAlert {
   /** Session the alert is about; clicking the notification opens it. */
@@ -19,7 +25,12 @@ export interface SessionAlert {
 
 export function osNotify(alerts: SessionAlert[], open: (id: string) => void) {
   if (alerts.length === 0 || !("Notification" in window)) return;
+  void hasPushSubscription().then((pushed) => {
+    if (!pushed) raise(alerts, open);
+  });
+}
 
+function raise(alerts: SessionAlert[], open: (id: string) => void) {
   const fire = () => {
     for (const alert of alerts) {
       try {

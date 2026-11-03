@@ -22,8 +22,7 @@ self.addEventListener("push", (event) => {
   const options = {
     body: data.body || "",
     tag: data.tag,
-    // Replace an existing notification with the same tag rather than stacking a duplicate. This also
-    // collapses against the in-page Notification (which uses the same tag) on the same device.
+    // Replace an existing notification with the same tag rather than stacking a duplicate.
     renotify: !!data.tag,
     // `node` is set only on an alert this node relayed for a peer's session (plans/multi-node.md §5).
     data: { sessionId: data.sessionId || null, node: data.node || null },
@@ -31,17 +30,11 @@ self.addEventListener("push", (event) => {
     badge: "/icons/badge-96.png", // Android draws it from the alpha alone: a white silhouette
   };
 
-  event.waitUntil(
-    (async () => {
-      // If an app window is currently focused on this device, the in-page UI already surfaces this —
-      // suppress the OS notification to avoid a double. iOS requires every push to show *something*,
-      // so we only skip when a window is genuinely visible/focused.
-      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      const focused = wins.some((w) => w.focused || w.visibilityState === "visible");
-      if (focused) return;
-      await self.registration.showNotification(title, options);
-    })()
-  );
+  // Always shown, even with an app window open on this device: a page that has a push subscription
+  // raises no notification of its own (osNotify), so this is the only one. Skipping it is not an option
+  // on iOS anyway — a push that shows nothing gets Safari's own "updated in the background" notice in
+  // its place, which is how an open app on the iPhone used to get two of everything.
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {
