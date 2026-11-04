@@ -122,7 +122,12 @@ const KEYWORD_DECL = new RegExp(
 // Go's method: `func (r *Repo) Name(`.
 const GO_METHOD = /\bfunc\s*\([^)]*\)\s*$/;
 // `Type Name` — a C-family member, local, or parameter — where what precedes the name is a type.
-const TYPED_BEFORE = /(?:^|[\s(,[<{])([A-Za-z_$][\w$.]*)(?:<[^()=;]*>)?(?:\[[\],\s]*\])*[?*&]*\s+$/;
+// Generic arguments may hold a tuple: `Task<(int A, int B)> Name(`.
+const TYPED_BEFORE =
+  /(?:^|[\s(,[<{])([A-Za-z_$][\w$.]*)(?:<(?:[^()=;]|\([^()=;]*\))*>)?(?:\[[\],\s]*\])*[?*&]*\s+$/;
+// A tuple type of its own: `(int Top, int Bottom)? Name(`. The comma tells it from `if (x) Name(`.
+const TUPLE_BEFORE =
+  /(?:^|[\s(,<{])\((?:[^()=;,]|\([^()=;]*\))*,(?:[^()=;]|\([^()=;]*\))*\)(?:\[[\],\s]*\])*[?*&]*\s+$/;
 const TYPED_AFTER = /^\s*(?:$|[;,)\]{(<:]|=(?!=))/;
 // Words that sit before a name the way a type would, and are not one.
 const NOT_TYPE = new Set(
@@ -148,7 +153,11 @@ export function declScore(line: string, col: number, length: number): number {
   const after = line.slice(col + length);
   if (KEYWORD_DECL.test(before) || GO_METHOD.test(before)) return 3;
   const typed = before.match(TYPED_BEFORE);
-  if (typed && !NOT_TYPE.has(typed[1].toLowerCase()) && TYPED_AFTER.test(after) && !/^\s*==/.test(after))
+  if (
+    ((typed && !NOT_TYPE.has(typed[1].toLowerCase())) || TUPLE_BEFORE.test(before)) &&
+    TYPED_AFTER.test(after) &&
+    !/^\s*==/.test(after)
+  )
     return 2;
   if (LINE_START_BEFORE.test(before) && LINE_START_AFTER.test(after)) return 1;
   return 0;
