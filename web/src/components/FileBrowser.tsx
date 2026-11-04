@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_MODEL_PREVIEW, MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
+import { useCodeNav } from "@/lib/codeNav";
 import { useHtml } from "@/lib/useHtml";
 import { useContentRev } from "@/lib/useContentRev";
 import { readUrlState, previewUrl } from "@/lib/urlState";
@@ -2418,6 +2419,8 @@ function FilePreview({
       [file, text]
     )
   );
+  // A click on a name in the code marks it throughout; Ctrl/⌘+click goes to its declaration.
+  const nav = useCodeNav();
 
   useEffect(() => {
     setText(null);
@@ -3075,11 +3078,12 @@ function FilePreview({
                   />
                 )
               ) : highlighted ? (
-                <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
+                <pre ref={nav.ref} style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
+                  {nav.overlay}
                   <code className="hljs bg-transparent p-0" dangerouslySetInnerHTML={highlighted} />
                 </pre>
               ) : (
-                <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>{text}</pre>
+                <pre ref={nav.ref} style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>{text}{nav.overlay}</pre>
               ))}
 
             {kind === "office" && file.size <= MAX_OFFICE_PREVIEW && (
@@ -3159,11 +3163,15 @@ function TabButton({
 
 export function DiffView({ diff }: { diff: string }) {
   const lines = useMemo(() => diff.split("\n"), [diff]);
+  // Names in the diff, as in the file preview — each line an element of its own here, starting with
+  // the diff's marker.
+  const nav = useCodeNav({ lineSelector: "[data-code-line]", diffPrefix: true });
   if (!diff.trim())
     return <div className="p-4 text-sm text-muted-foreground">No differences to show.</div>;
 
   return (
-    <div className="min-w-max py-1 font-mono text-xs leading-relaxed">
+    <div ref={nav.ref} className="min-w-max py-1 font-mono text-xs leading-relaxed">
+      {nav.overlay}
       {lines.map((ln, i) => {
         let cls = "";
         if (ln.startsWith("+") && !ln.startsWith("+++"))
@@ -3183,7 +3191,7 @@ export function DiffView({ diff }: { diff: string }) {
         )
           cls = "text-muted-foreground";
         return (
-          <div key={i} className={cn("whitespace-pre px-4", cls)}>
+          <div key={i} data-code-line className={cn("whitespace-pre px-4", cls)}>
             {ln || " "}
           </div>
         );

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fileExt, fileKind } from "@/lib/fileKind";
 import { highlightCode } from "@/lib/highlight";
+import { useCodeNav } from "@/lib/codeNav";
 import { useHtml } from "@/lib/useHtml";
 import { useContentRev } from "@/lib/useContentRev";
 import { cn } from "@/lib/utils";
@@ -303,6 +304,8 @@ export function ServerFileViewer({
   const highlighted = useHtml(
     useMemo(() => (text !== null ? highlightCode(name, text) : null), [name, text])
   );
+  // A click on a name in the code marks it throughout; Ctrl/⌘+click goes to its declaration.
+  const nav = useCodeNav();
 
   const copyContent = useCallback(async () => {
     if (text === null) return;
@@ -667,11 +670,12 @@ export function ServerFileViewer({
             />
           )
         ) : highlighted ? (
-          <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
+          <pre ref={nav.ref} style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
+            {nav.overlay}
             <code className="hljs" dangerouslySetInnerHTML={highlighted} />
           </pre>
         ) : (
-          <pre style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>{text}</pre>
+          <pre ref={nav.ref} style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>{text}{nav.overlay}</pre>
         )}
         </div>
       </div>

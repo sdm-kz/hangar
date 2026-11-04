@@ -331,3 +331,23 @@
 [data-sel-side="new"] [data-side="old"] {
   user-select: none;
 }
+
+/* In-file code navigation (lib/codeNav): every occurrence of the clicked name, the one in focus, and
+   the name under the pointer while Ctrl/⌘ is held. Painted with the Custom Highlight API, so the
+   code's own nodes are never touched. */
+::highlight(code-nav) {
+  background-color: rgb(250 204 21 / 0.3);
+}
+::highlight(code-nav-current) {
+  background-color: rgb(249 115 22 / 0.5);
+}
+::highlight(code-nav-link) {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+.dark ::highlight(code-nav) {
+  background-color: rgb(250 204 21 / 0.22);
+}
+.dark ::highlight(code-nav-current) {
+  background-color: rgb(249 115 22 / 0.45);
+}

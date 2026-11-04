@@ -23,6 +23,7 @@ import { reviewKey } from "@/lib/sessionPulls";
 import { writeToClipboard } from "@/lib/clipboard";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import { highlightLines, type CodeToken } from "@/lib/highlight";
+import { useCodeNav } from "@/lib/codeNav";
 import { allRows, oneSidedAs, parseUnifiedDiff, type DiffRow } from "@/lib/unifiedDiff";
 import { cn } from "@/lib/utils";
 import {
@@ -1607,6 +1608,7 @@ function FileDiff({
     fetchedFor.current = key;
 
     let cancelled = false;
+    let done = false;
     setLoadingContent(true);
     setContentError(null);
     const fail = (message: string) => {
@@ -1622,9 +1624,18 @@ function FileDiff({
         else setContent(r.content);
       })
       .catch(() => !cancelled && fail("Could not reach the server."))
-      .finally(() => !cancelled && setLoadingContent(false));
+      .finally(() => {
+        done = true;
+        if (!cancelled) setLoadingContent(false);
+      });
     return () => {
       cancelled = true;
+      // Left before the file arrived — back to Diff mid-read, say. What was asked for never landed,
+      // so it has not been fetched: the next File asks again rather than waiting on this one forever.
+      if (!done) {
+        fetchedFor.current = null;
+        setLoadingContent(false);
+      }
     };
   }, [whole, sessionId, number, repo, file.path, readAt]);
 
@@ -1638,6 +1649,30 @@ function FileDiff({
   // Nothing to read whole: a binary has no text, and a pure rename has no commit of its own to ask
   // about beyond what the review already said.
   const canReadWhole = !file.binary && !!readAt;
+
+  // Names in the code: a click marks a name's every occurrence, Ctrl/⌘+click goes to its declaration
+  // (see useCodeNav). A diff holds only the lines around the change, so a name declared elsewhere in
+  // the file is not in it — that sends the card to the whole file, to look again once it is here.
+  const [seeking, setSeeking] = useState<string | null>(null);
+  const nav = useCodeNav({
+    lineSelector: "[data-side]",
+    onNoDefinition: (word) => {
+      if (whole || !canReadWhole) return false;
+      setSeeking(word);
+      setWhole(true);
+      return true;
+    },
+  });
+  const { goToDefinition } = nav;
+  useEffect(() => {
+    if (!seeking) return;
+    // Back to the diff before the file came: the look it was waiting to take is off.
+    if (!whole || contentError) setSeeking(null);
+    else if (content !== null && !loadingContent) {
+      setSeeking(null);
+      goToDefinition(seeking);
+    }
+  }, [seeking, whole, content, contentError, loadingContent, goToDefinition]);
 
   return (
     <div
@@ -1801,50 +1836,53 @@ function FileDiff({
         )}
       </div>
 
-      {open && whole ? (
-        loadingContent ? (
-          <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Reading the file…
-          </div>
-        ) : contentError ? (
-          <div className="p-4 text-sm text-muted-foreground">{contentError}</div>
-        ) : (
-          <FileListing
-            path={file.path}
-            text={content ?? ""}
-            side={file.status === "D" ? "old" : "new"}
-            wrap={wrap}
-            zoom={zoom}
-            numCol={numCol}
-          />
-        )
-      ) : open ? (
-        file.binary ? (
-          <div className="p-4 text-sm text-muted-foreground">Binary file — nothing to show.</div>
-        ) : file.truncated ? (
-          // The server sends no text for a file it cut, precisely so half a diff is never drawn as
-          // though it were the whole one. The counts in the header still say how much changed.
-          <div className="p-4 text-sm text-muted-foreground">
-            This file's diff is too large to show here — it is on GitHub.
-          </div>
-        ) : hunks.length === 0 ? (
-          <div className="p-4 text-sm text-muted-foreground">
-            {file.status === "R" ? "Renamed with no other change." : "No changes to show."}
-          </div>
-        ) : side ? (
-          <OneSided hunks={hunks} side={side} wrap={wrap} zoom={zoom} numCol={numCol} />
-        ) : (
-          <SideBySide
-            hunks={hunks}
-            wrap={wrap}
-            zoom={zoom}
-            numCol={numCol}
-            share={share}
-            onResize={onShareResize}
-            onReset={onShareReset}
-          />
-        )
-      ) : null}
+      {nav.overlay}
+      <div ref={nav.ref}>
+        {open && whole ? (
+          loadingContent ? (
+            <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Reading the file…
+            </div>
+          ) : contentError ? (
+            <div className="p-4 text-sm text-muted-foreground">{contentError}</div>
+          ) : (
+            <FileListing
+              path={file.path}
+              text={content ?? ""}
+              side={file.status === "D" ? "old" : "new"}
+              wrap={wrap}
+              zoom={zoom}
+              numCol={numCol}
+            />
+          )
+        ) : open ? (
+          file.binary ? (
+            <div className="p-4 text-sm text-muted-foreground">Binary file — nothing to show.</div>
+          ) : file.truncated ? (
+            // The server sends no text for a file it cut, precisely so half a diff is never drawn as
+            // though it were the whole one. The counts in the header still say how much changed.
+            <div className="p-4 text-sm text-muted-foreground">
+              This file's diff is too large to show here — it is on GitHub.
+            </div>
+          ) : hunks.length === 0 ? (
+            <div className="p-4 text-sm text-muted-foreground">
+              {file.status === "R" ? "Renamed with no other change." : "No changes to show."}
+            </div>
+          ) : side ? (
+            <OneSided hunks={hunks} side={side} wrap={wrap} zoom={zoom} numCol={numCol} />
+          ) : (
+            <SideBySide
+              hunks={hunks}
+              wrap={wrap}
+              zoom={zoom}
+              numCol={numCol}
+              share={share}
+              onResize={onShareResize}
+              onReset={onShareReset}
+            />
+          )
+        ) : null}
+      </div>
     </div>
   );
 }

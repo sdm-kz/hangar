@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GitCommit, GitCommitDetail, GitCommitFile, GitFileContent, GitRefs } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
+import { useCodeNav } from "@/lib/codeNav";
 import { DiffView } from "./FileBrowser";
 import { STATUS_COLOR } from "@/lib/gitStatusColor";
 import {
@@ -812,6 +813,8 @@ export function CommitFilePreview({
   const [full, setFull] = useState<GitFileContent | null>(null);
   const name = useMemo(() => selection.path.split("/").pop() || selection.path, [selection.path]);
   const reqRef = useRef(0);
+  // A click on a name in the full file marks it throughout; Ctrl/⌘+click goes to its declaration.
+  const nav = useCodeNav();
 
   // Reset both caches and the view whenever the selected file/commit changes, so switching files
   // never shows the previously-loaded file's diff. (The parent also keys us by hash+path.)
@@ -891,8 +894,9 @@ export function CommitFilePreview({
         ) : view === "diff" ? (
           <DiffView diff={diff ?? ""} />
         ) : full?.exists ? (
-          <pre className="whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed">
+          <pre ref={nav.ref} className="whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed">
             {full.content}
+            {nav.overlay}
           </pre>
         ) : (
           <div className="p-4 text-sm text-muted-foreground">
