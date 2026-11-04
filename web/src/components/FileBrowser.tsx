@@ -1587,6 +1587,7 @@ export const FileBrowser = forwardRef<
               // A file tab's own preview guards that file; the explorer's follows the active file, so
               // it has a guard of its own that is asked about whenever the active file moves.
               guard={previewPath !== undefined ? tabs.guardFor(previewPath) : tabs.guardFor(EXPLORER_GUARD)}
+              onOpenFile={(path) => void tabs.open(fileEntryFromPath(path), false)}
             />
           </div>
         )}
@@ -2299,6 +2300,18 @@ function IndentedNote({ depth, children }: { depth: number; children: React.Reac
   );
 }
 
+// A search result's line, waiting for its file: picking a declaration in another file opens that file,
+// and whichever preview ends up showing it brings the line in once the text is there.
+const pendingReveals = new Map<string, { line: number; word: string }>();
+const revealKey = (session: string, dir: string | undefined, path: string) => `${session}\n${dir ?? ""}\n${path}`;
+// Told whenever a line is asked for, so a preview already showing that file — loaded long ago, in a
+// group of its own — takes it now rather than at its next reload.
+const revealListeners = new Set<() => void>();
+function requestReveal(key: string, want: { line: number; word: string }) {
+  pendingReveals.set(key, want);
+  revealListeners.forEach((tell) => tell());
+}
+
 function FilePreview({
   sessionId,
   workingDirectory,
@@ -2310,6 +2323,7 @@ function FilePreview({
   refreshToken,
   onSaved,
   guard,
+  onOpenFile,
 }: {
   sessionId: string;
   // Absolute working dir, for resolving the previewed file's server path (new-tab preview).
@@ -2328,6 +2342,8 @@ function FilePreview({
   onSaved?: () => void;
   // Lets the parent read this preview's unsaved-edit state (and trigger a save) when closing a tab.
   guard?: React.MutableRefObject<PreviewGuard>;
+  // Opens another file of the same root — where a name's declaration turned out to be.
+  onOpenFile?: (path: string) => void;
 }) {
   const api = useApi();
   const uiKey = useSessionKey(sessionId);
@@ -2419,8 +2435,63 @@ function FilePreview({
       [file, text]
     )
   );
-  // A click on a name in the code marks it throughout; Ctrl/⌘+click goes to its declaration.
-  const nav = useCodeNav();
+  // A click on a name in the code marks it throughout; Ctrl/⌘+click goes to its declaration — in
+  // this file, or, through git grep, in another one of the same root, which opens at that line.
+  const loadedFor = useRef<string | null>(null);
+  // The file a read failed for (or was refused for being too large): a line waiting for it never comes.
+  const failedFor = useRef<string | null>(null);
+  const [revealTick, setRevealTick] = useState(0);
+  useEffect(() => {
+    const tell = () => setRevealTick((t) => t + 1);
+    revealListeners.add(tell);
+    return () => {
+      revealListeners.delete(tell);
+    };
+  }, []);
+  const nav = useCodeNav({
+    path: file?.path,
+    search: (word) => api.sessionGrep(sessionId, word, dir),
+    onOpen: (m, word) => {
+      if (file && m.path === file.path) {
+        nav.revealAt(m.line, word);
+        return;
+      }
+      requestReveal(revealKey(uiKey, dir, m.path), { line: m.line, word });
+      onOpenFile?.(m.path);
+    },
+  });
+  const { revealAt } = nav;
+
+  // The line a search result in another file pointed at, once that file is the one here: its text
+  // read (this file's, not the last one's — hence loadedFor) and drawn as code rather than rendered.
+  // A file that will never be drawn as code — not text, or not readable — lets go of it instead.
+  useEffect(() => {
+    if (!file) return;
+    const key = revealKey(uiKey, dir, file.path);
+    const want = pendingReveals.get(key);
+    if (!want) return;
+    if (kind !== "text" || failedFor.current === file.path) {
+      pendingReveals.delete(key);
+      return;
+    }
+    if (text === null || status !== "idle" || editing || loadedFor.current !== file.path) return;
+    if ((isMarkdown || isHtml) && mdView === "rendered") return setMdView("raw");
+    if (view !== "preview") return setView("preview");
+    // Only a preview on screen takes it (see revealAt), and the one just opened may take a frame or
+    // two to be; a preview kept out of sight gives up and leaves it to that one.
+    let tries = 0;
+    let frame = 0;
+    const attempt = () => {
+      if (!pendingReveals.has(key)) return;
+      if (revealAt(want.line, want.word)) {
+        pendingReveals.delete(key);
+        // Where the file was last left is not where it was asked to open.
+        scrollRestoredRef.current = true;
+      } else if (++tries < 20) frame = requestAnimationFrame(attempt);
+    };
+    attempt();
+    return () => cancelAnimationFrame(frame);
+  }, [file, kind, text, status, editing, mdView, view, uiKey, dir, isMarkdown, isHtml, revealAt, revealTick]);
 
   useEffect(() => {
     setText(null);
@@ -2435,7 +2506,9 @@ function FilePreview({
     setFullscreen(false);
     setReload(0);
     if (!file || kind !== "text") return;
+    failedFor.current = null;
     if (file.size > MAX_TEXT_PREVIEW) {
+      failedFor.current = file.path;
       setStatus("toolarge");
       return;
     }
@@ -2443,8 +2516,17 @@ function FilePreview({
     setStatus("loading");
     api
       .fetchSessionFileText(sessionId, file.path, dir)
-      .then((t) => !cancelled && (setText(t), setStatus("idle")))
-      .catch(() => !cancelled && setStatus("error"));
+      .then((t) => {
+        if (cancelled) return;
+        loadedFor.current = file.path;
+        setText(t);
+        setStatus("idle");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        failedFor.current = file.path;
+        setStatus("error");
+      });
     return () => {
       cancelled = true;
     };

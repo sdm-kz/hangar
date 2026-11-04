@@ -8,9 +8,14 @@
 // someone else — React's rows in a pull request, highlight.js' innerHTML in the Files preview — and
 // a highlight is painted over ranges without touching a node of it. One registry per document, so
 // one view owns it at a time (see `owner`).
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+//
+// Past the file, a view can hand in a `search` — git grep over the rest of the code — and a name the
+// file does not declare is looked for there: one clear declaration is opened straight away, anything
+// less certain is listed, declarations first (see rankMatches).
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronUp, LocateFixed, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, LocateFixed, Search, X } from "lucide-react";
+import type { GrepMatch, GrepResult } from "@/types";
 
 export interface CodeNavOptions {
   /** Elements that each hold one line of code. Set where the view draws a line per element (a
@@ -22,6 +27,13 @@ export interface CodeNavOptions {
   /** Called when the file in view declares nothing by that name. True means the caller took it
    *  from there (a pull request swaps its diff for the whole file and asks again). */
   onNoDefinition?: (word: string) => boolean;
+  /** Looks a name up across the rest of the code. Given, a name with no declaration in this file is
+   *  looked for there, and the bar offers the search for any name. */
+  search?: (word: string) => Promise<GrepResult>;
+  /** Goes to a place the search found: another file, or a line of this one (see `path`). */
+  onOpen?: (match: GrepMatch, word: string) => void;
+  /** This file's path as the search names it, so its own lines are marked as such in the list. */
+  path?: string;
 }
 
 export interface CodeNav {
@@ -31,6 +43,9 @@ export interface CodeNav {
   overlay: ReactNode;
   /** Jump to the declaration of a name, as Ctrl+click on it would. False when there is none. */
   goToDefinition: (word: string) => boolean;
+  /** Bring a line into view with `word` marked on it — where a search result points. False while
+   *  there is no code to do it in (the caller tries again once there is). */
+  revealAt: (line: number, word?: string) => boolean;
 }
 
 const WORD_CHAR = /[\p{L}\p{N}_$]/u;
@@ -179,7 +194,7 @@ function lineAround(text: string, breaks: number[], offset: number): [number, nu
  * MAX_HITS the rest are dropped — except the one at `keep`, the occurrence that was clicked.
  */
 function findHits(root: HTMLElement, s: Scan, word: string, diffPrefix: boolean, keep?: number): Hit[] {
-  const re = new RegExp(`(?<![\\p{L}\\p{N}_$])${escapeRegExp(word)}(?![\\p{L}\\p{N}_$])`, "gu");
+  const re = wordRe(word, "gu");
   const breaks = newlines(s.text);
   const hits: Hit[] = [];
   for (const m of s.text.matchAll(re)) {
@@ -295,6 +310,47 @@ function typing(target: EventTarget | null): boolean {
   return !!el?.closest?.("input, textarea, select, [contenteditable=''], [contenteditable='true']");
 }
 
+/** A search result with how surely it declares the name (see declScore). */
+export interface RankedMatch extends GrepMatch {
+  score: number;
+}
+
+// A line that opens with a comment says nothing is declared on it, whatever the words after look like.
+const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*|<!--|--\s|#(?!\s*define\b|\[|!))/;
+
+/** A whole-word matcher for a name, the way findHits reads one. */
+function wordRe(word: string, flags: string): RegExp {
+  return new RegExp(`(?<![\\p{L}\\p{N}_$])${escapeRegExp(word)}(?![\\p{L}\\p{N}_$])`, flags);
+}
+
+// Prose: a README's "Foo: does this" or a fenced `class Foo` reads like a declaration and isn't one.
+const PROSE_FILE = /\.(?:md|markdown|mdx|txt|rst|adoc|log|csv)$/i;
+
+/**
+ * Search results best first: declarations — by how surely — ahead of uses, then by path and line. The
+ * same reading of a line the in-file jump does, applied to lines that come back from a search.
+ */
+export function rankMatches(matches: GrepMatch[], word: string): RankedMatch[] {
+  const re = wordRe(word, "gu");
+  return matches
+    .map((m) => {
+      let score = 0;
+      if (!COMMENT_LINE.test(m.text) && !PROSE_FILE.test(m.path))
+        for (const hit of m.text.matchAll(re)) score = Math.max(score, declScore(m.text, hit.index, word.length));
+      return { ...m, score };
+    })
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path) || a.line - b.line);
+}
+
+/** What a search across the code found, for the list above the bar. */
+interface Found {
+  word: string;
+  loading: boolean;
+  error?: string;
+  matches: RankedMatch[];
+  truncated: boolean;
+}
+
 interface Shown {
   word: string;
   index: number;
@@ -305,7 +361,21 @@ interface Shown {
 
 export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
   const [root, setRoot] = useState<HTMLElement | null>(null);
+  // The same element, for the calls a caller makes right after a render that put it there — before
+  // the state above has caught up with it.
+  const rootRef = useRef<HTMLElement | null>(null);
+  const ref = useCallback((el: HTMLElement | null) => {
+    rootRef.current = el;
+    setRoot(el);
+  }, []);
   const [shown, setShown] = useState<Shown | null>(null);
+  const [found, setFound] = useState<Found | null>(null);
+  const searchSeq = useRef(0);
+  /** Close the list of search results — and call off a search still on its way to it. */
+  const dropFound = useCallback(() => {
+    searchSeq.current++;
+    setFound(null);
+  }, []);
   const [place, setPlace] = useState<{ right: number; bottom: number } | null>(null);
   const opts = useRef(options);
   opts.current = options;
@@ -334,7 +404,9 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
     word.current = null;
     hits.current = [];
     window.clearTimeout(noteTimer.current);
+    searchSeq.current++;
     setShown(null);
+    setFound(null);
   }, []);
   self.current.clear = clear;
 
@@ -347,22 +419,19 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
   }, []);
 
   /** Mark `w` throughout the file; with `at`, the occurrence there is the current one. */
-  const mark = useCallback(
-    (w: string, at?: number): boolean => {
-      if (!root) return false;
-      const s = scan(root, opts.current.lineSelector);
-      const found = findHits(root, s, w, !!opts.current.diffPrefix, at);
-      if (!found.length) return false;
-      if (owner && owner !== self.current) owner.clear();
-      owner = self.current;
-      word.current = w;
-      hits.current = found;
-      const i = at === undefined ? -1 : found.findIndex((h) => h.start === at);
-      index.current = Math.max(0, i);
-      return true;
-    },
-    [root]
-  );
+  const mark = useCallback((w: string, at?: number): boolean => {
+    const el = rootRef.current;
+    if (!el) return false;
+    const s = scan(el, opts.current.lineSelector);
+    const all = findHits(el, s, w, !!opts.current.diffPrefix, at);
+    if (!all.length) return false;
+    take(self.current);
+    word.current = w;
+    hits.current = all;
+    const i = at === undefined ? -1 : all.findIndex((h) => h.start === at);
+    index.current = Math.max(0, i);
+    return true;
+  }, []);
 
   const go = useCallback(
     (i: number) => {
@@ -374,6 +443,53 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
       show();
     },
     [paint, show]
+  );
+
+  /**
+   * Look a name up across the rest of the code. `auto` is the Ctrl+click that found no declaration
+   * here: one declaration that is plainly the one is gone to, without a list to pick it from.
+   */
+  const findElsewhere = useCallback(
+    async (w: string, auto: boolean) => {
+      const search = opts.current.search;
+      if (!search) return;
+      const seq = ++searchSeq.current;
+      // The note that says so stays until the answer, however long the search takes: its timer would
+      // otherwise drop everything — this search included — when nothing in the file is marked.
+      window.clearTimeout(noteTimer.current);
+      if (!auto) setFound({ word: w, loading: true, matches: [], truncated: false });
+      let r: GrepResult;
+      try {
+        r = await search(w);
+      } catch {
+        r = { matches: [], truncated: false, error: "Could not reach the server." };
+      }
+      if (seq !== searchSeq.current) return; // cleared, or another search since
+      if (r.error) {
+        setFound({ word: w, loading: false, error: r.error, matches: [], truncated: false });
+        show();
+        return;
+      }
+      const ranked = rankMatches(r.matches, w);
+      if (auto) {
+        // Gone to without asking only when it is plainly the one: the single best declaration, in a
+        // search that read everything, somewhere other than this file (whose own lines the in-file
+        // pass has already read more carefully, and turned down).
+        const best = ranked.filter((m) => m.score > 0 && m.score === ranked[0].score);
+        if (best.length === 1 && !r.truncated && best[0].path !== opts.current.path) {
+          setFound(null);
+          opts.current.onOpen?.(best[0], w);
+          return;
+        }
+        if (!ranked.length) {
+          show("not found elsewhere");
+          return;
+        }
+      }
+      setFound({ word: w, loading: false, matches: ranked, truncated: r.truncated });
+      show();
+    },
+    [show]
   );
 
   /** From the current occurrence to its declaration — or, standing on one, to the next. */
@@ -393,7 +509,10 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
       }
       index.current = Math.max(0, index.current);
       paint();
-      show(`no declaration here`);
+      if (opts.current.search) {
+        show("searching…");
+        void findElsewhere(w, true);
+      } else show("no declaration here");
       return false;
     }
     if (!list.some(({ i }) => i === index.current)) {
@@ -409,22 +528,25 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
     if (same.length > 1) go(same[(here + 1) % same.length].i);
     else go(index.current + 1);
     return true;
-  }, [go, paint, show, clear]);
+  }, [go, paint, show, clear, findElsewhere]);
 
   const goToDefinition = useCallback(
     (w: string) => {
       if (!mark(w)) {
-        // Not in this code at all — a name only the removed lines had, say. Said, briefly, rather
-        // than leaving the reader to wonder whether anything happened.
-        if (!root) return false;
-        if (owner && owner !== self.current) owner.clear();
-        owner = self.current;
+        // Not in this code at all — a name only the removed lines had, say. Looked for elsewhere
+        // where that can be done, and otherwise said, briefly, rather than leaving the reader to
+        // wonder whether anything happened.
+        if (!rootRef.current) return false;
+        take(self.current);
         registry()?.delete(NAMES.all);
         registry()?.delete(NAMES.current);
         word.current = w;
         hits.current = [];
         index.current = 0;
-        show("not in this file");
+        if (opts.current.search) {
+          show("searching…");
+          void findElsewhere(w, true);
+        } else show("not in this file");
         return false;
       }
       // Starting from nowhere, so a declaration that happens to be the first occurrence is gone to
@@ -432,7 +554,68 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
       index.current = -1;
       return jump();
     },
-    [root, mark, jump, show]
+    [mark, jump, show, findElsewhere]
+  );
+
+  const revealAt = useCallback(
+    (line: number, w?: string): boolean => {
+      const el = rootRef.current;
+      // A view kept mounted out of sight (another tab's) is no place to bring a line into view — and
+      // the one on screen is left the chance to.
+      if (!el || !el.getClientRects().length) return false;
+      const lineSelector = opts.current.lineSelector;
+      // A line's number: the element it is drawn in says so where the view numbers its lines; where
+      // the code is one block, it is counted.
+      const s = scan(el, lineSelector);
+      const breaks = newlines(s.text);
+      const lineOf = (start: number, node: Node) => {
+        if (lineSelector) return Number(node.parentElement?.closest("[data-line]")?.getAttribute("data-line") ?? 0);
+        let lo = 0;
+        let hi = breaks.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (breaks[mid] < start) lo = mid + 1;
+          else hi = mid;
+        }
+        return lo + 1;
+      };
+      if (w && mark(w)) {
+        const i = hits.current.findIndex((h) => lineOf(h.start, h.range.startContainer) === line);
+        if (i >= 0) {
+          go(i);
+          return true;
+        }
+      } else if (owner === self.current) {
+        // Not marked here, so whatever was marked before has nothing to do with this line.
+        registry()?.delete(NAMES.all);
+        registry()?.delete(NAMES.current);
+        word.current = null;
+        hits.current = [];
+      }
+      // No mark on that line — the word is not on it after all — so the line itself is brought in.
+      let range: Range | null = null;
+      if (lineSelector) {
+        const cell = el.querySelector(`[data-line="${line}"]`);
+        if (cell) {
+          range = document.createRange();
+          range.selectNodeContents(cell);
+        }
+      } else {
+        const at = locate(s, line <= 1 ? 0 : (breaks[line - 2] ?? s.text.length) + 1, false);
+        if (at) {
+          range = document.createRange();
+          range.setStart(at[0], at[1]);
+        }
+      }
+      if (range) reveal(range);
+      if (hits.current.length) {
+        index.current = -1;
+        paint();
+        show();
+      }
+      return true;
+    },
+    [mark, go, paint, show]
   );
 
   // Clicks and Ctrl-hover inside the code.
@@ -457,6 +640,7 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
       }
       const s = scan(root, opts.current.lineSelector);
       const idx = s.nodes.indexOf(at.node);
+      dropFound();
       if (idx < 0) return;
       const w = at.node.data.slice(at.from, at.to);
       if (!mark(w, s.starts[idx] + at.from)) return;
@@ -506,11 +690,12 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
       window.removeEventListener("keyup", keyUp);
       window.removeEventListener("blur", unlink);
     };
-  }, [root, mark, jump, paint, show, clear]);
+  }, [root, mark, jump, paint, show, clear, dropFound]);
 
   const active = shown !== null;
 
-  // F3 / Shift+F3 step through the marks, Escape drops them.
+  // F3 / Shift+F3 step through the marks, Escape drops them — the list of search results first,
+  // where one is open: it takes its own keys (see ResultsPanel).
   useEffect(() => {
     if (!active) return;
     const key = (e: KeyboardEvent) => {
@@ -590,19 +775,40 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
   const overlay =
     shown && place
       ? createPortal(
-          <NavBar
-            shown={shown}
-            place={place}
-            onPrev={() => go(index.current - 1)}
-            onNext={() => go(index.current + 1)}
-            onDefinition={jump}
-            onClose={clear}
-          />,
+          <>
+            {found && (
+              <ResultsPanel
+                found={found}
+                place={place}
+                path={options.path}
+                onOpen={(m) => {
+                  dropFound();
+                  opts.current.onOpen?.(m, found.word);
+                }}
+                onClose={dropFound}
+              />
+            )}
+            <NavBar
+              shown={shown}
+              place={place}
+              onPrev={() => go(index.current - 1)}
+              onNext={() => go(index.current + 1)}
+              onDefinition={jump}
+              onFind={options.search ? () => void findElsewhere(shown.word, false) : undefined}
+              onClose={clear}
+            />
+          </>,
           document.body
         )
       : null;
 
-  return { ref: setRoot, overlay, goToDefinition };
+  return { ref, overlay, goToDefinition, revealAt };
+}
+
+/** Make `view` the one whose marks are in the registry, clearing whichever was. */
+function take(view: { clear: () => void }) {
+  if (owner && owner !== view) owner.clear();
+  owner = view;
 }
 
 function NavBar({
@@ -611,6 +817,7 @@ function NavBar({
   onPrev,
   onNext,
   onDefinition,
+  onFind,
   onClose,
 }: {
   shown: Shown;
@@ -618,6 +825,8 @@ function NavBar({
   onPrev: () => void;
   onNext: () => void;
   onDefinition: () => void;
+  /** Where the view can search the rest of the code. */
+  onFind?: () => void;
   onClose: () => void;
 }) {
   const btn =
@@ -633,7 +842,7 @@ function NavBar({
         {shown.word}
       </span>
       <span className="shrink-0 tabular-nums text-muted-foreground">
-        {shown.note ?? `${shown.index + 1} of ${shown.count}`}
+        {shown.note ?? (shown.count ? `${shown.index + 1} of ${shown.count}` : "not in this file")}
       </span>
       <button type="button" className={btn} onClick={onPrev} title="Previous occurrence (Shift+F3)">
         <ChevronUp className="size-3.5" />
@@ -644,9 +853,150 @@ function NavBar({
       <button type="button" className={btn} onClick={onDefinition} title="Go to declaration (Ctrl+click)">
         <LocateFixed className="size-3.5" />
       </button>
+      {onFind && (
+        <button type="button" className={btn} onClick={onFind} title="Find everywhere it is used">
+          <Search className="size-3.5" />
+        </button>
+      )}
       <button type="button" className={btn} onClick={onClose} title="Clear (Esc)">
         <X className="size-3.5" />
       </button>
+    </div>
+  );
+}
+
+// Focus that has keys of its own to answer: the list leaves Enter, Esc and the arrows to it.
+const OWN_KEYS = 'button, a[href], select, [role="button"], [role="dialog"], [role="menu"], [role="listbox"]';
+
+/**
+ * What a search across the code found, above the bar: declarations, then uses, each a file and line
+ * with the line itself. ↑/↓ and Enter pick one, Esc closes the list and leaves the marks.
+ */
+function ResultsPanel({
+  found,
+  place,
+  path,
+  onOpen,
+  onClose,
+}: {
+  found: Found;
+  place: { right: number; bottom: number };
+  /** The file the search was made from, whose own lines are labelled as such. */
+  path?: string;
+  onOpen: (m: RankedMatch) => void;
+  onClose: () => void;
+}) {
+  const [sel, setSel] = useState(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const { matches } = found;
+  const declared = matches.filter((m) => m.score > 0).length;
+
+  useEffect(() => setSel(0), [found]);
+
+  // Ahead of the page's own keys (the capture phase, on the window) — Esc here closes the list and
+  // nothing else, and the arrows move through it rather than the pane behind.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (typing(e.target)) return;
+      // Something else with focus — a button, a link, a dialog — keeps its own keys.
+      const t = e.target as HTMLElement | null;
+      if (t && t !== document.body && !panelRef.current?.contains(t) && t.closest?.(OWN_KEYS)) return;
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowDown") setSel((i) => Math.min(i + 1, matches.length - 1));
+      else if (e.key === "ArrowUp") setSel((i) => Math.max(i - 1, 0));
+      else if (e.key === "Enter" && matches[sel]) onOpen(matches[sel]);
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [matches, sel, onOpen, onClose]);
+
+  useEffect(() => {
+    listRef.current?.querySelector(`[data-row="${sel}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [sel]);
+
+  // Split on the word, kept: the odd parts are the word itself.
+  const splitter = new RegExp(`(${wordRe(found.word, "u").source})`, "u");
+  const summary = found.loading
+    ? "Searching…"
+    : found.error
+      ? null
+      : matches.length === 0
+        ? "Found nowhere else"
+        : `${declared ? `${declared} declaration${declared === 1 ? "" : "s"}` : "no declaration"} · ${matches.length}${
+            found.truncated ? "+" : ""
+          } line${matches.length === 1 ? "" : "s"}`;
+
+  return (
+    <div
+      ref={panelRef}
+      style={{ right: place.right, bottom: place.bottom + 34 }}
+      className="popover-edge fixed z-40 flex max-h-[min(60vh,480px)] w-[min(640px,calc(100vw-16px))] flex-col overflow-hidden rounded-md bg-popover text-xs text-popover-foreground shadow-lg"
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      <div className="flex shrink-0 items-center gap-2 border-b px-2 py-1">
+        <span className="min-w-0 truncate font-mono font-medium">{found.word}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-1 truncate text-muted-foreground">
+          {found.loading && <Loader2 className="size-3 animate-spin" />}
+          {summary}
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          title="Close the list (Esc)"
+          className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      {found.error && <div className="break-words px-3 py-2 text-muted-foreground">{found.error}</div>}
+      <div ref={listRef} className="min-h-0 overflow-y-auto py-0.5">
+        {matches.map((m, i) => {
+          const slash = m.path.lastIndexOf("/");
+          const parts = m.text.trim().split(splitter);
+          const heading = i === 0 && m.score > 0 ? "Declarations" : i === declared ? "Uses" : null;
+          return (
+            <div key={`${m.path}:${m.line}`}>
+              {heading && (
+                <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {heading}
+                </div>
+              )}
+              <button
+                type="button"
+                data-row={i}
+                onClick={() => onOpen(m)}
+                onMouseMove={() => setSel(i)}
+                className={`block w-full px-2 py-1 text-left ${i === sel ? "bg-accent" : ""}`}
+              >
+                <div className="flex min-w-0 items-baseline gap-1">
+                  <span className="shrink-0 font-medium">{m.path.slice(slash + 1)}</span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">:{m.line}</span>
+                  {/* Right-to-left so a long folder is cut at its start, where it says least. */}
+                  <span className="min-w-0 truncate text-muted-foreground/70" dir="rtl">
+                    <bdi>{slash > 0 ? m.path.slice(0, slash) : ""}</bdi>
+                  </span>
+                  {m.path === path && <span className="shrink-0 text-muted-foreground">· this file</span>}
+                </div>
+                <div className="truncate font-mono text-[11px] text-foreground/80">
+                  {parts.map((part, k) =>
+                    k % 2 === 1 ? (
+                      <span key={k} className="rounded-sm bg-yellow-400/40 font-semibold">
+                        {part}
+                      </span>
+                    ) : (
+                      <Fragment key={k}>{part}</Fragment>
+                    )
+                  )}
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

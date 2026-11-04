@@ -1622,6 +1622,19 @@ internal static class Program
             return Results.Ok(new { entries = SessionFileBrowser.Search(root, q) });
         });
 
+        // Where a name appears across the files of the session's folder (or the worktree or linked folder
+        // being browsed) — for going from a name in one file to its declaration in another.
+        app.MapGet("/api/sessions/{id}/fs/grep",
+            async (string id, string word, string? dir, SessionManager mgr, LinkedFolderStore links, CancellationToken ct) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            var root = BrowseRoot(info, dir, links);
+            if (root is null) return Results.BadRequest(new { error = "invalid root" });
+            if (!GitGrep.IsWord(word)) return Results.BadRequest(new { error = "invalid word" });
+            return Results.Ok(await GitGrep.WorkingTreeAsync(root, word, ct));
+        });
+
         app.MapPost("/api/sessions/{id}/fs/write", (string id, FileWriteRequest body, SessionManager mgr, LinkedFolderStore links) =>
         {
             var info = mgr.GetAny(id);
@@ -1944,32 +1957,26 @@ internal static class Program
             if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
             if (string.IsNullOrWhiteSpace(path)) return Results.BadRequest(new { error = "invalid path" });
 
-            var refs = await GitHubService.RefsAsync(info.WorkingDirectory, number, repo, ct);
-            if (refs.Error is not null)
-                return Results.Ok(new GitHubFileContent(path, @ref ?? "", "", false, refs.Error));
-            // Only a commit this very pull request names: its head or its base, or — for a review
-            // narrowed to one commit — one of its commits or the parent that commit is diffed
-            // against. The commit list is only asked for when the ref is not one of the first two,
-            // so reading a file of the whole review costs what it always did.
-            var sha = refs.HeadRefOid;
-            if (@ref == refs.BaseRefOid) sha = refs.BaseRefOid;
-            else if (@ref != refs.HeadRefOid && GitHubService.IsCommitSha(@ref))
-            {
-                // A commit that cannot be confirmed is an error, not the head. The reader asked for
-                // the file as one commit left it, and the head's copy under that commit's name
-                // would be a different file with the wrong label on it. It happens when the author
-                // has rewritten the branch since the review was loaded, or when the list itself
-                // could not be read — and the two are told apart, since one wants a reload and the
-                // other only a retry.
-                var commits = await GitHubService.CommitsAsync(info.WorkingDirectory, number, repo, ct);
-                if (commits.Error is not null)
-                    return Results.Ok(new GitHubFileContent(path, @ref!, "", false, commits.Error));
-                if (!commits.Commits.Any(c => c.Sha == @ref || c.Parent == @ref))
-                    return Results.Ok(new GitHubFileContent(path, @ref!, "", false,
-                        "That commit is no longer part of this pull request — reload the review."));
-                sha = @ref!;
-            }
-            return Results.Ok(await GitHubService.FileAsync(info.WorkingDirectory, path, sha, repo, ct));
+            var (sha, error) = await PullRefAsync(info.WorkingDirectory, number, @ref, repo, ct);
+            if (error is not null) return Results.Ok(new GitHubFileContent(path, @ref ?? "", "", false, error));
+            return Results.Ok(await GitHubService.FileAsync(info.WorkingDirectory, path, sha!, repo, ct));
+        });
+
+        // Where a name appears in the rest of a pull request's code, as one of its commits has it — for
+        // going from a name in the review to its declaration in a file the review never touched. The
+        // commit is checked against the review the same way a file read is.
+        app.MapGet("/api/sessions/{id}/github/pulls/{number:int}/grep",
+            async (string id, int number, string word, string? @ref, string? repo, SessionManager mgr, CancellationToken ct) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            if (number <= 0) return Results.BadRequest(new { error = "invalid pull request number" });
+            if (!GitGrep.IsWord(word)) return Results.BadRequest(new { error = "invalid word" });
+
+            var (sha, error) = await PullRefAsync(info.WorkingDirectory, number, @ref, repo, ct);
+            if (error is not null) return Results.Ok(new GrepResult([], false, error));
+            var target = GitHubService.Target(info.WorkingDirectory, repo);
+            return Results.Ok(await GitGrep.AtCommitAsync(info.WorkingDirectory, sha!, number, target.NameWithOwner, word, ct));
         });
 
         // A pull request's commits, oldest first, for narrowing the review to one of them.
@@ -2145,6 +2152,32 @@ internal static class Program
     /// </summary>
     internal static string? WriteRoot(SessionInfo info, string? dir, LinkedFolderStore links) =>
         string.IsNullOrWhiteSpace(dir) ? info.WorkingDirectory : links.Resolve(info.WorkingDirectory, dir);
+
+    /// <summary>
+    /// The commit of a pull request a read may be pointed at: its head or its base, or — for a review
+    /// narrowed to one commit — one of its commits or the parent that commit is diffed against; the head
+    /// when nothing is named. The commit list is only asked for when the ref is not one of the first two,
+    /// so a read of the whole review costs what it always did.
+    /// </summary>
+    internal static async Task<(string? Sha, string? Error)> PullRefAsync(
+        string workingDir, int number, string? @ref, string? repo, CancellationToken ct)
+    {
+        var refs = await GitHubService.RefsAsync(workingDir, number, repo, ct);
+        if (refs.Error is not null) return (null, refs.Error);
+        if (@ref == refs.BaseRefOid) return (refs.BaseRefOid, null);
+        if (@ref == refs.HeadRefOid || !GitHubService.IsCommitSha(@ref)) return (refs.HeadRefOid, null);
+
+        // A commit that cannot be confirmed is an error, not the head. The reader asked for the file as
+        // one commit left it, and the head's copy under that commit's name would be a different file
+        // with the wrong label on it. It happens when the author has rewritten the branch since the
+        // review was loaded, or when the list itself could not be read — and the two are told apart,
+        // since one wants a reload and the other only a retry.
+        var commits = await GitHubService.CommitsAsync(workingDir, number, repo, ct);
+        if (commits.Error is not null) return (null, commits.Error);
+        if (!commits.Commits.Any(c => c.Sha == @ref || c.Parent == @ref))
+            return (null, "That commit is no longer part of this pull request — reload the review.");
+        return (@ref, null);
+    }
 
     // A git object name is hex (full or abbreviated SHA). Reject anything else before handing it to git.
     private static bool IsCommitHash(string? hash) =>

@@ -157,7 +157,7 @@ public static class GitHubService
     /// remote points at. A named repo needs no checkout and no remote: gh answers for any repo by
     /// name, which is what lets a session reach one it has only linked.
     /// </summary>
-    private static GitHubRepo Target(string workingDir, string? repo) =>
+    internal static GitHubRepo Target(string workingDir, string? repo) =>
         SessionRepoStore.Clean(repo) is { } named ? new GitHubRepo(true, named) : Repo(workingDir);
 
     /// <summary>Run gh against a named repo, by adding the flag that says so.</summary>

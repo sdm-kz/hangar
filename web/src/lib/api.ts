@@ -13,6 +13,7 @@ import type {
   GitStatus,
   GitHubCommitDiff,
   GitHubFileContent,
+  GrepResult,
   GitHubPullCommits,
   GitHubPullDetail,
   GitHubPullList,
@@ -722,6 +723,12 @@ function createApi(base: string) {
       if (!res.ok) throw new ApiError(res.status, res.statusText);
       return res.text();
     },
+    // Where a name appears across the files of the root (git grep) — for cross-file navigation.
+    sessionGrep(id: string, word: string, dir?: string): Promise<GrepResult> {
+      const q = new URLSearchParams({ word });
+      if (dir) q.set("dir", dir);
+      return request(`/api/sessions/${id}/fs/grep?${q}`);
+    },
     // Git status/diff for the session's working dir, or another worktree of the same repo via `dir`.
     gitStatus(id: string, dir?: string): Promise<GitStatus> {
       const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
@@ -830,6 +837,10 @@ function createApi(base: string) {
       id: string, number: number, path: string, ref: string, repo?: string
     ): Promise<GitHubFileContent> {
       return request(`/api/sessions/${id}/github/pulls/${number}/file${githubQuery(repo, { path, ref })}`);
+    },
+    // Where a name appears across the pull request's code, as the commit `ref` has it.
+    githubPullGrep(id: string, number: number, word: string, ref: string, repo?: string): Promise<GrepResult> {
+      return request(`/api/sessions/${id}/github/pulls/${number}/grep${githubQuery(repo, { word, ref })}`);
     },
     writeSessionFile(id: string, path: string, content: string, dir?: string): Promise<void> {
       return request(`/api/sessions/${id}/fs/write`, {

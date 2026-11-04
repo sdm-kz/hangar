@@ -613,6 +613,22 @@ export interface GitHubPullFile {
   sha: string;
 }
 
+/** A line elsewhere in the code that names a word (git grep), for going to its declaration. */
+export interface GrepMatch {
+  /** Relative to the folder searched — or, for a pull request, to its repo. */
+  path: string;
+  line: number;
+  /** The line itself, cut short past a few hundred characters. */
+  text: string;
+}
+
+export interface GrepResult {
+  matches: GrepMatch[];
+  /** The search stopped at its cap (or its time limit) rather than at the end. */
+  truncated: boolean;
+  error: string | null;
+}
+
 /** One file of a pull request read whole at a commit, rather than as a diff. */
 export interface GitHubFileContent {
   path: string;

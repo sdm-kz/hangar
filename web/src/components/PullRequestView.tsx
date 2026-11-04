@@ -14,6 +14,7 @@ import type {
   GitHubPullCommit,
   GitHubPullDetail,
   GitHubPullFile,
+  GrepMatch,
   PullFolds,
 } from "@/types";
 import { age } from "@/lib/age";
@@ -44,6 +45,7 @@ import { CommentButton, CommentCard, pickLines, ReviewButton, ReviewDialog, spot
 import { usePersistentZoom, ZOOM_LEVELS } from "./ZoomControls";
 import {
   AlertTriangle,
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -861,6 +863,29 @@ export function PullRequestView({
     [isOpen, toggleFile]
   );
 
+  // Going from a name to where it is declared, across files. A file the review changes is brought up
+  // in its own card at that line; any other file opens in the peek beside the review, read at the same
+  // commit, and a trail of them is kept for Back.
+  const [goto, setGoto] = useState<{ path: string; line: number; word: string; seq: number } | null>(null);
+  const [peek, setPeek] = useState<PeekPlace[]>([]);
+  const openAt = useCallback(
+    (m: GrepMatch, word: string) => {
+      const f = files.find((x) => x.path === m.path);
+      if (f) {
+        setPeek([]);
+        setFileOpen(f, true);
+        setGoto((g) => ({ path: f.path, line: m.line, word, seq: (g?.seq ?? 0) + 1 }));
+      } else setPeek((stack) => [...stack, { path: m.path, line: m.line, word }]);
+    },
+    [files, setFileOpen]
+  );
+  // A peek is of the commit it was opened at, and so is a line asked of a card — whose remount under
+  // another commit would otherwise take it up again. Another commit, or review, starts with neither.
+  useEffect(() => {
+    setPeek([]);
+    setGoto(null);
+  }, [commitSha, number, repo]);
+
   const pull = detail?.pull;
   const { Icon: StateIcon, className: stateClass } = (() => {
     if (!pull) return { Icon: GitPullRequest, className: "text-muted-foreground" };
@@ -1094,7 +1119,24 @@ export function PullRequestView({
         )}
       </div>
 
-      <div ref={splitRef} className="flex min-h-0 flex-1">
+      <div ref={splitRef} className="relative flex min-h-0 flex-1">
+        {peek.length > 0 && (
+          <PeekFile
+            key={peek.length}
+            place={peek[peek.length - 1]}
+            canGoBack={peek.length > 1}
+            sessionId={sessionId}
+            number={number}
+            repo={repo}
+            headRef={inCommit ? commitSha! : pull?.headRefOid ?? ""}
+            wrap={wrap}
+            zoom={zoom}
+            numCol={numCol}
+            onOpenAt={openAt}
+            onBack={() => setPeek((stack) => stack.slice(0, -1))}
+            onClose={() => setPeek([])}
+          />
+        )}
         {sidebar && (
           <div
             style={{ "--files-w": `${sidebarWidth}px` } as React.CSSProperties}
@@ -1252,6 +1294,8 @@ export function PullRequestView({
                     if (el) fileRefs.current.set(f.path, el);
                     else fileRefs.current.delete(f.path);
                   }}
+                  goto={goto?.path === f.path ? goto : undefined}
+                  onOpenAt={openAt}
                 />
               ))}
             </>
@@ -1492,6 +1536,116 @@ function copyPathSelection(e: React.ClipboardEvent<HTMLElement>) {
   e.preventDefault();
 }
 
+/** A place a search found, in a file the review does not change. */
+interface PeekPlace {
+  path: string;
+  line: number;
+  word: string;
+}
+
+/**
+ * A file the review does not change, read whole at the review's commit and opened at a line — where a
+ * name used in the change turned out to be declared. Over the review rather than in it: it is a look
+ * aside, and closing it puts the reader back where they were. Names in it navigate on in the same way,
+ * and Back retraces the trail.
+ */
+function PeekFile({
+  place,
+  canGoBack,
+  sessionId,
+  number,
+  repo,
+  headRef,
+  wrap,
+  zoom,
+  numCol,
+  onOpenAt,
+  onBack,
+  onClose,
+}: {
+  place: PeekPlace;
+  canGoBack: boolean;
+  sessionId: string;
+  number: number;
+  repo?: string;
+  headRef: string;
+  wrap: boolean;
+  zoom: number;
+  numCol: number;
+  onOpenAt: (match: GrepMatch, word: string) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const api = useApi();
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const { dir, name } = splitPath(place.path);
+
+  const nav = useCodeNav({
+    lineSelector: "[data-side]",
+    path: place.path,
+    search: (word) => api.githubPullGrep(sessionId, number, word, headRef, repo),
+    onOpen: (m, word) => (m.path === place.path ? nav.revealAt(m.line, word) : onOpenAt(m, word)),
+  });
+  const { revealAt } = nav;
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .githubPullFile(sessionId, number, place.path, headRef, repo)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.error) setError(r.error);
+        else if (r.truncated) setError("This file is too large to show here — it is on GitHub.");
+        else setText(r.content);
+      })
+      .catch(() => !cancelled && setError("Could not reach the server."));
+    return () => {
+      cancelled = true;
+    };
+  }, [api, sessionId, number, place.path, headRef, repo]);
+
+  // Once the file is drawn, the line it was opened for.
+  useEffect(() => {
+    if (text !== null) revealAt(place.line, place.word);
+  }, [text, place.line, place.word, revealAt]);
+
+  const btn = "flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground";
+  return (
+    <div className="absolute inset-y-0 right-0 z-20 flex w-full flex-col border-l bg-background shadow-xl md:w-[min(960px,85%)]">
+      <div className="flex shrink-0 items-center gap-1.5 border-b px-2 py-1.5 text-xs">
+        <button type="button" onClick={onBack} disabled={!canGoBack} title="Back" className={cn(btn, "disabled:opacity-30")}>
+          <ArrowLeft className="size-3.5" />
+        </button>
+        <span className="min-w-0 truncate font-mono">
+          <span className="text-muted-foreground">{dir}</span>
+          <span className="font-medium">{name}</span>
+          <span className="text-muted-foreground">:{place.line}</span>
+        </span>
+        <span className="shrink-0 text-muted-foreground">· not changed here, at {headRef.slice(0, 7)}</span>
+        <span className="flex-1" />
+        <button type="button" onClick={onClose} title="Close" className={btn}>
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {nav.overlay}
+        <div ref={nav.ref}>
+          {error ? (
+            <div className="p-4 text-sm text-muted-foreground">{error}</div>
+          ) : text === null ? (
+            <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Reading the file…
+            </div>
+          ) : (
+            <FileListing path={place.path} text={text} side="new" wrap={wrap} zoom={zoom} numCol={numCol} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** One file of the review: a header that folds it away, and its diff — or the file itself — below. */
 function FileDiff({
   sessionId,
@@ -1513,6 +1667,8 @@ function FileDiff({
   bigByDefault,
   onToggle,
   register,
+  goto,
+  onOpenAt,
 }: {
   sessionId: string;
   number: number;
@@ -1541,6 +1697,11 @@ function FileDiff({
   bigByDefault: boolean;
   onToggle: () => void;
   register: (el: HTMLDivElement | null) => void;
+  /** A line of this file to bring into view, word marked — where a search from elsewhere pointed.
+   *  A new `seq` is a new request, even for the same line. */
+  goto?: { line: number; word: string; seq: number };
+  /** Goes to a search result in another file — a card of its own, or the peek beside the review. */
+  onOpenAt: (match: GrepMatch, word: string) => void;
 }) {
   const api = useApi();
   // Parsing is the expensive part of drawing a file, so it waits until the file is actually open.
@@ -1653,26 +1814,47 @@ function FileDiff({
   // Names in the code: a click marks a name's every occurrence, Ctrl/⌘+click goes to its declaration
   // (see useCodeNav). A diff holds only the lines around the change, so a name declared elsewhere in
   // the file is not in it — that sends the card to the whole file, to look again once it is here.
-  const [seeking, setSeeking] = useState<string | null>(null);
+  // Past the file, the rest of the pull request's code is searched (git grep at the commit the file
+  // is read at): a declaration in another file opens there, one in this file comes back as a line.
+  const [seeking, setSeeking] = useState<{ word: string; line?: number } | null>(null);
   const nav = useCodeNav({
     lineSelector: "[data-side]",
+    path: file.path,
+    search: canReadWhole ? (word) => api.githubPullGrep(sessionId, number, word, headRef, repo) : undefined,
+    onOpen: (m, word) => (m.path === file.path ? seekLine(m.line, word) : onOpenAt(m, word)),
     onNoDefinition: (word) => {
       if (whole || !canReadWhole) return false;
-      setSeeking(word);
+      setSeeking({ word });
       setWhole(true);
       return true;
     },
   });
-  const { goToDefinition } = nav;
+  const { goToDefinition, revealAt } = nav;
+
+  /** A line of this file, which only the whole file is sure to have on screen. */
+  function seekLine(line: number, word: string) {
+    if (!canReadWhole) return;
+    setSeeking({ word, line });
+    setWhole(true);
+  }
+
   useEffect(() => {
     if (!seeking) return;
     // Back to the diff before the file came: the look it was waiting to take is off.
     if (!whole || contentError) setSeeking(null);
     else if (content !== null && !loadingContent) {
       setSeeking(null);
-      goToDefinition(seeking);
+      if (seeking.line) revealAt(seeking.line, seeking.word);
+      else goToDefinition(seeking.word);
     }
-  }, [seeking, whole, content, contentError, loadingContent, goToDefinition]);
+  }, [seeking, whole, content, contentError, loadingContent, goToDefinition, revealAt]);
+
+  // Asked for from outside — a search in another file found its answer here.
+  useEffect(() => {
+    if (goto) seekLine(goto.line, goto.word);
+    // Only a new request: the line and word ride along with it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goto?.seq]);
 
   return (
     <div
