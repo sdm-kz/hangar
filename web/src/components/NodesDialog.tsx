@@ -14,6 +14,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -39,6 +40,9 @@ export function NodesDialog({ onClose }: { onClose: () => void }) {
   const [statuses, setStatuses] = useState<Record<string, PeerStatus | "checking">>({});
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [adding, setAdding] = useState(false);
+  // How the last pairing went, said under the button that started it once its popup has closed.
+  const [paired, setPaired] = useState<string | null>(null);
   const confirm = useConfirm();
 
   // The latest probe per node: an answer to an older one (a slow check overtaken by a newer) is dropped.
@@ -169,7 +173,7 @@ export function NodesDialog({ onClose }: { onClose: () => void }) {
             {!loaded ? (
               <Loader2 className="size-4 animate-spin text-muted-foreground" />
             ) : peers.length === 0 ? (
-              <p className="text-xs text-muted-foreground">None yet. Add one below.</p>
+              <p className="text-xs text-muted-foreground">None yet.</p>
             ) : (
               <ul className="flex flex-col divide-y rounded-md border">
                 {peers.map((peer) => (
@@ -185,14 +189,21 @@ export function NodesDialog({ onClose }: { onClose: () => void }) {
                 ))}
               </ul>
             )}
+            <div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setPaired(null);
+                  setAdding(true);
+                }}
+              >
+                <Plus className="mr-1.5 size-3.5" />
+                Add node
+              </Button>
+            </div>
+            {paired && <p className="text-xs text-muted-foreground">{paired}</p>}
           </section>
-
-          <AddNode
-            onAdded={async (peer) => {
-              await load();
-              probe(peer.id);
-            }}
-          />
 
           <section className="flex flex-col gap-2">
             <h3 className="text-sm font-medium">Allowed in</h3>
@@ -226,6 +237,18 @@ export function NodesDialog({ onClose }: { onClose: () => void }) {
           </section>
         </div>
       </DialogContent>
+
+      {adding && (
+        <AddNodeDialog
+          onClose={() => setAdding(false)}
+          onAdded={async (peer, outcome) => {
+            setAdding(false);
+            setPaired(outcome);
+            await load();
+            probe(peer.id);
+          }}
+        />
+      )}
     </Dialog>
   );
 }
@@ -407,14 +430,22 @@ function PeerRow({
   );
 }
 
-/** Pair with another node: its address and password, once. */
-function AddNode({ onAdded }: { onAdded: (peer: PeerNode) => void | Promise<void> }) {
+/**
+ * Pair with another node: its address and password, once. A popup over the nodes list rather than a
+ * form inside it, so the list stays a list; it closes on success and hands back how the pairing went.
+ */
+function AddNodeDialog({
+  onClose,
+  onAdded,
+}: {
+  onClose: () => void;
+  onAdded: (peer: PeerNode, outcome: string) => void | Promise<void>;
+}) {
   const [url, setUrl] = useState("");
   const [password, setPassword] = useState("");
   const [mutual, setMutual] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   // The certificate an https node presented that this machine doesn't trust: shown, and trusted by pairing again.
   const [cert, setCert] = useState<{ seen: CertificateSeen; changed: boolean } | null>(null);
 
@@ -426,20 +457,16 @@ function AddNode({ onAdded }: { onAdded: (peer: PeerNode) => void | Promise<void
     inFlight.current = true;
     setBusy(true);
     setError(null);
-    setNotice(null);
     try {
       const result = await api.addNode({ url: url.trim(), password, mutual, fingerprint });
-      setCert(null);
-      setUrl("");
-      setPassword("");
-      setNotice(
+      await onAdded(
+        result.node,
         result.mutual === "ok"
           ? `Paired with ${result.node.name}, both ways.`
           : result.mutual === "unreachable"
             ? `Paired with ${result.node.name} — but it could not reach this node back, so it doesn't list this one. Set "Address for other nodes" above and pair again to fix that.`
             : `Paired with ${result.node.name}, one way.`
       );
-      await onAdded(result.node);
     } catch (e) {
       const body = e instanceof ApiError ? (e.body as { certificate?: CertificateSeen; changed?: boolean } | undefined) : undefined;
       if (body?.certificate) setCert({ seen: body.certificate, changed: !!body.changed });
@@ -450,85 +477,97 @@ function AddNode({ onAdded }: { onAdded: (peer: PeerNode) => void | Promise<void
     }
   };
 
+  // Held open while a pairing is in flight: closing would drop the guard above with the popup, and the
+  // next one opened could start a second pairing alongside the first.
   return (
-    <section className="flex flex-col gap-2">
-      <h3 className="text-sm font-medium">Add a node</h3>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="add-node-url">Address</Label>
-          <Input
-            id="add-node-url"
-            value={url}
-            placeholder="http://nas.lan:5099"
-            onChange={(e) => {
-              setUrl(e.target.value);
-              setCert(null);
-            }}
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="add-node-password">Its password</Label>
-          <Input
-            id="add-node-password"
-            type="password"
-            value={password}
-            autoComplete="off"
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              void add();
-            }}
-          />
-        </div>
-      </div>
-      <label className="flex items-center gap-2 text-sm">
-        <Checkbox checked={mutual} onCheckedChange={(v) => setMutual(v === true)} />
-        Both ways — the other node lists this one too
-      </label>
-
-      {cert && (
-        <div className="flex flex-col gap-1.5 rounded-md border p-3 text-xs">
-          <p className="flex items-start gap-1.5 font-medium">
-            {cert.changed ? (
-              <ShieldAlert className="mt-px size-3.5 shrink-0 text-destructive" />
-            ) : (
-              <ShieldQuestion className="mt-px size-3.5 shrink-0" />
-            )}
-            {cert.changed
-              ? "The node presented a different certificate from the one you confirmed."
-              : "This machine doesn't trust the node's certificate (self-signed?)."}
-          </p>
-          <p className="text-muted-foreground">
-            {cert.changed
-              ? "It changed between one try and the next — which can mean someone is intercepting the connection. Only trust it if you know why."
-              : "Check that this fingerprint is the node's before trusting it. It is remembered, and a different certificate later is refused."}
-          </p>
-          {cert.seen.subject && <p className="break-all text-muted-foreground">{cert.seen.subject}</p>}
-          <p className="break-all font-mono">{cert.seen.fingerprint}</p>
-          <div>
-            <Button
-              size="sm"
-              variant={cert.changed ? "destructive" : "outline"}
-              disabled={busy}
-              onClick={() => void add(cert.seen.fingerprint ?? undefined)}
-            >
-              {busy && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
-              Trust and pair
-            </Button>
+    <Dialog open onOpenChange={(o) => !o && !inFlight.current && onClose()}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Add a node</DialogTitle>
+          <DialogDescription>
+            Another machine running Hangar: its address, and the password you log in to it with.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="add-node-url">Address</Label>
+            <Input
+              id="add-node-url"
+              value={url}
+              placeholder="http://nas.lan:5099"
+              onChange={(e) => {
+                setUrl(e.target.value);
+                setCert(null);
+              }}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="add-node-password">Its password</Label>
+            <Input
+              id="add-node-password"
+              type="password"
+              value={password}
+              autoComplete="off"
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                void add();
+              }}
+            />
           </div>
         </div>
-      )}
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={mutual} onCheckedChange={(v) => setMutual(v === true)} />
+          Both ways — the other node lists this one too
+        </label>
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
-      {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
-      {/* While a certificate waits on a decision, its own button is the way on; this one would only ask again. */}
-      <div className={cn(cert && "hidden")}>
-        <Button size="sm" disabled={!url.trim() || !password || busy} onClick={() => void add()}>
-          {busy ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Plus className="mr-1.5 size-3.5" />}
-          Pair
-        </Button>
-      </div>
-    </section>
+        {cert && (
+          <div className="flex flex-col gap-1.5 rounded-md border p-3 text-xs">
+            <p className="flex items-start gap-1.5 font-medium">
+              {cert.changed ? (
+                <ShieldAlert className="mt-px size-3.5 shrink-0 text-destructive" />
+              ) : (
+                <ShieldQuestion className="mt-px size-3.5 shrink-0" />
+              )}
+              {cert.changed
+                ? "The node presented a different certificate from the one you confirmed."
+                : "This machine doesn't trust the node's certificate (self-signed?)."}
+            </p>
+            <p className="text-muted-foreground">
+              {cert.changed
+                ? "It changed between one try and the next — which can mean someone is intercepting the connection. Only trust it if you know why."
+                : "Check that this fingerprint is the node's before trusting it. It is remembered, and a different certificate later is refused."}
+            </p>
+            {cert.seen.subject && <p className="break-all text-muted-foreground">{cert.seen.subject}</p>}
+            <p className="break-all font-mono">{cert.seen.fingerprint}</p>
+            <div>
+              <Button
+                size="sm"
+                variant={cert.changed ? "destructive" : "outline"}
+                disabled={busy}
+                onClick={() => void add(cert.seen.fingerprint ?? undefined)}
+              >
+                {busy && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+                Trust and pair
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {error && <p className="text-xs text-destructive">{error}</p>}
+
+        <DialogFooter>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          {/* While a certificate waits on a decision, its own button is the way on; this one would only ask again. */}
+          <Button className={cn(cert && "hidden")} disabled={!url.trim() || !password || busy} onClick={() => void add()}>
+            {busy ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Plus className="mr-1.5 size-3.5" />}
+            Pair
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
