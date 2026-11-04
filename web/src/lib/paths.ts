@@ -12,7 +12,12 @@ export function nativePath(root: string, rel: string): string {
   const base = root.replace(/[/\\]+$/, "");
   if (!base) return rel;
   // A drive letter or a backslash anywhere says Windows; a UNC root ("\\host\share") says it twice.
-  const sep = /\\/.test(base) || /^[A-Za-z]:/.test(base) ? "\\" : "/";
+  const windows = /\\/.test(base) || /^[A-Za-z]:/.test(base);
+  const sep = windows ? "\\" : "/";
+  // The root needs it as much as the tail: a worktree's comes from git, which writes Windows paths
+  // with forward slashes ("C:/Git/app-worktrees/feature"). Only flipped, not collapsed, so a UNC
+  // root keeps its leading pair.
+  const head = windows ? base.replace(/\//g, "\\") : base;
   const tail = rel.replace(/^[/\\]+/, "").replace(/[/\\]+/g, sep);
-  return tail ? `${base}${sep}${tail}` : base;
+  return tail ? `${head}${sep}${tail}` : head;
 }
