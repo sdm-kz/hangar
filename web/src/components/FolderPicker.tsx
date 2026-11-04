@@ -227,6 +227,20 @@ export function FolderChips({
   /** What to say when the list is empty; nothing renders without it. */
   empty?: ReactNode;
 }) {
+  // The chosen chip, kept in sight: a folder set before the dialog opened (a session started from a
+  // worktree's row) can be the thirtieth chip, below the list's fold. Scrolls the list only, never the
+  // dialog around it, which scrollIntoView would.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    const chosen = list?.querySelector<HTMLElement>("[data-chosen]");
+    if (!list || !chosen) return;
+    const top = chosen.offsetTop - list.clientTop;
+    if (top < list.scrollTop) list.scrollTop = top - 4;
+    else if (top + chosen.offsetHeight > list.scrollTop + list.clientHeight)
+      list.scrollTop = top + chosen.offsetHeight - list.clientHeight + 4;
+  }, [value, folders]);
+
   if (folders.length === 0 && !empty) return null;
   return (
     <div className="space-y-1.5 pt-1">
@@ -234,13 +248,17 @@ export function FolderChips({
       {folders.length === 0 ? (
         <p className="text-xs text-muted-foreground">{empty}</p>
       ) : (
-        <div className="flex flex-wrap gap-1.5">
+        // About four rows, then a scroller of its own: a project gathers a folder per worktree, and forty
+        // of them would otherwise push every field under them out of the dialog. -m-1 p-1 gives the chips'
+        // focus rings room inside the scroller without moving anything (see NewSessionDialog).
+        <div ref={listRef} className="relative -m-1 flex max-h-34 flex-wrap gap-1.5 overflow-y-auto overscroll-contain p-1">
           {folders.map((p) => (
             <button
               key={p}
               type="button"
               onClick={() => onPick(p)}
               title={p}
+              data-chosen={sameFolder(p, value) || undefined}
               className={cn(
                 "flex max-w-full items-center rounded-md border px-2 py-1 text-xs hover:bg-accent",
                 sameFolder(p, value) && "border-primary bg-accent"
