@@ -18,6 +18,11 @@
     <AssemblyTitle>Hangar</AssemblyTitle>
     <Product>Hangar</Product>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Workstation GC, not the server GC the Web SDK defaults to: this is one user's daemon, not a
+         web farm. Measured with a dozen shells streaming through it, it settles at about half the
+         private memory (62 MB against 114) and half the threads, and streams just as fast.
+         Concurrent (background) collection stays on: without it the heap settled higher, at ~92 MB. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
   </PropertyGroup>
 
   <!-- The exe's icon in Explorer and Task Manager. A Win32 resource, so only where there is a Windows
