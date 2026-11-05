@@ -2,13 +2,64 @@
 
 # Hangar
 
-Hangar is a self-hosted app that **launches Claude Code CLI sessions with Remote Control enabled** on
-your own machine, and gives you a web UI to run them from any device: a session manager with a full
-terminal, a file browser, shell tabs, pull-request reviews, saved templates and schedules. Each session
-is a real `claude` process in a folder of your choice, so you can drive it from the in-app terminal,
-from the Claude Code app (claude.ai/code and mobile), or both at once. Sessions survive restarts and
-updates of Hangar itself. The server runs on Windows, Linux and macOS, and an optional tray app adds a
-menu and screenshot-to-session capture.
+**Run and control Claude Code CLI sessions from your browser, on every machine you own.**
+
+Hangar is a self-hosted server that starts real `claude` CLI sessions on your computer and lets you
+drive them from any device: a desktop browser, or your phone as an installed web app. Each session is
+an ordinary `claude` process in a folder you choose, with Remote Control on, so the same conversation is
+also in the Claude Code app (claude.ai/code and mobile). Install Hangar on several machines (a
+workstation, a laptop, a home server), pair them, and one sidebar shows and runs the sessions of all of
+them.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/hangar-dark.png">
+  <img src="docs/images/hangar-light.png" alt="Hangar in the browser: a sidebar with two machines, workstation and home-server, their projects and sessions, and one session open with its Claude Code terminal">
+</picture>
+
+### What you get
+
+- **Sessions in the browser.** Start, stop, fork and reopen `claude` sessions, each with its full
+  terminal. Sessions keep running when Hangar restarts or updates, and closed ones resume where they
+  left off.
+- **Know what every session is doing.** Working, compacting, finished, failed on an API error, or
+  waiting on you, with the command it wants permission to run. The ones that need you raise a
+  notification in the page and a push notification on your phone.
+- **Everything around the conversation.** A file browser and editor, shell tabs in the session's
+  folder, another machine's files over SSH, the pages a session works from, and GitHub pull requests
+  to review, each as a tab beside the terminal.
+- **Organised work.** Projects that span several folders, virtual folders inside them, saved session
+  templates, and schedules that start a session on a clock.
+- **Many machines, one sidebar.** Paired machines appear under headings of their own, live. Start a
+  session or a schedule on any of them, browse and copy files between them, and continue a conversation
+  on another machine. You log in once, to the machine you opened.
+- **A tray app** for Windows, macOS and Linux. Running sessions are in its menu, and a screenshot hotkey
+  freezes the screen: pick a region, a window or a part of one, mark it up, and send it with a message
+  to a session on any machine.
+- **Sessions that use Hangar themselves.** From inside, a session can rename itself, notify you, open
+  files and pull requests as tabs, and start and close child sessions of its own.
+- **One-click updates.** A new build is staged beside the running app, and the app offers it under its
+  Update button, on this machine or a paired one, without ending a session.
+
+### Reach it from anywhere
+
+Hangar listens on `127.0.0.1` only until you decide otherwise. To use it from your phone or another
+computer, keep it there and put HTTPS in front:
+
+- **Tailscale**: `tailscale serve --bg 5099` publishes it at `https://<machine>.<tailnet>.ts.net`,
+  with a real certificate, reachable only from your own devices.
+- **Your own domain**: any TLS reverse proxy (Caddy, nginx) in front of `127.0.0.1:5099`.
+
+HTTPS is what the phone app and push notifications need. **Set a password first**: anyone who can log
+in to Hangar has a shell on that machine as you (see [Security model](#security-model)).
+
+<p align="center">
+  <img src="docs/images/phone-sessions.png" alt="Hangar on a phone: the session list, grouped by machine and project" width="260">
+  &nbsp;&nbsp;
+  <img src="docs/images/phone-terminal.png" alt="Hangar on a phone: a session's terminal" width="260">
+</p>
+
+**Runs on** Windows, Linux and macOS. **Needs** the Claude Code CLI (v2.1.51 or later), logged in with a
+plan that includes Remote Control: Pro, Max, Team or Enterprise.
 
 > Hangar is an independent project. It is not affiliated with or endorsed by Anthropic. Claude and
 > Claude Code are trademarks of Anthropic.
@@ -228,6 +279,11 @@ Hangar also writes:
   `~/.local/share/io.github.sdm-kz.hangar.tray` (Linux).
 
 ## Features
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/files-diff-dark.png">
+  <img src="docs/images/files-diff-light.png" alt="A session's Files tab: the project tree with a changed file marked, and that file's diff">
+</picture>
 
 Hangar is two programs:
 
