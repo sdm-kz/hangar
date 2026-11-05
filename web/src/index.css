@@ -345,6 +345,11 @@
   text-decoration: underline;
   text-decoration-thickness: 1px;
 }
+/* The editor's copy of a file it doesn't color is transparent (see CodeEditor), and an underline
+   takes the color of the text it is under. */
+.code-plain ::highlight(code-nav-link) {
+  text-decoration-color: var(--foreground);
+}
 .dark ::highlight(code-nav) {
   background-color: rgb(250 204 21 / 0.22);
 }

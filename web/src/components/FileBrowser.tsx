@@ -3054,16 +3054,18 @@ function FilePreview({
       <div className="relative min-h-0 flex-1">
         {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. The
             sandboxed HTML iframe is excluded — CSS zoom would scale the frame, not its document. */}
-        {!editing && view === "preview" && kind === "text" && status === "idle" && text !== null &&
-          !(isHtml && mdView === "rendered") && (
+        {(editing || (view === "preview" && kind === "text" && status === "idle" && text !== null &&
+          !(isHtml && mdView === "rendered"))) && (
             <ZoomControls
               zoom={zoom}
               onChange={setZoom}
               width={readingWidth}
-              onWidthChange={setReadingWidth}
+              // The editor neither wraps nor caps its width: either would pull the caret off the
+              // highlighted text under it (see CodeEditor). Zoom alone carries over.
+              onWidthChange={editing ? undefined : setReadingWidth}
               wrap={wordWrap}
               // Rendered markdown flows as paragraphs already; a wrap switch there would do nothing.
-              onWrapChange={isMarkdown && mdView === "rendered" ? undefined : setWordWrap}
+              onWrapChange={editing || (isMarkdown && mdView === "rendered") ? undefined : setWordWrap}
               className="bottom-3 right-3"
             />
           )}
@@ -3085,7 +3087,7 @@ function FilePreview({
           }}
         >
         {editing ? (
-          <CodeEditor name={file.name} value={draft} onChange={setDraft} />
+          <CodeEditor name={file.name} value={draft} onChange={setDraft} zoom={zoom} nav={nav} />
         ) : view === "diff" ? (
           diffLoading ? (
             <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">

@@ -577,15 +577,17 @@ export function ServerFileViewer({
       <div className="relative min-h-0 flex-1">
         {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. The
             sandboxed HTML iframe is excluded — CSS zoom would scale the frame, not its document. */}
-        {kind === "text" && !tooLarge && !editing && text !== null && !(isHtml && rendered) && (
+        {kind === "text" && !tooLarge && text !== null && (editing || !(isHtml && rendered)) && (
           <ZoomControls
             zoom={zoom}
             onChange={setZoom}
             width={readingWidth}
-            onWidthChange={setReadingWidth}
+            // The editor neither wraps nor caps its width: either would pull the caret off the
+            // highlighted text under it (see CodeEditor). Zoom alone carries over.
+            onWidthChange={editing ? undefined : setReadingWidth}
             wrap={wordWrap}
             // Rendered markdown flows as paragraphs already; a wrap switch there would do nothing.
-            onWrapChange={isMarkdown && rendered ? undefined : setWordWrap}
+            onWrapChange={editing || (isMarkdown && rendered) ? undefined : setWordWrap}
             className="bottom-3 right-3"
           />
         )}
@@ -638,7 +640,7 @@ export function ServerFileViewer({
             instead.
           </div>
         ) : editing ? (
-          <CodeEditor name={name} value={draft} onChange={setDraft} />
+          <CodeEditor name={name} value={draft} onChange={setDraft} zoom={zoom} nav={nav} />
         ) : isMarkdown && rendered ? (
           // maxWidth sits on the zoomed box on purpose: `zoom` scales it along with the text, so a
           // line keeps the same character count as you zoom (see READING_WIDTHS).

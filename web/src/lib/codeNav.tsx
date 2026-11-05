@@ -9,6 +9,10 @@
 // a highlight is painted over ranges without touching a node of it. One registry per document, so
 // one view owns it at a time (see `owner`).
 //
+// An editor can use it too: its text sits in a textarea laid over a highlighted copy (see CodeEditor),
+// so the copy is the code the marks go on, and the textarea — handed in as `input` — is where the
+// clicks land and where a jump puts the caret.
+//
 // Past the file, a view can hand in a `search` — git grep over the rest of the code — and a name the
 // file does not declare is looked for there: one clear declaration is opened straight away, anything
 // less certain is listed, declarations first (see rankMatches).
@@ -39,6 +43,9 @@ export interface CodeNavOptions {
 export interface CodeNav {
   /** The callback ref for the element holding the code. */
   ref: (el: HTMLElement | null) => void;
+  /** The callback ref for a textarea laid over that element, holding the same text character for
+   *  character — an editor. Clicks on it mark the word at the caret, and a jump moves the caret. */
+  input: (el: HTMLTextAreaElement | null) => void;
   /** The bar — word, count, arrows — while something is marked. Render it anywhere; it portals. */
   overlay: ReactNode;
   /** Jump to the declaration of a name, as Ctrl+click on it would. False when there is none. */
@@ -279,15 +286,49 @@ function wordAt(
   // A bare number is not a name, and `$` alone is punctuation.
   if (!/[\p{L}_]/u.test(word)) return null;
 
-  // The caret snaps to the nearest character, so a click in the blank space past the end of a line
-  // lands on its last word. Only a click that is on the word counts.
   const range = document.createRange();
   range.setStart(node, from);
   range.setEnd(node, to);
-  const on = Array.from(range.getClientRects()).some(
+  return isOn(range, x, y) ? { node: node as Text, from, to } : null;
+}
+
+/** Whether a point is on a range's text. The caret snaps to the nearest character, so a click in the
+ *  blank space past the end of a line lands on its last word; only a click that is on the word counts. */
+function isOn(range: Range, x: number, y: number): boolean {
+  return Array.from(range.getClientRects()).some(
     (r) => x >= r.left - 1 && x <= r.right + 1 && y >= r.top - 1 && y <= r.bottom + 1
   );
-  return on ? { node: node as Text, from, to } : null;
+}
+
+/** The word around an offset into the scanned code — where an editor's caret is — or null when there
+ *  is none there, or the point the caret came from is not on it. */
+function wordAtOffset(s: Scan, offset: number, x: number, y: number): { word: string; from: number; range: Range } | null {
+  const text = s.text;
+  let at = offset;
+  if (!WORD_CHAR.test(text[at] ?? "")) at--;
+  if (!WORD_CHAR.test(text[at] ?? "")) return null;
+  let from = at;
+  let to = at + 1;
+  while (from > 0 && WORD_CHAR.test(text[from - 1])) from--;
+  while (to < text.length && WORD_CHAR.test(text[to])) to++;
+  const word = text.slice(from, to);
+  if (!/[\p{L}_]/u.test(word)) return null;
+  const a = locate(s, from, false);
+  const b = locate(s, to, true);
+  if (!a || !b) return null;
+  const range = document.createRange();
+  range.setStart(a[0], a[1]);
+  range.setEnd(b[0], b[1]);
+  return isOn(range, x, y) ? { word, from, range } : null;
+}
+
+/** Where in a textarea's text a point falls, where the browser can say. */
+function offsetInInput(input: HTMLTextAreaElement, x: number, y: number): number | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  const p = doc.caretPositionFromPoint?.(x, y);
+  return p && p.offsetNode === input ? p.offset : null;
 }
 
 /** Scroll whatever needs scrolling to put a range in view, centred, once it is out of it. */
@@ -376,6 +417,16 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
   const ref = useCallback((el: HTMLElement | null) => {
     rootRef.current = el;
     setRoot(el);
+    // Let go of the marks with the element they point into. Done here rather than left to the effect
+    // below, which never sees the null when another element takes its place in the same commit — the
+    // preview's <pre> handing over to the editor's.
+    if (!el) self.current.clear();
+  }, []);
+  const [input, setInput] = useState<HTMLTextAreaElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const inputCb = useCallback((el: HTMLTextAreaElement | null) => {
+    inputRef.current = el;
+    setInput(el);
   }, []);
   const [shown, setShown] = useState<Shown | null>(null);
   const [found, setFound] = useState<Found | null>(null);
@@ -449,6 +500,10 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
       index.current = ((i % n) + n) % n;
       paint();
       reveal(hits.current[index.current].range);
+      // In an editor the caret goes along, so typing picks up where the jump landed. Its text is the
+      // code's, character for character, so an occurrence's place in one is its place in the other.
+      const start = hits.current[index.current].start;
+      inputRef.current?.setSelectionRange(start, start);
       show();
     },
     [paint, show]
@@ -635,6 +690,21 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
     const unlink = () => {
       reg?.delete(NAMES.link);
       root.style.cursor = "";
+      if (input) input.style.cursor = "";
+    };
+
+    /** Mark a word that was clicked; with Ctrl/⌘, go to its declaration. */
+    const hit = (e: MouseEvent, w: string, start: number) => {
+      dropFound();
+      if (!mark(w, start)) return;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        unlink();
+        jump();
+      } else {
+        paint();
+        show();
+      }
     };
 
     const click = (e: MouseEvent) => {
@@ -649,18 +719,21 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
       }
       const s = scan(root, opts.current.lineSelector);
       const idx = s.nodes.indexOf(at.node);
-      dropFound();
-      if (idx < 0) return;
-      const w = at.node.data.slice(at.from, at.to);
-      if (!mark(w, s.starts[idx] + at.from)) return;
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        unlink();
-        jump();
-      } else {
-        paint();
-        show();
+      if (idx < 0) return dropFound();
+      hit(e, at.node.data.slice(at.from, at.to), s.starts[idx] + at.from);
+    };
+
+    // The same in an editor, where the click lands on the textarea and has already put the caret
+    // where it fell: the word is read off the code around the caret.
+    const inputClick = (e: MouseEvent) => {
+      if (!input || e.button !== 0 || e.altKey || e.shiftKey) return;
+      if (input.selectionStart !== input.selectionEnd) return; // the end of a drag selecting text
+      const at = wordAtOffset(scan(root), input.selectionStart, e.clientX, e.clientY);
+      if (!at) {
+        if (owner === self.current) clear();
+        return;
       }
+      hit(e, at.word, at.from);
     };
 
     // Held Ctrl/⌘ underlines the name under the pointer, the way an editor shows what is a link.
@@ -669,13 +742,21 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
       if (!(e.ctrlKey || e.metaKey) || !reg) return unlink();
       const { clientX: x, clientY: y } = e;
       frame = requestAnimationFrame(() => {
-        const at = wordAt(root, x, y, opts.current.lineSelector);
-        if (!at) return unlink();
-        const range = document.createRange();
-        range.setStart(at.node, at.from);
-        range.setEnd(at.node, at.to);
+        let range: Range | null = null;
+        if (input) {
+          const offset = offsetInInput(input, x, y);
+          range = offset === null ? null : (wordAtOffset(scan(root), offset, x, y)?.range ?? null);
+        } else {
+          const at = wordAt(root, x, y, opts.current.lineSelector);
+          if (at) {
+            range = document.createRange();
+            range.setStart(at.node, at.from);
+            range.setEnd(at.node, at.to);
+          }
+        }
+        if (!range) return unlink();
         reg.set(NAMES.link, new Highlight(range));
-        root.style.cursor = "pointer";
+        (input ?? root).style.cursor = "pointer";
       });
     };
     const keyUp = (e: KeyboardEvent) => {
@@ -684,22 +765,25 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
     // A tap marks a word now, and iOS would flash its grey tap highlight over the whole block for it.
     root.style.setProperty("-webkit-tap-highlight-color", "transparent");
 
-    root.addEventListener("click", click);
-    root.addEventListener("mousemove", move);
-    root.addEventListener("mouseleave", unlink);
+    // An editor's code sits under its textarea and gets none of the pointer: the textarea does.
+    const target: HTMLElement = input ?? root;
+    const onClick = input ? inputClick : click;
+    target.addEventListener("click", onClick);
+    target.addEventListener("mousemove", move);
+    target.addEventListener("mouseleave", unlink);
     window.addEventListener("keyup", keyUp);
     window.addEventListener("blur", unlink);
     return () => {
       cancelAnimationFrame(frame);
       unlink();
       root.style.removeProperty("-webkit-tap-highlight-color");
-      root.removeEventListener("click", click);
-      root.removeEventListener("mousemove", move);
-      root.removeEventListener("mouseleave", unlink);
+      target.removeEventListener("click", onClick);
+      target.removeEventListener("mousemove", move);
+      target.removeEventListener("mouseleave", unlink);
       window.removeEventListener("keyup", keyUp);
       window.removeEventListener("blur", unlink);
     };
-  }, [root, mark, jump, paint, show, clear, dropFound]);
+  }, [root, input, mark, jump, paint, show, clear, dropFound]);
 
   const active = shown !== null;
 
@@ -708,7 +792,8 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
   useEffect(() => {
     if (!active) return;
     const key = (e: KeyboardEvent) => {
-      if (owner !== self.current || typing(e.target)) return;
+      // An editor's own textarea is typing too, but its keys are ours: F3 and Escape mean nothing to it.
+      if (owner !== self.current || (typing(e.target) && e.target !== inputRef.current)) return;
       // A view in a tab that is not showing keeps its marks for when it is, but not the keys.
       if (!root?.isConnected || !root.getClientRects().length) return;
       if (e.key === "F3") {
@@ -811,7 +896,7 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
         )
       : null;
 
-  return { ref, overlay, goToDefinition, revealAt };
+  return { ref, input: inputCb, overlay, goToDefinition, revealAt };
 }
 
 /** Make `view` the one whose marks are in the registry, clearing whichever was. */
