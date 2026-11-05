@@ -85,11 +85,26 @@ public sealed class PtySession : IDisposable
             options.Environment.TryAdd("COLORTERM", "truecolor");
         }
 
+        if (OperatingSystem.IsWindows()) KeepJobObjectMarshalling();
+
         // The spawn is async in Porta.Pty; this is a one-shot launch so blocking is fine.
         IPtyConnection Spawn() => PtyProvider.SpawnAsync(options, CancellationToken.None).GetAwaiter().GetResult();
         var conn = OperatingSystem.IsWindows() ? Spawn() : Unix.WithDefaultSignals(Spawn);
         return new PtySession(conn);
     }
+
+    /// <summary>
+    /// Makes a natively compiled host (scripts\build.ps1) able to create the kill-on-close job object.
+    /// </summary>
+    /// <remarks>
+    /// Porta.Pty sets the job's limits through Vanara, which writes the struct with
+    /// <c>Marshal.StructureToPtr(object)</c> after checking it with <c>Marshal.SizeOf(Type)</c>. Native
+    /// code has no marshalling data for a type the compiler never saw used that way, so the check fails,
+    /// and every spawn with it ("Unable to convert object to its binary format"). Naming the type here,
+    /// with a type the compiler can read, is what has it generate that data. A no-op in a JIT build.
+    /// </remarks>
+    private static void KeepJobObjectMarshalling() =>
+        _ = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Vanara.PInvoke.Kernel32.JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
 
     /// <summary>Resize the pseudoconsole (SIGWINCH-equivalent); the TUI repaints to the new size.</summary>
     public void Resize(short cols, short rows)

@@ -116,6 +116,9 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md), not in public
   (`webkit2gtk-4.1` and friends) plus `libayatana-appindicator3` and the screen-capture libraries listed
   in [tray/README.md](tray/README.md#developing), Xcode command line tools on macOS. Without Rust the
   build simply leaves the tray out.
+- Optional, Windows: the **MSVC build tools** ("Desktop development with C++"). With them, a `build.ps1`
+  for the machine's own CPU compiles the per-session pty host to native code, which is smaller and
+  lighter on memory; without them (or for another CPU) it ships the same host as a larger trimmed .NET file.
 
 The builds are self-contained: the machine that only *runs* Hangar needs no .NET runtime or Node.
 

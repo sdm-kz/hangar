@@ -7,7 +7,9 @@
   The daemon and the pty host need the .NET SDK and Node. The tray (tray\, a Tauri app) also needs Rust
   (cargo) and the MSVC build tools, and builds only for the machine it is built on; it is left out, with a
   warning, when cargo is not on PATH or -Rid names another CPU -- the server is complete without it.
-  -NoTray leaves it out regardless.
+  -NoTray leaves it out regardless. The pty host is compiled to native code when -Rid is this machine's
+  own CPU and the MSVC build tools are installed (the "Desktop development with C++" workload, which the
+  tray needs too), and published as a larger trimmed single file otherwise.
 
   Every step's exit code is checked and the first failure stops the build: a web build that failed must
   not leave the previous server\wwwroot to be published as if it were this one.
@@ -93,21 +95,60 @@ try {
 # outlive the daemon -- so it ships alongside Hangar.exe and the daemon refuses to launch a session
 # without it. Self-contained for the same reason the daemon is (no .NET runtime assumed), but a much
 # smaller image: no ASP.NET.
+#
+# Compiled to native code (NativeAOT) when it can be: one runs per session, and against the trimmed single
+# file a native host is ~6 MB on disk rather than ~15, and runs in ~5 MB less private memory, ~20 MB less
+# working set and half the threads (no JIT; the rest is the terminal's own history). That takes the MSVC
+# linker, so a build without the build tools gets the trimmed single file instead -- the same host, only
+# bigger. So does a build for another CPU: compiling across CPUs needs that CPU's MSVC tools as well, and
+# is left alone rather than shipped untried.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+$ptyAot = $false
+if ($Rid -ne $hostRid) {
+  $ptyNote = "trimmed single file: it is compiled natively only for this machine's own CPU ($hostRid)"
+} elseif (-not (Test-Path $vswhere)) {
+  $ptyNote = "trimmed single file: no Visual Studio installer here, so no MSVC build tools to compile it natively"
+} else {
+  $vcTools = if ($Rid -eq "win-arm64") { "ARM64" } else { "x86.x64" }
+  $vs = & $vswhere -latest -prerelease -products * -requires "Microsoft.VisualStudio.Component.VC.Tools.$vcTools" -property installationPath
+  if ($vs) {
+    $ptyAot = $true
+    $ptyNote = "native (NativeAOT)"
+  } else {
+    $ptyNote = "trimmed single file: no MSVC build tools for $Rid, so it can't be compiled natively"
+  }
+}
+if (-not $ptyAot) { Write-Warning "Pty host: $ptyNote." }
+
 Write-Host "==> Publishing pty host (ptyhost) for $Rid" -ForegroundColor Cyan
 $ptyOut = Join-Path $root "publish-ptyhost"
 if (Test-Path $ptyOut) { Remove-Item $ptyOut -Recurse -Force }
 Push-Location (Join-Path $root "ptyhost")
+$path = $env:PATH
 try {
-  # Trimmed, unlike the daemon: it is a tiny console program, and trimming takes it from ~70 MB to ~14 MB.
-  # Safe because everything crossing the pipe goes through a source-generated JSON context
-  # (shared\Pty\PtyJson.cs) rather than reflection -- if you add a wire type, add it there too.
-  dotnet publish -c Release -r $Rid --self-contained true `
-    -p:PublishSingleFile=true `
-    -p:PublishTrimmed=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -o $ptyOut
+  # Either way the build trims, which is safe because everything crossing the pipe goes through a
+  # source-generated JSON context (shared\Pty\PtyJson.cs) rather than reflection -- if you add a wire
+  # type, add it there too.
+  if ($ptyAot) {
+    # The compiler finds the linker through vcvarsall.bat, which runs vswhere.exe by bare name: from a
+    # shell whose PATH lacks the installer folder, its "not recognized" lands in the linker's path.
+    $env:PATH = "$(Split-Path $vswhere);$env:PATH"
+    dotnet publish -c Release -r $Rid -p:PublishAot=true -o $ptyOut
+  } else {
+    dotnet publish -c Release -r $Rid --self-contained true `
+      -p:PublishSingleFile=true `
+      -p:PublishTrimmed=true `
+      -p:IncludeNativeLibrariesForSelfExtract=true `
+      -o $ptyOut
+  }
   Assert-ExitCode "dotnet publish (ptyhost)"
-} finally { Pop-Location }
+} finally {
+  $env:PATH = $path
+  Pop-Location
+}
+# A native build's symbols are ~25 MB, four times the exe they describe, and nothing in an install reads
+# them: its exception stack traces carry method names without them.
+if ($ptyAot) { Remove-Item (Join-Path $ptyOut "*.pdb") -Force }
 Copy-Item (Join-Path $ptyOut "*") $publish -Recurse -Force
 Remove-Item $ptyOut -Recurse -Force
 
@@ -153,6 +194,7 @@ foreach ($exe in $expected) {
 }
 Write-Host "==> Done. Published to: $publish ($Rid)" -ForegroundColor Green
 Write-Host "    Build stamp: $($stamp.buildId)" -ForegroundColor DarkGray
+Write-Host "    Pty host:            $ptyNote"
 Write-Host "    Run the server:      $publish\Hangar.exe        (headless; browse to its port)"
 Write-Host "    Tray app:            $trayNote"
 Write-Host "    Install it:          scripts\deploy.ps1 -SkipBuild, then scripts\register-autostart.ps1"

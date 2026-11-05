@@ -66,7 +66,9 @@ dotnet publish "$root/server" -c Release -r "$rid" --self-contained true \
   -o "$publish"
 
 # Published into a scratch folder and copied in, so its runtime files can't land on top of the daemon's.
-# Trimmed for the same reason as on Windows (see build.ps1): one of these runs per session.
+# Trimmed for the same reason as on Windows (see build.ps1): one of these runs per session. Not compiled
+# natively as build.ps1 does there: native code can only be built on the OS it is for, with its own
+# toolchain, and a build for a Linux or macOS node is usually a cross-build from another machine.
 echo "==> Publishing pty host (ptyhost) for $rid"
 pty_out="$root/publish-ptyhost"
 rm -rf "$pty_out"
