@@ -30,7 +30,7 @@ import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { CodeEditor } from "@/components/CodeEditor";
 import {
   Dialog,
   DialogContent,
@@ -3085,12 +3085,7 @@ function FilePreview({
           }}
         >
         {editing ? (
-          <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            spellCheck={false}
-            className="h-full w-full resize-none rounded-none border-0 font-mono text-xs leading-relaxed focus-visible:ring-0"
-          />
+          <CodeEditor name={file.name} value={draft} onChange={setDraft} />
         ) : view === "diff" ? (
           diffLoading ? (
             <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">

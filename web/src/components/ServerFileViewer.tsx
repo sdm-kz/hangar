@@ -6,7 +6,7 @@ import { useHtml } from "@/lib/useHtml";
 import { useContentRev } from "@/lib/useContentRev";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { CodeEditor } from "@/components/CodeEditor";
 import { Markdown, MarkdownToc } from "./Markdown";
 import { OfficeViewer } from "./OfficeViewer";
 import { PdfViewer } from "./PdfViewer";
@@ -638,12 +638,7 @@ export function ServerFileViewer({
             instead.
           </div>
         ) : editing ? (
-          <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            spellCheck={false}
-            className="h-full w-full resize-none rounded-none border-0 font-mono text-xs leading-relaxed focus-visible:ring-0"
-          />
+          <CodeEditor name={name} value={draft} onChange={setDraft} />
         ) : isMarkdown && rendered ? (
           // maxWidth sits on the zoomed box on purpose: `zoom` scales it along with the text, so a
           // line keeps the same character count as you zoom (see READING_WIDTHS).
