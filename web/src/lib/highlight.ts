@@ -1,6 +1,7 @@
 // Syntax highlighting for the file preview. We use highlight.js' core build and
 // register only the languages we care about, keeping the bundle small.
 import hljs from "highlight.js/lib/core";
+import type { HLJSApi, Language, Mode } from "highlight.js";
 import typescript from "highlight.js/lib/languages/typescript";
 import javascript from "highlight.js/lib/languages/javascript";
 import json from "highlight.js/lib/languages/json";
@@ -41,7 +42,7 @@ import { fileExt } from "./fileKind";
 hljs.registerLanguage("typescript", typescript);
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("json", json);
-hljs.registerLanguage("csharp", csharp);
+hljs.registerLanguage("csharp", csharpWithParamComments);
 hljs.registerLanguage("powershell", powershell);
 hljs.registerLanguage("dos", dos);
 hljs.registerLanguage("sql", sql);
@@ -73,6 +74,33 @@ hljs.registerLanguage("markdown", markdown);
 hljs.registerLanguage("ini", ini);
 hljs.registerLanguage("dockerfile", dockerfile);
 hljs.registerLanguage("makefile", makefile);
+
+/**
+ * highlight.js' C# grammar, with comments allowed inside a parameter list. The stock grammar's
+ * `params` mode holds strings, numbers and block comments but no `//` or `///`, so a record's primary
+ * constructor with its parameters documented line by line — `record Project(string Id, /// <summary>…`
+ * — reads each doc comment as code. Its keywords light up, and the apostrophe in a word like "user's"
+ * opens a character literal that runs on, across lines, to the next apostrophe in the file.
+ * Everything below it is then colored wrong, in previews, diffs and the editor alike.
+ */
+function csharpWithParamComments(api: HLJSApi): Language {
+  const lang = csharp(api);
+  const docComment = lang.contains[0]; // the `///` mode, first in the grammar
+  for (const mode of lang.contains) {
+    const fn = mode as Mode;
+    if (fn.className !== "function") continue;
+    const params = fn.contains?.find((sub) => (sub as Mode).className === "params") as Mode | undefined;
+    if (!params?.contains) continue;
+    // The strings mode, read before the comments go in front of it.
+    const strings = params.contains[0];
+    params.contains = [docComment, api.C_LINE_COMMENT_MODE, ...params.contains];
+    // And strings in the declaration around the list: the mode also catches expressions that only
+    // look like one, `b is (byte)'?' or (byte)'='`, and without them the `=` inside the quotes ends
+    // it and leaves a lone apostrophe behind to do the same damage.
+    fn.contains = [...(fn.contains ?? []), strings];
+  }
+  return lang;
+}
 
 // Map file extensions to registered highlight.js language names.
 const EXT_LANG: Record<string, string> = {
