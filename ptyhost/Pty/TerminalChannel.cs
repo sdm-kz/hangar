@@ -58,6 +58,7 @@ public sealed partial class TerminalChannel : IDisposable
     // How long a repaint gets to start, and then to finish, inside RepaintAsync.
     private const int RepaintSettleMs = 60;
     private long _lastOutputTick;
+    private long _bytesProcessed;
     private long _lastInputTick;
     private long _lastResizeTick;
     // Non-zero while a repaint we asked for is in flight. A counter, not a flag: two viewers can
@@ -75,6 +76,13 @@ public sealed partial class TerminalChannel : IDisposable
                 && now - Volatile.Read(ref _lastResizeTick) > ResizeGuardMs;
         }
     }
+
+    /// <summary>
+    /// Every byte the screen model has been through so far: the child's output, repaints included, and
+    /// the snapshots drawn for viewers as they attach. What <see cref="HeapTrimmer"/> reads "has gone
+    /// quiet" off.
+    /// </summary>
+    public long BytesProcessed => Interlocked.Read(ref _bytesProcessed);
 
     /// <summary>
     /// The most recent on-screen text with ANSI escapes stripped (roughly the current screen).
@@ -429,6 +437,7 @@ public sealed partial class TerminalChannel : IDisposable
             {
                 int n = _pty.Output.Read(buf, 0, buf.Length);
                 if (n <= 0) break; // EOF: child exited / pseudoconsole closed
+                Interlocked.Add(ref _bytesProcessed, n);
                 var chunk = new byte[n];
                 Array.Copy(buf, chunk, n);
                 // Output produced by a repaint we asked for is not the child working, so it does not
@@ -500,6 +509,7 @@ public sealed partial class TerminalChannel : IDisposable
         lock (_lock)
         {
             var replay = _screen.Snapshot();
+            Interlocked.Add(ref _bytesProcessed, replay.Length);
             // Bounded + DropOldest so a stalled viewer degrades only itself, never the shared reader.
             var ch = System.Threading.Channels.Channel.CreateBounded<byte[]>(
                 new BoundedChannelOptions(2048) { FullMode = BoundedChannelFullMode.DropOldest, SingleReader = true, SingleWriter = false });

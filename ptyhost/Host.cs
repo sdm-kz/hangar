@@ -147,6 +147,7 @@ public static class Host
         using var stopping = new CancellationTokenSource();
         var serving = server.RunAsync(stopping.Token);
         var watching = watchdog.RunAsync(stopping.Token);
+        var trimming = new HeapTrimmer(terminal).RunAsync(stopping.Token);
 
         standDown.Wait();
 
@@ -161,7 +162,7 @@ public static class Host
 
         stopping.Cancel();
         server.Stop();
-        try { Task.WaitAll([serving, watching], TimeSpan.FromSeconds(2)); } catch { }
+        try { Task.WaitAll([serving, watching, trimming], TimeSpan.FromSeconds(2)); } catch { }
 
         // Disposing closes the pseudoconsole and the job handle (on Unix, signals the child's process
         // group), which terminates the whole child tree if any of it is somehow still up (see
