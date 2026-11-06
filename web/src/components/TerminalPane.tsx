@@ -641,11 +641,26 @@ export const TerminalPane = forwardRef<
       // split divider, the postponed panel and the window itself, that first dead gesture is easy to
       // meet and reads as scrolling being unreliable.
       //
-      // One synthetic scroll event spends it. With the flag down this is a no-op: the handler just
-      // re-reads a position that already agrees with the buffer. Two frames out, because the re-pin
-      // runs on xterm's own animation frame and has to have happened first.
-      const spendIgnoredScroll = () =>
-        host.querySelector(".xterm-viewport")?.dispatchEvent(new Event("scroll"));
+      // One synthetic scroll event spends it. Two frames out, because the re-pin runs on xterm's own
+      // animation frame and has to have happened first.
+      //
+      // With the flag down, xterm takes the event at its word and moves the buffer to wherever the
+      // scrollbar sits. That is only harmless while the scrollbar agrees with the buffer, and output
+      // moves the buffer at once but the scrollbar a frame later. Attaching is exactly when that
+      // happens: the screen arrives from the server in the same frames as the size, so the event
+      // could land while the scrollbar was still at the top of a terminal that had only just been
+      // filled, and the view went up there with it. A session opened from the sidebar sometimes
+      // showed the start of its scrollback for that reason. So the view is put back if it moved:
+      // this event is ours, and it was never meant to scroll anything.
+      const spendIgnoredScroll = () => {
+        const viewport = host.querySelector(".xterm-viewport");
+        if (!viewport) return;
+        const { viewportY, baseY } = term.buffer.active;
+        viewport.dispatchEvent(new Event("scroll"));
+        if (term.buffer.active.viewportY === viewportY) return;
+        if (viewportY >= baseY) term.scrollToBottom();
+        else term.scrollToLine(viewportY);
+      };
       requestAnimationFrame(() => requestAnimationFrame(spendIgnoredScroll));
       // Narrowing is the one direction that can leave strays: output already on the wire when the
       // grid shrank was drawn for the old width, and it lands here too wide and wraps. The child has
@@ -654,10 +669,33 @@ export const TerminalPane = forwardRef<
       if (shrank) requestRepaint();
     };
 
+    // A pane that was display:none comes back with its scrollbar where it was when it was hidden.
+    // Whatever xterm wrote to the scrollbar in between is dropped, because an element with no box
+    // keeps no scroll offset, and Chrome then restores the old one. Output that arrived meanwhile
+    // has moved the buffer on, so the two disagree. The screen still looks right, but the next
+    // scroll event is read off that scrollbar. A terminal attached while hidden (the session opened
+    // on its Files tab) came back with its scrollbar at 0, and the first wheel notch jumped to the
+    // top of the scrollback. Moving the view and back makes xterm write its position again.
+    let hidden = false;
+    const repinScrollbar = () => {
+      const { viewportY, baseY } = term.buffer.active;
+      if (baseY === 0) return; // no scrollback, nothing for the scrollbar to disagree about
+      term.scrollLines(viewportY > 0 ? -1 : 1);
+      if (viewportY >= baseY) term.scrollToBottom();
+      else term.scrollToLine(viewportY);
+    };
+
     const sendResize = () => {
       // Skip while the pane is hidden (e.g. the Files full view keeps us mounted but
       // display:none'd): measuring a 0-sized host would send a bogus 1x1 resize to the PTY.
-      if (host.clientWidth === 0 || host.clientHeight === 0) return;
+      if (host.clientWidth === 0 || host.clientHeight === 0) {
+        hidden = true;
+        return;
+      }
+      if (hidden) {
+        hidden = false;
+        repinScrollbar();
+      }
       let dims;
       try {
         dims = fit.proposeDimensions();
