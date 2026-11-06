@@ -18,6 +18,10 @@ namespace Hangar.PtyHost;
 /// session isn't collected over and over; and only after two ticks without any, so a TUI that is still
 /// drawing isn't paused mid-frame. A host's heap is a few megabytes, which an aggressive collection gets
 /// through in milliseconds.</para>
+/// <para>A quiet host still allocates a little (the state it pushes every second), and the GC lets that
+/// grow to its full gen0 budget, ~20 MB, before collecting it. So the heap growing <see cref="RegrowBytes"/>
+/// past what the last pass left is also a reason for another, output or not: on an idle host, measured at
+/// ~1.6 KB a second, that is one pass every forty minutes or so.</para>
 /// </remarks>
 internal sealed class HeapTrimmer(TerminalChannel terminal)
 {
@@ -29,10 +33,13 @@ internal sealed class HeapTrimmer(TerminalChannel terminal)
     /// </summary>
     private const long MinBytes = 64 * 1024;
 
+    /// <summary>Heap growth since the last collection that makes another worth it, with no output at all.</summary>
+    private const long RegrowBytes = 4 * 1024 * 1024;
+
     /// <summary>Run until <paramref name="ct"/> is cancelled.</summary>
     public async Task RunAsync(CancellationToken ct)
     {
-        long trimmedAt = 0, seen = 0;
+        long trimmedAt = 0, seen = 0, heapAfter = 0;
         var quietTicks = 0;
         using var timer = new PeriodicTimer(Tick);
         try
@@ -42,9 +49,11 @@ internal sealed class HeapTrimmer(TerminalChannel terminal)
                 var processed = terminal.BytesProcessed;
                 quietTicks = processed == seen ? quietTicks + 1 : 0;
                 seen = processed;
-                if (quietTicks < 2 || processed - trimmedAt < MinBytes) continue;
+                if (quietTicks < 2) continue;
+                if (processed - trimmedAt < MinBytes && GC.GetTotalMemory(false) - heapAfter < RegrowBytes) continue;
                 GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
                 trimmedAt = processed;
+                heapAfter = GC.GetTotalMemory(false);
             }
         }
         catch (OperationCanceledException) { }

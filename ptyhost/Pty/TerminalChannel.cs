@@ -89,15 +89,37 @@ public sealed partial class TerminalChannel : IDisposable
     /// Used by the watchdog to spot an error banner. Latin1 maps each VT byte 1:1 to a char, so the
     /// visible ASCII survives; computed on demand since only the watchdog poll needs it.
     /// </summary>
+    /// <remarks>
+    /// Kept until more output arrives. The watchdog asks every second, and working it out costs a
+    /// copy of the tail, a string of it and a stripped string: a few hundred KB a second of garbage
+    /// from a session that prints nothing, which grew the heap straight back after every
+    /// <see cref="HeapTrimmer"/> pass.
+    /// </remarks>
     public string RecentText
     {
         get
         {
             byte[] snap;
-            lock (_lock) snap = _recentRaw.Snapshot();
-            return Vt.Strip(Encoding.Latin1.GetString(snap));
+            long version;
+            lock (_lock)
+            {
+                if (_recentText is not null && _recentTextVersion == _recentVersion) return _recentText;
+                snap = _recentRaw.Snapshot();
+                version = _recentVersion;
+            }
+            var text = Vt.Strip(Encoding.Latin1.GetString(snap));
+            lock (_lock)
+            {
+                _recentText = text;
+                _recentTextVersion = version;
+            }
+            return text;
         }
     }
+
+    private long _recentVersion;      // bumped with every chunk appended to _recentRaw (under _lock)
+    private string? _recentText;      // RecentText as of _recentTextVersion
+    private long _recentTextVersion;
 
     // Claude prints its Remote Control deep link (…/code/session_<id>) once at startup; we sniff it
     // out of the raw VT stream so the UI can offer an "Open in app" link straight to this session.
@@ -454,6 +476,7 @@ public sealed partial class TerminalChannel : IDisposable
                     command = _shell.Feed(chunk);
                     _screen.Write(chunk);
                     _recentRaw.Append(chunk);
+                    _recentVersion++;
                     foreach (var w in _subs.Values) w.TryWrite(chunk);
                     url = SniffRemoteUrl(buf, n);
                     rename = SniffRename(buf, n);

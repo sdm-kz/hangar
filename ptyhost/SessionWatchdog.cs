@@ -179,7 +179,7 @@ public sealed class SessionWatchdog
         // prompt, which flagged sessions as waiting long after the user replied.)
         var text = Tail(_terminal.RecentText, 15);
         if (WorkingHint.IsMatch(text)) return false; // actively generating — not waiting
-        return _promptGuards.Any(r => r.IsMatch(text));
+        return AnyMatch(_promptGuards, text);
     }
 
     private async Task CheckAsync(CancellationToken ct)
@@ -201,9 +201,9 @@ public sealed class SessionWatchdog
         var text = Tail(_terminal.RecentText, Math.Max(50, _terminal.Rows * 2));
 
         // Guardrail: a permission/confirmation prompt is on screen — never auto-send input.
-        if (_promptGuards.Any(r => r.IsMatch(text))) return;
+        if (AnyMatch(_promptGuards, text)) return;
 
-        if (!_errorPatterns.Any(r => r.IsMatch(text)))
+        if (!AnyMatch(_errorPatterns, text))
         {
             // Idle at a healthy prompt: recovered (or never broke). Clear state.
             lock (_lock) { _consecutive = 0; _status = "healthy"; }
@@ -238,14 +238,25 @@ public sealed class SessionWatchdog
         PushState(force: true);
     }
 
-    /// <summary>Return the last <paramref name="maxLines"/> lines of <paramref name="text"/> (whole string if fewer).</summary>
-    private static string Tail(string text, int maxLines)
+    /// <summary>
+    /// The last <paramref name="maxLines"/> lines of <paramref name="text"/> (whole string if fewer), as a
+    /// slice rather than a copy: this runs every second for every session, mostly against text that
+    /// hasn't changed since the last time.
+    /// </summary>
+    private static ReadOnlySpan<char> Tail(string text, int maxLines)
     {
         int newlines = 0;
         for (int i = text.Length - 1; i >= 0; i--)
             if (text[i] == '\n' && ++newlines == maxLines)
-                return text[(i + 1)..];
+                return text.AsSpan(i + 1);
         return text;
+    }
+
+    private static bool AnyMatch(Regex[] patterns, ReadOnlySpan<char> text)
+    {
+        foreach (var r in patterns)
+            if (r.IsMatch(text)) return true;
+        return false;
     }
 
     private static Regex[] Compile(IEnumerable<string> patterns)
