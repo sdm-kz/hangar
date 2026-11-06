@@ -17,7 +17,7 @@ for testing. The **pty host** (`Hangar.PtyHost`) is the small detached process t
 
 ## Setting up
 
-Prerequisites are listed in the [README](README.md#prerequisites): the .NET 10 SDK, Node 22.12+ (`.nvmrc`
+Prerequisites are listed in the [install guide](docs/install.md#prerequisites): the .NET 10 SDK, Node 22.12+ (`.nvmrc`
 says 24), Git, a logged-in Claude Code CLI, and Rust only if you work on the tray.
 
 **Windows:**
@@ -82,6 +82,23 @@ Also:
 
   Leave `Hangar.PtyHost` processes alone unless you mean to end the sessions in them.
 
+## Repository layout
+
+```
+server/   .NET 10 daemon, the Minimal API host (Program.cs, Sessions/, Auth/, Nodes/, FileSystem/, Diagnostics/, Logging/, Update/)
+ptyhost/  the per-session pty host that owns each pseudoconsole
+shared/   source shared between projects: Pty/ (daemon <-> pty host), Common/, Contract/ (the wire records the tray reads)
+web/      React + Vite + TS + Tailwind + shadcn/ui web UI
+tray/     the tray app: tray menu and screenshots, a client of the daemon's API (Tauri: Rust + React)
+docs/     the documentation (install, features, configuration, updating, API, how it works, troubleshooting),
+          screenshots (images/) and design notes (design/)
+scripts/  build.ps1, deploy.ps1, register-autostart.ps1, uninstall.ps1, install-service.ps1, uninstall-service.ps1,
+          dev.ps1, run.ps1, deploy-wwwroot.ps1, stage-update.ps1 + apply-update.ps1 (the two halves of the in-app updater),
+          _paths.ps1 (install/staging/data folder resolution, dot-sourced by the others), hgr-new-session.ps1;
+          build.sh, install-unix.sh, stage-update.sh + apply-update.sh (the same, for Linux and macOS);
+          stage-update-remote.sh (stage a Linux/macOS build on another machine over ssh)
+```
+
 ## Checks
 
 Run the ones for the parts you changed. There is no single test command.
@@ -134,7 +151,7 @@ Common types are `feat`, `fix`, `refactor`, `style`, `docs` and `chore`; common 
 `sessions`, `files`, `nodes`, `tray`, `terminal`, `sidebar` and `scripts`. The subject says what is
 true after the change, in plain words. Use the body for the why when it isn't obvious.
 
-Keep a pull request to one change, describe how you tested it, and update the README when behaviour,
-configuration or scripts change.
+Keep a pull request to one change, describe how you tested it, and update the docs (README.md and docs/) when
+behaviour, configuration or scripts change.
 
 By contributing you agree that your contribution is licensed under the project's [MIT license](LICENSE).

@@ -362,7 +362,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// and .NET opens every descriptor close-on-exec, so nothing of ours is inherited but the three
     /// standard streams — which are redirected and dropped, so the host holds no terminal or journal
     /// pipe of ours. A service manager can still end it with us; see the systemd and launchd notes in
-    /// the README (<c>KillMode=process</c>, <c>AbandonProcessGroup</c>).
+    /// docs/install.md (<c>KillMode=process</c>, <c>AbandonProcessGroup</c>).
     /// </summary>
     private static int SpawnUnix(string exe, string requestFile, string workingDirectory)
     {
