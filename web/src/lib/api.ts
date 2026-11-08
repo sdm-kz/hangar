@@ -1,4 +1,5 @@
 import type {
+  ChatChunk,
   AllowedNode,
   BrowseResult,
   CreateSessionRequest,
@@ -621,6 +622,15 @@ function createApi(base: string) {
         method: "POST",
         body: JSON.stringify({ text }),
       });
+    },
+    /**
+     * What Claude has written down of the session's conversation since the last read, for the chat view.
+     * Pass back the `conversation` and `offset` of the previous answer; a first read passes neither.
+     */
+    getSessionChat(id: string, conversation: string | null, offset: number): Promise<ChatChunk> {
+      const q = new URLSearchParams({ offset: String(offset) });
+      if (conversation) q.set("conversation", conversation);
+      return request(`/api/sessions/${id}/chat?${q}`);
     },
 
     // ---- In-app update (a build staged by scripts\stage-update.ps1) ----

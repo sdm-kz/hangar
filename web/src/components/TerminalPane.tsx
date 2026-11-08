@@ -240,6 +240,9 @@ export interface TerminalPaneHandle {
   // Send one message to Claude: the text then each image path (both as bracketed pastes so multi-line
   // content stays literal), followed by a single Enter to submit. Resolves false if the socket closed.
   sendMessage: (msg: { text: string; imagePaths: string[] }) => Promise<boolean>;
+  // Send keys as typed, with no paste around them and no Enter after — an Esc to stop a turn, or the
+  // number that picks an answer in a dialog. False if the socket is closed.
+  sendKeys: (data: string) => boolean;
   // Put the keyboard in the terminal — for a group of the split pane taking focus.
   focus: () => void;
 }
@@ -400,6 +403,13 @@ export const TerminalPane = forwardRef<
     (): TerminalPaneHandle => ({
       isReady: () => wsRef.current?.readyState === WebSocket.OPEN,
       focus: () => termRef.current?.focus(),
+      sendKeys: (data) => {
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        claimRef.current();
+        ws.send(new TextEncoder().encode(data));
+        return true;
+      },
       sendMessage: async ({ text, imagePaths }) => {
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) return false;

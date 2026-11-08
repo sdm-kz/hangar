@@ -14,6 +14,43 @@ export interface SessionNotice {
   at: number;
 }
 
+/** One part of a transcript entry, as GET /api/sessions/{id}/chat cuts it down (ChatBlock on the server). */
+export interface ChatBlock {
+  type: "text" | "thinking" | "tool_use" | "tool_result" | "image";
+  text?: string | null;
+  /** The tool call's id, on a tool_use and on the tool_result that answers it. */
+  id?: string | null;
+  name?: string | null;
+  /** A tool_use's input as JSON text, possibly cut short. */
+  input?: string | null;
+  isError?: boolean;
+}
+
+/**
+ * One line of Claude's transcript. `other` has nothing to draw but is still a link in the parent chain
+ * the chat walks to find the conversation's live branch.
+ */
+export interface ChatEntry {
+  uuid: string;
+  parent: string | null;
+  kind: "user" | "assistant" | "system" | "other";
+  time: string | null;
+  messageId?: string | null;
+  meta?: boolean;
+  compactSummary?: boolean;
+  subtype?: string | null;
+  blocks?: ChatBlock[] | null;
+}
+
+/** A read of the transcript from an offset on; `reset` drops what the reader had before. */
+export interface ChatChunk {
+  conversation: string | null;
+  offset: number;
+  reset: boolean;
+  truncated: boolean;
+  entries: ChatEntry[];
+}
+
 export interface SessionInfo {
   id: string;
   /**

@@ -39,6 +39,14 @@ The web UI is a **session manager with a full terminal**:
   working folder of your choice.
 - **Control from the Claude Code app** — launched sessions register for Remote Control and appear
   by name in the app's session list (computer icon + green dot), so you can carry on from there.
+- **Chat view** — the **Terminal / Chat** switch in the top corner of Claude's tab shows the same
+  session as a chat: your messages as bubbles, Claude's replies rendered as Markdown, each tool call as
+  a card that opens to its input and output. It is read from the transcript Claude writes as it goes
+  (`~/.claude/projects/…/<conversation>.jsonl`), and what you write goes into the terminal the way
+  typing it there would, so the terminal stays the session and switching loses nothing. A turn can be
+  stopped from the chat, and a tool permission answered with **Allow** / **Deny**; anything that only
+  the terminal can show — a picker, a plan to approve, `/usage` — is one click away. The choice is kept
+  per session and per browser, so a phone can read the chat while the desk keeps the terminal.
 - **Fork a session** — branch a conversation in two from the sessions list or the session header:
   name the fork, and it launches beside the original with the same folder and settings, picking up
   its history (`claude --resume <id> --fork-session`). The original keeps running, untouched. Forks

@@ -1134,6 +1134,43 @@ internal static class Program
                 : null;
         }
 
+        // The session's conversation as Claude writes it down, for the chat view of its terminal. The view
+        // passes back the conversation and offset of its last read and gets only what was added since; a
+        // conversation that changed under it (a /clear starts a new one) comes back from the top, marked reset.
+        app.MapGet("/api/sessions/{id}/chat", (string id, string? conversation, long? offset, SessionManager mgr) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            var conv = info.ClaudeSessionId;
+            try
+            {
+                // No transcript yet (nothing said so far): empty, and only a reset if the reader had
+                // another conversation — not on every read until Claude writes its first line.
+                if (conv is null || ChatTranscriptPath(info.WorkingDirectory, conv) is not { } path)
+                    return Results.Ok(new ChatChunk(conv, 0, conversation is not null && conversation != conv, false, []));
+                return Results.Ok(ChatTranscript.Read(path, conv, conversation, offset ?? 0));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
+
+        // Claude files a conversation under the folder it was started in; a session's folder is that folder,
+        // so look there first and only search every project when it isn't (a folder renamed since, say).
+        static string? ChatTranscriptPath(string workingDirectory, string conversation)
+        {
+            if (!ClaudeProjectData.IsConversationId(conversation)) return null;
+            try
+            {
+                if (ClaudeProjectData.FolderFor(workingDirectory, create: false) is { } dir
+                    && Path.Combine(dir, conversation + ".jsonl") is var file && File.Exists(file))
+                    return file;
+            }
+            catch (InvalidOperationException) { }
+            return ClaudeProjectData.FindTranscript(conversation);
+        }
+
         // ---- Recent launch presets & folders (shared across devices, persisted server-side) ---
         app.MapGet("/api/recents", (RecentsStore store) => Results.Ok(store.Get()));
         app.MapPost("/api/recents/sessions", (RecentSession body, RecentsStore store) => Results.Ok(store.AddSession(body)));

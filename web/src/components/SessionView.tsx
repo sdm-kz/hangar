@@ -58,6 +58,7 @@ import { WebLinkView } from "./WebLinkView";
 import { RemoteFilesView } from "./RemoteFilesView";
 import { RemoteConnectDialog } from "./RemoteConnect";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
+import { ChatView } from "./ChatView";
 import { PostponedPool } from "./PostponedPool";
 import { HeadingActivityMark, type Activity } from "./ActivityMark";
 import { shellMark, shellMarkLabel, useShownShellsSeen, type ShellActivity } from "@/lib/shellActivity";
@@ -93,6 +94,7 @@ import {
   CirclePlay,
   Loader2,
   Menu,
+  MessageSquare,
   MoreVertical,
   Pencil,
   Play,
@@ -361,6 +363,19 @@ export function SessionView({
   // "continue", stopping — is out, and the Reopen button stands where the terminal would be.
   const closed = session.state === "Restorable";
   const terminalRef = useRef<TerminalPaneHandle>(null);
+  // Whether Claude's tab shows the terminal or the chat read from it. A choice per session and per
+  // browser: the phone may want the chat while the desk keeps the terminal.
+  const chatKey = `hangar.chatView.${uiKey}`;
+  const [chatFor, setChatFor] = useState(() => ({ id: session.id, on: readFlag(chatKey) }));
+  const chatMode = chatFor.id === session.id ? chatFor.on : readFlag(chatKey);
+  const setChatMode = (on: boolean) => {
+    writeFlag(chatKey, on);
+    setChatFor({ id: session.id, on });
+    if (!on) requestAnimationFrame(() => terminalRef.current?.focus());
+  };
+  const chatModeRef = useRef(chatMode);
+  chatModeRef.current = chatMode;
+  const claudePaneRef = useRef<HTMLDivElement>(null);
   const [stopping, setStopping] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const wide = useWide();
@@ -766,7 +781,10 @@ export function SessionView({
   const focusContent = useCallback((ref: PaneRef) => {
     // After the group is drawn: the keys go nowhere while it is still hidden.
     requestAnimationFrame(() => {
-      if (ref === CLAUDE) terminalRef.current?.focus();
+      // In chat mode the terminal is under the chat: focusing it would send what is typed next, unseen.
+      if (ref === CLAUDE && chatModeRef.current)
+        claudePaneRef.current?.querySelector<HTMLTextAreaElement>("[data-chat-composer]")?.focus();
+      else if (ref === CLAUDE) terminalRef.current?.focus();
       else if (paneKind(ref) === "shell") shellHandles.current.get(paneArg(ref))?.focus();
     });
   }, []);
@@ -979,12 +997,12 @@ export function SessionView({
         return {
           icon: (
             <span className="relative inline-flex shrink-0">
-              <TerminalSquare className="size-4" />
+              {chatMode ? <MessageSquare className="size-4" /> : <TerminalSquare className="size-4" />}
               <HeadingActivityMark activity={activity} label={activityLabel} />
             </span>
           ),
-          label: label("Terminal"),
-          title: activityLabel ? `Claude's terminal — ${activityLabel}` : "Claude's terminal",
+          label: label(chatMode ? "Chat" : "Terminal"),
+          title: `Claude's ${chatMode ? "chat" : "terminal"}${activityLabel ? ` — ${activityLabel}` : ""}`,
           closable: false,
         };
       case "files":
@@ -1088,7 +1106,7 @@ export function SessionView({
         return (
           // relative: the postponed pool floats over this corner rather than taking a bar under it.
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1">
+            <div ref={claudePaneRef} className="relative min-h-0 flex-1">
               {/* A closed session has no pty to attach to: mounting the pane would open a socket
                   against nothing and leave a black rectangle that looks like a terminal failing.
                   What goes there instead says what happened and offers the one way out of it. */}
@@ -1101,7 +1119,7 @@ export function SessionView({
                   sessionId={session.id}
                   workingDirectory={session.workingDirectory}
                   // A shell has focus: an image pasted there is not Claude's to upload.
-                  imagePaste={!focusedRef || paneKind(focusedRef) !== "shell"}
+                  imagePaste={!chatMode && (!focusedRef || paneKind(focusedRef) !== "shell")}
                   cornerTaken
                   onRenameDetected={(name) => onTerminalRename?.(session.id, name)}
                   onColorDetected={(color) => onTerminalColor?.(session.id, color)}
@@ -1109,6 +1127,24 @@ export function SessionView({
                   onFindFile={onTerminalFindFile}
                 />
               )}
+              {/* The chat covers the terminal rather than replacing it: the terminal stays mounted and
+                  sized underneath, so its socket and screen are there the moment you switch back, and
+                  it is what the chat types into. */}
+              {chatMode && (
+                <div className="absolute inset-0 z-10">
+                  <ChatView
+                    key={session.id}
+                    sessionId={session.id}
+                    closed={closed}
+                    busy={!!busy}
+                    activity={activity}
+                    activityLabel={activityLabel}
+                    terminalRef={terminalRef}
+                    onShowTerminal={() => setChatMode(false)}
+                  />
+                </div>
+              )}
+              <ChatModeToggle chat={chatMode} onChange={setChatMode} />
             </div>
             {/* Still here when the session is closed: the stash was written for this session and is
                 worth reading back, and throwing out a message you are no longer going to send is the
@@ -1889,4 +1925,48 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
       <dd className="min-w-0 break-all font-mono">{children}</dd>
     </>
   );
+}
+
+/** Terminal or chat, for Claude's tab: a two-way switch floating in the tab's top corner. */
+function ChatModeToggle({ chat, onChange }: { chat: boolean; onChange: (chat: boolean) => void }) {
+  const option = (on: boolean, Icon: typeof TerminalSquare, label: string) => (
+    <button
+      type="button"
+      title={on ? "Read the session as a chat" : "Show the terminal"}
+      aria-pressed={chat === on}
+      onClick={() => onChange(on)}
+      className={cn(
+        "flex items-center gap-1 rounded px-1.5 py-0.5",
+        chat === on ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+      )}
+    >
+      <Icon className="size-3.5" />
+      <span className="hidden @md:inline">{label}</span>
+    </button>
+  );
+  return (
+    <div className="@container pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-end p-1.5 pr-4">
+      <div className="pointer-events-auto flex gap-0.5 rounded-md border bg-background/90 p-0.5 text-xs opacity-70 shadow-sm backdrop-blur transition-opacity hover:opacity-100">
+        {option(false, TerminalSquare, "Terminal")}
+        {option(true, MessageSquare, "Chat")}
+      </div>
+    </div>
+  );
+}
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeFlag(key: string, on: boolean) {
+  try {
+    if (on) localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
+  } catch {
+    /* storage unavailable: the choice lasts until the page is reloaded */
+  }
 }

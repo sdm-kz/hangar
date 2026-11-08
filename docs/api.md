@@ -58,6 +58,13 @@ curl -X POST http://localhost:5099/api/external/sessions/<id>/message \
 needs a gap of ~150 ms between them, or Claude Code's input box merges them into one message. The
 browser's own route for this is `POST /api/sessions/{id}/message`, behind the bearer token.
 
+**Reading what a session said.** `GET /api/sessions/{id}/chat` (bearer token) is what the chat view
+reads: the session's conversation as Claude writes it to its transcript, cut down to what a chat draws
+(tool input and output trimmed to 4,000 characters, pasted images left out). It is incremental — pass
+back the `conversation` and `offset` of the last answer and only what was written since comes back;
+`reset: true` means the conversation changed (a `/clear`) and the answer starts from the top. A first
+read of a very long transcript takes its last 6 MB and says `truncated: true`.
+
 ## Self-service API for a running session
 
 A running session can act on **itself** — rename itself, open files or pull requests in its own tab
