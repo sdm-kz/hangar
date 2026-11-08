@@ -665,11 +665,40 @@ public sealed class SessionManager : IDisposable
     private string? ConversationId(ClaudeSession s) => _hooks.ClaudeSessionId(s.Id) ?? s.OwnConversationId;
 
     /// <summary>Ids of live sessions where Claude is currently generating output (for the "active" dot).</summary>
-    public IReadOnlyCollection<string> BusySessionIds() =>
-        _sessions.Values
+    public IReadOnlyCollection<string> BusySessionIds()
+    {
+        foreach (var s in _sessions.Values) EndInterruptedTurn(s);
+        return _sessions.Values
             .Where(s => s.State == SessionState.Running && IsBusy(s))
             .Select(s => s.Id)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Settle a turn you cut short with Esc. The hooks say working until a <c>Stop</c>, and none comes
+    /// for an interrupt, so without this the session kept its working mark (and its share of the
+    /// activity count) until the next prompt. The screen is the only witness: the notice Claude leaves
+    /// above its input box, read once the terminal has gone quiet and no hook has arrived for a moment.
+    /// Run where the marks are read (the hub's snapshot) and when the terminal goes quiet, so it holds
+    /// whether or not a browser is watching — the schedules read the hook status directly.
+    /// </summary>
+    private void EndInterruptedTurn(ClaudeSession s, bool lookAgain = false)
+    {
+        if (s.State != SessionState.Running || s.Terminal is not { IsBusy: false } term) return;
+        if (!_hooks.TryGetStatus(s.Id, out var st) || !(st.Busy || st.Waiting)) return;
+        // A hook this fresh is newer news than anything on screen: a prompt just sent, a tool starting.
+        var settle = InterruptSettle - (DateTimeOffset.Now - st.LastEventAt);
+        if (settle > TimeSpan.Zero)
+        {
+            // The terminal going quiet is the one edge there is. Esc soon after a hook lands here, and
+            // with nobody reading the marks nothing would ever look again — so look once that hook has aged.
+            if (lookAgain) _ = Task.Delay(settle).ContinueWith(_ => EndInterruptedTurn(s), TaskScheduler.Default);
+            return;
+        }
+        if (term.ShowsInterrupted) _hooks.EndInterruptedTurn(s.Id, st.LastEventAt);
+    }
+
+    private static readonly TimeSpan InterruptSettle = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// Whether Claude is generating in a session. Prefers the authoritative hook-derived status (exact
@@ -1722,7 +1751,7 @@ public sealed class SessionManager : IDisposable
         session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
         session.ProcessExited += _ => { SavePersisted(); RaiseChanged(); };
         // Busy/waiting/watchdog changes are not persisted — they just need to reach the browser.
-        session.StateChanged += _ => RaiseChanged();
+        session.StateChanged += s => { EndInterruptedTurn(s, lookAgain: true); RaiseChanged(); };
     }
 
     /// <summary>

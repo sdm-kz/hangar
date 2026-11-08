@@ -205,6 +205,28 @@ public sealed class HookEventStore
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// End a turn that was interrupted with Esc, which no hook reports: <c>Stop</c> doesn't run on a
+    /// user interrupt, so the session would read as working until its next prompt. The caller has seen
+    /// the interruption on screen; <paramref name="seenAfter"/> is the event time it read the status at,
+    /// and a hook that has landed since is newer than that screen, so it wins and nothing changes.
+    /// </summary>
+    public bool EndInterruptedTurn(string sessionId, DateTimeOffset seenAfter)
+    {
+        if (!_byId.TryGetValue(sessionId, out var s)) return false;
+        lock (s.Gate)
+        {
+            if (s.LastEventAt != seenAfter || (!s.Busy && !s.Waiting)) return false;
+            s.Busy = false; s.Waiting = false; s.CurrentTool = null;
+            Unblock(s);
+            s.Recent.Enqueue("Interrupted");
+            while (s.Recent.Count > RecentCapacity) s.Recent.Dequeue();
+        }
+        _log.LogDebug("Session {Id}: turn interrupted on screen, no longer busy", sessionId);
+        Changed?.Invoke();
+        return true;
+    }
+
     // Longest detail we keep. These are read in a sidebar tooltip and a phone's notification body,
     // both of which cut off long before this — the limit is here so a pasted essay of a permission
     // argument can't ride the snapshot to every connected client once a second.

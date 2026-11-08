@@ -66,20 +66,41 @@ internal static class ClaudeInputBox
     {
         if (FindBox(screen) is not var (_, bottom)) return null;
         var total = 0;
-        var line = new StringBuilder(screen.Cols);
         for (var y = bottom + 1; y < screen.Rows; y++)
-        {
-            line.Clear();
-            for (var x = 0; x < screen.Cols; x++)
-            {
-                var cell = screen.CellAt(x, y);
-                if (cell.IsWideTail) continue;
-                line.Append(cell.IsBlank ? " " : char.ConvertFromUtf32(cell.Rune));
-            }
-            foreach (Match m in BackgroundCount.Matches(line.ToString()))
+            foreach (Match m in BackgroundCount.Matches(RowText(screen, y)))
                 if (int.TryParse(m.Groups[1].Value, out var n)) total += n;
-        }
         return total;
+    }
+
+    /// <summary>
+    /// Whether the turn ended with you pressing Esc: the last thing above the box is Claude's
+    /// <c>⎿ Interrupted · What should Claude do instead?</c>. No hook fires for that (<c>Stop</c> is
+    /// documented not to run on a user interrupt), so this is the only word that the turn is over.
+    /// A turn running again puts its spinner line between that notice and the box, so an old notice
+    /// further up never reads as the current one.
+    /// </summary>
+    public static bool Interrupted(ScreenModel screen)
+    {
+        if (FindBox(screen) is not var (top, _)) return false;
+        for (var y = top - 1; y >= 0; y--)
+        {
+            var text = RowText(screen, y).Trim();
+            if (text.Length == 0) continue;
+            return text.TrimStart('⎿', ' ').StartsWith("Interrupted", StringComparison.Ordinal);
+        }
+        return false;
+    }
+
+    private static string RowText(ScreenModel screen, int y)
+    {
+        var line = new StringBuilder(screen.Cols);
+        for (var x = 0; x < screen.Cols; x++)
+        {
+            var cell = screen.CellAt(x, y);
+            if (cell.IsWideTail) continue;
+            line.Append(cell.IsBlank ? " " : char.ConvertFromUtf32(cell.Rune));
+        }
+        return line.ToString();
     }
 
     // The box's top and bottom rules. The bottom one first, then the one above it: the box sits at the

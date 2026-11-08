@@ -89,6 +89,12 @@ public interface ITerminal : IDisposable
     /// </summary>
     int BackgroundTasks { get; }
 
+    /// <summary>
+    /// True when Claude's last turn was cut short with Esc, as the notice above its input box says.
+    /// Read off the screen like <see cref="HasInputDraft"/>.
+    /// </summary>
+    bool ShowsInterrupted { get; }
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     bool IsCompacting { get; }
 

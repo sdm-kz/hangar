@@ -93,6 +93,8 @@ public sealed class PtyHostClient : ITerminal
 
     public bool HasInputDraft { get { lock (_lock) return ClaudeInputBox.HasDraft(_screen); } }
 
+    public bool ShowsInterrupted { get { lock (_lock) return ClaudeInputBox.Interrupted(_screen); } }
+
     // The last count the footer showed. Opening Claude's list of its shells hides the box, and reading
     // that as "none left" would tick the session finished while they are still running.
     private int _backgroundTasks;
