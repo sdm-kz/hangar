@@ -52,7 +52,9 @@ The web UI is a **session manager with a full terminal**:
   Anything else that only
   the terminal can show — a picker, a plan to approve, `/usage` — is one click away. The choice is kept
   per session and per browser, so a phone can read the chat while the desk keeps the terminal. The
-  postponed-messages and compose buttons move from the terminal's corner into the chat's message box,
+  postponed-messages and compose buttons move from the terminal's corner into the chat's message box
+  (Ctrl/⌘+Shift+Enter there postpones what is written, and the send button turns into Postpone while the
+  chord is held; Compose carries on what is written there),
   which has its own image button. Typing `/` there suggests slash commands — Claude's own, yours, the
   project's, plugins' and skills' — with their descriptions: arrows to choose, Tab or Enter to take one,
   Enter again to run it. It works anywhere in the text (a word that starts with `/`, at the caret), and

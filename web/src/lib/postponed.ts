@@ -85,3 +85,29 @@ export function newMessage(text: string, images: PostponedImage[]): PostponedMes
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return { id, text, images, createdAt: Date.now() };
 }
+
+/** A message to stash: what a box outside the pool (the chat's) hands it. */
+export interface PostponeDraft {
+  text: string;
+  images: PostponedImage[];
+}
+
+// Each session's pool, as it is on screen: it owns the list and its saving, so a message stashed from
+// elsewhere goes through it rather than past it to the server.
+const pools = new Map<string, (d: PostponeDraft) => void>();
+
+/** The pool of the session {@link sessionKey} names takes stashes from elsewhere. Returns the release. */
+export function registerPool(key: string, stash: (d: PostponeDraft) => void): () => void {
+  pools.set(key, stash);
+  return () => {
+    if (pools.get(key) === stash) pools.delete(key);
+  };
+}
+
+/** Stash a message in a session's pool. False when no pool for it is on screen to take it. */
+export function postponeTo(key: string, draft: PostponeDraft): boolean {
+  const stash = pools.get(key);
+  if (!stash) return false;
+  stash(draft);
+  return true;
+}

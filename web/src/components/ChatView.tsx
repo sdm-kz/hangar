@@ -8,6 +8,7 @@ import {
   Clock,
   ImageIcon,
   ImagePlus,
+  Inbox,
   Loader2,
   Send,
   Square,
@@ -37,6 +38,7 @@ import type { PostponedImage } from "@/lib/postponed";
 import type { ChatEntry, SessionStatus } from "@/types";
 import { sessionKey, useApi, useNodeId } from "@/lib/node";
 import { loadChatDraft, onChatDraft, saveChatDraft } from "@/lib/chatDraft";
+import { postponeTo } from "@/lib/postponed";
 import { cn } from "@/lib/utils";
 
 // How often the transcript is read: often while Claude is writing to it, rarely while it sits idle, and
@@ -674,7 +676,25 @@ function Composer({
     if (bare && slash.commands?.find((c) => c.name === bare[1])?.dialog) onShowTerminal();
   };
 
-  const canSend = (!!text.trim() || images.length > 0) && !sending && uploading === 0 && !blocked;
+  // Ctrl+Shift+Enter puts the message in the session's postponed pool instead, as it does in the full-size
+  // composer. Nothing goes into the terminal, so a question Claude is waiting on doesn't stop it.
+  const postpone = () => {
+    const body = text.trim();
+    if ((!body && !images.length) || sending || uploading) return;
+    if (!postponeTo(draftKey, { text: body, images })) {
+      setError("The postponed pool isn't here to take it. Try again in a moment.");
+      return;
+    }
+    setText("");
+    setImages([]);
+    setError(null);
+  };
+  // Held, the chord turns the send button into Postpone, so the shortcut shows what it will do.
+  const postponing = usePostponeChord();
+
+  const hasContent = !!text.trim() || images.length > 0;
+  const canSend = hasContent && !sending && uploading === 0 && !blocked;
+  const canPostpone = hasContent && !sending && uploading === 0;
   return (
     <div className="border-t bg-background px-4 pb-1.5 pt-2">
       {/* relative: the postponed pool's drop-up opens above the message box, against its right edge. */}
@@ -757,6 +777,11 @@ function Composer({
               if (e.nativeEvent.isComposing) return;
               if (repeatTyped(e)) return;
               if (slash.onKeyDown(e)) return;
+              if (e.key === "Enter" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                postpone();
+                return;
+              }
               if (e.key === "Enter" && !e.shiftKey && !coarse) {
                 e.preventDefault();
                 void send();
@@ -765,18 +790,60 @@ function Composer({
           />
           {/* The postponed pool's buttons, which float in the terminal's corner, sit here in the chat. */}
           <div ref={poolSlot} className="contents" />
-          <Button
-            size="icon"
-            className="size-7 shrink-0"
-            title={blocked ? "Answer Claude's question first" : busy ? "Queue for Claude" : "Send"}
-            disabled={!canSend} onClick={() => void send()}>
-            {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-          </Button>
+          {postponing ? (
+            <Button
+              size="icon"
+              className="size-7 shrink-0"
+              title="Postpone (Ctrl+Shift+Enter)"
+              aria-label="Postpone"
+              disabled={!canPostpone}
+              onClick={postpone}
+            >
+              <Inbox className="size-4" />
+            </Button>
+          ) : (
+            <Button
+              size="icon"
+              className="size-7 shrink-0"
+              title={
+                blocked
+                  ? "Answer Claude's question first"
+                  : `${busy ? "Queue for Claude" : "Send"} (Enter). Ctrl+Shift+Enter postpones it`
+              }
+              disabled={!canSend}
+              onClick={() => void send()}
+            >
+              {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+            </Button>
+          )}
         </div>
         <SessionFooter info={info} />
       </div>
     </div>
   );
+}
+
+/** Whether Ctrl (⌘ on a Mac) and Shift are held together: the postpone chord, short of its Enter. */
+function usePostponeChord(): boolean {
+  const [held, setHeld] = useState(false);
+  useEffect(() => {
+    const update = (e: KeyboardEvent | PointerEvent) => setHeld((e.ctrlKey || e.metaKey) && e.shiftKey);
+    // Let go while the window was away (Alt-Tab with the keys down): its keyup never comes.
+    const reset = () => setHeld(false);
+    // Capture: a box that stops its keys (the slash list, a dialog) must not leave the button stuck. A
+    // pointer move says which keys are down too, and catches a keyup that went missing.
+    window.addEventListener("keydown", update, true);
+    window.addEventListener("keyup", update, true);
+    window.addEventListener("pointermove", update, true);
+    window.addEventListener("blur", reset);
+    return () => {
+      window.removeEventListener("keydown", update, true);
+      window.removeEventListener("keyup", update, true);
+      window.removeEventListener("pointermove", update, true);
+      window.removeEventListener("blur", reset);
+    };
+  }, []);
+  return held;
 }
 
 function sameStatus(a: SessionStatus | null, b: SessionStatus | null): boolean {

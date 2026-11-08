@@ -21,6 +21,7 @@ import { SlashSuggestions, useSlashInput } from "./SlashCommands";
 import {
   loadPostponed,
   newMessage,
+  registerPool,
   savePostponed,
   type PostponedImage,
   type PostponedMessage,
@@ -212,6 +213,21 @@ export function PostponedPool({
     setDraftImages([]);
     setError(null);
   }, [draft, draftImages, messages, commit]);
+
+  // The chat's message box stashes here too (Ctrl+Shift+Enter), through the list as it stands.
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  useEffect(
+    () =>
+      registerPool(chatKey, (d) => {
+        // Ahead of the render, so a second stash straight after the first adds to it.
+        const next = [...messagesRef.current, newMessage(d.text, d.images)];
+        messagesRef.current = next;
+        commitRef.current(next);
+        setError(null);
+      }),
+    [chatKey]
+  );
 
   const deleteMsg = useCallback((id: string) => commit(messages.filter((m) => m.id !== id)), [messages, commit]);
 
