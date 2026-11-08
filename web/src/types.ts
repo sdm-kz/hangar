@@ -24,6 +24,10 @@ export interface ChatBlock {
   /** A tool_use's input as JSON text, possibly cut short. */
   input?: string | null;
   isError?: boolean;
+  /** An image's place among its line's images: with the line's `at` and uuid, what fetches it. */
+  n?: number | null;
+  /** On a tool_result, the places (as `n`) of the images it came with — a Read of a picture. */
+  images?: number[] | null;
 }
 
 /**
@@ -47,6 +51,8 @@ export interface ChatEntry {
   context?: number;
   /** A message typed while Claude was working, which it read before the turn was over. */
   queued?: boolean;
+  /** Where the line starts in the transcript, on a line with images. */
+  at?: number | null;
 }
 
 /** A session's model and context use, as its status line last reported them. */

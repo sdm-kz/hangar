@@ -1175,6 +1175,30 @@ internal static class Program
             }
         });
 
+        // One image of the conversation, for the chat's thumbnails: the chat read passes on where each one is
+        // (the line's offset and uuid, and its place among the line's images) rather than the image — pasted
+        // ones are stored inline as base64, megabytes on every read. Only the session's current conversation:
+        // a chat showing another one has been reset away from it already. Where an image is never changes, so
+        // the browser may keep it for good.
+        app.MapGet("/api/sessions/{id}/chat/image", async (string id, string conversation, long at, string uuid, int n,
+            SessionManager mgr, HttpContext http) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null || info.ClaudeSessionId != conversation
+                || ChatTranscriptPath(info.WorkingDirectory, conversation) is not { } path) return Results.NotFound();
+            try
+            {
+                if (await ChatTranscript.ReadImage(path, at, uuid, n) is not var (data, media)) return Results.NotFound();
+                http.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+                GuardServedFile(http.Response, media);
+                return Results.Bytes(data, media);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
+
         // Claude files a conversation under the folder it was started in; a session's folder is that folder,
         // so look there first and only search every project when it isn't (a folder renamed since, say).
         static string? ChatTranscriptPath(string workingDirectory, string conversation)

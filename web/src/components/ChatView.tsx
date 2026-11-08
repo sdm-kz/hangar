@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   ArrowDown,
@@ -22,6 +23,7 @@ import { ChatQuestion, parseQuestions } from "./ChatQuestion";
 import { ChatPlan, parsePlan } from "./ChatPlan";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import { SlashSuggestions, useSlashInput } from "./SlashCommands";
+import { ImageLightbox } from "./ImageLightbox";
 import type { Activity } from "./ActivityMark";
 import type { TerminalPaneHandle } from "./TerminalPane";
 import {
@@ -31,6 +33,7 @@ import {
   prettyInput,
   queuedMessages,
   toolSummary,
+  type ChatImageRef,
   type ChatItem,
   type ChatTranscript,
 } from "@/lib/chat";
@@ -100,6 +103,7 @@ export function ChatView({
   // The chat's own zoom, like the terminal's: one reading size for every session's chat, kept across
   // reloads, and apart from the terminal's — the two are set for different text.
   const [zoom, setZoom] = usePersistentZoom("chat");
+  const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
 
   // ---- Reading the transcript ----
   const transcriptRef = useRef(transcript);
@@ -172,6 +176,17 @@ export function ChatView({
   const info = useMemo(() => sessionInfo(status, transcript.entries), [status, transcript.entries]);
   const shown = items.length > limit ? items.slice(items.length - limit) : items;
   const hidden = items.length - shown.length;
+  const conversation = transcript.conversation;
+  const images = useMemo<ChatImageSource>(
+    () => ({
+      url: (image) =>
+        conversation && image.at != null && image.n != null
+          ? api.chatImageUrl(sessionId, conversation, { uuid: image.uuid, at: image.at, n: image.n })
+          : null,
+      open: (src, name) => setPreview({ src, name }),
+    }),
+    [api, sessionId, conversation]
+  );
 
   // ---- Scrolling: follow new items while reading the latest, stay put while reading back ----
   const onScroll = () => {
@@ -343,7 +358,7 @@ export function ChatView({
                     onShowTerminal={onShowTerminal}
                   />
                 ) : (
-                  <ChatRow key={item.key} item={item} sessionBusy={busy} />
+                  <ChatRow key={item.key} item={item} sessionBusy={busy} images={images} />
                 )
               )
             )}
@@ -419,6 +434,12 @@ export function ChatView({
           info={info}
         />
       )}
+      {/* On the page itself: the panes it could open in are positioned, and would hold it to their box. */}
+      {preview &&
+        createPortal(
+          <ImageLightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />,
+          document.body
+        )}
     </div>
   );
 }
@@ -463,17 +484,22 @@ function WaitingBar({
   );
 }
 
-function ChatRow({ item, sessionBusy }: { item: ChatItem; sessionBusy: boolean }) {
+/** Where the chat's images come from, and what a click on one does. */
+interface ChatImageSource {
+  /** The image's URL, or null when its node didn't say where it is. */
+  url: (image: ChatImageRef) => string | null;
+  open: (src: string, name: string) => void;
+}
+
+function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: boolean; images: ChatImageSource }) {
   switch (item.kind) {
     case "user":
       return (
         <div className="flex justify-end">
           <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-muted px-3.5 py-2 text-sm">
             {item.text}
-            {item.images > 0 && (
-              <span className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                <ImageIcon className="size-3.5" /> {item.images === 1 ? "1 image" : `${item.images} images`}
-              </span>
+            {item.images.length > 0 && (
+              <ChatImages images={item.images} source={images} name="Image" className={item.text ? "mt-2" : undefined} />
             )}
             {item.queued && (
               <span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -527,13 +553,83 @@ function ChatRow({ item, sessionBusy }: { item: ChatItem; sessionBusy: boolean }
         </Fold>
       );
     case "tool":
-      return <ToolCard item={item} sessionBusy={sessionBusy} />;
+      return <ToolCard item={item} sessionBusy={sessionBusy} images={images} />;
   }
 }
 
-function ToolCard({ item, sessionBusy }: { item: Extract<ChatItem, { kind: "tool" }>; sessionBusy: boolean }) {
+/**
+ * Thumbnails of a message's images, each opening full size. They are fetched as they come into view, at a
+ * fixed height so the conversation doesn't shift as they arrive.
+ */
+function ChatImages({
+  images,
+  source,
+  name,
+  className,
+}: {
+  images: ChatImageRef[];
+  source: ChatImageSource;
+  /** What the viewer calls them: numbered when there are several. */
+  name: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex flex-wrap gap-1.5", className)}>
+      {images.map((image, i) => {
+        const label = images.length > 1 ? `${name} ${i + 1}` : name;
+        const src = source.url(image);
+        return src ? (
+          <ChatThumb key={i} src={src} label={label} onOpen={() => source.open(src, label)} />
+        ) : (
+          <ImagePlaceholder key={i} label={label} />
+        );
+      })}
+    </div>
+  );
+}
+
+function ChatThumb({ src, label, onOpen }: { src: string; label: string; onOpen: () => void }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <ImagePlaceholder label={label} />;
+  return (
+    <button type="button" title={`Open ${label.toLowerCase()}`} onClick={onOpen} className="rounded-md">
+      <img
+        src={src}
+        alt={label}
+        loading="lazy"
+        decoding="async"
+        className="h-28 w-auto max-w-[14rem] cursor-zoom-in rounded-md border bg-background object-cover"
+        onError={() => setFailed(true)}
+      />
+    </button>
+  );
+}
+
+// An image that can't be shown — its node is too old to say where it is, or it is gone from the transcript.
+function ImagePlaceholder({ label }: { label: string }) {
+  return (
+    <span
+      title={label}
+      className="flex h-28 w-20 items-center justify-center rounded-md border border-dashed text-muted-foreground"
+    >
+      <ImageIcon className="size-5" />
+    </span>
+  );
+}
+
+function ToolCard({
+  item,
+  sessionBusy,
+  images,
+}: {
+  item: Extract<ChatItem, { kind: "tool" }>;
+  sessionBusy: boolean;
+  images: ChatImageSource;
+}) {
   const summary = toolSummary(item.input);
   const result = item.result;
+  // A picture's result is the picture: the "[image]" its text stands in with says nothing more.
+  const resultText = result?.images.length ? result.text.replace(/^\[image\]$/gm, "").trim() : result?.text;
   // No result yet: still running while the session works, otherwise it never finished (interrupted).
   const icon = result ? (
     result.isError ? (
@@ -558,15 +654,23 @@ function ToolCard({ item, sessionBusy }: { item: Extract<ChatItem, { kind: "tool
         {item.input && (
           <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono">{prettyInput(item.input)}</pre>
         )}
-        {result && (
+        {result && (resultText || !result.images.length) && (
           <pre
             className={cn(
               "max-h-72 overflow-auto whitespace-pre-wrap break-words border-t pt-2 font-mono",
               result.isError ? "text-destructive" : "text-muted-foreground"
             )}
           >
-            {result.text || "(no output)"}
+            {resultText || "(no output)"}
           </pre>
+        )}
+        {result && result.images.length > 0 && (
+          <ChatImages
+            images={result.images}
+            source={images}
+            name={summary ? baseName(summary) : "Image"}
+            className="border-t pt-2"
+          />
         )}
       </div>
     </details>

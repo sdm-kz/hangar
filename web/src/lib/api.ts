@@ -46,6 +46,7 @@ import type {
   UpdateStatus,
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
+import type { ChatImageRef } from "@/lib/chat";
 
 const TOKEN_KEY = "hangar.token";
 
@@ -632,6 +633,17 @@ function createApi(base: string) {
       const q = new URLSearchParams({ offset: String(offset) });
       if (conversation) q.set("conversation", conversation);
       return request(`/api/sessions/${id}/chat?${q}`);
+    },
+
+    /**
+     * One image of the session's conversation, for the chat's thumbnails: an `<img>` source, token in the
+     * query. The chat read says where each image is; the image itself is fetched only when it is drawn.
+     */
+    chatImageUrl(id: string, conversation: string, image: ChatImageRef): string {
+      const q = new URLSearchParams({ conversation, at: String(image.at), uuid: image.uuid, n: String(image.n) });
+      const token = getToken();
+      if (token) q.set("access_token", token);
+      return under(`/api/sessions/${id}/chat/image?${q}`);
     },
 
     /** The slash commands Claude takes in the session's folder, for the chat's autocomplete. */

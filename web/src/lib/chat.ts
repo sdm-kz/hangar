@@ -184,7 +184,7 @@ function promptHas(prompt: string, queued: string): boolean {
 
 /** What the chat draws, one item per bubble, card or note. */
 export type ChatItem =
-  | { kind: "user"; key: string; text: string; images: number; time: string | null; queued?: boolean }
+  | { kind: "user"; key: string; text: string; images: ChatImageRef[]; time: string | null; queued?: boolean }
   | { kind: "command"; key: string; text: string }
   | { kind: "output"; key: string; text: string }
   | { kind: "notice"; key: string; text: string; tone?: "error" }
@@ -196,7 +196,24 @@ export type ChatItem =
 export interface ToolResult {
   text: string;
   isError: boolean;
+  images: ChatImageRef[];
 }
+
+/**
+ * Where one image of the transcript is: its line (start and uuid) and its place among the line's images.
+ * `at` and `n` are missing from a node too old to say — the chat then just counts the image.
+ */
+export interface ChatImageRef {
+  uuid: string;
+  at?: number;
+  n?: number;
+}
+
+const imageRef = (e: ChatEntry, n: number | null | undefined): ChatImageRef => ({
+  uuid: e.uuid,
+  at: e.at ?? undefined,
+  n: n ?? undefined,
+});
 
 // Colors and styles from a terminal command's output (a /compact's dimmed "Compacted").
 // eslint-disable-next-line no-control-regex
@@ -249,7 +266,12 @@ export function chatItems(entries: ChatEntry[]): ChatItem[] {
     for (const b of blocks) {
       if (b.type !== "tool_result" || !b.id) continue;
       const call = tools.get(b.id);
-      if (call) call.result = { text: clean(b.text ?? ""), isError: !!b.isError };
+      if (call)
+        call.result = {
+          text: clean(b.text ?? ""),
+          isError: !!b.isError,
+          images: (b.images ?? []).map((n) => imageRef(e, n)),
+        };
     }
     if (e.meta) continue;
     const text = blocks
@@ -257,12 +279,12 @@ export function chatItems(entries: ChatEntry[]): ChatItem[] {
       .map((b) => b.text!)
       .filter((t) => !t.trimStart().startsWith("<system-reminder>"))
       .join("\n\n");
-    const images = blocks.filter((b) => b.type === "image").length;
+    const images = blocks.filter((b) => b.type === "image").map((b) => imageRef(e, b.n));
     if (e.compactSummary) {
       items.push({ kind: "summary", key: e.uuid, text });
       continue;
     }
-    if (!text.trim() && !images) continue;
+    if (!text.trim() && !images.length) continue;
     const special = taggedItem(e.uuid, text);
     if (special !== undefined) {
       if (special) items.push(special);

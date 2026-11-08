@@ -17,7 +17,14 @@ public sealed record ChatBlock(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? Name = null,
     /// <summary>A <c>tool_use</c>'s input as JSON text, cut to <see cref="ChatTranscript.MaxToolText"/>.</summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? Input = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool IsError = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool IsError = false,
+    /// <summary>
+    /// An <c>image</c>'s place among its line's images, which is how <see cref="ChatTranscript.ReadImage"/> finds
+    /// it: the image itself is not passed on.
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? N = null,
+    /// <summary>The places (as <see cref="N"/>) of the images a <c>tool_result</c> came with — a Read of a picture.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] IReadOnlyList<int>? Images = null);
 
 /// <summary>
 /// One line of a Claude transcript that has a place in the conversation. <see cref="Kind"/> is <c>user</c>,
@@ -45,7 +52,9 @@ public sealed record ChatEntry(
     /// <summary>Tokens in the context when an assistant line was written: its request's whole input.</summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long Context = 0,
     /// <summary>A message typed while Claude was working, which it read before the turn was over.</summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Queued = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Queued = false,
+    /// <summary>Where the line starts in the file, on a line with images: with its uuid, what fetches one of them.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? At = null);
 
 /// <summary>
 /// A read of a transcript from <see cref="Offset"/> on. <see cref="Reset"/> says the reader's earlier entries
@@ -204,7 +213,8 @@ public static class ChatTranscript
                 {
                     if (!d.TryGetProperty("message", out var msg) || msg.ValueKind != JsonValueKind.Object)
                         return new ChatEntry(uuid, parent, "other", time);
-                    var blocks = Blocks(msg);
+                    var images = 0;
+                    var blocks = Blocks(msg, ref images);
                     var assistant = type == "assistant";
                     if (assistant) WithPlans(blocks, Str(d, "slug"));
                     return new ChatEntry(uuid, parent, type, time,
@@ -213,7 +223,8 @@ public static class ChatTranscript
                         CompactSummary: Bool(d, "isCompactSummary"),
                         Blocks: blocks,
                         Model: assistant ? Str(msg, "model") : null,
-                        Context: assistant ? ContextTokens(msg) : 0);
+                        Context: assistant ? ContextTokens(msg) : 0,
+                        At: images > 0 ? at : null);
                 }
                 case "system":
                 {
@@ -225,11 +236,12 @@ public static class ChatTranscript
                 case "attachment"
                     when d.TryGetProperty("attachment", out var att) && Str(att, "type") == "queued_command"
                         && att.TryGetProperty("origin", out var origin) && Str(origin, "kind") == "human"
-                        && att.TryGetProperty("prompt", out var prompt) && ContentBlocks(prompt) is { Count: > 0 } said:
+                        && att.TryGetProperty("prompt", out var prompt) && QueuedPrompt(prompt) is ({ Count: > 0 } said, var pics):
                     // A message sent while Claude was working that it read between two steps of the turn,
                     // rather than after it. Not a user line, so it would be lost with the attachments. Its
                     // prompt is a message's content: text, or text and the images pasted with it.
-                    return new ChatEntry(uuid, parent, "user", Str(att, "timestamp") ?? time, Queued: true, Blocks: said);
+                    return new ChatEntry(uuid, parent, "user", Str(att, "timestamp") ?? time, Queued: true, Blocks: said,
+                        At: pics > 0 ? at : null);
                 default:
                     return new ChatEntry(uuid, parent, "other", time);
             }
@@ -278,11 +290,20 @@ public static class ChatTranscript
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    private static List<ChatBlock> Blocks(JsonElement msg) =>
-        msg.TryGetProperty("content", out var content) ? ContentBlocks(content) : [];
+    private static List<ChatBlock> Blocks(JsonElement msg, ref int images) =>
+        msg.TryGetProperty("content", out var content) ? ContentBlocks(content, ref images) : [];
 
-    /// <summary>A message's content — a string, or a list of parts — as blocks.</summary>
-    private static List<ChatBlock> ContentBlocks(JsonElement content)
+    private static (List<ChatBlock>, int) QueuedPrompt(JsonElement prompt)
+    {
+        var images = 0;
+        return (ContentBlocks(prompt, ref images), images);
+    }
+
+    /// <summary>
+    /// A message's content — a string, or a list of parts — as blocks. <paramref name="images"/> counts the
+    /// images met, in the order <see cref="ImageSources"/> walks them, so each image block can say which it is.
+    /// </summary>
+    private static List<ChatBlock> ContentBlocks(JsonElement content, ref int images)
     {
         var list = new List<ChatBlock>();
         if (content.ValueKind == JsonValueKind.String)
@@ -312,16 +333,178 @@ public static class ChatTranscript
                     break;
                 }
                 case "tool_result":
+                {
+                    List<int>? pics = null;
+                    if (b.TryGetProperty("content", out var parts) && parts.ValueKind == JsonValueKind.Array)
+                        foreach (var part in parts.EnumerateArray())
+                            if (Str(part, "type") == "image") (pics ??= []).Add(images++);
                     list.Add(new ChatBlock("tool_result", Id: Str(b, "tool_use_id"),
-                        Text: Cut(ResultText(b), MaxToolText), IsError: Bool(b, "is_error")));
+                        Text: Cut(ResultText(b), MaxToolText), IsError: Bool(b, "is_error"), Images: pics));
                     break;
+                }
                 case "image":
-                    // Pasted images are stored inline as base64: far too much to ship to a chat preview.
-                    list.Add(new ChatBlock("image"));
+                    // Pasted images are stored inline as base64: far too much to ship with every read.
+                    // The chat fetches each one on its own, by line and place (ReadImage).
+                    list.Add(new ChatBlock("image", N: images++));
                     break;
             }
         }
         return list;
+    }
+
+    /// <summary>Longest line <see cref="ReadImage"/> reads: a message of a few pasted screenshots is a few megabytes.</summary>
+    private const int MaxImageLine = 64 * 1024 * 1024;
+
+    // The types an image is served as. Anything else — an SVG, which can carry a script — is not served.
+    private static readonly HashSet<string> ImageTypes =
+        new(StringComparer.OrdinalIgnoreCase) { "image/png", "image/jpeg", "image/gif", "image/webp" };
+
+    // Reading an image parses its whole line, megabytes of JSON: a chat opening on a dozen of them reads
+    // two at a time rather than all at once.
+    private static readonly SemaphoreSlim ImageReads = new(2);
+
+    private static readonly ImageCache ImageLines = new();
+
+    /// <summary>
+    /// The <paramref name="n"/>th image (as <see cref="ChatBlock.N"/> counts them) of the line at
+    /// <paramref name="at"/> in <paramref name="path"/>, which must be the line of <paramref name="uuid"/> — a
+    /// file rewritten since the chat read it has other lines there. Null when there is no such image, or it is
+    /// not a type served here.
+    /// </summary>
+    public static async Task<(byte[] Data, string MediaType)?> ReadImage(string path, long at, string uuid, int n)
+    {
+        var key = $"{path}|{at}|{uuid}";
+        if (ImageLines.TryGet(key, out var held)) return Pick(held, n);
+        await ImageReads.WaitAsync();
+        try
+        {
+            // Another request for the same line may have read it while this one waited.
+            if (ImageLines.TryGet(key, out held)) return Pick(held, n);
+            var line = ReadLine(path, at);
+            if (line is null) return null;
+            List<(byte[], string)?> all;
+            try
+            {
+                using var doc = JsonDocument.Parse(line.GetBuffer().AsMemory(0, (int)line.Length));
+                var d = doc.RootElement;
+                if (d.ValueKind != JsonValueKind.Object || Str(d, "uuid") != uuid) return null;
+                all = ImageSources(d).Select(Decode).ToList();
+            }
+            catch (JsonException) { return null; }
+            ImageLines.Put(key, all);
+            return Pick(all, n);
+        }
+        finally { ImageReads.Release(); }
+    }
+
+    private static (byte[], string)? Pick(List<(byte[], string)?> images, int n) =>
+        n >= 0 && n < images.Count ? images[n] : null;
+
+    /// <summary>The line starting at <paramref name="at"/>, or null if none does or it is longer than <see cref="MaxImageLine"/>.</summary>
+    private static MemoryStream? ReadLine(string path, long at)
+    {
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        if (at < 0 || at >= file.Length) return null;
+        // The line must start there: the one before it ends just ahead of it.
+        if (at > 0)
+        {
+            file.Seek(at - 1, SeekOrigin.Begin);
+            if (file.ReadByte() != '\n') return null;
+        }
+        var buffer = new MemoryStream();
+        var chunk = new byte[256 * 1024];
+        while (true)
+        {
+            var n = file.Read(chunk, 0, chunk.Length);
+            if (n == 0) return null; // no newline yet: a line still being written
+            var nl = Array.IndexOf(chunk, (byte)'\n', 0, n);
+            if (buffer.Length + (nl < 0 ? n : nl) > MaxImageLine) return null;
+            buffer.Write(chunk, 0, nl < 0 ? n : nl);
+            if (nl >= 0) return buffer;
+        }
+    }
+
+    /// <summary>
+    /// A line's image parts, in the order <see cref="ContentBlocks"/> numbers them: the message's content, or a
+    /// queued message's prompt, taking a tool result's images where the result stands.
+    /// </summary>
+    private static IEnumerable<JsonElement> ImageSources(JsonElement d)
+    {
+        JsonElement content;
+        if (d.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object
+            && msg.TryGetProperty("content", out var c)) content = c;
+        else if (d.TryGetProperty("attachment", out var att) && att.ValueKind == JsonValueKind.Object
+            && att.TryGetProperty("prompt", out var p)) content = p;
+        else yield break;
+        if (content.ValueKind != JsonValueKind.Array) yield break;
+        foreach (var b in content.EnumerateArray())
+        {
+            var type = Str(b, "type");
+            if (type == "image") yield return b;
+            else if (type == "tool_result" && b.TryGetProperty("content", out var parts) && parts.ValueKind == JsonValueKind.Array)
+                foreach (var part in parts.EnumerateArray())
+                    if (Str(part, "type") == "image") yield return part;
+        }
+    }
+
+    private static (byte[], string)? Decode(JsonElement image)
+    {
+        if (!image.TryGetProperty("source", out var src) || Str(src, "type") != "base64") return null;
+        var media = Str(src, "media_type");
+        if (media is null || !ImageTypes.Contains(media)) return null;
+        return src.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.String
+            && data.TryGetBytesFromBase64(out var bytes) && bytes.Length > 0
+            ? (bytes, media.ToLowerInvariant())
+            : null;
+    }
+
+    /// <summary>
+    /// The images of the lines read most recently, a line's all together (they are asked for together), up to
+    /// a total size: what saves parsing a line again when its images are asked for one after another, or by a
+    /// second browser. The browser keeps its own copy, so this need not be big.
+    /// </summary>
+    private sealed class ImageCache
+    {
+        private const long MaxBytes = 64 * 1024 * 1024;
+        private readonly object _gate = new();
+        private readonly LinkedList<(string Key, List<(byte[], string)?> Images, long Size)> _lru = new();
+        private readonly Dictionary<string, LinkedListNode<(string Key, List<(byte[], string)?> Images, long Size)>> _byKey = new();
+        private long _size;
+
+        public bool TryGet(string key, out List<(byte[], string)?> images)
+        {
+            lock (_gate)
+            {
+                images = [];
+                if (!_byKey.TryGetValue(key, out var node)) return false;
+                _lru.Remove(node);
+                _lru.AddFirst(node);
+                images = node.Value.Images;
+                return true;
+            }
+        }
+
+        public void Put(string key, List<(byte[], string)?> images)
+        {
+            var size = images.Sum(i => (long)(i?.Item1.Length ?? 0));
+            if (size > MaxBytes / 4) return; // one line would push out everything else
+            lock (_gate)
+            {
+                if (_byKey.Remove(key, out var old))
+                {
+                    _lru.Remove(old);
+                    _size -= old.Value.Size;
+                }
+                _byKey[key] = _lru.AddFirst((key, images, size));
+                _size += size;
+                while (_size > MaxBytes && _lru.Last is { } last)
+                {
+                    _lru.RemoveLast();
+                    _byKey.Remove(last.Value.Key);
+                    _size -= last.Value.Size;
+                }
+            }
+        }
     }
 
     // Everything the request sent in: fresh input plus what was written to and read from the cache.
