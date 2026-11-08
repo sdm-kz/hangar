@@ -425,7 +425,7 @@ function ChatRow({ item, sessionBusy }: { item: ChatItem; sessionBusy: boolean }
     case "user":
       return (
         <div className="flex justify-end">
-          <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-primary/10 px-3.5 py-2 text-sm">
+          <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-muted px-3.5 py-2 text-sm">
             {item.text}
             {item.images > 0 && (
               <span className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
@@ -714,6 +714,7 @@ function Composer({
             }}
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing) return;
+              if (repeatTyped(e)) return;
               if (slash.open) {
                 const pick = slash.matches[slash.active];
                 if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -830,6 +831,24 @@ function SessionFooter({ info }: { info: SessionLine }) {
       )}
     </div>
   );
+}
+
+/**
+ * A held key that repeats, as it does in the terminal. On macOS a held letter opens the accent picker
+ * (ł ļ ľ) instead, and only the first press is typed: the picker lives in the system's text input, which
+ * each repeat goes through. Typing the repeats in here keeps them from getting there — xterm does the same
+ * with every key, which is why the terminal never shows the picker. Returns whether it took the key.
+ */
+function repeatTyped(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
+  if (!e.repeat || e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey) return false;
+  e.preventDefault();
+  // execCommand keeps it on the undo stack and fires the input event React's onChange listens for.
+  if (!document.execCommand("insertText", false, e.key)) {
+    const el = e.currentTarget;
+    el.setRangeText(e.key, el.selectionStart, el.selectionEnd, "end");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  return true;
 }
 
 interface SlashState {

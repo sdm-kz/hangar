@@ -127,7 +127,7 @@ export function ChatQuestion({
   };
 
   return (
-    <div className={cn("rounded-lg border text-sm", live ? "border-primary/40 bg-primary/5" : "bg-muted/30")}>
+    <div className={cn("rounded-lg border text-sm", live ? "border-primary/30 bg-background" : "bg-background")}>
       <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
         <CircleHelp className="size-3.5" />
         <span className="flex-1">{live ? "Claude is asking" : answered ? "Claude asked" : "Claude asked — not answered"}</span>
@@ -161,7 +161,7 @@ export function ChatQuestion({
                         onClick={() => toggle(i, k)}
                         className={cn(
                           "flex items-start gap-2.5 rounded-md border px-2.5 py-1.5 text-left transition-colors",
-                          on ? "border-primary bg-primary/10" : "hover:bg-muted"
+                          on ? "border-primary bg-muted/60" : "hover:bg-muted/50"
                         )}
                       >
                         <span
