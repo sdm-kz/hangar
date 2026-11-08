@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./Markdown";
 import { ChatQuestion, parseQuestions } from "./ChatQuestion";
+import { ChatPlan, parsePlan } from "./ChatPlan";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import { SlashSuggestions, useSlashInput } from "./SlashCommands";
 import type { Activity } from "./ActivityMark";
@@ -51,7 +52,7 @@ const PAGE = 150;
 // Within this many pixels of the bottom counts as reading the latest, which new items keep in view.
 const STICK_PX = 80;
 
-// Between the keys that answer a question: each one redraws Claude's dialog before it takes the next.
+// Between the keys that answer a question or a plan: each one redraws Claude's dialog before it takes the next.
 const QUESTION_KEY_GAP_MS = 150;
 
 // Ctrl-wheel travel per zoom step, as in the terminal: a mouse notch steps at once, a pinch ramps.
@@ -261,6 +262,12 @@ export function ChatView({
     !closed && last?.kind === "tool" && last.name === "AskUserQuestion" && !last.result && parseQuestions(last.input)
       ? last.key
       : null;
+  // The same for a plan waiting on approval: its ExitPlanMode, unanswered.
+  const planKey =
+    !closed && last?.kind === "tool" && last.name === "ExitPlanMode" && !last.result && parsePlan(last.input)
+      ? last.key
+      : null;
+  const readScreen = useCallback(() => terminalRef.current?.screenLines() ?? [], [terminalRef]);
   const answerQuestion = async (keys: string[]) => {
     for (const k of keys) {
       if (!terminalRef.current?.sendKeys(k)) return false;
@@ -324,6 +331,17 @@ export function ChatView({
                     onAnswer={answerQuestion}
                     onShowTerminal={onShowTerminal}
                   />
+                ) : item.kind === "tool" && item.name === "ExitPlanMode" && parsePlan(item.input) ? (
+                  <ChatPlan
+                    key={item.key}
+                    callId={item.id}
+                    input={item.input}
+                    result={item.result}
+                    pending={item.key === planKey}
+                    readScreen={readScreen}
+                    onAnswer={answerQuestion}
+                    onShowTerminal={onShowTerminal}
+                  />
                 ) : (
                   <ChatRow key={item.key} item={item} sessionBusy={busy} />
                 )
@@ -365,8 +383,9 @@ export function ChatView({
         )}
       </div>
 
-      {/* A question has its own form in the conversation; the bar is for everything else Claude waits on. */}
-      {!closed && waiting && !questionKey && (
+      {/* A question and a plan have their own cards in the conversation; the bar is for everything else
+          Claude waits on. */}
+      {!closed && waiting && !questionKey && !planKey && (
         <WaitingBar label={activityLabel} onKeys={keys} onShowTerminal={onShowTerminal} />
       )}
       {!closed && busy && !waiting && (
@@ -392,7 +411,7 @@ export function ChatView({
         <Composer
           sessionId={sessionId}
           terminalRef={terminalRef}
-          blocked={waiting || !!questionKey}
+          blocked={waiting || !!questionKey || !!planKey}
           busy={busy}
           onSent={() => pokeRef.current()}
           onShowTerminal={onShowTerminal}
@@ -407,7 +426,7 @@ export function ChatView({
 /**
  * Claude is stopped on a question in the terminal. A tool permission has two answers worth a button —
  * the first choice is always "Yes", and Esc is always "No" — so those are typed for you. Anything
- * else (a plan to approve, a question with options of its own) is answered in the terminal.
+ * else (a plan or a question the chat couldn't read) is answered in the terminal.
  */
 function WaitingBar({
   label,

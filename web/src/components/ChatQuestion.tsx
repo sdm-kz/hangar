@@ -66,7 +66,7 @@ export function questionKeys(questions: Question[], answers: Answer[]): string[]
 
 // One line of plain text: the dialog's field ends at Enter and has no use for control characters.
 // eslint-disable-next-line no-control-regex
-const typedAnswer = (text: string) => text.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim();
+export const typedAnswer = (text: string) => text.replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim();
 
 /** The answers out of the tool result Claude got: `"question"="answer"` pairs. */
 function answeredPairs(result: string): Map<string, string> {

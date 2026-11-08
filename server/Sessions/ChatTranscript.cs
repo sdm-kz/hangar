@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace Hangar.Server.Sessions;
 
@@ -75,7 +76,10 @@ public static class ChatTranscript
     /// <summary>Longest tool input or output passed on. The chat shows a preview; the terminal has the rest.</summary>
     public const int MaxToolText = 4000;
 
-    /// <summary>Longest AskUserQuestion input passed on — whole in practice (four questions of four options).</summary>
+    /// <summary>
+    /// Longest AskUserQuestion or ExitPlanMode input passed on — whole in practice (four questions of four
+    /// options, or a plan of a few pages).
+    /// </summary>
     private const int MaxQuestionText = 64 * 1024;
 
     /// <summary>
@@ -202,6 +206,7 @@ public static class ChatTranscript
                         return new ChatEntry(uuid, parent, "other", time);
                     var blocks = Blocks(msg);
                     var assistant = type == "assistant";
+                    if (assistant) WithPlans(blocks, Str(d, "slug"));
                     return new ChatEntry(uuid, parent, type, time,
                         MessageId: assistant ? Str(msg, "id") : null,
                         Meta: Bool(d, "isMeta"),
@@ -231,6 +236,48 @@ public static class ChatTranscript
         }
     }
 
+    /// <summary>
+    /// Fill in the plan of an ExitPlanMode call that came without one. Claude often calls it with no
+    /// arguments: the plan is the file it wrote, <c>plans/&lt;slug&gt;.md</c> under its config folder, named after
+    /// the session's slug, and the copy Claude Code adds to the call is written down only some of the time.
+    /// The file holds the latest plan, so a call read again later shows that rather than the one it made.
+    /// </summary>
+    private static void WithPlans(List<ChatBlock> blocks, string? slug)
+    {
+        for (var i = 0; i < blocks.Count; i++)
+        {
+            var b = blocks[i];
+            if (b is not { Type: "tool_use", Name: "ExitPlanMode" } || HasPlan(b.Input)) continue;
+            if (PlanFile(slug) is not { } plan) return;
+            blocks[i] = b with { Input = JsonSerializer.Serialize(new { plan }) };
+        }
+    }
+
+    private static bool HasPlan(string? input)
+    {
+        if (input is null) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(input);
+            return Str(doc.RootElement, "plan") is { Length: > 0 };
+        }
+        catch (JsonException) { return true; } // cut short: there was something, and a file won't make it whole
+    }
+
+    // A slug is a few lowercase words joined by dashes; anything else is not looked for on disk.
+    private static readonly Regex Slug = new("^[a-z0-9]+(-[a-z0-9]+)*$", RegexOptions.Compiled);
+
+    private static string? PlanFile(string? slug)
+    {
+        if (slug is null || !Slug.IsMatch(slug)) return null;
+        try
+        {
+            var file = new FileInfo(Path.Combine(ClaudeProjectData.ConfigDir(), "plans", slug + ".md"));
+            return file.Exists && file.Length <= MaxQuestionText ? File.ReadAllText(file.FullName) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     private static List<ChatBlock> Blocks(JsonElement msg) =>
         msg.TryGetProperty("content", out var content) ? ContentBlocks(content) : [];
 
@@ -258,8 +305,8 @@ public static class ChatTranscript
                 case "tool_use":
                 {
                     var name = Str(b, "name");
-                    // A question's input is the form the chat draws to answer it: cut, it couldn't be read.
-                    var max = name == "AskUserQuestion" ? MaxQuestionText : MaxToolText;
+                    // A question's or a plan's input is the card the chat draws to answer it: cut, it couldn't be read.
+                    var max = name is "AskUserQuestion" or "ExitPlanMode" ? MaxQuestionText : MaxToolText;
                     list.Add(new ChatBlock("tool_use", Id: Str(b, "id"), Name: name,
                         Input: b.TryGetProperty("input", out var input) ? Cut(input.GetRawText(), max) : null));
                     break;

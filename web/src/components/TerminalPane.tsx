@@ -243,6 +243,9 @@ export interface TerminalPaneHandle {
   // Send keys as typed, with no paste around them and no Enter after — an Esc to stop a turn, or the
   // number that picks an answer in a dialog. False if the socket is closed.
   sendKeys: (data: string) => boolean;
+  // The lines on screen now, top to bottom, as plain text — to read a dialog Claude has up. Empty
+  // before the terminal has started.
+  screenLines: () => string[];
   // Put the keyboard in the terminal — for a group of the split pane taking focus.
   focus: () => void;
 }
@@ -409,6 +412,14 @@ export const TerminalPane = forwardRef<
         claimRef.current();
         ws.send(new TextEncoder().encode(data));
         return true;
+      },
+      screenLines: () => {
+        const term = termRef.current;
+        if (!term) return [];
+        const buf = term.buffer.active;
+        const lines: string[] = [];
+        for (let y = buf.baseY; y < buf.baseY + term.rows; y++) lines.push(buf.getLine(y)?.translateToString(true) ?? "");
+        return lines;
       },
       sendMessage: async ({ text, imagePaths }) => {
         const ws = wsRef.current;
