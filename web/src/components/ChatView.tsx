@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./Markdown";
+import { ChatQuestion, parseQuestions } from "./ChatQuestion";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import type { Activity } from "./ActivityMark";
 import type { TerminalPaneHandle } from "./TerminalPane";
@@ -39,6 +40,9 @@ const STICK_PX = 80;
 const MAX_SUGGESTIONS = 50;
 // How long the command list is trusted before it is read again (a skill added in the meantime).
 const COMMANDS_TTL_MS = 30_000;
+
+// Between the keys that answer a question: each one redraws Claude's dialog before it takes the next.
+const QUESTION_KEY_GAP_MS = 150;
 
 // Ctrl-wheel travel per zoom step, as in the terminal: a mouse notch steps at once, a pinch ramps.
 const WHEEL_ZOOM_STEP = 40;
@@ -238,6 +242,21 @@ export function ChatView({
   }, [stepZoom]);
 
   const waiting = activity === "waiting";
+  // A question Claude is waiting on: the newest thing in the conversation is its AskUserQuestion, with no
+  // answer yet. Read off the transcript, so it doesn't need the hooks' "waiting" to be seen.
+  const last = items[items.length - 1];
+  const questionKey =
+    !closed && last?.kind === "tool" && last.name === "AskUserQuestion" && !last.result && parseQuestions(last.input)
+      ? last.key
+      : null;
+  const answerQuestion = async (keys: string[]) => {
+    for (const k of keys) {
+      if (!terminalRef.current?.sendKeys(k)) return false;
+      await new Promise((r) => window.setTimeout(r, QUESTION_KEY_GAP_MS));
+    }
+    window.setTimeout(() => pokeRef.current(), 300);
+    return true;
+  };
   const keys = (data: string) => {
     if (!terminalRef.current?.sendKeys(data)) return;
     window.setTimeout(() => pokeRef.current(), 300);
@@ -283,17 +302,30 @@ export function ChatView({
                     : "Nothing said yet. Write below, or in the terminal."}
               </p>
             ) : (
-              shown.map((item) => <ChatRow key={item.key} item={item} sessionBusy={busy} />)
+              shown.map((item) =>
+                item.kind === "tool" && item.name === "AskUserQuestion" && parseQuestions(item.input) ? (
+                  <ChatQuestion
+                    key={item.key}
+                    input={item.input}
+                    result={item.result}
+                    pending={item.key === questionKey}
+                    onAnswer={answerQuestion}
+                    onShowTerminal={onShowTerminal}
+                  />
+                ) : (
+                  <ChatRow key={item.key} item={item} sessionBusy={busy} />
+                )
+              )
             )}
           </div>
         </div>
-        {/* Under the Terminal / Chat switch. Shown on hover like the terminal's, and pinned open once
-            zoomed, since a size that isn't the default should say so and offer the way back. */}
+        {/* In the corner, like the terminal's. Shown on hover, and pinned open once zoomed, since a size
+            that isn't the default should say so and offer the way back. */}
         <ZoomControls
           zoom={zoom}
           onChange={setZoom}
           className={cn(
-            "right-4 top-10 mr-0 transition-opacity",
+            "right-4 top-3 mr-0 transition-opacity",
             zoom === 1 &&
               "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
           )}
@@ -310,7 +342,8 @@ export function ChatView({
         )}
       </div>
 
-      {!closed && waiting && (
+      {/* A question has its own form in the conversation; the bar is for everything else Claude waits on. */}
+      {!closed && waiting && !questionKey && (
         <WaitingBar label={activityLabel} onKeys={keys} onShowTerminal={onShowTerminal} />
       )}
       {!closed && busy && !waiting && (
@@ -336,7 +369,7 @@ export function ChatView({
         <Composer
           sessionId={sessionId}
           terminalRef={terminalRef}
-          blocked={waiting}
+          blocked={waiting || !!questionKey}
           onSent={() => pokeRef.current()}
           onShowTerminal={onShowTerminal}
           poolSlot={poolSlot}

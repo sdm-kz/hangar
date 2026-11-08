@@ -71,6 +71,9 @@ public static class ChatTranscript
     /// <summary>Longest tool input or output passed on. The chat shows a preview; the terminal has the rest.</summary>
     public const int MaxToolText = 4000;
 
+    /// <summary>Longest AskUserQuestion input passed on — whole in practice (four questions of four options).</summary>
+    private const int MaxQuestionText = 64 * 1024;
+
     /// <summary>
     /// How much of a transcript a first read takes. A conversation that has run for days is tens of megabytes,
     /// nearly all of it tool output; the end of it is what someone opening the chat wants.
@@ -227,9 +230,14 @@ public static class ChatTranscript
                     if (Str(b, "thinking") is { Length: > 0 } thought) list.Add(new ChatBlock("thinking", Text: thought));
                     break;
                 case "tool_use":
-                    list.Add(new ChatBlock("tool_use", Id: Str(b, "id"), Name: Str(b, "name"),
-                        Input: b.TryGetProperty("input", out var input) ? Cut(input.GetRawText(), MaxToolText) : null));
+                {
+                    var name = Str(b, "name");
+                    // A question's input is the form the chat draws to answer it: cut, it couldn't be read.
+                    var max = name == "AskUserQuestion" ? MaxQuestionText : MaxToolText;
+                    list.Add(new ChatBlock("tool_use", Id: Str(b, "id"), Name: name,
+                        Input: b.TryGetProperty("input", out var input) ? Cut(input.GetRawText(), max) : null));
                     break;
+                }
                 case "tool_result":
                     list.Add(new ChatBlock("tool_result", Id: Str(b, "tool_use_id"),
                         Text: Cut(ResultText(b), MaxToolText), IsError: Bool(b, "is_error")));

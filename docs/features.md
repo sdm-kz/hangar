@@ -39,12 +39,14 @@ The web UI is a **session manager with a full terminal**:
   working folder of your choice.
 - **Control from the Claude Code app** — launched sessions register for Remote Control and appear
   by name in the app's session list (computer icon + green dot), so you can carry on from there.
-- **Chat view** — the **Terminal / Chat** switch in the top corner of Claude's tab shows the same
+- **Chat view** — the chat icon in Claude's tab (next to the terminal one) shows the same
   session as a chat: your messages as bubbles, Claude's replies rendered as Markdown, each tool call as
   a card that opens to its input and output. It is read from the transcript Claude writes as it goes
   (`~/.claude/projects/…/<conversation>.jsonl`), and what you write goes into the terminal the way
   typing it there would, so the terminal stays the session and switching loses nothing. A turn can be
-  stopped from the chat, and a tool permission answered with **Allow** / **Deny**; anything that only
+  stopped from the chat, a tool permission answered with **Allow** / **Deny**, and a question Claude asks
+  (AskUserQuestion) answered in a form — pick options or type your own, and the choices are typed into
+  its dialog in the terminal. Anything else that only
   the terminal can show — a picker, a plan to approve, `/usage` — is one click away. The choice is kept
   per session and per browser, so a phone can read the chat while the desk keeps the terminal. The
   postponed-messages and compose buttons move from the terminal's corner into the chat's message box,
@@ -55,7 +57,7 @@ The web UI is a **session manager with a full terminal**:
   from a status line Hangar gives each session it launches (`--settings`, so `~/.claude/settings.json`
   is untouched, and only when neither you nor the project has a status line of your own) — the terminal shows it too, as
   "Opus 5.5 · 24% context". A session started before that shows its tokens in context instead of the
-  percentage, until it is restarted. The chat zooms on its own, like the terminal: the buttons under the switch,
+  percentage, until it is restarted. The chat zooms on its own, like the terminal: the buttons in its corner,
   Ctrl/⌘ with + − 0, or Ctrl/⌘-wheel; the size is shared by every session's chat and remembered.
 - **Fork a session** — branch a conversation in two from the sessions list or the session header:
   name the fork, and it launches beside the original with the same folder and settings, picking up

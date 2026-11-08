@@ -999,7 +999,7 @@ export function SessionView({
         return {
           icon: (
             <span className="relative inline-flex shrink-0">
-              {chatMode ? <MessageSquare className="size-4" /> : <TerminalSquare className="size-4" />}
+              <ChatModeSwitch chat={chatMode} onChange={setChatMode} />
               <HeadingActivityMark activity={activity} label={activityLabel} />
             </span>
           ),
@@ -1147,7 +1147,6 @@ export function SessionView({
                   />
                 </div>
               )}
-              <ChatModeToggle chat={chatMode} onChange={setChatMode} />
             </div>
             {/* Still here when the session is closed: the stash was written for this session and is
                 worth reading back, and throwing out a message you are no longer going to send is the
@@ -1931,30 +1930,31 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** Terminal or chat, for Claude's tab: a two-way switch floating in the tab's top corner. */
-function ChatModeToggle({ chat, onChange }: { chat: boolean; onChange: (chat: boolean) => void }) {
-  const option = (on: boolean, Icon: typeof TerminalSquare, label: string) => (
+/**
+ * Terminal or chat, for Claude's tab: two icons in the tab itself, the lit one the view showing. A click on
+ * either also selects the tab (the click goes on to it), so the other view is one click from anywhere.
+ */
+function ChatModeSwitch({ chat, onChange }: { chat: boolean; onChange: (chat: boolean) => void }) {
+  const option = (on: boolean, Icon: typeof TerminalSquare, title: string) => (
     <button
       type="button"
-      title={on ? "Read the session as a chat" : "Show the terminal"}
+      title={title}
+      aria-label={title}
       aria-pressed={chat === on}
       onClick={() => onChange(on)}
       className={cn(
-        "flex items-center gap-1 rounded px-1.5 py-0.5",
-        chat === on ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+        "grid size-5 place-items-center rounded-[3px] transition-colors",
+        chat === on ? "bg-muted text-foreground" : "text-muted-foreground/70 hover:text-foreground"
       )}
     >
       <Icon className="size-3.5" />
-      <span className="hidden @md:inline">{label}</span>
     </button>
   );
   return (
-    <div className="@container pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-end p-1.5 pr-4">
-      <div className="pointer-events-auto flex gap-0.5 rounded-md border bg-background/90 p-0.5 text-xs opacity-70 shadow-sm backdrop-blur transition-opacity hover:opacity-100">
-        {option(false, TerminalSquare, "Terminal")}
-        {option(true, MessageSquare, "Chat")}
-      </div>
-    </div>
+    <span className="inline-flex items-center gap-px rounded border p-px">
+      {option(true, MessageSquare, "Chat — read the session as a chat")}
+      {option(false, TerminalSquare, "Terminal")}
+    </span>
   );
 }
 
