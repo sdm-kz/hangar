@@ -33,6 +33,7 @@ export function applyChunk(t: ChatTranscript, c: ChatChunk): ChatTranscript {
  */
 export function liveBranch(entries: ChatEntry[]): ChatEntry[] {
   let leaf = -1;
+  entries = entries.filter((e) => e.kind !== "queue");
   for (let i = entries.length - 1; i >= 0; i--) {
     // A system line counts: a local command (/usage, /model) is written as two of them, chained after
     // the last message.
@@ -93,14 +94,97 @@ export function liveBranch(entries: ChatEntry[]): ChatEntry[] {
   return entries.filter((_, i) => !isAbandoned(i));
 }
 
-/** Something typed: a user line that isn't Claude's bookkeeping or a tool's result. */
+/**
+ * Something typed: a user line that isn't Claude's bookkeeping or a tool's result. A message Claude read
+ * mid-turn isn't one: it is a step of the turn, not a place the conversation was taken up from.
+ */
 function isPrompt(e: ChatEntry): boolean {
-  return e.kind === "user" && !e.meta && !(e.blocks ?? []).some((b) => b.type === "tool_result");
+  return e.kind === "user" && !e.meta && !e.queued && !(e.blocks ?? []).some((b) => b.type === "tool_result");
+}
+
+/** A message sent while Claude was working, still waiting for it. */
+export interface QueuedMessage {
+  key: string;
+  text: string;
+  time: string | null;
+}
+
+/**
+ * The messages waiting for Claude, replayed from the queue's changes in the order Claude wrote them: a
+ * message is added, then taken — as the next prompt, or read mid-turn — or all of them are pulled back
+ * into the terminal's input to be edited. What Claude adds for itself (a background task's report, a
+ * message from another session) waits there too; only what was typed is shown.
+ *
+ * What a dequeue took isn't written with it, and it isn't always the oldest: Claude takes by priority,
+ * its own items are sometimes queued twice, and a scheduled prompt is taken with no dequeue at all. So
+ * what was taken is told by the prompt it became — the first one after it that holds its text — and only
+ * a dequeue whose prompt matches nothing takes the oldest.
+ */
+export function queuedMessages(entries: ChatEntry[]): QueuedMessage[] {
+  let queue: QueuedMessage[] = [];
+  entries.forEach((e, i) => {
+    // One read mid-turn has already left the queue with its remove.
+    if (e.kind === "user" && !e.queued) {
+      const prompt = promptText(e);
+      const at = prompt ? queue.findIndex((q) => promptHas(prompt, q.text)) : -1;
+      if (at >= 0) queue.splice(at, 1);
+      return;
+    }
+    if (e.kind !== "queue") return;
+    const text = e.blocks?.find((b) => b.type === "text")?.text ?? null;
+    switch (e.subtype) {
+      case "enqueue":
+        if (text !== null) queue.push({ key: e.uuid, text, time: e.time });
+        break;
+      case "dequeue": {
+        // A prompt not written yet comes with the next read, and the dequeue is replayed against it then.
+        const prompt = nextPromptText(entries, i);
+        if (prompt !== null && !queue.some((q) => promptHas(prompt, q.text))) queue.shift();
+        break;
+      }
+      case "remove": {
+        const at = text === null ? 0 : queue.findIndex((q) => q.text === text);
+        if (at >= 0) queue.splice(at, 1);
+        break;
+      }
+      case "popAll":
+        queue = [];
+        break;
+    }
+  });
+  // Claude's own items open with a tag of its own (<task-notification>, <cross-session-message>).
+  return queue.filter((q) => q.text.trim() && !/^<[a-z]+-[a-z-]+[\s>]/.test(q.text.trimStart()));
+}
+
+/** The text of the first prompt after entry `from` — what a dequeue there was taken as — or null if none is read yet. */
+function nextPromptText(entries: ChatEntry[], from: number): string | null {
+  for (let i = from + 1; i < entries.length; i++) {
+    const text = promptText(entries[i]);
+    if (text) return text;
+  }
+  return null;
+}
+
+/**
+ * A user line's text — what was said, not a tool's result — or "" for any other line. Claude's own lines
+ * count: a scheduled prompt taken from the queue is written as one.
+ */
+function promptText(e: ChatEntry): string {
+  if (e.kind !== "user") return "";
+  return (e.blocks ?? []).filter((b) => b.type === "text" && b.text).map((b) => b.text!).join("\n");
+}
+
+/** A prompt was made from this queued message: it holds its text, or — a slash command — its name. */
+function promptHas(prompt: string, queued: string): boolean {
+  const q = queued.trim();
+  if (prompt.includes(q)) return true;
+  const command = q.match(/^\/(\S+)/);
+  return !!command && prompt.includes(`<command-name>/${command[1]}</command-name>`);
 }
 
 /** What the chat draws, one item per bubble, card or note. */
 export type ChatItem =
-  | { kind: "user"; key: string; text: string; images: number; time: string | null }
+  | { kind: "user"; key: string; text: string; images: number; time: string | null; queued?: boolean }
   | { kind: "command"; key: string; text: string }
   | { kind: "output"; key: string; text: string }
   | { kind: "notice"; key: string; text: string; tone?: "error" }
@@ -184,7 +268,7 @@ export function chatItems(entries: ChatEntry[]): ChatItem[] {
       if (special) items.push(special);
       continue;
     }
-    items.push({ kind: "user", key: e.uuid, text: text.trim(), images, time: e.time });
+    items.push({ kind: "user", key: e.uuid, text: text.trim(), images, time: e.time, queued: e.queued });
   }
   return items;
 }

@@ -5,6 +5,7 @@ import {
   Check,
   ChevronRight,
   Circle,
+  Clock,
   ImageIcon,
   ImagePlus,
   Loader2,
@@ -20,7 +21,16 @@ import { ChatQuestion, parseQuestions } from "./ChatQuestion";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import type { Activity } from "./ActivityMark";
 import type { TerminalPaneHandle } from "./TerminalPane";
-import { applyChunk, chatItems, EMPTY_TRANSCRIPT, prettyInput, toolSummary, type ChatItem, type ChatTranscript } from "@/lib/chat";
+import {
+  applyChunk,
+  chatItems,
+  EMPTY_TRANSCRIPT,
+  prettyInput,
+  queuedMessages,
+  toolSummary,
+  type ChatItem,
+  type ChatTranscript,
+} from "@/lib/chat";
 import { uploadImageFile } from "@/lib/upload";
 import type { PostponedImage } from "@/lib/postponed";
 import type { ChatEntry, SessionStatus, SlashCommand } from "@/types";
@@ -156,6 +166,8 @@ export function ChatView({
   }, [busy, activity]);
 
   const items = useMemo(() => chatItems(transcript.entries), [transcript.entries]);
+  // A closed session's queue went with it: nothing in it is coming.
+  const queued = useMemo(() => (closed ? [] : queuedMessages(transcript.entries)), [closed, transcript.entries]);
   const info = useMemo(() => sessionInfo(status, transcript.entries), [status, transcript.entries]);
   const shown = items.length > limit ? items.slice(items.length - limit) : items;
   const hidden = items.length - shown.length;
@@ -175,7 +187,7 @@ export function ChatView({
   }, []);
   useLayoutEffect(() => {
     if (atBottom.current) toBottom();
-  }, [items, busy, activity, toBottom]);
+  }, [items, queued, busy, activity, toBottom]);
   // Rendered Markdown and images settle after layout; keep the bottom in view while they do.
   useEffect(() => {
     const el = scrollRef.current;
@@ -293,7 +305,7 @@ export function ChatView({
                 <Loader2 className="size-4 animate-spin" />
                 {failed ? "Couldn't read the conversation. Trying again…" : "Reading the conversation…"}
               </p>
-            ) : items.length === 0 ? (
+            ) : items.length === 0 && queued.length === 0 ? (
               <p className="self-center py-8 text-center text-sm text-muted-foreground">
                 {transcript.conversation
                   ? "Nothing said yet."
@@ -317,6 +329,17 @@ export function ChatView({
                 )
               )
             )}
+            {loaded &&
+              queued.map((q) => (
+                <div key={q.key} className="flex flex-col items-end gap-1">
+                  <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-dashed px-3.5 py-2 text-sm text-muted-foreground">
+                    {q.text}
+                  </div>
+                  <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    <Clock className="size-3" /> Queued — Claude reads it as soon as it can
+                  </span>
+                </div>
+              ))}
           </div>
         </div>
         {/* In the corner, like the terminal's. Shown on hover, and pinned open once zoomed, since a size
@@ -370,6 +393,7 @@ export function ChatView({
           sessionId={sessionId}
           terminalRef={terminalRef}
           blocked={waiting || !!questionKey}
+          busy={busy}
           onSent={() => pokeRef.current()}
           onShowTerminal={onShowTerminal}
           poolSlot={poolSlot}
@@ -430,6 +454,11 @@ function ChatRow({ item, sessionBusy }: { item: ChatItem; sessionBusy: boolean }
             {item.images > 0 && (
               <span className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
                 <ImageIcon className="size-3.5" /> {item.images === 1 ? "1 image" : `${item.images} images`}
+              </span>
+            )}
+            {item.queued && (
+              <span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Clock className="size-3" /> Sent while Claude was working
               </span>
             )}
           </div>
@@ -539,12 +568,14 @@ function Fold({ title, className, children }: { title: string; className?: strin
 
 /**
  * Where a message is written. It goes into the terminal the way typing it there would — a bracketed paste
- * and an Enter — so a message sent while Claude is busy queues behind the turn, as it does in the TUI.
+ * and an Enter — so a message sent while Claude is busy queues behind the turn, as it does in the TUI:
+ * the chat shows it as queued until Claude takes it, between two steps of the turn or after it.
  */
 function Composer({
   sessionId,
   terminalRef,
   blocked,
+  busy,
   onSent,
   onShowTerminal,
   poolSlot,
@@ -558,6 +589,8 @@ function Composer({
    * it has been answered. Writing goes on; the message waits.
    */
   blocked: boolean;
+  /** Claude is mid-turn: what is sent now waits for it. */
+  busy: boolean;
   onSent: () => void;
   /** A command that answers in the terminal was sent: show the terminal. */
   onShowTerminal: () => void;
@@ -695,7 +728,13 @@ function Composer({
             // screen nobody can see. Not on a phone, where focus pops the keyboard up over the chat.
             autoFocus={!coarse}
             value={text}
-            placeholder={blocked ? "Answer Claude's question first" : "Message Claude, or / for commands"}
+            placeholder={
+              blocked
+                ? "Answer Claude's question first"
+                : busy
+                  ? "Claude is working. A message sent now waits for it"
+                  : "Message Claude, or / for commands"
+            }
             data-chat-composer
             role="combobox"
             aria-expanded={slash.open}
@@ -747,7 +786,7 @@ function Composer({
           <Button
             size="icon"
             className="size-7 shrink-0"
-            title={blocked ? "Answer Claude's question first" : "Send"}
+            title={blocked ? "Answer Claude's question first" : busy ? "Queue for Claude" : "Send"}
             disabled={!canSend} onClick={() => void send()}>
             {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
           </Button>

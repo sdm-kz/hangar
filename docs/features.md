@@ -46,7 +46,10 @@ The web UI is a **session manager with a full terminal**:
   typing it there would, so the terminal stays the session and switching loses nothing. A turn can be
   stopped from the chat, a tool permission answered with **Allow** / **Deny**, and a question Claude asks
   (AskUserQuestion) answered in a form — pick options or type your own, and the choices are typed into
-  its dialog in the terminal. Anything else that only
+  its dialog in the terminal. A message sent while Claude is working waits in Claude's queue, as one
+  typed in the terminal does: the chat shows it as a dashed "Queued" bubble until Claude takes it —
+  after the turn, or between two of its steps, when it is marked "Sent while Claude was working".
+  Anything else that only
   the terminal can show — a picker, a plan to approve, `/usage` — is one click away. The choice is kept
   per session and per browser, so a phone can read the chat while the desk keeps the terminal. The
   postponed-messages and compose buttons move from the terminal's corner into the chat's message box,

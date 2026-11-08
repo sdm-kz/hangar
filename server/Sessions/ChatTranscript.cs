@@ -20,8 +20,10 @@ public sealed record ChatBlock(
 
 /// <summary>
 /// One line of a Claude transcript that has a place in the conversation. <see cref="Kind"/> is <c>user</c>,
-/// <c>assistant</c>, <c>system</c>, or <c>other</c> — an entry with nothing to draw (an attachment, a hook
-/// summary) that is still a link in the <see cref="Parent"/> chain the view walks to find the live branch.
+/// <c>assistant</c>, <c>system</c>, <c>other</c> — an entry with nothing to draw (an attachment, a hook
+/// summary) that is still a link in the <see cref="Parent"/> chain the view walks to find the live branch —
+/// or <c>queue</c>: a change to the messages waiting for Claude to finish its turn, <see cref="Subtype"/>
+/// saying which (<c>enqueue</c>, <c>dequeue</c>, <c>remove</c>, <c>popAll</c>). A queue line is in no chain.
 /// </summary>
 public sealed record ChatEntry(
     string Uuid,
@@ -40,7 +42,9 @@ public sealed record ChatEntry(
     /// <summary>The model an assistant line came from (<c>claude-opus-5-5</c>).</summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? Model = null,
     /// <summary>Tokens in the context when an assistant line was written: its request's whole input.</summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long Context = 0);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long Context = 0,
+    /// <summary>A message typed while Claude was working, which it read before the turn was over.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Queued = false);
 
 /// <summary>
 /// A read of a transcript from <see cref="Offset"/> on. <see cref="Reset"/> says the reader's earlier entries
@@ -139,7 +143,8 @@ public static class ChatTranscript
         for (var i = start; i <= end; i++)
         {
             if (buffer[i] != '\n') continue;
-            if (i > lineStart && Parse(buffer.AsSpan(lineStart, i - lineStart)) is { } entry) entries.Add(entry);
+            if (i > lineStart && Parse(buffer.AsSpan(lineStart, i - lineStart), offset + lineStart) is { } entry)
+                entries.Add(entry);
             lineStart = i + 1;
         }
         return new ChatChunk(conversation, offset + end + 1, reset, truncated, entries);
@@ -160,7 +165,8 @@ public static class ChatTranscript
         }
     }
 
-    private static ChatEntry? Parse(ReadOnlySpan<byte> line)
+    /// <param name="at">Where the line starts in the file: a queue line has no id of its own, so this is it.</param>
+    private static ChatEntry? Parse(ReadOnlySpan<byte> line, long at)
     {
         JsonDocument doc;
         try { doc = JsonDocument.Parse(line.ToArray()); }
@@ -169,6 +175,15 @@ public static class ChatTranscript
         {
             var d = doc.RootElement;
             if (d.ValueKind != JsonValueKind.Object) return null;
+            // A message typed while Claude works waits in a queue, and the queue's changes are written down
+            // as they happen: what was added, and when it was taken (as the next prompt, or mid-turn) or
+            // pulled back to be edited.
+            if (Str(d, "type") == "queue-operation")
+            {
+                var content = Str(d, "content");
+                return new ChatEntry($"queue:{at}", null, "queue", Str(d, "timestamp"), Subtype: Str(d, "operation"),
+                    Blocks: content is null ? null : [new ChatBlock("text", Text: Cut(content, MaxToolText))]);
+            }
             var uuid = Str(d, "uuid");
             if (uuid is null) return null;
             // Subagent runs are kept in files of their own now; one that turns up here is still not part of
@@ -202,16 +217,27 @@ public static class ChatTranscript
                     return new ChatEntry(uuid, parent, "system", time, Subtype: subtype,
                         Blocks: text is null ? null : [new ChatBlock("text", Text: Cut(text, MaxToolText))]);
                 }
+                case "attachment"
+                    when d.TryGetProperty("attachment", out var att) && Str(att, "type") == "queued_command"
+                        && att.TryGetProperty("origin", out var origin) && Str(origin, "kind") == "human"
+                        && att.TryGetProperty("prompt", out var prompt) && ContentBlocks(prompt) is { Count: > 0 } said:
+                    // A message sent while Claude was working that it read between two steps of the turn,
+                    // rather than after it. Not a user line, so it would be lost with the attachments. Its
+                    // prompt is a message's content: text, or text and the images pasted with it.
+                    return new ChatEntry(uuid, parent, "user", Str(att, "timestamp") ?? time, Queued: true, Blocks: said);
                 default:
                     return new ChatEntry(uuid, parent, "other", time);
             }
         }
     }
 
-    private static List<ChatBlock> Blocks(JsonElement msg)
+    private static List<ChatBlock> Blocks(JsonElement msg) =>
+        msg.TryGetProperty("content", out var content) ? ContentBlocks(content) : [];
+
+    /// <summary>A message's content — a string, or a list of parts — as blocks.</summary>
+    private static List<ChatBlock> ContentBlocks(JsonElement content)
     {
         var list = new List<ChatBlock>();
-        if (!msg.TryGetProperty("content", out var content)) return list;
         if (content.ValueKind == JsonValueKind.String)
         {
             list.Add(new ChatBlock("text", Text: content.GetString()));

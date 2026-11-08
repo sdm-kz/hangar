@@ -28,12 +28,13 @@ export interface ChatBlock {
 
 /**
  * One line of Claude's transcript. `other` has nothing to draw but is still a link in the parent chain
- * the chat walks to find the conversation's live branch.
+ * the chat walks to find the conversation's live branch. `queue` is a change to the messages waiting for
+ * Claude's turn to end — `subtype` enqueue, dequeue, remove or popAll — and is in no chain.
  */
 export interface ChatEntry {
   uuid: string;
   parent: string | null;
-  kind: "user" | "assistant" | "system" | "other";
+  kind: "user" | "assistant" | "system" | "other" | "queue";
   time: string | null;
   messageId?: string | null;
   meta?: boolean;
@@ -44,6 +45,8 @@ export interface ChatEntry {
   model?: string | null;
   /** Tokens in the context when an assistant line was written. */
   context?: number;
+  /** A message typed while Claude was working, which it read before the turn was over. */
+  queued?: boolean;
 }
 
 /** A session's model and context use, as its status line last reported them. */
