@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ImageLightbox } from "./ImageLightbox";
 import { ComposerDialog, type ComposerDraft } from "./ComposerDialog";
+import { SlashSuggestions, useSlashInput } from "./SlashCommands";
 import {
   loadPostponed,
   newMessage,
@@ -88,6 +89,8 @@ export function PostponedPool({
   // the click at once instead of a hub tick later. Null once the two agree.
   const [autoAsked, setAutoAsked] = useState<boolean | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // A stashed message is typed into Claude later, so a slash command in it runs then: suggest them here too.
+  const slash = useSlashInput(sessionId, draft, setDraft, textareaRef);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   // Read by the re-sync effect below without making it re-run on every local edit.
@@ -343,6 +346,7 @@ export function PostponedPool({
   );
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slash.onKeyDown(e)) return;
     // Ctrl/Cmd+J inserts a newline at the cursor — a keyboard-only alternative to Shift+Enter (which
     // is awkward to reach on some mobile keyboards).
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
@@ -575,11 +579,17 @@ export function PostponedPool({
               ))}
             </div>
           )}
-          <div className="flex items-end gap-2">
+          {/* relative: the slash-command suggestions open above the box, as wide as this row. */}
+          <div className="relative flex items-end gap-2">
+            <SlashSuggestions slash={slash} />
             <Textarea
               ref={textareaRef}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              {...slash.inputProps}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                slash.track(e.target);
+              }}
               onPaste={onPaste}
               onKeyDown={onKeyDown}
               rows={1}

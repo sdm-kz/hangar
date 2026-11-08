@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
+import { SlashSuggestions, useSlashInput } from "./SlashCommands";
 import type { PostponedImage } from "@/lib/postponed";
 import { useApi } from "@/lib/node";
 
@@ -61,6 +62,11 @@ export function ComposerDialog({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const slash = useSlashInput(sessionId, text, setText, textRef);
+  // Read by the dialog's Esc handler, which the dialog may hold on to from an earlier render.
+  const slashRef = useRef(slash);
+  slashRef.current = slash;
 
   // Reseed on each open only — `initial` is a fresh object on every parent render, so depending on it
   // would reset the box mid-typing.
@@ -128,6 +134,7 @@ export function ComposerDialog({
   // when this is an already-stashed message being edited. Shift for "not the default action" is the
   // pairing every send box uses, and it keeps the second exit off a key of its own.
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slash.onKeyDown(e)) return;
     if (!(e.ctrlKey || e.metaKey) || e.key !== "Enter") return;
     e.preventDefault();
     if (e.shiftKey) postpone();
@@ -141,6 +148,12 @@ export function ComposerDialog({
             document-level paste listener from also dropping them into the live input. */}
         <DialogContent
           data-owns-image-paste
+          // Esc with the slash-command suggestions up closes them, not the dialog.
+          onEscapeKeyDown={(e) => {
+            if (!slashRef.current.open) return;
+            e.preventDefault();
+            slashRef.current.dismiss();
+          }}
           className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-3"
         >
           <DialogHeader className="shrink-0">
@@ -226,21 +239,30 @@ export function ComposerDialog({
             </div>
           )}
 
-          <Textarea
-            autoFocus
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onPaste={onPaste}
-            onKeyDown={onKeyDown}
-            // The send chord goes with the Send button when there is nothing to send into: offering
-            // a shortcut that returns silently is worse than not mentioning it.
-            placeholder={
-              closed
-                ? "Write your message — Enter for a newline, Ctrl+Shift+Enter to postpone, paste an image to attach"
-                : "Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste an image to attach"
-            }
-            className="min-h-[35vh] flex-1 resize-none leading-6"
-          />
+          {/* relative: the slash-command suggestions open above the box, as wide as it. */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <SlashSuggestions slash={slash} />
+            <Textarea
+              ref={textRef}
+              autoFocus
+              value={text}
+              {...slash.inputProps}
+              onChange={(e) => {
+                setText(e.target.value);
+                slash.track(e.target);
+              }}
+              onPaste={onPaste}
+              onKeyDown={onKeyDown}
+              // The send chord goes with the Send button when there is nothing to send into: offering
+              // a shortcut that returns silently is worse than not mentioning it.
+              placeholder={
+                closed
+                  ? "Write your message — Enter for a newline, Ctrl+Shift+Enter to postpone, paste an image to attach"
+                  : "Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste an image to attach"
+              }
+              className="min-h-[35vh] flex-1 resize-none leading-6"
+            />
+          </div>
 
           {error && <p className="shrink-0 text-xs text-destructive">{error}</p>}
 

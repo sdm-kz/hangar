@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./Markdown";
 import { ChatQuestion, parseQuestions } from "./ChatQuestion";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
+import { SlashSuggestions, useSlashInput } from "./SlashCommands";
 import type { Activity } from "./ActivityMark";
 import type { TerminalPaneHandle } from "./TerminalPane";
 import {
@@ -33,7 +34,7 @@ import {
 } from "@/lib/chat";
 import { uploadImageFile } from "@/lib/upload";
 import type { PostponedImage } from "@/lib/postponed";
-import type { ChatEntry, SessionStatus, SlashCommand } from "@/types";
+import type { ChatEntry, SessionStatus } from "@/types";
 import { useApi } from "@/lib/node";
 import { cn } from "@/lib/utils";
 
@@ -46,10 +47,6 @@ const POLL_HIDDEN_MS = 15000;
 const PAGE = 150;
 // Within this many pixels of the bottom counts as reading the latest, which new items keep in view.
 const STICK_PX = 80;
-// Most slash commands the suggestions list at once; the rest are a few more letters away.
-const MAX_SUGGESTIONS = 50;
-// How long the command list is trusted before it is read again (a skill added in the meantime).
-const COMMANDS_TTL_MS = 30_000;
 
 // Between the keys that answer a question: each one redraws Claude's dialog before it takes the next.
 const QUESTION_KEY_GAP_MS = 150;
@@ -599,13 +596,13 @@ function Composer({
 }) {
   const api = useApi();
   const [text, setText] = useState("");
-  const slash = useSlashCommands(sessionId, text);
   const [images, setImages] = useState<PostponedImage[]>([]);
   const [uploading, setUploading] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const slash = useSlashInput(sessionId, text, setText, areaRef);
   // Enter sends at a keyboard; on a phone it is the only way to start a new line, so the button sends.
   const coarse = useMemo(() => window.matchMedia?.("(pointer: coarse)").matches ?? false, []);
 
@@ -657,25 +654,12 @@ function Composer({
     if (bare && slash.commands?.find((c) => c.name === bare[1])?.dialog) onShowTerminal();
   };
 
-  // Take a suggestion: the command and a space, ready for its argument or for Enter.
-  const complete = (c: SlashCommand) => {
-    const next = `/${c.name} `;
-    setText(next);
-    slash.close(next);
-    requestAnimationFrame(() => {
-      const el = areaRef.current;
-      if (!el) return;
-      el.focus();
-      el.selectionStart = el.selectionEnd = el.value.length;
-    });
-  };
-
   const canSend = (!!text.trim() || images.length > 0) && !sending && uploading === 0 && !blocked;
   return (
     <div className="border-t bg-background px-4 pb-1.5 pt-2">
       {/* relative: the postponed pool's drop-up opens above the message box, against its right edge. */}
       <div className="relative mx-auto w-full max-w-3xl">
-        {slash.open && <SlashSuggestions slash={slash} onPick={complete} />}
+        <SlashSuggestions slash={slash} />
         {error && <p className="mb-1.5 text-xs text-destructive">{error}</p>}
         {(images.length > 0 || uploading > 0) && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -736,13 +720,11 @@ function Composer({
                   : "Message Claude, or / for commands"
             }
             data-chat-composer
-            role="combobox"
-            aria-expanded={slash.open}
-            aria-controls={slash.open ? "chat-slash-list" : undefined}
-            aria-activedescendant={slash.open ? `chat-slash-${slash.active}` : undefined}
+            {...slash.inputProps}
             className="min-h-7 flex-1 resize-none border-0 px-1 py-1 leading-5 shadow-none focus-visible:ring-0"
             onChange={(e) => {
               setText(e.target.value);
+              slash.track(e.target);
               if (error) setError(null);
             }}
             onPaste={(e) => {
@@ -754,27 +736,7 @@ function Composer({
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing) return;
               if (repeatTyped(e)) return;
-              if (slash.open) {
-                const pick = slash.matches[slash.active];
-                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                  e.preventDefault();
-                  slash.move(e.key === "ArrowDown" ? 1 : -1);
-                  return;
-                }
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  slash.close(text);
-                  return;
-                }
-                // Tab takes the suggestion; so does Enter, unless what is typed is already that command —
-                // then Enter runs it, as it would in the terminal.
-                if (pick && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && slash.enterCompletes))) {
-                  e.preventDefault();
-                  complete(pick);
-                  return;
-                }
-              }
+              if (slash.onKeyDown(e)) return;
               if (e.key === "Enter" && !e.shiftKey && !coarse) {
                 e.preventDefault();
                 void send();
@@ -890,177 +852,3 @@ function repeatTyped(e: React.KeyboardEvent<HTMLTextAreaElement>): boolean {
   return true;
 }
 
-interface SlashState {
-  commands: SlashCommand[] | null;
-  matches: SlashCommand[];
-  open: boolean;
-  active: number;
-  /** Enter takes the highlighted suggestion rather than sending what is typed. */
-  enterCompletes: boolean;
-  move: (delta: number) => void;
-  /** Close the list until the text is no longer `text`. */
-  close: (text: string) => void;
-}
-
-/**
- * Suggestions for a message that is a slash command being typed: "/" and the start of a name, nothing after
- * it yet. The list is read from the session's node the first time it is wanted, and again once it is old.
- */
-function useSlashCommands(sessionId: string, text: string): SlashState {
-  const api = useApi();
-  const [commands, setCommands] = useState<SlashCommand[] | null>(null);
-  const [active, setActive] = useState(0);
-  // The text the list was closed on (Esc, or a pick): it stays closed until that changes.
-  const [closedOn, setClosedOn] = useState<string | null>(null);
-  const fetchedAt = useRef(0);
-  const query = text.match(/^\/(\S*)$/)?.[1] ?? null;
-  const wanted = query !== null;
-
-  useEffect(() => {
-    if (!wanted || Date.now() - fetchedAt.current < COMMANDS_TTL_MS) return;
-    fetchedAt.current = Date.now();
-    let stale = false;
-    let settled = false;
-    api
-      .getSessionCommands(sessionId)
-      .then((list) => {
-        if (!stale) setCommands(list);
-      })
-      .catch(() => {
-        // A node too old to have the list, or one that dropped: no suggestions, and typing goes on.
-        if (!stale) setCommands((cur) => cur ?? []);
-      })
-      .finally(() => {
-        settled = true;
-      });
-    return () => {
-      stale = true;
-      // Dropped before it answered (the slash typed past, or deleted): the next "/" asks again rather
-      // than waiting out the TTL on a list that never arrived.
-      if (!settled) fetchedAt.current = 0;
-    };
-  }, [wanted, api, sessionId]);
-
-  const matches = useMemo(() => (query === null || !commands ? [] : rankCommands(commands, query)), [commands, query]);
-  // Whether the highlight was moved by hand since the query last changed.
-  const [chosen, setChosen] = useState(false);
-  useEffect(() => {
-    setActive(0);
-    setChosen(false);
-  }, [query]);
-
-  const open = wanted && text !== closedOn && (matches.length > 0 || !commands);
-  const current = Math.min(active, Math.max(0, matches.length - 1));
-  const pick = open ? matches[current] : undefined;
-  return {
-    commands,
-    matches,
-    open,
-    active: current,
-    // A suggestion that only contains what was typed, or mentions it in its description, is not what was
-    // meant by a whole command typed out — /new is not /fork — so Enter takes it only when it starts with
-    // what was typed, or was picked with the arrows.
-    enterCompletes: !!pick && text !== `/${pick.name}` && (chosen || startsWithQuery(pick, query ?? "")),
-    move: (delta) => {
-      setChosen(true);
-      setActive((i) => (matches.length ? (i + delta + matches.length) % matches.length : 0));
-    },
-    close: setClosedOn,
-  };
-}
-
-/** The command's name, or a plugin command's own part, starts with what was typed. */
-function startsWithQuery(c: SlashCommand, query: string): boolean {
-  const name = c.name.toLowerCase();
-  const q = query.toLowerCase();
-  return name.startsWith(q) || name.slice(name.indexOf(":") + 1).startsWith(q);
-}
-
-/**
- * Commands that match what follows the slash, best first: the name starts with it, then a plugin
- * command's own part does (design:critique for "crit"), then the name contains it, then the description.
- */
-function rankCommands(commands: SlashCommand[], query: string): SlashCommand[] {
-  const q = query.toLowerCase();
-  const scored: [number, SlashCommand][] = [];
-  for (const c of commands) {
-    const name = c.name.toLowerCase();
-    const own = name.includes(":") ? name.slice(name.indexOf(":") + 1) : name;
-    const score = name.startsWith(q)
-      ? 0
-      : own.startsWith(q)
-        ? 1
-        : name.includes(q)
-          ? 2
-          : q.length > 1 && c.description?.toLowerCase().includes(q)
-            ? 3
-            : -1;
-    if (score >= 0) scored.push([score, c]);
-  }
-  scored.sort((a, b) => a[0] - b[0] || a[1].name.length - b[1].name.length || a[1].name.localeCompare(b[1].name));
-  return scored.slice(0, MAX_SUGGESTIONS).map(([, c]) => c);
-}
-
-// Where a command comes from, where that is worth saying: a plugin's is in its name, Claude's goes unsaid.
-const SOURCE_LABEL: Record<SlashCommand["source"], string | null> = {
-  builtin: null,
-  project: "project",
-  user: "user",
-  plugin: null,
-};
-
-function SlashSuggestions({ slash, onPick }: { slash: SlashState; onPick: (c: SlashCommand) => void }) {
-  const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    listRef.current?.querySelector<HTMLElement>(`[data-index="${slash.active}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [slash.active, slash.matches]);
-  return (
-    <div
-      ref={listRef}
-      id="chat-slash-list"
-      role="listbox"
-      className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-72 overflow-y-auto overflow-x-hidden rounded-lg border bg-background p-1 shadow-lg"
-    >
-      {slash.matches.length === 0 ? (
-        <p className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
-          <Loader2 className="size-3.5 animate-spin" /> Reading the commands…
-        </p>
-      ) : (
-        slash.matches.map((c, i) => (
-          <div
-            key={c.name}
-            id={`chat-slash-${i}`}
-            data-index={i}
-            role="option"
-            aria-selected={i === slash.active}
-            // mousedown, not click: taking the pick must not take the focus out of the message box first.
-            onMouseDown={(e) => {
-              e.preventDefault();
-              onPick(c);
-            }}
-            className={cn(
-              "flex cursor-pointer items-baseline gap-2 rounded-md px-2 py-1 text-sm",
-              i === slash.active ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-            )}
-          >
-            <span className="shrink-0 font-mono">/{c.name}</span>
-            {c.hint && (
-              <span className="hidden max-w-[40%] shrink-0 truncate font-mono text-xs text-muted-foreground sm:block">{c.hint}</span>
-            )}
-            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{c.description}</span>
-            {c.dialog && (
-              <span title="Answers in the terminal" className="shrink-0 self-center text-muted-foreground">
-                <TerminalSquare className="size-3.5" />
-              </span>
-            )}
-            {SOURCE_LABEL[c.source] && (
-              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {SOURCE_LABEL[c.source]}
-              </span>
-            )}
-          </div>
-        ))
-      )}
-    </div>
-  );
-}

@@ -55,7 +55,8 @@ The web UI is a **session manager with a full terminal**:
   postponed-messages and compose buttons move from the terminal's corner into the chat's message box,
   which has its own image button. Typing `/` there suggests slash commands — Claude's own, yours, the
   project's, plugins' and skills' — with their descriptions: arrows to choose, Tab or Enter to take one,
-  Enter again to run it. A command that answers in the terminal (`/model`, `/config`, `/context`…)
+  Enter again to run it. It works anywhere in the text (a word that starts with `/`, at the caret), and
+  in the postponed pool's box and the full-size composer too. A command that answers in the terminal (`/model`, `/config`, `/context`…)
   switches to it when sent. Under the box: the model and how full the context window is. That comes
   from a status line Hangar gives each session it launches (`--settings`, so `~/.claude/settings.json`
   is untouched, and only when neither you nor the project has a status line of your own) — the terminal shows it too, as
