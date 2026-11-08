@@ -46,7 +46,17 @@ The web UI is a **session manager with a full terminal**:
   typing it there would, so the terminal stays the session and switching loses nothing. A turn can be
   stopped from the chat, and a tool permission answered with **Allow** / **Deny**; anything that only
   the terminal can show — a picker, a plan to approve, `/usage` — is one click away. The choice is kept
-  per session and per browser, so a phone can read the chat while the desk keeps the terminal.
+  per session and per browser, so a phone can read the chat while the desk keeps the terminal. The
+  postponed-messages and compose buttons move from the terminal's corner into the chat's message box,
+  which has its own image button. Typing `/` there suggests slash commands — Claude's own, yours, the
+  project's, plugins' and skills' — with their descriptions: arrows to choose, Tab or Enter to take one,
+  Enter again to run it. A command that answers in the terminal (`/model`, `/config`, `/context`…)
+  switches to it when sent. Under the box: the model and how full the context window is. That comes
+  from a status line Hangar gives each session it launches (`--settings`, so `~/.claude/settings.json`
+  is untouched, and only when neither you nor the project has a status line of your own) — the terminal shows it too, as
+  "Opus 5.5 · 24% context". A session started before that shows its tokens in context instead of the
+  percentage, until it is restarted. The chat zooms on its own, like the terminal: the buttons under the switch,
+  Ctrl/⌘ with + − 0, or Ctrl/⌘-wheel; the size is shared by every session's chat and remembered.
 - **Fork a session** — branch a conversation in two from the sessions list or the session header:
   name the fork, and it launches beside the original with the same folder and settings, picking up
   its history (`claude --resume <id> --fork-session`). The original keeps running, untouched. Forks

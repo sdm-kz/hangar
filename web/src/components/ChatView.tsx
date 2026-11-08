@@ -16,11 +16,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./Markdown";
+import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import type { Activity } from "./ActivityMark";
 import type { TerminalPaneHandle } from "./TerminalPane";
 import { applyChunk, chatItems, EMPTY_TRANSCRIPT, prettyInput, toolSummary, type ChatItem, type ChatTranscript } from "@/lib/chat";
 import { uploadImageFile } from "@/lib/upload";
 import type { PostponedImage } from "@/lib/postponed";
+import type { ChatEntry, SessionStatus, SlashCommand } from "@/types";
 import { useApi } from "@/lib/node";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +35,13 @@ const POLL_HIDDEN_MS = 15000;
 const PAGE = 150;
 // Within this many pixels of the bottom counts as reading the latest, which new items keep in view.
 const STICK_PX = 80;
+// Most slash commands the suggestions list at once; the rest are a few more letters away.
+const MAX_SUGGESTIONS = 50;
+// How long the command list is trusted before it is read again (a skill added in the meantime).
+const COMMANDS_TTL_MS = 30_000;
+
+// Ctrl-wheel travel per zoom step, as in the terminal: a mouse notch steps at once, a pinch ramps.
+const WHEEL_ZOOM_STEP = 40;
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || "image";
 
@@ -51,6 +60,7 @@ export function ChatView({
   activityLabel,
   terminalRef,
   onShowTerminal,
+  poolSlot,
 }: {
   sessionId: string;
   /** No live terminal: the conversation can be read, not added to. */
@@ -60,15 +70,21 @@ export function ChatView({
   activityLabel?: string;
   terminalRef: RefObject<TerminalPaneHandle | null>;
   onShowTerminal: () => void;
+  /** Called with the place in the message box where the session's postponed-message buttons go. */
+  poolSlot?: (el: HTMLElement | null) => void;
 }) {
   const api = useApi();
   const [transcript, setTranscript] = useState<ChatTranscript>(EMPTY_TRANSCRIPT);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [status, setStatus] = useState<SessionStatus | null>(null);
   const [limit, setLimit] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const [showJump, setShowJump] = useState(false);
+  // The chat's own zoom, like the terminal's: one reading size for every session's chat, kept across
+  // reloads, and apart from the terminal's — the two are set for different text.
+  const [zoom, setZoom] = usePersistentZoom("chat");
 
   // ---- Reading the transcript ----
   const transcriptRef = useRef(transcript);
@@ -87,6 +103,7 @@ export function ChatView({
     setTranscript(EMPTY_TRANSCRIPT);
     setLoaded(false);
     setFailed(false);
+    setStatus(null);
     const tick = async () => {
       window.clearTimeout(timer);
       if (inFlight) return;
@@ -97,6 +114,8 @@ export function ChatView({
         const chunk = await api.getSessionChat(sessionId, t.conversation, t.offset);
         if (stopped) return;
         setTranscript((cur) => (transcriptRef.current = applyChunk(cur, chunk)));
+        // Only when it changed: a new object every poll would redraw the whole chat every second.
+        setStatus((cur) => (sameStatus(cur, chunk.status ?? null) ? cur : (chunk.status ?? null)));
         setLoaded(true);
         setFailed(false);
         ok = true;
@@ -133,6 +152,7 @@ export function ChatView({
   }, [busy, activity]);
 
   const items = useMemo(() => chatItems(transcript.entries), [transcript.entries]);
+  const info = useMemo(() => sessionInfo(status, transcript.entries), [status, transcript.entries]);
   const shown = items.length > limit ? items.slice(items.length - limit) : items;
   const hidden = items.length - shown.length;
 
@@ -173,6 +193,50 @@ export function ChatView({
     });
   };
 
+  // ---- Zoom: the buttons, Ctrl/⌘ with + - 0, and Ctrl/⌘-wheel, the keys the terminal answers to ----
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const stepZoom = useCallback(
+    (delta: number) => {
+      const i = ZOOM_LEVELS.indexOf(zoomRef.current) + delta;
+      setZoom(ZOOM_LEVELS[Math.max(0, Math.min(ZOOM_LEVELS.length - 1, i))]);
+    },
+    [setZoom]
+  );
+  // Only while the chat has focus — the browser's own zoom, which takes the whole app with it, is what
+  // these keys do anywhere else.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.altKey || !(e.ctrlKey || e.metaKey)) return;
+    const delta =
+      e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd"
+        ? 1
+        : e.key === "-" || e.key === "_" || e.code === "Minus" || e.code === "NumpadSubtract"
+          ? -1
+          : 0;
+    const reset = e.key === "0" || e.code === "Digit0" || e.code === "Numpad0";
+    if (!delta && !reset) return;
+    e.preventDefault();
+    if (reset) setZoom(1);
+    else stepZoom(delta);
+  };
+  // React's wheel handler is passive, and a passive one can't stop the browser zooming the page.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let travel = 0;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      travel += e.deltaY;
+      const steps = Math.trunc(travel / WHEEL_ZOOM_STEP);
+      if (steps === 0) return;
+      travel -= steps * WHEEL_ZOOM_STEP;
+      stepZoom(-steps);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [stepZoom]);
+
   const waiting = activity === "waiting";
   const keys = (data: string) => {
     if (!terminalRef.current?.sendKeys(data)) return;
@@ -180,10 +244,16 @@ export function ChatView({
   };
 
   return (
-    <div data-owns-image-paste className="@container flex h-full min-h-0 flex-col bg-background">
-      <div className="relative min-h-0 flex-1">
+    <div
+      data-owns-image-paste
+      onKeyDown={onKeyDown}
+      className="flex h-full min-h-0 flex-col bg-background"
+    >
+      <div className="group relative min-h-0 flex-1">
         <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto overscroll-contain">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
+          {/* CSS zoom rather than a font size: it scales the cards, code and spacing with the text, and
+              takes part in layout, so the scroll height and the stick-to-bottom stay right. */}
+          <div style={{ zoom }} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
             {hidden > 0 ? (
               <button
                 type="button"
@@ -217,6 +287,17 @@ export function ChatView({
             )}
           </div>
         </div>
+        {/* Under the Terminal / Chat switch. Shown on hover like the terminal's, and pinned open once
+            zoomed, since a size that isn't the default should say so and offer the way back. */}
+        <ZoomControls
+          zoom={zoom}
+          onChange={setZoom}
+          className={cn(
+            "right-4 top-10 mr-0 transition-opacity",
+            zoom === 1 &&
+              "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          )}
+        />
         {showJump && (
           <button
             type="button"
@@ -242,15 +323,24 @@ export function ChatView({
         </div>
       )}
       {closed ? (
-        <p className="border-t px-4 py-3 text-center text-sm text-muted-foreground">
-          The session is closed. Reopen it to carry on the conversation.
-        </p>
+        // The postponed pool still reads and discards in a closed session, so its buttons stay.
+        <div className="border-t px-4 py-2">
+          <div className="relative mx-auto flex w-full max-w-3xl items-center gap-2">
+            <p className="min-w-0 flex-1 py-1 text-center text-sm text-muted-foreground">
+              The session is closed. Reopen it to carry on the conversation.
+            </p>
+            <div ref={poolSlot} className="contents" />
+          </div>
+        </div>
       ) : (
         <Composer
           sessionId={sessionId}
           terminalRef={terminalRef}
           blocked={waiting}
           onSent={() => pokeRef.current()}
+          onShowTerminal={onShowTerminal}
+          poolSlot={poolSlot}
+          info={info}
         />
       )}
     </div>
@@ -423,6 +513,9 @@ function Composer({
   terminalRef,
   blocked,
   onSent,
+  onShowTerminal,
+  poolSlot,
+  info,
 }: {
   sessionId: string;
   terminalRef: RefObject<TerminalPaneHandle | null>;
@@ -433,9 +526,14 @@ function Composer({
    */
   blocked: boolean;
   onSent: () => void;
+  /** A command that answers in the terminal was sent: show the terminal. */
+  onShowTerminal: () => void;
+  poolSlot?: (el: HTMLElement | null) => void;
+  info: SessionLine;
 }) {
   const api = useApi();
   const [text, setText] = useState("");
+  const slash = useSlashCommands(sessionId, text);
   const [images, setImages] = useState<PostponedImage[]>([]);
   const [uploading, setUploading] = useState(0);
   const [sending, setSending] = useState(false);
@@ -488,14 +586,30 @@ function Composer({
     setText("");
     setImages([]);
     onSent();
+    // A bare /model, /config, /context… answers in the terminal; the chat would show nothing.
+    const bare = body.match(/^\/(\S+)$/);
+    if (bare && slash.commands?.find((c) => c.name === bare[1])?.dialog) onShowTerminal();
+  };
+
+  // Take a suggestion: the command and a space, ready for its argument or for Enter.
+  const complete = (c: SlashCommand) => {
+    const next = `/${c.name} `;
+    setText(next);
+    slash.close(next);
+    requestAnimationFrame(() => {
+      const el = areaRef.current;
+      if (!el) return;
+      el.focus();
+      el.selectionStart = el.selectionEnd = el.value.length;
+    });
   };
 
   const canSend = (!!text.trim() || images.length > 0) && !sending && uploading === 0 && !blocked;
   return (
-    // The postponed pool's buttons float in the pane's bottom-right corner, over this bar. Where the pane
-    // is too narrow for the composer to sit clear of them, it leaves their room free instead.
-    <div className="border-t bg-background pb-3 pl-4 pr-28 pt-2 @[64rem]:pr-4">
-      <div className="mx-auto w-full max-w-3xl">
+    <div className="border-t bg-background px-4 pb-1.5 pt-2">
+      {/* relative: the postponed pool's drop-up opens above the message box, against its right edge. */}
+      <div className="relative mx-auto w-full max-w-3xl">
+        {slash.open && <SlashSuggestions slash={slash} onPick={complete} />}
         {error && <p className="mb-1.5 text-xs text-destructive">{error}</p>}
         {(images.length > 0 || uploading > 0) && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -520,11 +634,11 @@ function Composer({
             )}
           </div>
         )}
-        <div className="flex items-end gap-2 rounded-xl border bg-background px-2 py-1.5 focus-within:ring-1 focus-within:ring-ring">
+        <div className="flex items-end gap-2 rounded-xl border bg-background px-1.5 py-1 focus-within:ring-1 focus-within:ring-ring">
           <Button
             variant="ghost"
             size="icon"
-            className="size-8 shrink-0"
+            className="size-7 shrink-0"
             title="Attach an image"
             onClick={() => fileRef.current?.click()}
           >
@@ -548,9 +662,13 @@ function Composer({
             // screen nobody can see. Not on a phone, where focus pops the keyboard up over the chat.
             autoFocus={!coarse}
             value={text}
-            placeholder={blocked ? "Answer Claude's question first" : "Message Claude"}
+            placeholder={blocked ? "Answer Claude's question first" : "Message Claude, or / for commands"}
             data-chat-composer
-            className="min-h-8 flex-1 resize-none border-0 px-1 py-1.5 shadow-none focus-visible:ring-0"
+            role="combobox"
+            aria-expanded={slash.open}
+            aria-controls={slash.open ? "chat-slash-list" : undefined}
+            aria-activedescendant={slash.open ? `chat-slash-${slash.active}` : undefined}
+            className="min-h-7 flex-1 resize-none border-0 px-1 py-1 leading-5 shadow-none focus-visible:ring-0"
             onChange={(e) => {
               setText(e.target.value);
               if (error) setError(null);
@@ -562,21 +680,296 @@ function Composer({
               void addFiles(files);
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !coarse && !e.nativeEvent.isComposing) {
+              if (e.nativeEvent.isComposing) return;
+              if (slash.open) {
+                const pick = slash.matches[slash.active];
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  e.preventDefault();
+                  slash.move(e.key === "ArrowDown" ? 1 : -1);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  slash.close(text);
+                  return;
+                }
+                // Tab takes the suggestion; so does Enter, unless what is typed is already that command —
+                // then Enter runs it, as it would in the terminal.
+                if (pick && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && slash.enterCompletes))) {
+                  e.preventDefault();
+                  complete(pick);
+                  return;
+                }
+              }
+              if (e.key === "Enter" && !e.shiftKey && !coarse) {
                 e.preventDefault();
                 void send();
               }
             }}
           />
+          {/* The postponed pool's buttons, which float in the terminal's corner, sit here in the chat. */}
+          <div ref={poolSlot} className="contents" />
           <Button
             size="icon"
-            className="size-8 shrink-0"
+            className="size-7 shrink-0"
             title={blocked ? "Answer Claude's question first" : "Send"}
             disabled={!canSend} onClick={() => void send()}>
             {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
           </Button>
         </div>
+        <SessionFooter info={info} />
       </div>
+    </div>
+  );
+}
+
+function sameStatus(a: SessionStatus | null, b: SessionStatus | null): boolean {
+  return a === b || (!!a && !!b && a.model === b.model && a.contextPercent === b.contextPercent && a.contextWindow === b.contextWindow);
+}
+
+interface SessionLine {
+  model: string | null;
+  /** Share of the context window in use, when Claude has said (its status line). */
+  percent: number | null;
+  window: number | null;
+  /** Tokens in context, from the transcript: what is known when the percentage isn't. */
+  tokens: number | null;
+}
+
+/**
+ * The model and context use under the message box. Claude's status line is the source — only it knows the
+ * window's size. A session started before Hangar gave it one (or whose user has a status line of their own)
+ * has only the transcript, which names the model and counts the tokens but can't say what they are out of.
+ */
+function sessionInfo(status: SessionStatus | null, entries: ChatEntry[]): SessionLine {
+  let model: string | null = null;
+  let tokens: number | null = null;
+  for (let i = entries.length - 1; i >= 0 && (model === null || tokens === null); i--) {
+    const e = entries[i];
+    // "<synthetic>" is what Claude files its own error notes under: not a model that answered.
+    if (e.kind !== "assistant" || !e.model || e.model === "<synthetic>") continue;
+    model ??= e.model;
+    if (e.context) tokens ??= e.context;
+  }
+  return {
+    model: status?.model || (model && modelName(model)),
+    percent: status?.contextPercent ?? null,
+    window: status?.contextWindow ?? null,
+    tokens,
+  };
+}
+
+/** claude-opus-5-5 → Opus 5.5, claude-haiku-4-5-20251001 → Haiku 4.5; anything else as it is. */
+function modelName(id: string): string {
+  // The minor version is one or two digits on their own: claude-opus-4-20250514 is Opus 4, not 4.20.
+  const m = id.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?!\d))?/);
+  if (!m) return id;
+  return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
+}
+
+const kTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
+
+function SessionFooter({ info }: { info: SessionLine }) {
+  if (!info.model && info.percent === null && info.tokens === null) return <div className="h-4" />;
+  const pct = info.percent;
+  const tone = pct === null ? "" : pct >= 90 ? "text-destructive" : pct >= 75 ? "text-amber-600 dark:text-amber-400" : "";
+  const bar = pct === null ? "" : pct >= 90 ? "bg-destructive" : pct >= 75 ? "bg-amber-500" : "bg-muted-foreground/60";
+  return (
+    <div className="flex h-4 items-center gap-3 px-1 pt-1 text-[11px] leading-none text-muted-foreground">
+      {info.model && <span title="The model answering in this session">{info.model}</span>}
+      {pct !== null ? (
+        <span
+          className={cn("flex items-center gap-1.5", tone)}
+          title={`Context window ${Math.round(pct)}% used${info.window ? ` of ${kTokens(info.window)} tokens` : ""}`}
+        >
+          <span className="h-1 w-10 overflow-hidden rounded-full bg-muted">
+            <span className={cn("block h-full rounded-full", bar)} style={{ width: `${Math.max(2, pct)}%` }} />
+          </span>
+          {Math.round(pct)}% context
+        </span>
+      ) : (
+        info.tokens !== null && (
+          <span title="Tokens in the context window. The percentage comes from Hangar's status line, which a session gets when Hangar starts it — unless you have a status line of your own.">
+            {kTokens(info.tokens)} tokens in context
+          </span>
+        )
+      )}
+    </div>
+  );
+}
+
+interface SlashState {
+  commands: SlashCommand[] | null;
+  matches: SlashCommand[];
+  open: boolean;
+  active: number;
+  /** Enter takes the highlighted suggestion rather than sending what is typed. */
+  enterCompletes: boolean;
+  move: (delta: number) => void;
+  /** Close the list until the text is no longer `text`. */
+  close: (text: string) => void;
+}
+
+/**
+ * Suggestions for a message that is a slash command being typed: "/" and the start of a name, nothing after
+ * it yet. The list is read from the session's node the first time it is wanted, and again once it is old.
+ */
+function useSlashCommands(sessionId: string, text: string): SlashState {
+  const api = useApi();
+  const [commands, setCommands] = useState<SlashCommand[] | null>(null);
+  const [active, setActive] = useState(0);
+  // The text the list was closed on (Esc, or a pick): it stays closed until that changes.
+  const [closedOn, setClosedOn] = useState<string | null>(null);
+  const fetchedAt = useRef(0);
+  const query = text.match(/^\/(\S*)$/)?.[1] ?? null;
+  const wanted = query !== null;
+
+  useEffect(() => {
+    if (!wanted || Date.now() - fetchedAt.current < COMMANDS_TTL_MS) return;
+    fetchedAt.current = Date.now();
+    let stale = false;
+    let settled = false;
+    api
+      .getSessionCommands(sessionId)
+      .then((list) => {
+        if (!stale) setCommands(list);
+      })
+      .catch(() => {
+        // A node too old to have the list, or one that dropped: no suggestions, and typing goes on.
+        if (!stale) setCommands((cur) => cur ?? []);
+      })
+      .finally(() => {
+        settled = true;
+      });
+    return () => {
+      stale = true;
+      // Dropped before it answered (the slash typed past, or deleted): the next "/" asks again rather
+      // than waiting out the TTL on a list that never arrived.
+      if (!settled) fetchedAt.current = 0;
+    };
+  }, [wanted, api, sessionId]);
+
+  const matches = useMemo(() => (query === null || !commands ? [] : rankCommands(commands, query)), [commands, query]);
+  // Whether the highlight was moved by hand since the query last changed.
+  const [chosen, setChosen] = useState(false);
+  useEffect(() => {
+    setActive(0);
+    setChosen(false);
+  }, [query]);
+
+  const open = wanted && text !== closedOn && (matches.length > 0 || !commands);
+  const current = Math.min(active, Math.max(0, matches.length - 1));
+  const pick = open ? matches[current] : undefined;
+  return {
+    commands,
+    matches,
+    open,
+    active: current,
+    // A suggestion that only contains what was typed, or mentions it in its description, is not what was
+    // meant by a whole command typed out — /new is not /fork — so Enter takes it only when it starts with
+    // what was typed, or was picked with the arrows.
+    enterCompletes: !!pick && text !== `/${pick.name}` && (chosen || startsWithQuery(pick, query ?? "")),
+    move: (delta) => {
+      setChosen(true);
+      setActive((i) => (matches.length ? (i + delta + matches.length) % matches.length : 0));
+    },
+    close: setClosedOn,
+  };
+}
+
+/** The command's name, or a plugin command's own part, starts with what was typed. */
+function startsWithQuery(c: SlashCommand, query: string): boolean {
+  const name = c.name.toLowerCase();
+  const q = query.toLowerCase();
+  return name.startsWith(q) || name.slice(name.indexOf(":") + 1).startsWith(q);
+}
+
+/**
+ * Commands that match what follows the slash, best first: the name starts with it, then a plugin
+ * command's own part does (design:critique for "crit"), then the name contains it, then the description.
+ */
+function rankCommands(commands: SlashCommand[], query: string): SlashCommand[] {
+  const q = query.toLowerCase();
+  const scored: [number, SlashCommand][] = [];
+  for (const c of commands) {
+    const name = c.name.toLowerCase();
+    const own = name.includes(":") ? name.slice(name.indexOf(":") + 1) : name;
+    const score = name.startsWith(q)
+      ? 0
+      : own.startsWith(q)
+        ? 1
+        : name.includes(q)
+          ? 2
+          : q.length > 1 && c.description?.toLowerCase().includes(q)
+            ? 3
+            : -1;
+    if (score >= 0) scored.push([score, c]);
+  }
+  scored.sort((a, b) => a[0] - b[0] || a[1].name.length - b[1].name.length || a[1].name.localeCompare(b[1].name));
+  return scored.slice(0, MAX_SUGGESTIONS).map(([, c]) => c);
+}
+
+// Where a command comes from, where that is worth saying: a plugin's is in its name, Claude's goes unsaid.
+const SOURCE_LABEL: Record<SlashCommand["source"], string | null> = {
+  builtin: null,
+  project: "project",
+  user: "user",
+  plugin: null,
+};
+
+function SlashSuggestions({ slash, onPick }: { slash: SlashState; onPick: (c: SlashCommand) => void }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${slash.active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [slash.active, slash.matches]);
+  return (
+    <div
+      ref={listRef}
+      id="chat-slash-list"
+      role="listbox"
+      className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-72 overflow-y-auto overflow-x-hidden rounded-lg border bg-background p-1 shadow-lg"
+    >
+      {slash.matches.length === 0 ? (
+        <p className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" /> Reading the commands…
+        </p>
+      ) : (
+        slash.matches.map((c, i) => (
+          <div
+            key={c.name}
+            id={`chat-slash-${i}`}
+            data-index={i}
+            role="option"
+            aria-selected={i === slash.active}
+            // mousedown, not click: taking the pick must not take the focus out of the message box first.
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onPick(c);
+            }}
+            className={cn(
+              "flex cursor-pointer items-baseline gap-2 rounded-md px-2 py-1 text-sm",
+              i === slash.active ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+            )}
+          >
+            <span className="shrink-0 font-mono">/{c.name}</span>
+            {c.hint && (
+              <span className="hidden max-w-[40%] shrink-0 truncate font-mono text-xs text-muted-foreground sm:block">{c.hint}</span>
+            )}
+            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{c.description}</span>
+            {c.dialog && (
+              <span title="Answers in the terminal" className="shrink-0 self-center text-muted-foreground">
+                <TerminalSquare className="size-3.5" />
+              </span>
+            )}
+            {SOURCE_LABEL[c.source] && (
+              <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                {SOURCE_LABEL[c.source]}
+              </span>
+            )}
+          </div>
+        ))
+      )}
     </div>
   );
 }

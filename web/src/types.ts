@@ -40,6 +40,18 @@ export interface ChatEntry {
   compactSummary?: boolean;
   subtype?: string | null;
   blocks?: ChatBlock[] | null;
+  /** The model an assistant line came from (claude-opus-5-5). */
+  model?: string | null;
+  /** Tokens in the context when an assistant line was written. */
+  context?: number;
+}
+
+/** A session's model and context use, as its status line last reported them. */
+export interface SessionStatus {
+  /** Claude's display name for it ("Opus 5.5"). */
+  model?: string | null;
+  contextPercent?: number | null;
+  contextWindow?: number | null;
 }
 
 /** A read of the transcript from an offset on; `reset` drops what the reader had before. */
@@ -49,6 +61,18 @@ export interface ChatChunk {
   reset: boolean;
   truncated: boolean;
   entries: ChatEntry[];
+  status?: SessionStatus | null;
+}
+
+/** A slash command Claude takes in a session's folder (GET /api/sessions/{id}/commands). */
+export interface SlashCommand {
+  name: string;
+  source: "builtin" | "project" | "user" | "plugin";
+  description?: string;
+  /** What goes after the name, as the command describes it ("<path>", "[model]"). */
+  hint?: string;
+  /** Answers in the terminal (a picker, a panel, output the transcript never gets), not in the conversation. */
+  dialog?: boolean;
 }
 
 export interface SessionInfo {

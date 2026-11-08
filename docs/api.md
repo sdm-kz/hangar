@@ -63,7 +63,20 @@ reads: the session's conversation as Claude writes it to its transcript, cut dow
 (tool input and output trimmed to 4,000 characters, pasted images left out). It is incremental — pass
 back the `conversation` and `offset` of the last answer and only what was written since comes back;
 `reset: true` means the conversation changed (a `/clear`) and the answer starts from the top. A first
-read of a very long transcript takes its last 6 MB and says `truncated: true`.
+read of a very long transcript takes its last 6 MB and says `truncated: true`. Each answer also carries
+`status` — the session's `model`, `contextPercent` and `contextWindow` as its status line last reported
+them — once there is one; assistant entries carry their `model` and `context` (tokens in context).
+
+**A session's status line.** `POST /api/self/statusline` (`X-Session-Id` / `X-Hook-Token`, like the
+other self endpoints) is what the status-line command Hangar launches each session with calls: it posts
+the JSON Claude pipes to a status line and gets back the line to show, as plain text.
+
+**Slash commands.** `GET /api/sessions/{id}/commands` (bearer token) lists the slash commands Claude
+would take in the session's folder, for the chat's autocomplete: `name`, `source` (`builtin`,
+`project`, `user`, `plugin`), and, where known, `description`, `hint` (the argument) and `dialog` (it
+answers in the terminal). It is read from disk — `.claude/commands` and `.claude/skills` in the folder
+and its parents and in `~/.claude`, enabled and synced plugins — plus a built-in table for Claude Code
+2.1, so a command a newer Claude adds can be missing until Hangar catches up.
 
 ## Self-service API for a running session
 

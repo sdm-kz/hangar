@@ -316,6 +316,7 @@ internal static class Program
         // Collects Claude hook callbacks and derives live busy/waiting status; consumed by SessionManager
         // and pushed by SessionHub.
         builder.Services.AddSingleton<HookEventStore>();
+        builder.Services.AddSingleton<StatusLineStore>();
         builder.Services.AddSingleton<SessionManager>();
         // The session-list push hub is one instance shared as both a singleton (so the endpoint can
         // reach it) and a hosted service (so its broadcast loop runs for the app's lifetime).
@@ -775,6 +776,22 @@ internal static class Program
             return mgr.Rename(id, clean) ? Results.Ok(new { id, name = clean }) : Results.NotFound();
         });
 
+        // Self-statusline: the status-line command Hangar gives each session (StatusLineStore) posts what
+        // Claude piped it — model, context use — and prints the answer, which is the line Claude shows.
+        // Plain text back, and never an error body: whatever comes back is drawn under Claude's prompt.
+        app.MapPost("/api/self/statusline", async (HttpContext ctx, TokenStore tokens, StatusLineStore status,
+            SessionManager mgr, ILoggerFactory lf) =>
+        {
+            // Only for a session there is: the store is keyed by whatever id arrives.
+            if (SelfCaller(ctx, tokens, lf, "statusline") is not { } id || mgr.GetAny(id) is null) return Results.Text("");
+            try
+            {
+                using var doc = await JsonDocument.ParseAsync(ctx.Request.Body);
+                return Results.Text(status.Ingest(id, doc.RootElement));
+            }
+            catch (JsonException) { return Results.Text(""); }
+        });
+
         // Self-open: the same deal for the Files panel. A session opens a file of its own working
         // directory as a tab in its own tab bar — the tab a click in the tree would have made — so
         // what Claude is talking about is one click away for whoever is watching. Paths are relative
@@ -1137,7 +1154,8 @@ internal static class Program
         // The session's conversation as Claude writes it down, for the chat view of its terminal. The view
         // passes back the conversation and offset of its last read and gets only what was added since; a
         // conversation that changed under it (a /clear starts a new one) comes back from the top, marked reset.
-        app.MapGet("/api/sessions/{id}/chat", (string id, string? conversation, long? offset, SessionManager mgr) =>
+        app.MapGet("/api/sessions/{id}/chat", (string id, string? conversation, long? offset, SessionManager mgr,
+            StatusLineStore status) =>
         {
             var info = mgr.GetAny(id);
             if (info is null) return Results.NotFound();
@@ -1146,9 +1164,10 @@ internal static class Program
             {
                 // No transcript yet (nothing said so far): empty, and only a reset if the reader had
                 // another conversation — not on every read until Claude writes its first line.
-                if (conv is null || ChatTranscriptPath(info.WorkingDirectory, conv) is not { } path)
-                    return Results.Ok(new ChatChunk(conv, 0, conversation is not null && conversation != conv, false, []));
-                return Results.Ok(ChatTranscript.Read(path, conv, conversation, offset ?? 0));
+                var chunk = conv is null || ChatTranscriptPath(info.WorkingDirectory, conv) is not { } path
+                    ? new ChatChunk(conv, 0, conversation is not null && conversation != conv, false, [])
+                    : ChatTranscript.Read(path, conv, conversation, offset ?? 0);
+                return Results.Ok(chunk with { Status = status.Get(id) });
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -1170,6 +1189,10 @@ internal static class Program
             catch (InvalidOperationException) { }
             return ClaudeProjectData.FindTranscript(conversation);
         }
+
+        // The slash commands Claude would take in a session's folder, for the chat view's autocomplete.
+        app.MapGet("/api/sessions/{id}/commands", (string id, SessionManager mgr) =>
+            mgr.GetAny(id) is { } info ? Results.Ok(SlashCommands.List(info.WorkingDirectory)) : Results.NotFound());
 
         // ---- Recent launch presets & folders (shared across devices, persisted server-side) ---
         app.MapGet("/api/recents", (RecentsStore store) => Results.Ok(store.Get()));

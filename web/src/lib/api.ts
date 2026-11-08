@@ -1,5 +1,6 @@
 import type {
   ChatChunk,
+  SlashCommand,
   AllowedNode,
   BrowseResult,
   CreateSessionRequest,
@@ -631,6 +632,11 @@ function createApi(base: string) {
       const q = new URLSearchParams({ offset: String(offset) });
       if (conversation) q.set("conversation", conversation);
       return request(`/api/sessions/${id}/chat?${q}`);
+    },
+
+    /** The slash commands Claude takes in the session's folder, for the chat's autocomplete. */
+    getSessionCommands(id: string): Promise<SlashCommand[]> {
+      return request(`/api/sessions/${id}/commands`);
     },
 
     // ---- In-app update (a build staged by scripts\stage-update.ps1) ----

@@ -36,7 +36,11 @@ public sealed record ChatEntry(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool CompactSummary = false,
     /// <summary>A system line's subtype (<c>compact_boundary</c>, <c>api_error</c>, …).</summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? Subtype = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] IReadOnlyList<ChatBlock>? Blocks = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] IReadOnlyList<ChatBlock>? Blocks = null,
+    /// <summary>The model an assistant line came from (<c>claude-opus-5-5</c>).</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] string? Model = null,
+    /// <summary>Tokens in the context when an assistant line was written: its request's whole input.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] long Context = 0);
 
 /// <summary>
 /// A read of a transcript from <see cref="Offset"/> on. <see cref="Reset"/> says the reader's earlier entries
@@ -48,7 +52,9 @@ public sealed record ChatChunk(
     long Offset,
     bool Reset,
     bool Truncated,
-    IReadOnlyList<ChatEntry> Entries);
+    IReadOnlyList<ChatEntry> Entries,
+    /// <summary>The session's model and context use, from its status line, when it has reported them.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] SessionStatus? Status = null);
 
 /// <summary>
 /// Reads Claude Code's transcript (<c>~/.claude/projects/&lt;folder&gt;/&lt;id&gt;.jsonl</c>) for the chat view of
@@ -177,11 +183,14 @@ public static class ChatTranscript
                     if (!d.TryGetProperty("message", out var msg) || msg.ValueKind != JsonValueKind.Object)
                         return new ChatEntry(uuid, parent, "other", time);
                     var blocks = Blocks(msg);
+                    var assistant = type == "assistant";
                     return new ChatEntry(uuid, parent, type, time,
-                        MessageId: type == "assistant" ? Str(msg, "id") : null,
+                        MessageId: assistant ? Str(msg, "id") : null,
                         Meta: Bool(d, "isMeta"),
                         CompactSummary: Bool(d, "isCompactSummary"),
-                        Blocks: blocks);
+                        Blocks: blocks,
+                        Model: assistant ? Str(msg, "model") : null,
+                        Context: assistant ? ContextTokens(msg) : 0);
                 }
                 case "system":
                 {
@@ -232,6 +241,17 @@ public static class ChatTranscript
             }
         }
         return list;
+    }
+
+    // Everything the request sent in: fresh input plus what was written to and read from the cache.
+    private static long ContextTokens(JsonElement msg)
+    {
+        if (!msg.TryGetProperty("usage", out var u) || u.ValueKind != JsonValueKind.Object) return 0;
+        long total = 0;
+        foreach (var name in new[] { "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens" })
+            if (u.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n))
+                total += n;
+        return total;
     }
 
     // A tool result's content is a string, or a list of text and image parts.

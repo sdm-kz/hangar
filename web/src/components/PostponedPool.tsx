@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ImagePlus,
   Inbox,
@@ -54,6 +55,7 @@ export function PostponedPool({
   closed = false,
   serverCount,
   autoSend = false,
+  slot = null,
 }: {
   sessionId: string;
   // Whether Claude is currently working in this session (drives the "idle — send now" cue only).
@@ -68,6 +70,9 @@ export function PostponedPool({
   serverCount?: number;
   // Whether auto-send is on, as the server reports it.
   autoSend?: boolean;
+  // Where the buttons go instead of the pane's corner: the chat view's message box, which has an image
+  // button of its own, so the corner's is left out there. The drop-up opens above that box.
+  slot?: HTMLElement | null;
 }) {
   const api = useApi();
   const [messages, setMessages] = useState<PostponedMessage[]>([]);
@@ -366,7 +371,8 @@ export function PostponedPool({
   const idle = !closed && !busy && !auto && messages.length > 0;
   const canStash = draft.trim().length > 0 || draftImages.length > 0;
 
-  return (
+  const inline = !!slot;
+  const body = (
     <>
     {/* Floats over the terminal's bottom-right corner instead of taking a bar's worth of height
         under it: the count, attach and Compose, with the pool itself in a drop-up above them. Both
@@ -390,7 +396,14 @@ export function PostponedPool({
       />
 
       {open && (
-        <div className="absolute bottom-10 right-5 z-10 w-[min(32rem,calc(100%-2.5rem))] rounded-lg border bg-background p-2 shadow-lg">
+        <div
+          className={cn(
+            "absolute z-10 rounded-lg border bg-background p-2 shadow-lg",
+            inline
+              ? "bottom-full right-0 mb-2 w-[min(32rem,100%)]"
+              : "bottom-10 right-5 w-[min(32rem,calc(100%-2.5rem))]"
+          )}
+        >
           {/* Wraps: in a narrow split the buttons drop to a line of their own rather than spill out. */}
           <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 px-1">
             <span className="text-sm font-medium text-muted-foreground">Postponed</span>
@@ -601,16 +614,17 @@ export function PostponedPool({
         </div>
       )}
 
-      <div className="absolute bottom-1 right-5 z-10 flex items-center gap-1">
+      <div className={inline ? "flex shrink-0 items-center" : "absolute bottom-1 right-5 z-10 flex items-center gap-1"}>
         {/* The pool's toggle: its count, green when Claude is idle and there is something to send
             (the nudge the old bar gave), and a dot for a draft left unstashed in the drop-up. */}
         <Button
           size="sm"
-          variant="outline"
+          variant={inline ? "ghost" : "outline"}
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           className={cn(
-            "relative h-7 gap-1 bg-background/90 px-2 shadow-md backdrop-blur [&_svg]:size-3.5",
+            "relative gap-1 px-2",
+            inline ? "h-7 [&_svg]:size-4" : "h-7 bg-background/90 shadow-md backdrop-blur [&_svg]:size-3.5",
             idle && "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-600/90 hover:text-white",
             auto && !closed && "border-emerald-600 text-emerald-600 dark:text-emerald-500"
           )}
@@ -629,20 +643,25 @@ export function PostponedPool({
             <span className="absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
           )}
         </Button>
+        {!inline && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="size-7 bg-background/90 px-0 shadow-md backdrop-blur [&_svg]:size-3.5"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach an image (photo library or camera)"
+            aria-label="Attach an image"
+          >
+            <ImagePlus />
+          </Button>
+        )}
         <Button
           size="sm"
-          variant="outline"
-          className="size-7 bg-background/90 px-0 shadow-md backdrop-blur [&_svg]:size-3.5"
-          onClick={() => fileInputRef.current?.click()}
-          title="Attach an image (photo library or camera)"
-          aria-label="Attach an image"
-        >
-          <ImagePlus />
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="size-7 bg-background/90 px-0 shadow-md backdrop-blur [&_svg]:size-3.5"
+          variant={inline ? "ghost" : "outline"}
+          className={cn(
+            "px-0",
+            inline ? "size-7 [&_svg]:size-4" : "size-7 bg-background/90 shadow-md backdrop-blur [&_svg]:size-3.5"
+          )}
           onClick={openComposer}
           title="Write a message in a full-size window — send it now or postpone it"
           aria-label="Compose a message"
@@ -651,6 +670,12 @@ export function PostponedPool({
         </Button>
       </div>
     </div>
+    </>
+  );
+
+  return (
+    <>
+    {slot ? createPortal(body, slot) : body}
     <ComposerDialog
       sessionId={sessionId}
       open={!!composer}

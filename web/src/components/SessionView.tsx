@@ -376,6 +376,8 @@ export function SessionView({
   const chatModeRef = useRef(chatMode);
   chatModeRef.current = chatMode;
   const claudePaneRef = useRef<HTMLDivElement>(null);
+  // The chat's message box, where the postponed pool's buttons sit while the chat is showing.
+  const [poolSlot, setPoolSlot] = useState<HTMLElement | null>(null);
   const [stopping, setStopping] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const wide = useWide();
@@ -1141,6 +1143,7 @@ export function SessionView({
                     activityLabel={activityLabel}
                     terminalRef={terminalRef}
                     onShowTerminal={() => setChatMode(false)}
+                    poolSlot={setPoolSlot}
                   />
                 </div>
               )}
@@ -1157,6 +1160,7 @@ export function SessionView({
               closed={closed}
               serverCount={session.postponedCount}
               autoSend={!!session.postponedAutoSend}
+              slot={chatMode ? poolSlot : null}
             />
           </div>
         );

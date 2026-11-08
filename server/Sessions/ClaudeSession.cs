@@ -456,6 +456,9 @@ public sealed class ClaudeSession : IDisposable
         args.Add("--name=" + Name);
         if (Model is not null && IsValidModel(Model))
             args.Add("--model=" + Model);
+        // A status line that reports the model and context use back to us, for the chat view.
+        if (StatusLineStore.SettingsFile(WorkingDirectory, _log) is { } settings)
+            args.Add("--settings=" + settings);
         // The initial prompt is a positional argument and MUST come last, after all flags — and after
         // "--", so that one starting with a dash is still a prompt (see the remarks).
         // Claude submits it on startup and stays interactive (works alongside --remote-control).
