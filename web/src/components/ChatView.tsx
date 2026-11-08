@@ -11,6 +11,7 @@ import {
   ImagePlus,
   Inbox,
   Loader2,
+  Search,
   Send,
   Square,
   TerminalSquare,
@@ -24,6 +25,7 @@ import { ChatPlan, parsePlan } from "./ChatPlan";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import { SlashSuggestions, useSlashInput } from "./SlashCommands";
 import { ImageLightbox } from "./ImageLightbox";
+import { useChatFind } from "./ChatFind";
 import type { Activity } from "./ActivityMark";
 import type { TerminalPaneHandle } from "./TerminalPane";
 import {
@@ -57,6 +59,9 @@ const STICK_PX = 80;
 
 // Between the keys that answer a question or a plan: each one redraws Claude's dialog before it takes the next.
 const QUESTION_KEY_GAP_MS = 150;
+
+// The find key: ⌘F on a Mac, where Ctrl+F moves the caret in the message box; Ctrl+F elsewhere.
+const MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
 
 // Ctrl-wheel travel per zoom step, as in the terminal: a mouse notch steps at once, a pinch ramps.
 const WHEEL_ZOOM_STEP = 40;
@@ -98,6 +103,7 @@ export function ChatView({
   const [status, setStatus] = useState<SessionStatus | null>(null);
   const [limit, setLimit] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const [showJump, setShowJump] = useState(false);
   // The chat's own zoom, like the terminal's: one reading size for every session's chat, kept across
@@ -173,6 +179,7 @@ export function ChatView({
   const items = useMemo(() => chatItems(transcript.entries), [transcript.entries]);
   // A closed session's queue went with it: nothing in it is coming.
   const queued = useMemo(() => (closed ? [] : queuedMessages(transcript.entries)), [closed, transcript.entries]);
+  const queuedKeys = useMemo(() => queued.map((q) => q.key), [queued]);
   const info = useMemo(() => sessionInfo(status, transcript.entries), [status, transcript.entries]);
   const shown = items.length > limit ? items.slice(items.length - limit) : items;
   const hidden = items.length - shown.length;
@@ -225,6 +232,23 @@ export function ChatView({
     });
   };
 
+  // ---- Find: Ctrl/⌘+F and the button in the corner ----
+  const itemCount = items.length;
+  const revealItem = useCallback(
+    // In whole pages, as "show earlier" draws them, so its count stays in step.
+    (i: number) => setLimit((l) => Math.max(l, Math.ceil((itemCount - i) / PAGE) * PAGE)),
+    [itemCount]
+  );
+  const find = useChatFind({
+    items,
+    extraKeys: queuedKeys,
+    shownFrom: hidden,
+    contentRef,
+    scrollRef,
+    revealItem,
+    onScrolled: onScroll,
+  });
+
   // ---- Zoom: the buttons, Ctrl/⌘ with + - 0, and Ctrl/⌘-wheel, the keys the terminal answers to ----
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
@@ -236,9 +260,21 @@ export function ChatView({
     [setZoom]
   );
   // Only while the chat has focus — the browser's own zoom, which takes the whole app with it, is what
-  // these keys do anywhere else.
+  // these keys do anywhere else. Its find, too.
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Only from the conversation itself: in the message box, the postponed pool or a picture opened full
+    // size, Esc is theirs.
+    if (e.key === "Escape" && find.open && !e.defaultPrevented && !preview && scrollRef.current?.contains(e.target as Node)) {
+      e.preventDefault();
+      find.close();
+      return;
+    }
     if (e.altKey || !(e.ctrlKey || e.metaKey)) return;
+    if (!e.shiftKey && (MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey) && (e.key.toLowerCase() === "f" || e.code === "KeyF")) {
+      e.preventDefault();
+      find.start();
+      return;
+    }
     const delta =
       e.key === "+" || e.key === "=" || e.code === "Equal" || e.code === "NumpadAdd"
         ? 1
@@ -303,10 +339,16 @@ export function ChatView({
       className="flex h-full min-h-0 flex-col bg-background"
     >
       <div className="group relative min-h-0 flex-1">
-        <div ref={scrollRef} onScroll={onScroll} className="h-full overflow-y-auto overscroll-contain">
+        {/* Focusable, so a click in the conversation keeps the keyboard in the chat — and Ctrl+F with it. */}
+        <div
+          ref={scrollRef}
+          tabIndex={-1}
+          onScroll={onScroll}
+          className="h-full overflow-y-auto overscroll-contain outline-none"
+        >
           {/* CSS zoom rather than a font size: it scales the cards, code and spacing with the text, and
               takes part in layout, so the scroll height and the stick-to-bottom stay right. */}
-          <div style={{ zoom }} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
+          <div ref={contentRef} style={{ zoom }} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
             {hidden > 0 ? (
               <button
                 type="button"
@@ -336,39 +378,40 @@ export function ChatView({
                     : "Nothing said yet. Write below, or in the terminal."}
               </p>
             ) : (
-              shown.map((item) =>
-                item.kind === "tool" && item.name === "AskUserQuestion" && parseQuestions(item.input) ? (
-                  <ChatQuestion
-                    key={item.key}
-                    input={item.input}
-                    result={item.result}
-                    pending={item.key === questionKey}
-                    onAnswer={answerQuestion}
-                    onShowTerminal={onShowTerminal}
-                  />
-                ) : item.kind === "tool" && item.name === "ExitPlanMode" && parsePlan(item.input) ? (
-                  <ChatPlan
-                    key={item.key}
-                    callId={item.id}
-                    input={item.input}
-                    result={item.result}
-                    pending={item.key === planKey}
-                    readScreen={readScreen}
-                    onAnswer={answerQuestion}
-                    onShowTerminal={onShowTerminal}
-                  />
-                ) : (
-                  <ChatRow key={item.key} item={item} sessionBusy={busy} images={images} />
-                )
-              )
+              // Each in a box of its own, with nothing of its own to lay out, for find to know it by.
+              shown.map((item) => (
+                <div key={item.key} data-find-key={item.key} className="contents">
+                  {item.kind === "tool" && item.name === "AskUserQuestion" && parseQuestions(item.input) ? (
+                    <ChatQuestion
+                      input={item.input}
+                      result={item.result}
+                      pending={item.key === questionKey}
+                      onAnswer={answerQuestion}
+                      onShowTerminal={onShowTerminal}
+                    />
+                  ) : item.kind === "tool" && item.name === "ExitPlanMode" && parsePlan(item.input) ? (
+                    <ChatPlan
+                      callId={item.id}
+                      input={item.input}
+                      result={item.result}
+                      pending={item.key === planKey}
+                      readScreen={readScreen}
+                      onAnswer={answerQuestion}
+                      onShowTerminal={onShowTerminal}
+                    />
+                  ) : (
+                    <ChatRow item={item} sessionBusy={busy} images={images} />
+                  )}
+                </div>
+              ))
             )}
             {loaded &&
               queued.map((q) => (
-                <div key={q.key} className="flex flex-col items-end gap-1">
+                <div key={q.key} data-find-key={q.key} className="flex flex-col items-end gap-1">
                   <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-dashed px-3.5 py-2 text-sm text-muted-foreground">
                     {q.text}
                   </div>
-                  <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <span data-find-skip className="flex items-center gap-1 text-[11px] text-muted-foreground">
                     <Clock className="size-3" /> Queued — Claude reads it as soon as it can
                   </span>
                 </div>
@@ -376,16 +419,33 @@ export function ChatView({
           </div>
         </div>
         {/* In the corner, like the terminal's. Shown on hover, and pinned open once zoomed, since a size
-            that isn't the default should say so and offer the way back. */}
-        <ZoomControls
-          zoom={zoom}
-          onChange={setZoom}
-          className={cn(
-            "right-4 top-3 mr-0 transition-opacity",
-            zoom === 1 &&
-              "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
-          )}
-        />
+            that isn't the default should say so and offer the way back. The find bar opens beside it, and
+            under it where the two don't fit side by side. */}
+        <div className="pointer-events-none absolute left-4 right-4 top-3 z-10 flex flex-wrap-reverse items-start justify-end gap-1.5 [&>*]:pointer-events-auto">
+          {find.bar}
+          <ZoomControls
+            zoom={zoom}
+            onChange={setZoom}
+            leading={
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                title={`Find in the chat (${MAC ? "⌘F" : "Ctrl+F"})`}
+                aria-pressed={find.open}
+                onClick={find.open ? find.close : find.start}
+              >
+                <Search className="size-4" />
+              </Button>
+            }
+            className={cn(
+              "relative mr-0 transition-opacity",
+              zoom === 1 &&
+                !find.open &&
+                "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+            )}
+          />
+        </div>
         {showJump && (
           <button
             type="button"
@@ -502,7 +562,7 @@ function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: b
               <ChatImages images={item.images} source={images} name="Image" className={item.text ? "mt-2" : undefined} />
             )}
             {item.queued && (
-              <span className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+              <span data-find-skip className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
                 <Clock className="size-3" /> Sent while Claude was working
               </span>
             )}

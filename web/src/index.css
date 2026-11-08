@@ -356,3 +356,17 @@
 .dark ::highlight(code-nav-current) {
   background-color: rgb(249 115 22 / 0.45);
 }
+
+/* Find in the chat (ChatFind): every match, and the one gone to. The same colors as the code's marks. */
+::highlight(chat-find) {
+  background-color: rgb(250 204 21 / 0.3);
+}
+::highlight(chat-find-current) {
+  background-color: rgb(249 115 22 / 0.5);
+}
+.dark ::highlight(chat-find) {
+  background-color: rgb(250 204 21 / 0.22);
+}
+.dark ::highlight(chat-find-current) {
+  background-color: rgb(249 115 22 / 0.45);
+}

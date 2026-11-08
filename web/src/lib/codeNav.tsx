@@ -115,7 +115,7 @@ function locate(s: Scan, offset: number, isEnd: boolean): [Text, number] | null 
   return at <= node.data.length ? [node, at] : null;
 }
 
-function escapeRegExp(s: string): string {
+export function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
@@ -332,7 +332,7 @@ function offsetInInput(input: HTMLTextAreaElement, x: number, y: number): number
 }
 
 /** Scroll whatever needs scrolling to put a range in view, centred, once it is out of it. */
-function reveal(range: Range) {
+export function reveal(range: Range) {
   const start = range.startContainer;
   let el: HTMLElement | null = start.nodeType === Node.TEXT_NODE ? start.parentElement : (start as HTMLElement);
   for (; el; el = el.parentElement) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useState, type ReactNode, type RefObject } from "react";
 import { ArrowDown, ArrowUp, FoldHorizontal, UnfoldHorizontal, WrapText, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -198,6 +198,8 @@ export function ScrollJumpButtons({
  *
  * Pass `wrap`/`onWrapChange` to lead with the word-wrap toggle. Unlike the width toggle it stays on
  * phones: a narrow screen is exactly where a long line runs off the edge.
+ *
+ * `leading` goes first of all, set off by a divider: a button of the viewer's own that belongs with these.
  */
 export function ZoomControls({
   zoom,
@@ -206,6 +208,7 @@ export function ZoomControls({
   onWidthChange,
   wrap,
   onWrapChange,
+  leading,
   className = "right-3 top-3",
 }: {
   zoom: number;
@@ -216,6 +219,7 @@ export function ZoomControls({
   /** Whether long lines wrap; pass together with onWrapChange to show the toggle. */
   wrap?: boolean;
   onWrapChange?: (wrap: boolean) => void;
+  leading?: ReactNode;
   /** Position within the nearest relative ancestor, e.g. "bottom-3 right-3". */
   className?: string;
 }) {
@@ -236,6 +240,12 @@ export function ZoomControls({
         className
       )}
     >
+      {leading && (
+        <>
+          {leading}
+          <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
+        </>
+      )}
       {onWrapChange && (
         <>
           <Button
