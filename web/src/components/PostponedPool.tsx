@@ -26,7 +26,8 @@ import {
   type PostponedMessage,
 } from "@/lib/postponed";
 import type { TerminalPaneHandle } from "./TerminalPane";
-import { useApi } from "@/lib/node";
+import { sessionKey, useApi, useNodeId } from "@/lib/node";
+import { loadChatDraft, saveChatDraft } from "@/lib/chatDraft";
 
 // Small delay between items in a "Send all" flush so Claude Code's TUI registers each as a distinct
 // queued message rather than merging back-to-back submits.
@@ -36,10 +37,10 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const baseName = (p: string) => p.split(/[\\/]/).pop() || "image";
 
 /**
- * What the full-size composer is working on: the inline draft (a new message), or one already-stashed
- * message being edited in place.
+ * What the full-size composer is working on: the inline draft (a new message), what is written in the
+ * chat view's message box, or one already-stashed message being edited in place.
  */
-type ComposerTarget = { kind: "draft" } | { kind: "message"; id: string };
+type ComposerTarget = { kind: "draft" } | { kind: "chat" } | { kind: "message"; id: string };
 
 /**
  * Per-session pool of "postponed" messages: buttons floating over the terminal's bottom-right corner,
@@ -76,6 +77,7 @@ export function PostponedPool({
   slot?: HTMLElement | null;
 }) {
   const api = useApi();
+  const chatKey = sessionKey(useNodeId(), sessionId);
   const [messages, setMessages] = useState<PostponedMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [draftImages, setDraftImages] = useState<PostponedImage[]>([]);
@@ -218,6 +220,17 @@ export function PostponedPool({
     setComposer({ target: { kind: "draft" }, draft: { text: draft, images: draftImages } });
   }, [draft, draftImages]);
 
+  /**
+   * The corner's Compose. In the chat view it carries on what is written in the chat's message box, which
+   * is where it sits; that stays in the box until the composer sends or postpones it.
+   */
+  const composeButton = useCallback(() => {
+    const chat = slot ? loadChatDraft(chatKey) : null;
+    if (chat && (chat.text.trim() || chat.images.length))
+      setComposer({ target: { kind: "chat" }, draft: { text: chat.text, images: chat.images } });
+    else openComposer();
+  }, [slot, chatKey, openComposer]);
+
   /** Open the full-size composer on a stashed item, to rewrite or send it. */
   const editMsg = useCallback((msg: PostponedMessage) => {
     setComposer({ target: { kind: "message", id: msg.id }, draft: { text: msg.text, images: msg.images } });
@@ -237,6 +250,8 @@ export function PostponedPool({
         const rest = messages.filter((m) => m.id !== id);
         commit(rest);
         closeIfSentDry(rest.length);
+      } else if (composer?.target.kind === "chat") {
+        saveChatDraft(chatKey);
       } else {
         setDraft("");
         setDraftImages([]);
@@ -244,7 +259,7 @@ export function PostponedPool({
       setError(null);
       return true;
     },
-    [composer, messages, commit, terminalRef, closeIfSentDry]
+    [composer, messages, commit, terminalRef, closeIfSentDry, chatKey]
   );
 
   // Composer "Postpone"/"Save": stash a new message, or overwrite the one being edited in place (so it
@@ -263,12 +278,15 @@ export function PostponedPool({
         );
       } else {
         commit([...messages, newMessage(d.text, d.images)]);
-        setDraft("");
-        setDraftImages([]);
+        if (composer?.target.kind === "chat") saveChatDraft(chatKey);
+        else {
+          setDraft("");
+          setDraftImages([]);
+        }
       }
       setError(null);
     },
-    [composer, messages, commit]
+    [composer, messages, commit, chatKey]
   );
 
   const sendOne = useCallback(
@@ -672,7 +690,7 @@ export function PostponedPool({
             "px-0",
             inline ? "size-7 [&_svg]:size-4" : "size-7 bg-background/90 shadow-md backdrop-blur [&_svg]:size-3.5"
           )}
-          onClick={openComposer}
+          onClick={composeButton}
           title="Write a message in a full-size window — send it now or postpone it"
           aria-label="Compose a message"
         >

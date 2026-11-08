@@ -35,7 +35,8 @@ import {
 import { uploadImageFile } from "@/lib/upload";
 import type { PostponedImage } from "@/lib/postponed";
 import type { ChatEntry, SessionStatus } from "@/types";
-import { useApi } from "@/lib/node";
+import { sessionKey, useApi, useNodeId } from "@/lib/node";
+import { loadChatDraft, onChatDraft, saveChatDraft } from "@/lib/chatDraft";
 import { cn } from "@/lib/utils";
 
 // How often the transcript is read: often while Claude is writing to it, rarely while it sits idle, and
@@ -595,8 +596,21 @@ function Composer({
   info: SessionLine;
 }) {
   const api = useApi();
-  const [text, setText] = useState("");
-  const [images, setImages] = useState<PostponedImage[]>([]);
+  // What was written here and not sent is kept per session, so a switch to another session and back
+  // finds it where it was.
+  const draftKey = sessionKey(useNodeId(), sessionId);
+  const [text, setText] = useState(() => loadChatDraft(draftKey).text);
+  const [images, setImages] = useState<PostponedImage[]>(() => loadChatDraft(draftKey).images);
+  useEffect(() => saveChatDraft(draftKey, { text, images }), [draftKey, text, images]);
+  // Taken from here by the full-size composer, and sent or postponed from there.
+  useEffect(
+    () =>
+      onChatDraft(draftKey, (d) => {
+        setText(d.text);
+        setImages(d.images);
+      }),
+    [draftKey]
+  );
   const [uploading, setUploading] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -605,6 +619,12 @@ function Composer({
   const slash = useSlashInput(sessionId, text, setText, areaRef);
   // Enter sends at a keyboard; on a phone it is the only way to start a new line, so the button sends.
   const coarse = useMemo(() => window.matchMedia?.("(pointer: coarse)").matches ?? false, []);
+
+  // A draft brought back is carried on from its end, not typed in front of.
+  useEffect(() => {
+    const el = areaRef.current;
+    if (el) el.selectionStart = el.selectionEnd = el.value.length;
+  }, []);
 
   // Grow with what is written, up to a third of the window; past that it scrolls.
   useLayoutEffect(() => {
