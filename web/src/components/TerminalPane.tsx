@@ -68,7 +68,9 @@ const WHEEL_ZOOM_STEP = 40;
 // only writes are honored.
 const clipboardProvider: IClipboardProvider = {
   readText: () => "",
-  writeText: (_selection, text) => writeToClipboard(text),
+  writeText: async (_selection, text) => {
+    await writeToClipboard(text);
+  },
 };
 
 // xterm palettes that track the site theme. The dark one keeps xterm's default ANSI colors (tuned

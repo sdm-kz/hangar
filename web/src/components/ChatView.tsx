@@ -26,6 +26,7 @@ import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import { SlashSuggestions, useSlashInput } from "./SlashCommands";
 import { ImageLightbox } from "./ImageLightbox";
 import { useChatFind } from "./ChatFind";
+import { CopyButton } from "./CopyPathButton";
 import type { Activity } from "./ActivityMark";
 import type { TerminalPaneHandle } from "./TerminalPane";
 import {
@@ -67,6 +68,12 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const WHEEL_ZOOM_STEP = 40;
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || "image";
+
+// A copy button that shows while the pointer is over what it copies (each place names that its group),
+// and always on a touch screen, which has no hover. Icon-only, and not selectable, so a selection dragged
+// across the chat — and find, which reads the chat's text — never takes it in.
+const COPY_BUTTON =
+  "grid size-6 shrink-0 select-none place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100";
 
 /**
  * The session's terminal, read as a chat. Claude's TUI keeps running in the terminal underneath: this
@@ -555,7 +562,11 @@ function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: b
   switch (item.kind) {
     case "user":
       return (
-        <div className="flex justify-end">
+        // The button to the bubble's left, in the room its 85% leaves, clear of the text.
+        <div className="group/msg flex items-end justify-end gap-1">
+          {item.text && (
+            <CopyButton text={item.text} title="Copy message" className={cn(COPY_BUTTON, "group-hover/msg:opacity-100")} />
+          )}
           <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-muted px-3.5 py-2 text-sm">
             {item.text}
             {item.images.length > 0 && (
@@ -602,8 +613,16 @@ function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: b
       );
     case "assistant":
       return (
-        <div className="prose prose-sm max-w-none break-words dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
-          <Markdown text={item.text} />
+        // The button in the space under the reply's last paragraph, which ends in a margin of its own.
+        <div className="group/msg relative">
+          <div className="prose prose-sm max-w-none break-words dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
+            <Markdown text={item.text} copyCode />
+          </div>
+          <CopyButton
+            text={item.text}
+            title="Copy reply (Markdown)"
+            className={cn(COPY_BUTTON, "absolute -bottom-2 right-0 group-hover/msg:opacity-100")}
+          />
         </div>
       );
     case "thinking":
@@ -712,17 +731,21 @@ function ToolCard({
       </summary>
       <div className="flex flex-col gap-2 border-t px-2.5 py-2">
         {item.input && (
-          <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono">{prettyInput(item.input)}</pre>
+          <ToolText copy={() => prettyInput(item.input)} title="Copy input">
+            <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words pr-7 font-mono">{prettyInput(item.input)}</pre>
+          </ToolText>
         )}
         {result && (resultText || !result.images.length) && (
-          <pre
-            className={cn(
-              "max-h-72 overflow-auto whitespace-pre-wrap break-words border-t pt-2 font-mono",
-              result.isError ? "text-destructive" : "text-muted-foreground"
-            )}
-          >
-            {resultText || "(no output)"}
-          </pre>
+          <ToolText copy={resultText || null} title="Copy output" divided>
+            <pre
+              className={cn(
+                "max-h-72 overflow-auto whitespace-pre-wrap break-words pr-7 font-mono",
+                result.isError ? "text-destructive" : "text-muted-foreground"
+              )}
+            >
+              {resultText || "(no output)"}
+            </pre>
+          </ToolText>
         )}
         {result && result.images.length > 0 && (
           <ChatImages
@@ -734,6 +757,37 @@ function ToolCard({
         )}
       </div>
     </details>
+  );
+}
+
+/**
+ * A tool's input or its output, with a button in the top right corner that copies it. The button is out of
+ * the <pre>, which scrolls, so it stays put; the <pre> leaves room for it on the right.
+ */
+function ToolText({
+  copy,
+  title,
+  divided,
+  children,
+}: {
+  /** The text to copy; null when there is nothing worth it ("(no output)"). */
+  copy: string | (() => string) | null;
+  title: string;
+  /** A rule above it, between the input and the output. */
+  divided?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className={cn("group/io relative", divided && "border-t pt-2")}>
+      {children}
+      {copy && (
+        <CopyButton
+          text={copy}
+          title={title}
+          className={cn(COPY_BUTTON, "absolute right-0 bg-background/80 group-hover/io:opacity-100", divided ? "top-2" : "top-0")}
+        />
+      )}
+    </div>
   );
 }
 

@@ -19,6 +19,7 @@ import { mdAssetUrl } from "@/lib/mdAssets";
 import { useApi } from "@/lib/node";
 import { useHtml } from "@/lib/useHtml";
 import { TocPanel, type TocItem } from "./TocPanel";
+import { CopyButton } from "./CopyPathButton";
 
 /**
  * Shared markdown renderer for file previews (FileBrowser + ServerFileViewer): GFM plus inline
@@ -31,6 +32,8 @@ import { TocPanel, type TocItem } from "./TocPanel";
  *
  * Pass `docPath` (the document's absolute path on the server) to make its own images render —
  * without it, a relative `![](img/x.png)` resolves against the app's URL and 404s.
+ *
+ * Pass `copyCode` to give each code block a copy button in its top right corner (the chat does).
  */
 // GitHub's sanitize schema minus the `user-content-` id clamp: documents place explicit
 // `<a id="…"></a>` anchors and link to them as `[§2.4](#s-2-4)`, so ids must survive verbatim
@@ -49,11 +52,13 @@ export function Markdown({
   text,
   docPath,
   assetUrl,
+  copyCode,
 }: {
   text: string;
   docPath?: string;
   /** Where a file the document references is fetched from; the file API of the view's node by default. */
   assetUrl?: (path: string) => string;
+  copyCode?: boolean;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const api = useApi();
@@ -143,7 +148,7 @@ export function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={rehypePlugins}
-        components={components}
+        components={copyCode ? copyComponents : components}
       >
         {text}
       </ReactMarkdown>
@@ -319,6 +324,28 @@ const components: Components = {
   h4: heading("h4"),
   h5: heading("h5"),
   h6: heading("h6"),
+};
+
+// The same, with a copy button on each code block. The button sits outside the <pre>, which scrolls
+// sideways, so that it stays in the corner; the wrapper takes over the block's margins for it.
+const copyComponents: Components = {
+  ...components,
+  pre({ node, children, ...props }) {
+    const code = mermaidSource(node);
+    if (code !== null) return <MermaidDiagram code={code} />;
+    return (
+      <div className="group/code relative my-5 [&>pre]:my-0">
+        <pre {...props}>{children}</pre>
+        {node && (
+          <CopyButton
+            text={() => hastText(node).replace(/\n$/, "")}
+            title="Copy code"
+            className="absolute right-1.5 top-1.5 grid size-6 select-none place-items-center rounded-md border bg-background/80 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/code:opacity-100 [@media(pointer:coarse)]:opacity-100"
+          />
+        )}
+      </div>
+    );
+  },
 };
 
 /** If this <pre> wraps a ```mermaid fence, return the fence's source text; otherwise null. */
