@@ -2,11 +2,76 @@
 
 # Installing Hangar
 
+## From a release
+
+**Linux and macOS:**
+
+```bash
+curl -fsSL https://github.com/sdm-kz/hangar/releases/latest/download/install.sh | sh
+```
+
+**Windows**, in PowerShell (Windows PowerShell 5.1 or PowerShell 7):
+
+```powershell
+irm https://github.com/sdm-kz/hangar/releases/latest/download/install.ps1 | iex
+```
+
+The installer downloads the build for your machine from the latest release, checks it against the
+release's `SHA256SUMS`, and installs it with the same scripts a build from source uses:
+
+- **Linux and macOS:** into `~/.local/opt/hangar`, started now and at sign-in, as a systemd user unit or a
+  launchd agent (see [Linux and macOS](#linux-and-macos)).
+- **Windows:** into `%LocalAppData%\Programs\Hangar`, started now, and at sign-in from the first install
+  (see [Windows](#windows)). The tray starts too.
+
+Then open **http://localhost:5099**, and [set a password](#first-run-set-a-password) before you reach it
+from anywhere else.
+
+**Run it again to update.** Settings (`appsettings*.json`), the app's data and running sessions are kept,
+and on Windows so are your sign-in entries. The in-app Update button works too.
+
+Settings, as environment variables:
+
+| Variable | |
+|---|---|
+| `HANGAR_VERSION` | A release to install instead of the latest, such as `0.1.0`, or a prerelease such as `0.2.0-rc.1` |
+| `HANGAR_INSTALL_DIR` | Where to install it |
+| `HANGAR_NO_AUTOSTART=1` | Windows: add no sign-in entries on a first install |
+
+```bash
+curl -fsSL https://github.com/sdm-kz/hangar/releases/latest/download/install.sh | HANGAR_VERSION=0.1.0 sh
+```
+
+```powershell
+$env:HANGAR_VERSION = "0.1.0"; irm https://github.com/sdm-kz/hangar/releases/latest/download/install.ps1 | iex
+```
+
+**Builds:** Windows x64 and arm64, macOS on Apple silicon and Intel, Linux x64 and arm64. The Linux tray
+needs glibc 2.39 or later (Ubuntu 24.04, Debian 13); the server runs on older systems too. On macOS the
+tray is signed with Hangar's release certificate, so the permissions you grant it (Screen Recording,
+Accessibility) carry over from one release to the next.
+
+**Before you pipe it to a shell**, you can read it: open the same URL in a browser. To check that a
+download was built by this repository's release workflow, from the tagged commit:
+
+```bash
+gh attestation verify hangar-linux-x64.tar.gz --repo sdm-kz/hangar
+```
+
+**Uninstalling** uses the scripts the installer keeps in the install folder:
+`~/.local/opt/hangar/scripts/install-unix.sh --uninstall`, or
+`%LocalAppData%\Programs\Hangar\scripts\uninstall.ps1`. See [Uninstall](#uninstall).
+
 ## Prerequisites
+
+To run Hangar, from a release or from source:
 
 - **Claude Code CLI**, installed and logged in for your user account with a Claude subscription
   (Remote Control needs a Pro, Max, Team or Enterprise plan, and Claude Code v2.1.51 or later). Run
   `claude` once in a terminal and log in before starting Hangar.
+
+To build it from source, also:
+
 - **Git**.
 - **.NET 10 SDK** (pinned by [`global.json`](../global.json)).
 - **Node.js 22.12+** ([`.nvmrc`](../.nvmrc) names 24).

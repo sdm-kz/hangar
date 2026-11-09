@@ -101,9 +101,34 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md), not in public
 ## Quick start
 
 You need the **Claude Code CLI**, installed and logged in for your account (run `claude` once in a
-terminal). To build Hangar: **Git**, the **.NET 10 SDK** and **Node.js 22.12+**, plus **Rust** if you
-want the tray app. The builds are self-contained, so the machine that only runs Hangar needs no .NET or
-Node. The full list is in [Installing Hangar](docs/install.md#prerequisites).
+terminal). Then install the latest release:
+
+**Linux and macOS:**
+
+```bash
+curl -fsSL https://github.com/sdm-kz/hangar/releases/latest/download/install.sh | sh
+```
+
+**Windows**, in PowerShell:
+
+```powershell
+irm https://github.com/sdm-kz/hangar/releases/latest/download/install.ps1 | iex
+```
+
+It downloads the build for your machine, checks it against the release's checksums, installs it
+(`~/.local/opt/hangar`, or `%LocalAppData%\Programs\Hangar`) and starts it now and at sign-in. Run it
+again to update: settings and running sessions are kept. Builds are for Windows (x64, arm64), macOS
+(Apple silicon, Intel) and Linux (x64, arm64). Options, uninstalling and checking a download are in
+[Installing Hangar](docs/install.md#from-a-release).
+
+Then open **http://localhost:5099**. Until you set a password it answers only this machine: see
+[First run: set a password](docs/install.md#first-run-set-a-password).
+
+### Build from source
+
+You need **Git**, the **.NET 10 SDK** and **Node.js 22.12+**, plus **Rust** if you want the tray app.
+The builds are self-contained, so the machine that only runs Hangar needs no .NET or Node. The full list
+is in [Installing Hangar](docs/install.md#prerequisites).
 
 **Windows**, from PowerShell:
 
@@ -122,9 +147,7 @@ cd hangar
 scripts/build.sh && scripts/install-unix.sh   # build, install to ~/.local/opt/hangar, start now and at sign-in
 ```
 
-Then open **http://localhost:5099**. Until you set a password it answers only this machine: see
-[First run: set a password](docs/install.md#first-run-set-a-password). Running it as a Windows
-service, keeping macOS permissions across updates and uninstalling are in
+Running it as a Windows service, keeping macOS permissions across updates and uninstalling are in
 [Installing Hangar](docs/install.md).
 
 ## What Hangar changes on your machine
@@ -143,12 +166,14 @@ The full list, and how to undo each: [What Hangar changes outside its own folder
 
 ## Documentation
 
-- [Installing Hangar](docs/install.md): prerequisites, Windows, Linux and macOS, the first password, a
-  Windows service, uninstalling, and everything Hangar writes outside its folders.
+- [Installing Hangar](docs/install.md): the one-line install, prerequisites, building on Windows, Linux
+  and macOS, the first password, a Windows service, uninstalling, and everything Hangar writes outside
+  its folders.
 - [Features](docs/features.md): what the web UI (terminal, chat, files) and the tray app do, and how
   sessions survive restarts.
 - [Configuration](docs/configuration.md): where your settings go, and every key.
-- [Updating](docs/updating.md): redeploys, one-click in-app updates, and updating another machine.
+- [Updating](docs/updating.md): re-running the installer, redeploys, one-click in-app updates, and
+  updating another machine.
 - [API](docs/api.md): starting sessions from scripts, and the API a session uses on itself.
 - [How it works](docs/architecture.md): how a session is launched, the architecture, and the design notes.
 - [Troubleshooting](docs/troubleshooting.md).

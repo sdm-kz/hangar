@@ -2,6 +2,12 @@
 
 # Updating
 
+## From a release
+
+Run the [one-line installer](install.md#from-a-release) again. It installs the latest release over the
+one you have, keeping settings (`appsettings*.json`), the app's data, running sessions and, on Windows,
+your sign-in entries.
+
 ## From a checkout on the same machine
 
 Pull and redeploy. Settings are preserved and running sessions survive:
