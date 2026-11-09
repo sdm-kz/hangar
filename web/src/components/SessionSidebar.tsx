@@ -2612,12 +2612,18 @@ export function SessionSidebar({
           </span>
         )}
         <div className="flex items-center justify-between gap-1">
-          <span className="flex min-w-0 flex-1 items-center gap-0.5">
+          <span className="relative flex min-w-0 flex-1 items-center gap-0.5">
             {/* Fold away whatever is nested under this session — its forks, and anything put under it
-                by hand. Only a row that actually has some gets the toggle: no gutter is reserved
-                elsewhere, so a childless row starts at its name. How much a collapsed row is hiding
-                rides in the tooltip rather than an inline count, which would cost a reserved slot on
-                every parent row just to keep the name from jumping. */}
+                by hand. Only a row that actually has some gets the toggle, and it hangs out to the
+                left of the row rather than sitting in front of the name: inline, it pushed a parent's
+                name one chevron in, and the parent read as nested under the row above it. Hung, every
+                row of a level starts its name in one column whether it has children or not, and no
+                gutter is spent on the childless rows. There is room for it wherever a row is drawn: a
+                project's and a folder's rows are stepped in under their heading, a nested row by its
+                indent, and the plain list pads for it. The tap target is wider than the glyph, but
+                only out to the left, so it never takes a click meant for the name. How much a
+                collapsed row is hiding rides in the tooltip rather than an inline count, which would
+                cost a reserved slot on every parent row just to keep the name from jumping. */}
             {hasChildren && (
               <button
                 type="button"
@@ -2631,7 +2637,7 @@ export function SessionSidebar({
                     ? `Show ${hiddenCount} nested session${hiddenCount === 1 ? "" : "s"}`
                     : "Hide the sessions nested under this one"
                 }
-                className="flex shrink-0 items-center text-muted-foreground hover:text-foreground"
+                className="absolute right-full top-1/2 mr-0.5 flex -translate-y-1/2 items-center text-muted-foreground before:absolute before:-inset-y-1.5 before:-left-1.5 before:right-0 before:content-[''] hover:text-foreground"
               >
                 {hiddenCount > 0 ? (
                   <ChevronRight className="size-3.5" />
@@ -2826,7 +2832,7 @@ export function SessionSidebar({
    * `indent` is a step in, taken when there is a header of their own above them — a folder group's,
    * or a virtual folder's. Where the rows hang straight off the project heading instead (a merged
    * folder header, or the flat list), they are at the project's own child level and take no step, so
-   * a row's fork chevron lands in the same column as the chevron of a box sitting beside it.
+   * a row's name starts in the column of the chevron of a box sitting beside it.
    */
   const renderGroupRows = (
     g: { key: string; nodes: ForkNode[]; rootIds: string[] },
@@ -3186,12 +3192,13 @@ export function SessionSidebar({
           renderItems={(ss, project) => renderFlatSection(project, ss)}
           // No folder header stands between a project and its rows here, so they sit at the
           // project's own child level — level with the virtual folders beside them, which is what
-          // puts a row's fork chevron in the same column as a box's. (They used to carry a folder
-          // group's indent as well, which lined them up with the grouped view at the cost of
-          // looking like they hung off a header that isn't there.)
+          // starts a row's name in the column of a box's chevron (a parent row's own fold chevron
+          // hangs to the left of that, see renderRow). (They used to carry a folder group's indent
+          // as well, which lined them up with the grouped view at the cost of looking like they
+          // hung off a header that isn't there.)
           // 5px, not 6: a row carries a 1px transparent border (it turns solid when selected)
-          // and a header does not, so the row needs one pixel less to put its chevron in the
-          // same column as a virtual folder's.
+          // and a header does not, so the row needs one pixel less to put its name in the same
+          // column as a virtual folder's chevron.
           // No row gap, for the reason renderGroupRows gives: the rings are inside the rows and
           // the borders alone are what stands between two of them.
           bodyClassName="pl-[15px]"
@@ -3212,8 +3219,10 @@ export function SessionSidebar({
         />
       ) : (
         // Plain flat list: no projects to head it, but the same one arrangeable list underneath —
-        // pins float to the top, and everything else keeps the place it was dragged to.
-        <div>{renderFlatSection(null, visibleSessions)}</div>
+        // pins float to the top, and everything else keeps the place it was dragged to. Stepped in
+        // by the width of the fold chevron a parent row hangs to its left (see renderRow): with no
+        // heading above them, the list's own padding is all the room there is, and it is too little.
+        <div className="pl-2">{renderFlatSection(null, visibleSessions)}</div>
       )}
     </>
   );
