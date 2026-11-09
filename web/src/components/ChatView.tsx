@@ -526,6 +526,7 @@ export function ChatView({
           onShowTerminal={onShowTerminal}
           poolSlot={poolSlot}
           info={info}
+          onPreview={(src, name) => setPreview({ src, name })}
         />
       )}
       {/* On the page itself: the panes it could open in are positioned, and would hold it to their box. */}
@@ -830,6 +831,26 @@ function Fold({ title, className, children }: { title: string; className?: strin
   );
 }
 
+/** An attached image's thumbnail in its chip, or the image icon until it loads (or if it can't). */
+function ChipThumb({ src }: { src: string }) {
+  const [shown, setShown] = useState(false);
+  const [failed, setFailed] = useState(false);
+  return (
+    <>
+      {!shown && <ImageIcon className="size-3.5 shrink-0" />}
+      {!failed && (
+        <img
+          src={src}
+          alt=""
+          className={shown ? "size-4 shrink-0 rounded-sm object-cover" : "hidden"}
+          onLoad={() => setShown(true)}
+          onError={() => setFailed(true)}
+        />
+      )}
+    </>
+  );
+}
+
 /**
  * Where a message is written. It goes into the terminal the way typing it there would — a bracketed paste
  * and an Enter — so a message sent while Claude is busy queues behind the turn, as it does in the TUI:
@@ -844,6 +865,7 @@ function Composer({
   onShowTerminal,
   poolSlot,
   info,
+  onPreview,
 }: {
   sessionId: string;
   terminalRef: RefObject<TerminalPaneHandle | null>;
@@ -860,6 +882,8 @@ function Composer({
   onShowTerminal: () => void;
   poolSlot?: (el: HTMLElement | null) => void;
   info: SessionLine;
+  /** Open an attached image full size. */
+  onPreview: (src: string, name: string) => void;
 }) {
   const api = useApi();
   // What was written here and not sent is kept per session, so a switch to another session and back
@@ -978,8 +1002,16 @@ function Composer({
           <div className="mb-1.5 flex flex-wrap gap-1.5">
             {images.map((img) => (
               <span key={img.fullPath} className="flex items-center gap-1 rounded-md border bg-muted px-2 py-0.5 text-xs">
-                <ImageIcon className="size-3.5" />
-                <span className="max-w-[10rem] truncate">{baseName(img.path)}</span>
+                {/* The picture and its name open it full size, to check it is the one meant. */}
+                <button
+                  type="button"
+                  title="Preview image"
+                  className="flex min-w-0 cursor-zoom-in items-center gap-1 hover:text-foreground"
+                  onClick={() => onPreview(api.sessionFileUrl(sessionId, img.path), baseName(img.path))}
+                >
+                  <ChipThumb src={api.sessionFileUrl(sessionId, img.path)} />
+                  <span className="max-w-[10rem] truncate">{baseName(img.path)}</span>
+                </button>
                 <button
                   type="button"
                   title="Remove"
