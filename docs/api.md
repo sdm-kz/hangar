@@ -77,6 +77,9 @@ would take in the session's folder, for the chat's autocomplete: `name`, `source
 answers in the terminal). It is read from disk — `.claude/commands` and `.claude/skills` in the folder
 and its parents and in `~/.claude`, enabled and synced plugins — plus a built-in table for Claude Code
 2.1, so a command a newer Claude adds can be missing until Hangar catches up.
+`GET /api/commands?folder=<path>` lists the same for a folder no session runs in yet (the tray app's
+new-session message); a folder that isn't there, or isn't a full path, has no commands of its own, so
+the list is the user's, plugins' and Claude's.
 
 ## Self-service API for a running session
 

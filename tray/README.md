@@ -89,6 +89,14 @@ WinUI (the WhatsApp app) only show the whole window. On macOS this takes the *Ac
 The **editor** opens with the message box focused. The quickest path is: capture, type, `Ctrl+Enter`
 (`⌘↵` on a Mac).
 
+**Slash commands.** Typing `/` in the message box suggests the commands Claude takes in the chosen
+session's folder (or, for a new session, in the folder it is to start in): Claude's own, yours, the
+project's, plugins' and skills', with their descriptions, as the web UI's message box does. `↑`/`↓`
+choose, `Tab` or `Enter` takes one, `Esc` closes the list; it works anywhere in the text, on the word
+at the caret. Sent first in the message, the command runs, with the pictures after it. Needs a Hangar
+that has `GET /api/sessions/{id}/commands` (and `GET /api/commands` for a new session); with an older
+one there are no suggestions.
+
 **Several pictures, one message.** *Add a capture* (the picture-plus button in the toolbar,
 `Ctrl+Shift+N`, `⌘⇧N`) steps the editor aside and picks a region as the hotkey does; the cut-out joins
 this editor instead of opening one of its own, and `Esc` comes back without one. With more than one, a
@@ -251,6 +259,10 @@ The log (`…\logs`) records how long each overlay and editor took to come up.
   (`POST /api/sessions/{id}/fs/upload-image`) and sends the message with the uploaded paths
   (`POST /api/sessions/{id}/message`, `images`), which types them into the session the way the web
   composer does.
+- The message box's slash-command suggestions (`src/editor/slash.ts`) read the list through
+  `session_commands` (`GET /api/sessions/{id}/commands`, through `/n/{node}/` for a paired machine's
+  session) or `folder_commands` (`GET /api/commands?folder=`), and find, rank and complete the command
+  at the caret with the web UI's own rules (`@web/lib/slash`).
 - An editor holds several captures as pages (`src/editor/pages.ts`). Only the one on show has a Konva
   stage; the others keep their drawing and the PNG they were flattened to when left, so sending doesn't
   have to draw them again. *Add a capture* (`add_capture`) hides the editor, waits for it to be off the

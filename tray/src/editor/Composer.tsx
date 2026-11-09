@@ -1,9 +1,10 @@
 import { forwardRef, useEffect, useRef } from "react";
 import clsx from "clsx";
-import { Check, Clock, ExternalLink, Loader2, Plus, RefreshCw, Search, Send, Settings } from "lucide-react";
+import { Check, Clock, ExternalLink, Loader2, Plus, RefreshCw, Search, Send, Settings, TerminalSquare } from "lucide-react";
 import type { ApiError, SessionItem } from "@/lib/tauri";
 import { sessionColor } from "@web/lib/sessionColors";
 import { ago } from "./sessions";
+import type { SlashInput } from "./slash";
 import { folderName } from "./NewSession";
 import { MESSAGE_MIN, PICKER_MIN } from "./Splitter";
 
@@ -20,30 +21,115 @@ export type SessionsState =
 
 export const MessageBox = forwardRef<
   HTMLTextAreaElement,
-  { value: string; onChange(v: string): void; target: SessionItem | null; creating: boolean; mod: string }
->(function MessageBox({ value, onChange, target, creating, mod }, ref) {
+  {
+    value: string;
+    onChange(v: string): void;
+    target: SessionItem | null;
+    creating: boolean;
+    mod: string;
+    slash: SlashInput;
+  }
+>(function MessageBox({ value, onChange, target, creating, mod, slash }, ref) {
   return (
-    <textarea
-      ref={ref}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={
-        creating
-          ? "First prompt for the new session — what should Claude do with this?"
-          : target
-            ? `Message to ${target.name}${target.nodeName ? ` on ${target.nodeName}` : ""} — what should Claude look at?`
-            : "Message to Claude…"
-      }
-      className="h-full min-h-0 w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-[13.5px] leading-relaxed outline-none placeholder:text-muted-foreground/70 focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
-      aria-label="Message"
-      title={
-        creating
-          ? `${mod}↵ starts the session · Esc leaves the box so tool keys work`
-          : `${mod}↵ sends · ${mod}⇧↵ postpones · Esc leaves the box so tool keys work`
-      }
-    />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <SlashSuggestions slash={slash} />
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          slash.track(e.target);
+        }}
+        onSelect={(e) => slash.track(e.currentTarget)}
+        onFocus={(e) => {
+          slash.track(e.currentTarget);
+          slash.focus(true);
+        }}
+        onBlur={() => slash.focus(false)}
+        onKeyDown={(e) => void slash.onKeyDown(e)}
+        role="combobox"
+        aria-expanded={slash.open}
+        aria-controls={slash.open ? slash.listId : undefined}
+        aria-activedescendant={slash.open && slash.matches.length ? slash.optionId(slash.active) : undefined}
+        aria-autocomplete="list"
+        placeholder={
+          creating
+            ? "First prompt for the new session — what should Claude do with this?"
+            : target
+              ? `Message to ${target.name}${target.nodeName ? ` on ${target.nodeName}` : ""} — what should Claude look at?`
+              : "Message to Claude…"
+        }
+        className="h-full min-h-0 w-full flex-1 resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-[13.5px] leading-relaxed outline-none placeholder:text-muted-foreground/70 focus:border-accent/70 focus:ring-2 focus:ring-accent/20"
+        aria-label="Message"
+        title={
+          creating
+            ? `${mod}↵ starts the session · / for a command · Esc leaves the box so tool keys work`
+            : `${mod}↵ sends · ${mod}⇧↵ postpones · / for a command · Esc leaves the box so tool keys work`
+        }
+      />
+    </div>
   );
 });
+
+// Where a command comes from, where that is worth saying: a plugin's is in its name, Claude's goes unsaid.
+const SOURCE_LABEL: Record<string, string | undefined> = { project: "project", user: "user" };
+
+/** The commands matching the one being typed, over the message box. */
+function SlashSuggestions({ slash }: { slash: SlashInput }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${slash.active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [slash.active, slash.matches]);
+  if (!slash.open) return null;
+  return (
+    <div
+      ref={listRef}
+      id={slash.listId}
+      role="listbox"
+      aria-label="Slash commands"
+      className="absolute inset-x-0 bottom-full z-30 mb-2 max-h-64 overflow-y-auto overflow-x-hidden rounded-lg border border-border bg-background p-1 shadow-lg"
+    >
+      {slash.matches.length === 0 ? (
+        <p className="flex items-center gap-2 px-2 py-1.5 text-[12px] text-muted-foreground">
+          <Loader2 size={13} className="animate-spin" /> Reading the commands…
+        </p>
+      ) : (
+        slash.matches.map((c, i) => (
+          <div
+            key={c.name}
+            id={slash.optionId(i)}
+            data-index={i}
+            role="option"
+            aria-selected={i === slash.active}
+            // mousedown, not click: taking the pick must not take the focus out of the box first.
+            onMouseDown={(e) => {
+              e.preventDefault();
+              slash.complete(c);
+            }}
+            className={clsx(
+              "flex cursor-default items-baseline gap-2 rounded-md px-2 py-1 text-[13px]",
+              i === slash.active ? "bg-accent text-accent-foreground" : "hover:bg-muted",
+            )}
+          >
+            <span className="shrink-0 font-mono">/{c.name}</span>
+            {c.hint && <span className="max-w-[40%] shrink-0 truncate font-mono text-[11.5px] opacity-70">{c.hint}</span>}
+            <span className={clsx("min-w-0 flex-1 truncate text-[11.5px]", i === slash.active ? "opacity-80" : "text-muted-foreground")}>
+              {c.description}
+            </span>
+            {c.dialog && (
+              <span title="Answers in the terminal" className="shrink-0 self-center opacity-70">
+                <TerminalSquare size={13} />
+              </span>
+            )}
+            {SOURCE_LABEL[c.source] && (
+              <span className="shrink-0 text-[10px] uppercase tracking-wide opacity-70">{SOURCE_LABEL[c.source]}</span>
+            )}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
 
 export function SessionPicker(props: {
   state: SessionsState;

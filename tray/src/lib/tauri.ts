@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { SlashCommand } from "@web/types";
 import { packImages } from "./pack";
 
 export type Mode = "region" | "window" | "fullscreen" | "freeform";
@@ -165,6 +166,11 @@ export const api = {
         "x-postpone": postpone ? "1" : "0",
       },
     }),
+  /** The slash commands Claude takes in the session, for the message box's suggestions. */
+  sessionCommands: (session: SessionItem) =>
+    invoke<SlashCommand[]>("session_commands", { sessionId: session.id, node: session.node }),
+  /** The same for the folder a new session is to start in. */
+  folderCommands: (folder: string) => invoke<SlashCommand[]>("folder_commands", { folder }),
   newSessionOptions: () => invoke<NewSessionOptions>("new_session_options"),
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
   /** Start a session in `target.folder`, its first prompt the message with the captures. */

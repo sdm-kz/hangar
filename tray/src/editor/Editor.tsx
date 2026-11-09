@@ -8,6 +8,7 @@ import { MessageBox, SendBar, SessionPicker, type SendState, type SessionsState 
 import { NewSessionPanel, type OptionsState } from "./NewSession";
 import { MAX_PAGES, loadPage, moveItem, neighbourOf, rawPng, thumbnail, type Page } from "./pages";
 import { PageStrip } from "./PageStrip";
+import { useSlashInput, type SlashSource } from "./slash";
 import {
   CANVAS_MIN,
   COMPOSER_HEIGHT,
@@ -433,6 +434,14 @@ export default function Editor({ id }: { id: string }) {
   const items = useMemo(() => filterSessions(allItems, query), [allItems, query]);
   useEffect(() => setTarget((t) => keepSelection(items, t)), [items]);
   const targetItem = items.find((s) => s.key === target) ?? null;
+  // The slash commands the message box suggests: the chosen session's, or those of the new one's folder.
+  const newFolder = newTarget.folder.trim();
+  const slashSource: SlashSource | null = creating
+    ? { key: `folder:${newFolder}`, load: () => api.folderCommands(newFolder) }
+    : targetItem
+      ? { key: `session:${targetItem.key}`, load: () => api.sessionCommands(targetItem) }
+      : null;
+  const slash = useSlashInput(slashSource, message, setMessage, messageRef);
 
   // ---- Actions ----
   const onCommit = useCallback((next: Doc) => setHistory((h) => commit(h, next)), []);
@@ -915,7 +924,15 @@ export default function Editor({ id }: { id: string }) {
         className="flex shrink-0 border-t border-border bg-panel p-3"
       >
         <div ref={messageColRef} className="flex min-w-0 flex-1 flex-col gap-2" style={{ minWidth: MESSAGE_MIN }}>
-          <MessageBox ref={messageRef} value={message} onChange={setMessage} target={targetItem} creating={creating} mod={MOD} />
+          <MessageBox
+            ref={messageRef}
+            value={message}
+            onChange={setMessage}
+            target={targetItem}
+            creating={creating}
+            mod={MOD}
+            slash={slash}
+          />
           <SendBar
             target={targetItem}
             creating={creating ? { folder: newTarget.folder } : null}

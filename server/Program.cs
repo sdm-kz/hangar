@@ -1228,6 +1228,12 @@ internal static class Program
         // The slash commands Claude would take in a session's folder, for the chat view's autocomplete.
         app.MapGet("/api/sessions/{id}/commands", (string id, SessionManager mgr) =>
             mgr.GetAny(id) is { } info ? Results.Ok(SlashCommands.List(info.WorkingDirectory)) : Results.NotFound());
+        // The same for a folder no session runs in yet, for the tray app's new-session message. A folder that
+        // isn't there (one still being typed) has no commands of its own: the user's, plugins' and Claude's.
+        app.MapGet("/api/commands", (string? folder) =>
+            Results.Ok(SlashCommands.List(folder is not null && Path.IsPathFullyQualified(folder) && Directory.Exists(folder)
+                ? folder
+                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))));
 
         // ---- Recent launch presets & folders (shared across devices, persisted server-side) ---
         app.MapGet("/api/recents", (RecentsStore store) => Results.Ok(store.Get()));

@@ -166,6 +166,21 @@ pub struct CreatedSession {
     pub group_id: Option<String>,
 }
 
+/// A slash command Claude takes, as the server lists them for a session or a folder: handed on to the
+/// editor's message box as it is.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlashCommand {
+    pub name: String,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dialog: bool,
+}
+
 /// Where a new session is to run and be filed, and what it is told first.
 pub struct NewSession<'a> {
     pub folder: &'a str,
@@ -414,6 +429,21 @@ impl Client {
         });
         let res = self.send(self.request_url(reqwest::Method::POST, url)?.json(&body)).await?;
         Ok(res.json::<Uploaded>().await.map_err(|e| ApiError::Failed(e.to_string()))?.path)
+    }
+
+    /// The slash commands Claude takes in the session's folder.
+    pub async fn session_commands(&self, session_id: &str) -> Result<Vec<SlashCommand>, ApiError> {
+        let url = self.session_url(session_id, &["commands"])?;
+        let res = self.send(self.request_url(reqwest::Method::GET, url)?).await?;
+        res.json().await.map_err(|e| ApiError::Failed(e.to_string()))
+    }
+
+    /// The slash commands Claude would take in `folder`, where no session runs yet.
+    pub async fn folder_commands(&self, folder: &str) -> Result<Vec<SlashCommand>, ApiError> {
+        let mut url = self.url("/api/commands")?;
+        url.query_pairs_mut().append_pair("folder", folder);
+        let res = self.send(self.request_url(reqwest::Method::GET, url)?).await?;
+        res.json().await.map_err(|e| ApiError::Failed(e.to_string()))
     }
 
     /// Stash `text` and the uploaded `images` in the session's postponed messages, to be sent later
@@ -684,6 +714,28 @@ mod tests {
         nas.message("s 1", "look", &[]).await.unwrap();
         sessions.assert_async().await;
         message.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn reads_the_slash_commands_of_a_session_and_of_a_folder() {
+        let mut server = mockito::Server::new_async().await;
+        let body = r#"[{"name":"review","source":"user","description":"Review it"},{"name":"model","source":"builtin","hint":"[model]","dialog":true}]"#;
+        let session = server.mock("GET", "/n/nas/api/sessions/s%201/commands").with_body(body).create_async().await;
+        let folder = server
+            .mock("GET", "/api/commands")
+            .match_query(mockito::Matcher::UrlEncoded("folder".into(), r"C:\work dir".into()))
+            .with_body("[]")
+            .create_async()
+            .await;
+        let client = Client::new(Credentials { base: Url::parse(&server.url()).unwrap(), token: None, local: false });
+        let listed = client.at_node("nas").session_commands("s 1").await.unwrap();
+        assert_eq!(listed[0].description.as_deref(), Some("Review it"));
+        assert!(!listed[0].dialog && listed[1].dialog);
+        // Handed on to the page without what the server left out.
+        assert_eq!(serde_json::to_value(&listed[0]).unwrap(), serde_json::json!({ "name": "review", "source": "user", "description": "Review it" }));
+        assert!(client.folder_commands(r"C:\work dir").await.unwrap().is_empty());
+        session.assert_async().await;
+        folder.assert_async().await;
     }
 
     fn instances_dir_with(port: u16, body: &str) -> PathBuf {

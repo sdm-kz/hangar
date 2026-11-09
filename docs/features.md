@@ -25,7 +25,8 @@ Hangar is two programs:
     submenu per paired machine. Click a session to open it.
   - **Screenshots.** A hotkey freezes the screen; you pick a region, window, screen or freeform shape,
     mark it up, type a message, and send both to one of the server's running sessions — the picture
-    lands in the prompt as a pasted image would.
+    lands in the prompt as a pasted image would. Typing `/` in its message box suggests the session's slash
+    commands, as the web UI's message box does.
   - **Quit** closes the app; **Stop server…** stops the server. Neither ends a session (see
     [Sessions survive an app restart](#session-lifecycle)). The icon greys out while the server isn't
     running, and the menu then offers **Start server**. Both server items are there only for a server

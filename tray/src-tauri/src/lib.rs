@@ -610,6 +610,25 @@ async fn send_capture(app: AppHandle, request: Request<'_>) -> Result<(), ApiErr
     Ok(())
 }
 
+/// The slash commands Claude takes in a session (on the paired machine `node`, for one of its), for the
+/// message box's suggestions.
+#[tauri::command]
+async fn session_commands(app: AppHandle, session_id: String, node: Option<String>) -> Result<Vec<api::SlashCommand>, ApiError> {
+    let (client, _) = client(&app)?;
+    let client = match node.as_deref().filter(|n| !n.is_empty()) {
+        Some(node) => client.at_node(node),
+        None => client,
+    };
+    client.session_commands(&session_id).await
+}
+
+/// The slash commands Claude would take in a new session's folder.
+#[tauri::command]
+async fn folder_commands(app: AppHandle, folder: String) -> Result<Vec<api::SlashCommand>, ApiError> {
+    let (client, _) = client(&app)?;
+    client.folder_commands(folder.trim()).await
+}
+
 /// What the new-session form offers: the projects with their folders and groups, the folders used
 /// lately, and whether the server is on this machine (so a folder can be browsed for here).
 #[derive(Serialize)]
@@ -1332,6 +1351,8 @@ pub fn run() {
             editor_ready,
             list_sessions,
             send_capture,
+            session_commands,
+            folder_commands,
             new_session_options,
             pick_folder,
             start_session,

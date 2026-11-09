@@ -4,49 +4,10 @@ import type { SlashCommand } from "@/types";
 import { useApi } from "@/lib/node";
 import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
+import { commandRanges, insertCommand, rankCommands, SLASH_WORD, slashToken, startsWithQuery, type SlashRange } from "@/lib/slash";
 
-// Most slash commands the suggestions list at once; the rest are a few more letters away.
-const MAX_SUGGESTIONS = 50;
 // How long the command list is trusted before it is read again (a skill added in the meantime).
 const COMMANDS_TTL_MS = 30_000;
-
-/** The slash command being typed at the caret: where its "/" is, and what follows it so far. */
-interface SlashToken {
-  start: number;
-  query: string;
-}
-
-/**
- * The command at the caret: a "/" at the start of the text or after a space, then the start of a name,
- * with the caret at the end of the word. Anywhere in the text, so a command can be asked for mid-sentence
- * ("then run /review"). A path (/usr/bin, C:/x) has another slash in it, or no space before it.
- */
-function slashToken(text: string, caret: number): SlashToken | null {
-  if (caret < text.length && !/\s/.test(text[caret])) return null;
-  const m = text.slice(0, caret).match(/(^|\s)\/([^\s/]*)$/);
-  return m ? { start: caret - m[2].length - 1, query: m[2] } : null;
-}
-
-/** Something that could be a command: a "/" at the start or after a space, and a name. */
-const SLASH_WORD = /(^|\s)\/[^\s/]/;
-
-/** Where a known command stands in the text, whole: "/review" in "then /review it", not "/rev" or "/usr/bin". */
-export interface SlashRange {
-  start: number;
-  end: number;
-}
-
-function commandRanges(text: string, commands: SlashCommand[]): SlashRange[] {
-  if (!commands.length) return [];
-  const names = new Set(commands.map((c) => c.name.toLowerCase()));
-  const ranges: SlashRange[] = [];
-  for (const m of text.matchAll(/(^|\s)\/([^\s/]+)(?=\s|$)/g)) {
-    if (!names.has(m[2].toLowerCase())) continue;
-    const start = (m.index ?? 0) + m[1].length;
-    ranges.push({ start, end: start + 1 + m[2].length });
-  }
-  return ranges;
-}
 
 export interface SlashInput {
   commands: SlashCommand[] | null;
@@ -148,12 +109,7 @@ export function useSlashInput(
 
   const complete = (c: SlashCommand) => {
     if (!token) return;
-    const at = Math.min(caret, text.length);
-    // One space after the command: the one already there, or a new one.
-    const rest = text.slice(at);
-    const inserted = `/${c.name} `;
-    const next = text.slice(0, token.start) + inserted + rest.replace(/^ /, "");
-    const end = token.start + inserted.length;
+    const { text: next, caret: end } = insertCommand(text, token, caret, c);
     setText(next);
     setClosedOn(next);
     setCaret(end);
@@ -213,38 +169,6 @@ export function useSlashInput(
       onSelect: (e) => track(e.currentTarget),
     },
   };
-}
-
-/** The command's name, or a plugin command's own part, starts with what was typed. */
-function startsWithQuery(c: SlashCommand, query: string): boolean {
-  const name = c.name.toLowerCase();
-  const q = query.toLowerCase();
-  return name.startsWith(q) || name.slice(name.indexOf(":") + 1).startsWith(q);
-}
-
-/**
- * Commands that match what follows the slash, best first: the name starts with it, then a plugin
- * command's own part does (design:critique for "crit"), then the name contains it, then the description.
- */
-function rankCommands(commands: SlashCommand[], query: string): SlashCommand[] {
-  const q = query.toLowerCase();
-  const scored: [number, SlashCommand][] = [];
-  for (const c of commands) {
-    const name = c.name.toLowerCase();
-    const own = name.includes(":") ? name.slice(name.indexOf(":") + 1) : name;
-    const score = name.startsWith(q)
-      ? 0
-      : own.startsWith(q)
-        ? 1
-        : name.includes(q)
-          ? 2
-          : q.length > 1 && c.description?.toLowerCase().includes(q)
-            ? 3
-            : -1;
-    if (score >= 0) scored.push([score, c]);
-  }
-  scored.sort((a, b) => a[0] - b[0] || a[1].name.length - b[1].name.length || a[1].name.localeCompare(b[1].name));
-  return scored.slice(0, MAX_SUGGESTIONS).map(([, c]) => c);
 }
 
 // Where a command comes from, where that is worth saying: a plugin's is in its name, Claude's goes unsaid.
