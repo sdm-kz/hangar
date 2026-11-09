@@ -153,7 +153,9 @@ export function queuedMessages(entries: ChatEntry[]): QueuedMessage[] {
     }
   });
   // Claude's own items open with a tag of its own (<task-notification>, <cross-session-message>).
-  return queue.filter((q) => q.text.trim() && !/^<[a-z]+-[a-z-]+[\s>]/.test(q.text.trimStart()));
+  return queue
+    .filter((q) => q.text.trim() && !/^<[a-z]+-[a-z-]+[\s>]/.test(q.text.trimStart()))
+    .map((q) => ({ ...q, text: unwrapPasted(q.text).trim() }));
 }
 
 /** The text of the first prompt after entry `from` — what a dequeue there was taken as — or null if none is read yet. */
@@ -219,6 +221,13 @@ const imageRef = (e: ChatEntry, n: number | null | undefined): ChatImageRef => (
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 
+// Text pasted into Claude's prompt, which it writes wrapped (`<pasted_content id="d2ba">` … `</pasted_content
+// id="d2ba">`) and the terminal shows plain.
+const PASTED = /\n*<pasted_content(?: id="[^"]*")?>\n?([\s\S]*?)\n?<\/pasted_content(?: id="[^"]*")?>\n*/g;
+
+/** The text as it was sent: what was pasted set off from what was typed around it by a blank line. */
+const unwrapPasted = (text: string) => text.replace(PASTED, "\n\n$1\n\n");
+
 const tag = (text: string, name: string) => {
   const m = text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
   return m ? m[1] : null;
@@ -278,6 +287,7 @@ export function chatItems(entries: ChatEntry[]): ChatItem[] {
       .filter((b) => b.type === "text" && b.text)
       .map((b) => b.text!)
       .filter((t) => !t.trimStart().startsWith("<system-reminder>"))
+      .map(unwrapPasted)
       .join("\n\n");
     const images = blocks.filter((b) => b.type === "image").map((b) => imageRef(e, b.n));
     if (e.compactSummary) {
