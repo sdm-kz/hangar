@@ -13,7 +13,7 @@ them.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/hangar-dark.png">
-  <img src="docs/images/hangar-light.png" alt="Hangar in the browser: a sidebar with two machines, workstation and home-server, their projects and sessions, and one session open with its Claude Code terminal">
+  <img src="docs/images/hangar-light.png" alt="Hangar in the browser: a sidebar with two machines, workstation and home-server, their projects and sessions, and one session open as a chat: the prompt as a bubble, Claude's file reads as cards, and its reply with a diff and a table">
 </picture>
 
 ### What you get
@@ -21,6 +21,11 @@ them.
 - **Sessions in the browser.** Start, stop, fork and reopen `claude` sessions, each with its full
   terminal. Sessions keep running when Hangar restarts or updates, and closed ones resume where they
   left off.
+- **A chat view of every session.** The same conversation as a chat: your messages as bubbles,
+  Claude's replies as rendered Markdown, each tool call as a card that opens to its input and output.
+  Answer permission prompts, Claude's questions and its plans with buttons, attach images and files,
+  pick slash commands from suggestions, and reply to a selected piece of a reply. The terminal stays
+  the session, so switching between the two loses nothing, and the chat is what you want on a phone.
 - **Know what every session is doing.** Working, compacting, finished, failed on an API error, or
   waiting on you, with the command it wants permission to run. The ones that need you raise a
   notification in the page and a push notification on your phone.
@@ -55,7 +60,7 @@ in to Hangar has a shell on that machine as you (see [Security model](#security-
 <p align="center">
   <img src="docs/images/phone-sessions.png" alt="Hangar on a phone: the session list, grouped by machine and project" width="260">
   &nbsp;&nbsp;
-  <img src="docs/images/phone-terminal.png" alt="Hangar on a phone: a session's terminal" width="260">
+  <img src="docs/images/phone-chat.png" alt="Hangar on a phone: a session's chat, with a drafted Markdown section shown rendered" width="260">
 </p>
 
 **Runs on** Windows, Linux and macOS. **Needs** the Claude Code CLI (v2.1.51 or later), logged in with a
@@ -140,7 +145,8 @@ The full list, and how to undo each: [What Hangar changes outside its own folder
 
 - [Installing Hangar](docs/install.md): prerequisites, Windows, Linux and macOS, the first password, a
   Windows service, uninstalling, and everything Hangar writes outside its folders.
-- [Features](docs/features.md): what the web UI and the tray app do, and how sessions survive restarts.
+- [Features](docs/features.md): what the web UI (terminal, chat, files) and the tray app do, and how
+  sessions survive restarts.
 - [Configuration](docs/configuration.md): where your settings go, and every key.
 - [Updating](docs/updating.md): redeploys, one-click in-app updates, and updating another machine.
 - [API](docs/api.md): starting sessions from scripts, and the API a session uses on itself.

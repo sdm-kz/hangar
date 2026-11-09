@@ -34,7 +34,13 @@ Hangar is two programs:
 
   See [tray/README.md](../tray/README.md).
 
-The web UI is a **session manager with a full terminal**:
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/terminal-dark.png">
+  <img src="images/terminal-light.png" alt="A session's terminal: the same conversation the README shows as a chat, in Claude Code's own interface">
+</picture>
+
+The web UI is a **session manager with a full terminal**, and a chat view of it (the README's
+screenshot is this session as a chat):
 
 - **Create / select sessions** — each session is a live `claude --remote-control` process in a
   working folder of your choice.
