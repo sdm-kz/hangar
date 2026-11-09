@@ -16,6 +16,11 @@ namespace Hangar.Server.Sessions;
 /// The hooks carry correlation via headers interpolated from environment variables we inject into each
 /// session's process (<c>HANGAR_SESSION_ID</c> / <c>HANGAR_HOOK_TOKEN</c>). For a plain <c>claude</c>
 /// run those vars are unset, so the headers are empty and the server treats the callback as a no-op.
+///
+/// <c>SessionStart</c> is the exception: Claude runs only <c>command</c> hooks for it, and skips an
+/// <c>http</c> one without a word. It is what reports the conversation a <c>/clear</c> starts, so it is
+/// registered as a command that posts the same payload to the same URL with <c>curl</c> (see
+/// <see cref="BuildCommand"/>).
 /// </summary>
 public static class ClaudeHookStore
 {
@@ -33,17 +38,21 @@ public static class ClaudeHookStore
 
     private const string UrlPath = "/api/hooks"; // discriminates our handler within the settings file
 
+    // The events Claude runs only command hooks for (see the class summary).
+    private static readonly HashSet<string> CommandEvents = new() { "SessionStart" };
+
     /// <param name="port">The port this instance is bound to; hooks are pointed at it.</param>
     /// <param name="force">
     /// Take the registration over even when another instance is live on the port it currently names
     /// (<c>Hooks:Force=true</c>). The guard below is right almost always; this is the way out of the
     /// case where it isn't — a stale registration whose port some unrelated process now holds.
     /// </param>
-    public static void EnsureConfigured(int port, ILogger log, bool force = false)
+    /// <param name="settingsPath">The settings file to write; <c>~/.claude/settings.json</c> unless given.</param>
+    public static void EnsureConfigured(int port, ILogger log, bool force = false, string? settingsPath = null)
     {
         try
         {
-            var path = SettingsPath;
+            var path = settingsPath ?? SettingsPath;
             var url = $"http://127.0.0.1:{port}{UrlPath}";
 
             JsonObject root;
@@ -98,11 +107,21 @@ public static class ClaudeHookStore
                     hooks[evt] = groups;
                 }
 
-                if (FindOurHandler(groups) is { } existing)
+                var fresh = CommandEvents.Contains(evt) ? BuildCommand(url) : BuildHandler(url);
+                if (FindOurHandler(groups) is (var handlers, var at, var existing))
                 {
+                    if (existing["type"]?.GetValue<string>() != fresh["type"]?.GetValue<string>()
+                        || fresh["type"]?.GetValue<string>() == "command")
+                    {
+                        // Another kind of handler than this event takes (an http SessionStart written by
+                        // an earlier version), or a command, which is all one string: put in the new one.
+                        if (JsonNode.DeepEquals(existing, fresh)) continue;
+                        handlers[at] = fresh;
+                        changed = true;
+                        continue;
+                    }
                     // Already registered — refresh what may have moved: the URL (a port change) and the
                     // variables the headers name.
-                    var fresh = BuildHandler(url);
                     foreach (var key in new[] { "url", "headers", "allowedEnvVars" })
                     {
                         if (JsonNode.DeepEquals(existing[key], fresh[key])) continue;
@@ -115,7 +134,7 @@ public static class ClaudeHookStore
                     groups.Add(new JsonObject
                     {
                         ["matcher"] = "",
-                        ["hooks"] = new JsonArray { BuildHandler(url) },
+                        ["hooks"] = new JsonArray { fresh },
                     });
                     changed = true;
                 }
@@ -161,8 +180,8 @@ public static class ClaudeHookStore
         foreach (var evt in Events)
         {
             if (hooks[evt] is not JsonArray groups) continue;
-            if (FindOurHandler(groups) is not { } handler) continue;
-            if (PortOf(handler["url"]?.GetValue<string>()) is not { } other) continue;
+            if (FindOurHandler(groups) is not (_, _, var handler)) continue;
+            if (PortOf(UrlOf(handler)) is not { } other) continue;
             if (other == ourPort) return null; // already ours — nothing to guard
             return IsListening(other) ? other : null;
         }
@@ -196,22 +215,54 @@ public static class ClaudeHookStore
         }
     }
 
-    // Our handler = an http hook whose url path is /api/hooks, in any matcher group of the event.
-    private static JsonObject? FindOurHandler(JsonArray groups)
+    // Our handler = an http hook whose url path is /api/hooks, or a command posting to one, in any matcher
+    // group of the event. With the list it is in and its place there, for it to be swapped for another.
+    private static (JsonArray Handlers, int At, JsonObject Handler)? FindOurHandler(JsonArray groups)
     {
         foreach (var group in groups)
         {
             if (group is not JsonObject g || g["hooks"] is not JsonArray handlers) continue;
-            foreach (var h in handlers)
+            for (var i = 0; i < handlers.Count; i++)
             {
-                if (h is not JsonObject ho) continue;
-                var url = ho["url"]?.GetValue<string>();
-                if (ho["type"]?.GetValue<string>() == "http" && url is not null && url.Contains(UrlPath, StringComparison.OrdinalIgnoreCase))
-                    return ho;
+                if (handlers[i] is JsonObject ho && UrlOf(ho) is { } url && url.Contains(UrlPath, StringComparison.OrdinalIgnoreCase))
+                    return (handlers, i, ho);
             }
         }
         return null;
     }
+
+    // The URL a handler calls: an http hook's own, or the one a command of ours posts to.
+    private static string? UrlOf(JsonObject handler)
+    {
+        string? Text(string key) => handler[key] is JsonValue v && v.TryGetValue<string>(out var t) ? t : null;
+        return Text("type") switch
+        {
+            "http" => Text("url"),
+            "command" when Text("command") is { } c && OurCommandUrl.Match(c) is { Success: true } m => m.Value,
+            _ => null,
+        };
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex OurCommandUrl =
+        new(@"http://127\.0\.0\.1:\d+/api/hooks", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// A command that does what <see cref="BuildHandler"/>'s http hook does: posts the hook's payload (its
+    /// stdin) to <paramref name="url"/> with the session's headers. Run by Claude's shell — sh, or Git Bash on
+    /// Windows. A plain <c>claude</c> run, which has no session to report, posts nothing; and it says nothing
+    /// and always succeeds, since what a SessionStart hook prints is handed to Claude as context and a failure
+    /// is shown in the terminal, neither of which a Hangar that isn't answering should cause.
+    /// </summary>
+    private static JsonObject BuildCommand(string url) => new()
+    {
+        ["type"] = "command",
+        ["command"] =
+            "if [ -n \"$HANGAR_SESSION_ID\" ]; then curl -s -m 5 -o /dev/null -X POST " +
+            "-H 'Content-Type: application/json' -H \"X-Session-Id: $HANGAR_SESSION_ID\" " +
+            $"-H \"X-Hook-Token: $HANGAR_HOOK_TOKEN\" --data-binary @- {url} >/dev/null 2>&1; " +
+            "else cat >/dev/null; fi; exit 0",
+        ["timeout"] = 10,
+    };
 
     private static JsonObject BuildHandler(string url) => new()
     {

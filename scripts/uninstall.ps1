@@ -29,7 +29,7 @@
     * Claude Code hooks. When Hooks:Enabled is on, the app registers hooks in ~/.claude/settings.json:
       entries whose URL ends in /api/hooks. Once the app is gone those calls have nowhere to go, so
       open %USERPROFILE%\.claude\settings.json and delete the hook entries whose URL ends in
-      /api/hooks, keeping any others.
+      /api/hooks, and the SessionStart command that posts to it, keeping any others.
     * A staging folder set by Update:StagingPath outside the data folder; delete it by hand if wanted.
 
 .PARAMETER InstallPath
@@ -212,6 +212,6 @@ if ($RemoveData) {
 }
 
 Write-Host "==> Done." -ForegroundColor Green
-Write-Host "    If Claude hooks were on, remove the hook entries whose URL ends in /api/hooks from $env:USERPROFILE\.claude\settings.json."
+Write-Host "    If Claude hooks were on, remove the hook entries that call /api/hooks from $env:USERPROFILE\.claude\settings.json."
 if (-not $RemoveFiles) { Write-Host "    Files kept: $InstallPath (-RemoveFiles deletes them)." }
 if (-not $RemoveData) { Write-Host "    Data kept: $dataRoot (-RemoveData ends running sessions and deletes it)." }

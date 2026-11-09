@@ -219,7 +219,7 @@ added or refreshed.
 
 | What | Where | When | Turn it off |
 |---|---|---|---|
-| HTTP **hooks** for `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `Notification`, `PermissionRequest`, `Stop`, `StopFailure`, each pointing at `http://127.0.0.1:<port>/api/hooks` | `~/.claude/settings.json`, under `hooks` | Every server start | `Hooks:Enabled=false` (session status then falls back to terminal heuristics) |
+| HTTP **hooks** for `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `Notification`, `PermissionRequest`, `Stop`, `StopFailure`, each pointing at `http://127.0.0.1:<port>/api/hooks`, and a **command** hook for `SessionStart` that posts to the same URL with `curl` | `~/.claude/settings.json`, under `hooks` | Every server start | `Hooks:Enabled=false` (session status then falls back to terminal heuristics) |
 | `skipDangerousModePermissionPrompt: true` (pre-accepts the one-time warning for `--dangerously-skip-permissions`) | `~/.claude/settings.json` | The first time a session is started with `bypassPermissions` | Don't use that mode |
 | `projects["<folder>"].hasTrustDialogAccepted: true` (pre-accepts workspace trust) | `~/.claude.json` | Before launching a session in a folder not already listed | `Sessions:AutoTrustFolders=false` (then accept the prompt yourself in the Claude Code app) |
 
@@ -227,13 +227,19 @@ About the hooks:
 
 - They are **global**: every `claude` on the machine calls them. A `claude` that Hangar didn't launch
   carries no session headers, and the server ignores its calls.
+- `SessionStart` is a command because Claude runs no `http` hook for that event, and it is the one that
+  names the conversation a `/clear` starts (the chat view follows it there at once). It needs `curl`,
+  which Windows 10 and later, macOS and most Linux systems have; it posts only for a session Hangar
+  launched, prints nothing and never fails. Without it, the chat catches up with a `/clear` at the next
+  prompt instead.
 - A second Hangar on another port does not take them over while the instance they name is still
   listening (`Hooks:Force=true` overrides that). Dev instances never register them (see
   [Development](../CONTRIBUTING.md#safety-rules-for-dev-and-test-instances)).
 - **Uninstalling does not remove them.** While nothing listens on that port, Claude Code reports hook
   errors (`ECONNREFUSED`) on tool calls in every session. Open `~/.claude/settings.json`
   (`%USERPROFILE%\.claude\settings.json` on Windows) and delete the hook handlers whose `url` ends in
-  `/api/hooks`, keeping any others. `skipDangerousModePermissionPrompt` and the trust entries in
+  `/api/hooks` and the `SessionStart` command that posts to it, keeping any others.
+  `skipDangerousModePermissionPrompt` and the trust entries in
   `~/.claude.json` are harmless to leave, or can be removed by hand the same way.
 
 Hangar also writes:

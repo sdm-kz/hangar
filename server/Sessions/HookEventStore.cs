@@ -120,7 +120,9 @@ public sealed class HookEventStore
         lock (s.Gate)
         {
             s.LastEventAt = DateTimeOffset.Now;
-            if (!string.IsNullOrEmpty(claudeSessionId) && s.ClaudeSessionId != claudeSessionId)
+            // Not from SessionEnd: it names the conversation that is ending. A /clear ends one and starts
+            // another, and the end, arriving after the start, would put the session back on the old one.
+            if (!string.IsNullOrEmpty(claudeSessionId) && s.ClaudeSessionId != claudeSessionId && evt != "SessionEnd")
             {
                 previousClaudeSessionId = s.ClaudeSessionId;
                 s.ClaudeSessionId = claudeSessionId;
