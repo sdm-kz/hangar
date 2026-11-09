@@ -166,7 +166,7 @@ The web UI is a **session manager with a full terminal**:
   navigation (↑/↓/Enter) and recently-used folders.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:
   - **Text/code** files rendered inline and **editable** (Edit → Save writes the file);
-    **images** with a full-page **zoom/pan** lightbox; **Markdown** rendered (Rendered/Raw toggle);
+    **images** with a full-page **zoom/pan** lightbox that opens with the whole image fitted to the page; **Markdown** rendered (Rendered/Raw toggle);
     anything else is downloadable.
   - **Git**: if the folder is a repo, the current **branch** is shown, changed files are
     **marked** (M/A/U/D) in the tree, and each changed file has a **Diff** view.
