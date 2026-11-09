@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
-import { useApi } from "@/lib/node";
+import { sessionKey, useApi, useNodeId } from "@/lib/node";
+import { newSessionChat, setChatView, setNewSessionChat } from "@/lib/chatView";
 import { NodePicker, type LaunchNode } from "./NodePicker";
 import { folderName } from "@/lib/recentFolders";
 import { cn } from "@/lib/utils";
@@ -33,10 +34,12 @@ import {
   ChevronRight,
   History,
   Loader2,
+  MessageSquare,
   Pencil,
   Plus,
   RotateCcw,
   Sparkles,
+  TerminalSquare,
   X,
 } from "lucide-react";
 
@@ -82,7 +85,10 @@ export function NewSessionDialog({
   defaultContinue?: boolean;
 }) {
   const api = useApi();
+  const nodeId = useNodeId();
   const [tab, setTab] = useState<Tab>("new");
+  // Whether the session opens on its chat or its terminal. Starts where the last one started from here did.
+  const [chat, setChat] = useState(newSessionChat);
 
   // ---- the hand-made session (the "New" tab) --------------------------------------------------
   const [dir, setDir] = useState("");
@@ -188,6 +194,7 @@ export function NewSessionDialog({
     setTemplateId(null);
     setInput("");
     setShowOptions(false);
+    setChat(newSessionChat());
     // Relaunching a remembered preset almost always means picking the work back up, so default to
     // continuing its conversation; a plain "New session" starts fresh. Some openers override this
     // (cloning a live session wants a fresh conversation alongside the original).
@@ -303,6 +310,10 @@ export function NewSessionDialog({
             permissionMode: opts.permissionMode,
           })
           .catch(() => {});
+      // Before the session is shown, so it opens on the view picked here — in this browser and, through
+      // the session's saved state, in the others.
+      setChatView(sessionKey(nodeId, s.id), chat);
+      setNewSessionChat(chat);
       onCreated(s);
       // Reset the transient fields for next time.
       setName("");
@@ -495,6 +506,7 @@ export function NewSessionDialog({
             </div>
 
             <DialogFooter className="shrink-0">
+              <ViewSwitch chat={chat} onChange={setChat} disabled={busy} />
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
                 Cancel
               </Button>
@@ -530,6 +542,34 @@ export function NewSessionDialog({
         />
       )}
     </>
+  );
+}
+
+/** Open the new session on its chat or on its terminal. Either way the other is a click away in its tab. */
+function ViewSwitch({ chat, onChange, disabled }: { chat: boolean; onChange: (chat: boolean) => void; disabled: boolean }) {
+  const option = (on: boolean, Icon: typeof TerminalSquare, label: string, title: string) => (
+    <button
+      type="button"
+      title={title}
+      aria-pressed={chat === on}
+      disabled={disabled}
+      onClick={() => onChange(on)}
+      className={cn(
+        "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors sm:flex-none",
+        chat === on ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+      )}
+    >
+      <Icon className="size-3.5" /> {label}
+    </button>
+  );
+  return (
+    <div role="group" aria-label="Open in" className="flex items-center gap-2 sm:mr-auto">
+      <span className="shrink-0 text-xs text-muted-foreground">Open in</span>
+      <div className="flex flex-1 items-center gap-0.5 rounded-lg bg-muted/50 p-0.5 sm:flex-none">
+        {option(true, MessageSquare, "Chat", "Open the session on its chat")}
+        {option(false, TerminalSquare, "Terminal", "Open the session on its terminal")}
+      </div>
+    </div>
   );
 }
 

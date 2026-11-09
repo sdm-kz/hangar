@@ -11,6 +11,7 @@ import {
 } from "@/lib/nodeStream";
 import { presetFromSession, type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
+import { carryChatView } from "@/lib/chatView";
 import { readUrlState, patchUrlState, SSH_SHELLS } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
 import { forkDescendants } from "@/lib/sessionTree";
@@ -1496,6 +1497,7 @@ export function App() {
     if (!ok) return;
     const created = await attempt(() => apiFor(node).restoreSession(id));
     if (!created) return;
+    carryChatView(sessionKey(node, id), sessionKey(node, created.id));
     // Drop the old Restorable entry AND any copy of the new session the live stream may have already
     // pushed (the push can beat this response), so the reopened session appears exactly once.
     if (node) {

@@ -43,6 +43,9 @@ export interface SessionUi {
   // The pane's layout: which groups there are, how they are split, and which tabs each one holds
   // (see lib/layout.ts). Unchecked here — parseLayout vets it on the way in.
   layout?: unknown;
+  // Claude's tab showing the chat rather than the terminal — the session's own record of it, which a
+  // browser that has made no choice of its own goes by (see lib/chatView.ts).
+  chat?: boolean;
   // Id of the shell tab filling the pane in the "shell" view. The shells themselves live on the
   // server (they are processes), so only which one is on screen is remembered here.
   shell?: string;

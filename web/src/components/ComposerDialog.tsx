@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ImagePlus, Inbox, Loader2, Send, X } from "lucide-react";
 import { uploadImageFile } from "@/lib/upload";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -12,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
-import { SlashSuggestions, useSlashInput } from "./SlashCommands";
+import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import type { PostponedImage } from "@/lib/postponed";
 import { useApi } from "@/lib/node";
 
@@ -242,7 +241,9 @@ export function ComposerDialog({
           {/* relative: the slash-command suggestions open above the box, as wide as it. */}
           <div className="relative flex min-h-0 flex-1 flex-col">
             <SlashSuggestions slash={slash} />
-            <Textarea
+            <SlashTextarea
+              slash={slash}
+              wrapperClassName="flex min-h-0 flex-1 flex-col"
               ref={textRef}
               autoFocus
               value={text}

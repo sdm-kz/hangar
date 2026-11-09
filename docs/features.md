@@ -51,14 +51,19 @@ The web UI is a **session manager with a full terminal**:
   after the turn, or between two of its steps, when it is marked "Sent while Claude was working".
   Anything else that only
   the terminal can show — a picker, a plan to approve, `/usage` — is one click away. The choice is kept
-  per session and per browser, so a phone can read the chat while the desk keeps the terminal. The
+  per session and per browser, so a phone can read the chat while the desk keeps the terminal; it is
+  also kept with the session itself, so a stopped session reopens on the view it was left on (here and
+  after the app restarts), and a browser that has made no choice of its own opens it that way too. The
+  **New session** dialog has a Chat / Terminal switch for the view the new session opens on, which starts
+  where the last session started from that browser did. The
   postponed-messages and compose buttons move from the terminal's corner into the chat's message box
   (Ctrl/⌘+Shift+Enter there postpones what is written, and the send button turns into Postpone while the
   chord is held; Compose carries on what is written there),
   which has its own image button. Typing `/` there suggests slash commands — Claude's own, yours, the
   project's, plugins' and skills' — with their descriptions: arrows to choose, Tab or Enter to take one,
   Enter again to run it. It works anywhere in the text (a word that starts with `/`, at the caret), and
-  in the postponed pool's box and the full-size composer too. A command that answers in the terminal (`/model`, `/config`, `/context`…)
+  in the postponed pool's box and the full-size composer too, and every command in the text that Claude
+  knows is tinted, so a typo'd one stands out before it is sent. A command that answers in the terminal (`/model`, `/config`, `/context`…)
   switches to it when sent. Under the box: the model and how full the context window is. That comes
   from a status line Hangar gives each session it launches (`--settings`, so `~/.claude/settings.json`
   is untouched, and only when neither you nor the project has a status line of your own) — the terminal shows it too, as

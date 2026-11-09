@@ -1,8 +1,9 @@
-import { useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
 import { Loader2, TerminalSquare } from "lucide-react";
 import type { SlashCommand } from "@/types";
 import { useApi } from "@/lib/node";
 import { cn } from "@/lib/utils";
+import { Textarea } from "@/components/ui/textarea";
 
 // Most slash commands the suggestions list at once; the rest are a few more letters away.
 const MAX_SUGGESTIONS = 50;
@@ -26,9 +27,32 @@ function slashToken(text: string, caret: number): SlashToken | null {
   return m ? { start: caret - m[2].length - 1, query: m[2] } : null;
 }
 
+/** Something that could be a command: a "/" at the start or after a space, and a name. */
+const SLASH_WORD = /(^|\s)\/[^\s/]/;
+
+/** Where a known command stands in the text, whole: "/review" in "then /review it", not "/rev" or "/usr/bin". */
+export interface SlashRange {
+  start: number;
+  end: number;
+}
+
+function commandRanges(text: string, commands: SlashCommand[]): SlashRange[] {
+  if (!commands.length) return [];
+  const names = new Set(commands.map((c) => c.name.toLowerCase()));
+  const ranges: SlashRange[] = [];
+  for (const m of text.matchAll(/(^|\s)\/([^\s/]+)(?=\s|$)/g)) {
+    if (!names.has(m[2].toLowerCase())) continue;
+    const start = (m.index ?? 0) + m[1].length;
+    ranges.push({ start, end: start + 1 + m[2].length });
+  }
+  return ranges;
+}
+
 export interface SlashInput {
   commands: SlashCommand[] | null;
   matches: SlashCommand[];
+  /** The known commands in the text, to be marked in the box (see {@link SlashTextarea}). */
+  highlights: SlashRange[];
   open: boolean;
   active: number;
   /** Enter takes the highlighted suggestion rather than doing what Enter does in the box. */
@@ -73,7 +97,9 @@ export function useSlashInput(
   const fetchedAt = useRef(0);
   const token = useMemo(() => slashToken(text, Math.min(caret, text.length)), [text, caret]);
   const query = token?.query ?? null;
-  const wanted = query !== null;
+  // The list is wanted for the suggestions, and for marking the commands already in the text — a draft
+  // brought back, a message opened for editing — which nothing typed asked for.
+  const wanted = query !== null || SLASH_WORD.test(text);
 
   useEffect(() => {
     if (!wanted || Date.now() - fetchedAt.current < COMMANDS_TTL_MS) return;
@@ -108,7 +134,9 @@ export function useSlashInput(
     setChosen(false);
   }, [query]);
 
-  const open = wanted && text !== closedOn && (matches.length > 0 || !commands);
+  const highlights = useMemo(() => (commands ? commandRanges(text, commands) : []), [text, commands]);
+
+  const open = query !== null && text !== closedOn && (matches.length > 0 || !commands);
   const current = Math.min(active, Math.max(0, matches.length - 1));
   const pick = open ? matches[current] : undefined;
   // A suggestion that only contains what was typed, or mentions it in its description, is not what was
@@ -167,6 +195,7 @@ export function useSlashInput(
   return {
     commands,
     matches,
+    highlights,
     open,
     active: current,
     enterCompletes,
@@ -283,6 +312,126 @@ export function SlashSuggestions({ slash, className }: { slash: SlashInput; clas
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+// A zero-width space: something after a trailing newline in the layer (see SlashTextarea).
+const ZERO_WIDTH = String.fromCharCode(0x200b);
+
+// What the marks' layer copies from the box, so its text wraps line for line with the box's own.
+const MIRRORED = [
+  "font-family",
+  "font-size",
+  "font-weight",
+  "font-style",
+  "line-height",
+  "letter-spacing",
+  "word-spacing",
+  "text-indent",
+  "text-transform",
+  "tab-size",
+  "padding-top",
+  "padding-bottom",
+  "padding-left",
+  "border-top-width",
+  "border-right-width",
+  "border-bottom-width",
+  "border-left-width",
+] as const;
+
+/**
+ * A text box that marks the slash commands in it: a layer under the (see-through) box draws the same text,
+ * invisible, with a tint behind each known command. The box itself is untouched — the caret, the
+ * selection and what is typed are all still the textarea's own.
+ */
+export function SlashTextarea({
+  slash,
+  wrapperClassName,
+  ref,
+  className,
+  onScroll,
+  ...props
+}: React.ComponentProps<"textarea"> & { slash: SlashInput; wrapperClassName?: string }) {
+  const areaRef = useRef<HTMLTextAreaElement | null>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const text = typeof props.value === "string" ? props.value : "";
+  const marks = slash.highlights;
+  const shown = marks.length > 0;
+
+  // Stable, so the caller's ref is not let go of and handed the box again on every render.
+  const setRef = useCallback(
+    (el: HTMLTextAreaElement | null) => {
+      areaRef.current = el;
+      if (typeof ref === "function") ref(el);
+      else if (ref) ref.current = el;
+    },
+    [ref]
+  );
+
+  // Lay the layer out as the box is: its padding, its borders, its font, and the width a scrollbar takes.
+  const sync = useCallback(() => {
+    const area = areaRef.current;
+    const layer = layerRef.current;
+    if (!area || !layer) return;
+    const cs = getComputedStyle(area);
+    for (const p of MIRRORED) layer.style.setProperty(p, cs.getPropertyValue(p));
+    const borders = parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+    const bar = Math.max(0, area.offsetWidth - area.clientWidth - borders);
+    layer.style.paddingRight = `${parseFloat(cs.paddingRight) + bar}px`;
+    layer.scrollTop = area.scrollTop;
+    layer.scrollLeft = area.scrollLeft;
+  }, []);
+
+  // After every change of the text (a line more can bring a scrollbar), and whenever the box is resized.
+  useEffect(() => {
+    if (shown) sync();
+  });
+  useEffect(() => {
+    const area = areaRef.current;
+    if (!shown || !area || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(sync);
+    ro.observe(area);
+    return () => ro.disconnect();
+  }, [shown, sync]);
+
+  const parts: React.ReactNode[] = [];
+  if (shown) {
+    let at = 0;
+    for (const m of marks) {
+      if (m.start > at) parts.push(text.slice(at, m.start));
+      parts.push(
+        <mark key={m.start} className="rounded-[3px] bg-sky-500/20 text-transparent dark:bg-sky-400/25">
+          {text.slice(m.start, m.end)}
+        </mark>
+      );
+      at = m.end;
+    }
+    // A trailing newline still makes a line in the box, but not in a div without something after it.
+    parts.push(text.slice(at) + ZERO_WIDTH);
+  }
+
+  return (
+    <div className={cn("relative", wrapperClassName)}>
+      {shown && (
+        <div
+          ref={layerRef}
+          aria-hidden
+          className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words border-solid border-transparent text-transparent"
+        >
+          {parts}
+        </div>
+      )}
+      {/* relative: drawn over the layer, which, positioned, would otherwise be drawn over it. */}
+      <Textarea
+        ref={setRef}
+        className={cn("relative", className)}
+        onScroll={(e) => {
+          if (shown) sync();
+          onScroll?.(e);
+        }}
+        {...props}
+      />
     </div>
   );
 }

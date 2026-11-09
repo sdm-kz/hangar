@@ -14,10 +14,9 @@ import {
 import { uploadImageFile } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { ImageLightbox } from "./ImageLightbox";
 import { ComposerDialog, type ComposerDraft } from "./ComposerDialog";
-import { SlashSuggestions, useSlashInput } from "./SlashCommands";
+import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import {
   loadPostponed,
   newMessage,
@@ -616,7 +615,11 @@ export function PostponedPool({
           {/* relative: the slash-command suggestions open above the box, as wide as this row. */}
           <div className="relative flex items-end gap-2">
             <SlashSuggestions slash={slash} />
-            <Textarea
+            <SlashTextarea
+              slash={slash}
+              // min-w-0 flex-1: the Textarea's own w-full would otherwise set a flex base of 100%
+              // and, on a narrow screen, soak up the row by shrinking the buttons next to it.
+              wrapperClassName="min-w-0 flex-1"
               ref={textareaRef}
               value={draft}
               {...slash.inputProps}
@@ -629,9 +632,7 @@ export function PostponedPool({
               rows={1}
               placeholder="Postpone a message — Enter to stash"
               title="Enter to stash, Shift+Enter or Ctrl+J for a newline; paste an image to attach it"
-              // min-w-0 flex-1: the Textarea's own w-full would otherwise set a flex base of 100%
-              // and, on a narrow screen, soak up the row by shrinking the buttons next to it.
-              className="max-h-20 min-h-10 min-w-0 flex-1 resize-none py-2.5 leading-5"
+              className="max-h-20 min-h-10 resize-none py-2.5 leading-5"
             />
             {/* Desktop-only: on a phone it would eat the width the message needs, and Compose sits
                 right below in the corner anyway. */}

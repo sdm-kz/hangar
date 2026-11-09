@@ -10,6 +10,7 @@ import {
   subscribeSessionUi,
   syncSessionUi,
 } from "@/lib/sessionUi";
+import { chatViewOf, localChatView, setChatView } from "@/lib/chatView";
 import { EXPLORER_GUARD, fileEntryFromPath, useFileTabs, type FileTabs } from "@/lib/useFileTabs";
 import { linkTabLabel, MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
 import { parsePullKey, pullKey, useSessionPulls } from "@/lib/sessionPulls";
@@ -363,13 +364,12 @@ export function SessionView({
   // "continue", stopping — is out, and the Reopen button stands where the terminal would be.
   const closed = session.state === "Restorable";
   const terminalRef = useRef<TerminalPaneHandle>(null);
-  // Whether Claude's tab shows the terminal or the chat read from it. A choice per session and per
-  // browser: the phone may want the chat while the desk keeps the terminal.
-  const chatKey = `hangar.chatView.${uiKey}`;
-  const [chatFor, setChatFor] = useState(() => ({ id: session.id, on: readFlag(chatKey) }));
-  const chatMode = chatFor.id === session.id ? chatFor.on : readFlag(chatKey);
+  // Whether Claude's tab shows the terminal or the chat read from it: this browser's choice, else the
+  // session's own (lib/chatView.ts).
+  const [chatFor, setChatFor] = useState(() => ({ id: session.id, on: chatViewOf(uiKey) }));
+  const chatMode = chatFor.id === session.id ? chatFor.on : chatViewOf(uiKey);
   const setChatMode = (on: boolean) => {
-    writeFlag(chatKey, on);
+    setChatView(uiKey, on);
     setChatFor({ id: session.id, on });
     if (!on) requestAnimationFrame(() => terminalRef.current?.focus());
   };
@@ -705,6 +705,11 @@ export function SessionView({
         if (!seed) return;
         const ui = loadSessionUi(uiKey);
         if (ui.shell) shells.restore(ui.shell);
+        // The session's view, for a browser with no choice of its own — this one reopened, or never
+        // opened here. A choice made before the session kept one is handed over to it.
+        const own = localChatView(uiKey);
+        if (own === null) setChatFor({ id: session.id, on: ui.chat ?? false });
+        else if (ui.chat === undefined) saveSessionUi(uiKey, { chat: own });
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [session.id]
@@ -1956,21 +1961,4 @@ function ChatModeSwitch({ chat, onChange }: { chat: boolean; onChange: (chat: bo
       {option(false, TerminalSquare, "Terminal")}
     </span>
   );
-}
-
-function readFlag(key: string): boolean {
-  try {
-    return localStorage.getItem(key) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeFlag(key: string, on: boolean) {
-  try {
-    if (on) localStorage.setItem(key, "1");
-    else localStorage.removeItem(key);
-  } catch {
-    /* storage unavailable: the choice lasts until the page is reloaded */
-  }
 }

@@ -18,12 +18,11 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "./Markdown";
 import { ChatQuestion, parseQuestions } from "./ChatQuestion";
 import { ChatPlan, parsePlan } from "./ChatPlan";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
-import { SlashSuggestions, useSlashInput } from "./SlashCommands";
+import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import { ImageLightbox } from "./ImageLightbox";
 import { useChatFind } from "./ChatFind";
 import { CopyButton } from "./CopyPathButton";
@@ -982,7 +981,9 @@ function Composer({
               e.target.value = "";
             }}
           />
-          <Textarea
+          <SlashTextarea
+            slash={slash}
+            wrapperClassName="min-w-0 flex-1"
             ref={areaRef}
             rows={1}
             // The terminal under the chat keeps the keyboard otherwise, and what is typed goes into a
@@ -998,7 +999,7 @@ function Composer({
             }
             data-chat-composer
             {...slash.inputProps}
-            className="min-h-7 flex-1 resize-none border-0 px-1 py-1 leading-5 shadow-none focus-visible:ring-0"
+            className="min-h-7 resize-none border-0 px-1 py-1 leading-5 shadow-none focus-visible:ring-0"
             onChange={(e) => {
               setText(e.target.value);
               slash.track(e.target);
