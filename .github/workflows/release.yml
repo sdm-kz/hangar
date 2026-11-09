@@ -25,12 +25,14 @@ jobs:
       matrix:
         include:
           # Native runners throughout: the tray (Tauri) builds only on the platform it is for. Linux on
-          # 22.04, the oldest supported image, so the tray runs on any glibc from 2.35 up.
+          # 24.04: the screen capture's PipeWire bindings (pipewire 0.10) need PipeWire 1.0's headers, which
+          # 22.04 (0.3.48) lacks. So the Linux tray needs glibc 2.39 (Ubuntu 24.04, Debian 13) or later;
+          # the server and the pty host are self-contained .NET and run on older systems too.
           - { rid: win-x64, os: windows-latest }
           - { rid: win-arm64, os: windows-11-arm }
           - { rid: osx-arm64, os: macos-latest }
-          - { rid: linux-x64, os: ubuntu-22.04 }
-          - { rid: linux-arm64, os: ubuntu-22.04-arm }
+          - { rid: linux-x64, os: ubuntu-24.04 }
+          - { rid: linux-arm64, os: ubuntu-24.04-arm }
     env:
       RID: ${{ matrix.rid }}
     steps:
@@ -99,6 +101,13 @@ jobs:
           security find-identity -p codesigning "$keychain" \
             | sed -n 's/^ *1) \([0-9A-F]\{40\}\) .*/\1/p' > "$dir/identity"
           [ -s "$dir/identity" ] || { echo "::error::MACOS_SIGNING_P12 holds no code-signing identity"; exit 1; }
+          # On the search list too: the runner's codesign finds no identity in a keychain that isn't, even
+          # one named with --keychain (a Mac of our own does). The runner is thrown away after the job.
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # Signed once here, so a signing problem fails this step rather than the build minutes later.
+          cp /usr/bin/true "$RUNNER_TEMP/probe"
+          codesign --force --keychain "$keychain" --sign "$(cat "$dir/identity")" "$RUNNER_TEMP/probe"
+          codesign --verify "$RUNNER_TEMP/probe"
           echo "Signing with $(cat "$dir/identity")"
 
       # From the lockfiles: the build scripts install only when node_modules is missing.
