@@ -1837,6 +1837,12 @@ export function SessionSidebar({
   // The toolbar's counts are over every machine listed: its filters apply to all of them.
   const peerCount = peers.reduce((n, p) => n + p.sessions.length, 0);
   const allCount = sessions.length + peerCount;
+  // What the Sessions tab says it holds: the rows the filter leaves, the sum of the machines'
+  // headings below it. `allCount` stays what decides whether there is a list to act on at all, or a
+  // filter that matched nothing would take away the very button that turns it off.
+  const shownCount =
+    visibleSessions.length +
+    peers.reduce((n, p) => n + filterSessions(filter, p.sessions, p.activityIds, p.activeId).length, 0);
   const activeCount = [sessions, ...peers.map((p) => p.sessions)].reduce(
     (n, list) => n + list.filter((s) => s.state === "Running").length,
     0
@@ -3088,7 +3094,7 @@ export function SessionSidebar({
     return () => ro.disconnect();
   }, []);
   const [toolsShown, setToolsShown] = useState(Infinity);
-  const fitKey = `${toolbarWidth}|${tools.map((t) => t.id).join()}|${allCount}|${recents.length}`;
+  const fitKey = `${toolbarWidth}|${tools.map((t) => t.id).join()}|${shownCount}|${recents.length}`;
   const fitKeyRef = useRef(fitKey);
   useLayoutEffect(() => {
     if (fitKeyRef.current !== fitKey) {
@@ -3291,7 +3297,7 @@ export function SessionSidebar({
           labels keep their width; actions that don't fit beside them move into a "more" menu, the
           ones at the end of the list first, rather than squeezing the labels down to their counts. */}
       <div ref={toolbarRef} className="flex items-center gap-0.5 p-2">
-        <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")} count={allCount}>
+        <TabButton active={tab === "sessions"} onClick={() => setTab("sessions")} count={shownCount}>
           Sessions
         </TabButton>
         <TabButton active={tab === "recent"} onClick={() => setTab("recent")} count={recents.length}>
