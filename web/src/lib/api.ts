@@ -47,6 +47,8 @@ import type {
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
 import type { ChatImageRef } from "@/lib/chat";
+import type { UiThemesState } from "@/lib/theme";
+import type { ThemeColors } from "@/lib/themes";
 
 const TOKEN_KEY = "hangar.token";
 
@@ -592,6 +594,22 @@ function createApi(base: string) {
     },
     deleteTemplate(id: string): Promise<SessionTemplate[]> {
       return request(`/api/templates/${id}`, { method: "DELETE" });
+    },
+
+    // ---- Colour themes beyond the built-ins (the settings file's, and the Themes dialog's) ----
+    // Same shape as the templates: every mutation answers with the whole state. Colours are replaced
+    // whole on an update — the dialog always sends a theme's full set of overrides.
+    getThemes(): Promise<UiThemesState> {
+      return request("/api/themes");
+    },
+    createTheme(theme: { name: string; base: string; colors?: ThemeColors }): Promise<UiThemesState> {
+      return request("/api/themes", { method: "POST", body: JSON.stringify(theme) });
+    },
+    updateTheme(id: string, patch: { name?: string; base?: string; colors?: ThemeColors }): Promise<UiThemesState> {
+      return request(`/api/themes/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(patch) });
+    },
+    deleteTheme(id: string): Promise<UiThemesState> {
+      return request(`/api/themes/${encodeURIComponent(id)}`, { method: "DELETE" });
     },
 
     // ---- Schedules (a template plus a clock) ----

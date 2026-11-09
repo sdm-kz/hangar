@@ -54,3 +54,54 @@ The tray's first run takes the server's port from `Server:Urls` in the `appsetti
 | `Update:ShutdownWaitSeconds`| How long the updater lets the app close before forcing it down | `45`       |
 | `FileSystem:DefaultFolder`  | Folder the picker opens at when creating a session; empty = your user profile | `""` |
 | `Push:Subject`              | VAPID subject for Web Push (`mailto:` or `https:`); unset = `Server:PublicUrl` | (unset) |
+| `Ui:LightTheme`             | Colour theme a browser that hasn't picked one shows in light mode (a theme id, below) | `light` |
+| `Ui:DarkTheme`              | Same, for dark mode                                  | `dark`               |
+| `Ui:Themes`                 | Colour themes of your own, or tweaks to the built-in ones — see below | `[]` |
+
+## Colour themes
+
+The web UI ships with these themes, picked in the sidebar's **Themes** dialog (the palette icon beside
+the light/dark switch):
+
+| Light                                   | Dark                                                         |
+| --------------------------------------- | ------------------------------------------------------------ |
+| `light` Hangar Light                    | `dark` Hangar Dark                                           |
+| `github-light` GitHub Light             | `github-dark` GitHub Dark                                    |
+| `solarized-light` Solarized Light       | `solarized-dark` Solarized Dark                              |
+| `one-light` One Light                   | `one-dark` One Dark                                          |
+| `catppuccin-latte` Catppuccin Latte     | `catppuccin-mocha` Catppuccin Mocha                          |
+| `gruvbox-light` Gruvbox Light           | `gruvbox-dark` Gruvbox Dark                                  |
+| `rose-pine-dawn` Rosé Pine Dawn         | `rose-pine` Rosé Pine, `dracula` Dracula, `nord` Nord, `tokyo-night` Tokyo Night |
+
+Each browser keeps its own picks (one theme for light, one for dark, and whether to follow the
+system's setting). A theme made in the dialog — **Customize colors** copies the showing theme, and
+every colour of the copy can then be changed — is kept on the server (`themes.json` in the data
+folder), so every browser signed in here can pick it.
+
+`Ui:Themes` adds themes from the settings file. Each entry has an `Id`, and optionally a `Name`, a
+`Base` (the theme it starts from) and `Colors` (the colours that differ from the base). An entry
+whose id is a built-in's, with no `Base`, tunes that built-in in place:
+
+```json
+{
+  "Ui": {
+    "DarkTheme": "midnight",
+    "Themes": [
+      { "Id": "dracula", "Colors": { "background": "#1e1f29" } },
+      { "Id": "midnight", "Name": "Midnight", "Base": "nord", "Colors": { "primary": "#ff8800", "terminal-background": "#000000" } }
+    ]
+  }
+}
+```
+
+Colour names are the interface's (`background`, `foreground`, `card`, `card-foreground`, `popover`,
+`popover-foreground`, `primary`, `primary-foreground`, `secondary`, `secondary-foreground`, `muted`,
+`muted-foreground`, `accent`, `accent-foreground`, `destructive`, `border`, `popover-border`, `input`,
+`ring`), code
+highlighting's (`syntax-comment`, `syntax-keyword`, `syntax-string`, `syntax-number`, `syntax-title`,
+`syntax-type`, `syntax-tag`) and the terminal's (`terminal-background`, `terminal-foreground`,
+`terminal-cursor`, `terminal-selection`, `terminal-red` … `terminal-white`, `terminal-bright-red` …
+`terminal-bright-white`). A value is any CSS colour: `#rrggbb`, `rgb()`, `oklch()`, `color-mix()`.
+Leave one out and it follows from the others — a changed `background` takes the terminal's along
+unless `terminal-background` is set too. Themes from the settings file show in the dialog but can't
+be edited there; customizing one makes a copy that can.

@@ -363,7 +363,12 @@ The web UI is a **session manager with a full terminal**:
   it, so a collapsed group can't hide a question.
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile, installable
   as a PWA over HTTPS.
-- **Light / dark** theme toggle.
+- **Colour themes** — a light/dark switch, plus a Themes dialog with sixteen built-in themes (GitHub,
+  Solarized, One, Catppuccin, Gruvbox, Rosé Pine, Dracula, Nord, Tokyo Night and Hangar's own), one
+  picked for light mode and one for dark, optionally following the system's setting. A theme colours
+  the interface, highlighted code and the terminal alike. **Customize colors** copies a theme and
+  lets you change any colour of it, kept on the server for every browser; themes can also be added
+  or tuned in the settings file (see [Configuration](configuration.md#colour-themes)).
 - **Start / stop** — stop kills the process; the app just manages lifecycle.
 
 ## Session lifecycle

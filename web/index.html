@@ -22,12 +22,20 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Hangar" />
     <script>
-      // Apply saved theme before render to avoid a flash. Default: light.
+      // Apply the saved theme before render to avoid a flash. Default: light. The mode is light, dark
+      // or system; the colours are the ones lib/theme.ts last resolved for each kind (a CSS custom
+      // property per token), so a theme from the settings or the Themes dialog paints at once too.
       (function () {
         try {
-          var theme = localStorage.getItem("hangar.theme");
-          if (theme === "dark")
-            document.documentElement.classList.add("dark");
+          var mode = localStorage.getItem("hangar.theme");
+          var dark =
+            mode === "dark" ||
+            (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+          var vars = JSON.parse(localStorage.getItem("hangar.theme.vars") || "{}")[dark ? "dark" : "light"];
+          for (var name in vars || {})
+            if (/^--[a-z0-9-]+$/.test(name) && CSS.supports("color", vars[name]))
+              document.documentElement.style.setProperty(name, vars[name]);
         } catch (e) {}
       })();
     </script>

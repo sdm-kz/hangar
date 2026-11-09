@@ -294,6 +294,7 @@ internal static class Program
             updateOptions.StagingPath = Path.GetFullPath(Path.Combine(contentRoot, updateOptions.StagingPath));
         var ptyHostOptions = builder.Configuration.GetSection("Pty").Get<Sessions.Pty.PtyHostOptions>() ?? new Sessions.Pty.PtyHostOptions();
         var scheduleOptions = builder.Configuration.GetSection("Schedules").Get<ScheduleOptions>() ?? new ScheduleOptions();
+        var uiOptions = builder.Configuration.GetSection("Ui").Get<Web.UiOptions>() ?? new Web.UiOptions();
 
         // The URL a launched session calls back on (HANGAR_URL in its environment). Derived from the
         // bound port unless the operator pinned Sessions:SelfUrl; always loopback, since the session's
@@ -348,6 +349,10 @@ internal static class Program
         // Session templates: named launch presets (project, folder, prompt template) for the errands
         // that come back — the New Session dialog's Templates tab starts sessions from them.
         builder.Services.AddSingleton<TemplateStore>();
+        // Colour themes beyond the built-in ones: those the settings file defines (Ui:Themes) and those
+        // made in the Themes dialog, which follow the user between browsers like the templates do.
+        builder.Services.AddSingleton(uiOptions);
+        builder.Services.AddSingleton<Web.ThemeStore>();
         // Schedules: a template plus a clock. The service is the only thing in the app that starts a
         // session without someone asking for one, so it lives here rather than in an external cron —
         // that is what lets a schedule survive a reboot and still be editable from a phone.
@@ -1295,6 +1300,20 @@ internal static class Program
                 : store.Update(id, body) is { } list ? Results.Ok(list) : Results.NotFound());
         app.MapDelete("/api/templates/{id}", (string id, TemplateStore store) =>
             store.Delete(id) is { } list ? Results.Ok(list) : Results.NotFound());
+
+        // ---- Colour themes (the ones beyond the client's built-ins) --------------------------------
+        // Every mutation answers with the whole state, like the templates above.
+        app.MapGet("/api/themes", (Web.ThemeStore store) => Results.Ok(store.State()));
+        app.MapPost("/api/themes", (Web.UiThemePatch body, Web.ThemeStore store) =>
+            store.Create(body) is { } state
+                ? Results.Ok(state)
+                : Results.BadRequest(new { error = "A theme needs a name and a base (and there is a limit on how many)." }));
+        app.MapPost("/api/themes/{id}", (string id, Web.UiThemePatch body, Web.ThemeStore store) =>
+            (body.Name is { } n && string.IsNullOrWhiteSpace(n)) || (body.Base is { } b && !Web.ThemeStore.IsThemeId(b))
+                ? Results.BadRequest(new { error = "A theme needs a name and a base." })
+                : store.Update(id, body) is { } state ? Results.Ok(state) : Results.NotFound());
+        app.MapDelete("/api/themes/{id}", (string id, Web.ThemeStore store) =>
+            store.Delete(id) is { } state ? Results.Ok(state) : Results.NotFound());
 
         // ---- Schedules (a template plus a clock) --------------------------------------------------
         // Same shape again: the whole list comes back from every mutation. The list carries each

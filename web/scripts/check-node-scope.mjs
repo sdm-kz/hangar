@@ -20,6 +20,7 @@ const THIS_NODE_ONLY = new Set([
   "App.tsx", // picks the node itself: this one's api for its own, apiFor(node) for a peer's
   "components/Login.tsx",
   "components/NodesDialog.tsx",
+  "components/ThemeDialog.tsx", // the themes are this page's own, from the node that served it
   "components/PreviewApp.tsx", // the standalone preview tab reads this machine's disk; never offered for a peer's file
   "lib/migrateRecents.ts",
   "lib/node.tsx", // where useApi() gets the client of the node it is told

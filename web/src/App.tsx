@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, apiFor, getToken, setToken, sessionsStreamUrl } from "@/lib/api";
+import { setThemeLibrary } from "@/lib/theme";
 import { NodeProvider, sessionKey, setHomeNodeId, splitSessionKey } from "@/lib/node";
 import {
   EMPTY_SNAPSHOT,
@@ -857,6 +858,13 @@ export function App() {
     })();
     loadProjects();
   }, [auth, loadRecents, loadProjects, refresh]);
+
+  // The colour themes beyond the built-ins: the settings file's and the Themes dialog's (lib/theme). A
+  // server older than them answers 404, which leaves the built-ins — all there is to pick from then.
+  useEffect(() => {
+    if (auth !== "authed") return;
+    api.getThemes().then(setThemeLibrary, () => {});
+  }, [auth]);
 
   // Re-read the projects whenever the server says they moved (see ProjectStore.Revision). Mostly they
   // move because this browser asked — and it replaced its own list from that response already, so the
