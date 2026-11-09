@@ -11,6 +11,8 @@ import {
   ImagePlus,
   Inbox,
   Loader2,
+  Pencil,
+  Play,
   Search,
   Send,
   Square,
@@ -91,6 +93,8 @@ export function ChatView({
   terminalRef,
   onShowTerminal,
   poolSlot,
+  onReopen,
+  onReopenWithOptions,
 }: {
   sessionId: string;
   /** The conversation the session last reported running: a new one (a /clear) is read at once. */
@@ -104,6 +108,10 @@ export function ChatView({
   onShowTerminal: () => void;
   /** Called with the place in the message box where the session's postponed-message buttons go. */
   poolSlot?: (el: HTMLElement | null) => void;
+  /** Relaunch a closed session, resuming its conversation; the new one opens on the chat too. */
+  onReopen?: () => void;
+  /** The same through the create dialog, to change the model or permissions first. */
+  onReopenWithOptions?: () => void;
 }) {
   const api = useApi();
   const [transcript, setTranscript] = useState<ChatTranscript>(EMPTY_TRANSCRIPT);
@@ -382,10 +390,10 @@ export function ChatView({
               </p>
             ) : items.length === 0 && queued.length === 0 ? (
               <p className="self-center py-8 text-center text-sm text-muted-foreground">
-                {transcript.conversation
-                  ? "Nothing said yet."
-                  : closed
-                    ? "This session left no conversation to show."
+                {closed
+                  ? "This session left no conversation to show."
+                  : transcript.conversation
+                    ? "Nothing said yet."
                     : "Nothing said yet. Write below, or in the terminal."}
               </p>
             ) : (
@@ -487,9 +495,23 @@ export function ChatView({
         // The postponed pool still reads and discards in a closed session, so its buttons stay.
         <div className="border-t px-4 py-2">
           <div className="relative mx-auto flex w-full max-w-3xl items-center gap-2">
-            <p className="min-w-0 flex-1 py-1 text-center text-sm text-muted-foreground">
-              The session is closed. Reopen it to carry on the conversation.
-            </p>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
+              <p className="py-1 text-sm text-muted-foreground">
+                {onReopen ? "The session is closed." : "The session is closed. Reopen it to carry on the conversation."}
+              </p>
+              {onReopen && (
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button size="sm" className="h-8 gap-1.5" onClick={onReopen}>
+                    <Play className="size-3.5" /> Reopen session
+                  </Button>
+                  {onReopenWithOptions && (
+                    <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={onReopenWithOptions}>
+                      <Pencil className="size-3.5" /> Reopen with options…
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
             <div ref={poolSlot} className="contents" />
           </div>
         </div>

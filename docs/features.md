@@ -54,7 +54,9 @@ The web UI is a **session manager with a full terminal**:
   the terminal can show — a picker, a plan to approve, `/usage` — is one click away. The choice is kept
   per session and per browser, so a phone can read the chat while the desk keeps the terminal; it is
   also kept with the session itself, so a stopped session reopens on the view it was left on (here and
-  after the app restarts), and a browser that has made no choice of its own opens it that way too. The
+  after the app restarts), and a browser that has made no choice of its own opens it that way too. A
+  closed session's chat has the **Reopen** buttons too, and **Reopen with options…** starts its dialog on
+  the view the session was left on. The
   **New session** dialog has a Chat / Terminal switch for the view the new session opens on, which starts
   where the last session started from that browser did. The
   postponed-messages and compose buttons move from the terminal's corner into the chat's message box

@@ -1150,6 +1150,8 @@ export function SessionView({
                     terminalRef={terminalRef}
                     onShowTerminal={() => setChatMode(false)}
                     poolSlot={setPoolSlot}
+                    onReopen={closed ? onReopen : undefined}
+                    onReopenWithOptions={closed ? onReopenWithOptions : undefined}
                   />
                 </div>
               )}

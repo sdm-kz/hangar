@@ -54,6 +54,7 @@ export function NewSessionDialog({
   project,
   projects,
   defaultContinue,
+  defaultChat,
   nodes = [],
   node = null,
   origin = null,
@@ -83,6 +84,11 @@ export function NewSessionDialog({
   projects?: Project[];
   /** Overrides the "continue conversation" default (normally on for presets, off otherwise). */
   defaultContinue?: boolean;
+  /**
+   * The view it opens on, when it reopens a closed session: the one that session was left on. Otherwise
+   * the last new session's, and this launch becomes the next one's default.
+   */
+  defaultChat?: boolean;
 }) {
   const api = useApi();
   const nodeId = useNodeId();
@@ -194,7 +200,7 @@ export function NewSessionDialog({
     setTemplateId(null);
     setInput("");
     setShowOptions(false);
-    setChat(newSessionChat());
+    setChat(defaultChat ?? newSessionChat());
     // Relaunching a remembered preset almost always means picking the work back up, so default to
     // continuing its conversation; a plain "New session" starts fresh. Some openers override this
     // (cloning a live session wants a fresh conversation alongside the original).
@@ -221,7 +227,7 @@ export function NewSessionDialog({
       setCommand(preset.command);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, preset, defaultContinue]);
+  }, [open, preset, defaultContinue, defaultChat]);
 
   /** Picking a template fills the launch in from it; the fields below stay editable for this run. */
   const pickTemplate = (t: SessionTemplate) => {
@@ -313,7 +319,7 @@ export function NewSessionDialog({
       // Before the session is shown, so it opens on the view picked here — in this browser and, through
       // the session's saved state, in the others.
       setChatView(sessionKey(nodeId, s.id), chat);
-      setNewSessionChat(chat);
+      if (defaultChat === undefined) setNewSessionChat(chat);
       onCreated(s);
       // Reset the transient fields for next time.
       setName("");

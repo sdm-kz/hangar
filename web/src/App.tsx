@@ -11,7 +11,7 @@ import {
 } from "@/lib/nodeStream";
 import { presetFromSession, type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
-import { carryChatView } from "@/lib/chatView";
+import { carryChatView, chatViewOf } from "@/lib/chatView";
 import { readUrlState, patchUrlState, SSH_SHELLS } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
 import { forkDescendants } from "@/lib/sessionTree";
@@ -182,6 +182,8 @@ export function App() {
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
   // Override for the dialog's "continue conversation" default; undefined = the dialog's own default.
   const [newDefaultContinue, setNewDefaultContinue] = useState<boolean | undefined>(undefined);
+  // The view the dialog's session opens on, when it reopens one (see reopenAsNew); undefined = the dialog's own.
+  const [newDefaultChat, setNewDefaultChat] = useState<boolean | undefined>(undefined);
   // Project the create dialog was opened from ("+" on a project heading): its linked folders are
   // offered as picks in the dialog. Held by id and resolved from the live list, so a folder linked
   // in the meantime shows up.
@@ -949,6 +951,7 @@ export function App() {
     setNewPreset(preset);
     setNewProjectId(null);
     setNewDefaultContinue(undefined);
+    setNewDefaultChat(undefined);
     setNewOpen(true);
   }
 
@@ -959,6 +962,7 @@ export function App() {
     setNewPreset(null);
     setNewProjectId(project.id);
     setNewDefaultContinue(false); // starting fresh, not resuming whatever ran there last
+    setNewDefaultChat(undefined);
     setNewOpen(true);
     setSidebarOpen(false);
   }, []);
@@ -976,6 +980,7 @@ export function App() {
     setNewProjectId(null);
     setNewPreset(preset);
     setNewDefaultContinue(undefined);
+    setNewDefaultChat(chatViewOf(sessionKey(s.nodeId ?? null, s.id)));
     setNewFromId(s.id);
     setNewOpen(true);
     setSidebarOpen(false);
@@ -1214,6 +1219,7 @@ export function App() {
     // The clone runs alongside the original, so it should start a fresh conversation, not steal
     // (or fork) the live session's one.
     setNewDefaultContinue(false);
+    setNewDefaultChat(undefined);
     setNewOpen(true);
     setSidebarOpen(false);
   }, []);
@@ -1241,6 +1247,7 @@ export function App() {
     });
     // "New session in this folder" means starting fresh there, not resuming whatever ran last.
     setNewDefaultContinue(false);
+    setNewDefaultChat(undefined);
     setNewOpen(true);
     setSidebarOpen(false);
   }, []);
@@ -2041,6 +2048,7 @@ export function App() {
                 setNewPreset(null); // clear preset so the next plain "New session" starts fresh
                 setNewProjectId(null);
                 setNewDefaultContinue(undefined);
+                setNewDefaultChat(undefined);
                 setNewFromId(null); // dismissed without launching — keep the Restorable entry as it is
               }
             }}
@@ -2050,6 +2058,7 @@ export function App() {
             project={newNode === newOrigin ? projectsOf(newNode).find((p) => p.id === newProjectId) ?? null : null}
             projects={projectsOf(newNode)}
             defaultContinue={newDefaultContinue}
+            defaultChat={newDefaultChat}
             nodes={launchNodes}
             node={newNode}
             origin={newOrigin}
