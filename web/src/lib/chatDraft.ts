@@ -9,6 +9,8 @@ import type { PostponedImage } from "./postponed";
 export interface ChatDraft {
   text: string;
   images: PostponedImage[];
+  /** A piece of the conversation the message replies to, shown over the box and sent ahead of the text. */
+  quote?: string;
 }
 
 const PREFIX = "hangar.chatDraft:";
@@ -24,7 +26,8 @@ export function loadChatDraft(key: string): ChatDraft {
     const raw = localStorage.getItem(PREFIX + key);
     const v = raw ? (JSON.parse(raw) as Partial<ChatDraft>) : null;
     if (v && typeof v.text === "string") {
-      const draft = { text: v.text, images: Array.isArray(v.images) ? v.images : [] };
+      const draft: ChatDraft = { text: v.text, images: Array.isArray(v.images) ? v.images : [] };
+      if (typeof v.quote === "string" && v.quote) draft.quote = v.quote;
       drafts.set(key, draft);
       return draft;
     }
@@ -39,7 +42,7 @@ export function loadChatDraft(key: string): ChatDraft {
  * elsewhere (the full-size composer, which sends or postpones it) leaves it empty.
  */
 export function saveChatDraft(key: string, draft: ChatDraft = EMPTY) {
-  const empty = !draft.text && draft.images.length === 0;
+  const empty = !draft.text && draft.images.length === 0 && !draft.quote;
   if (empty) drafts.delete(key);
   else drafts.set(key, draft);
   try {
@@ -60,4 +63,33 @@ export function onChatDraft(key: string, listener: (d: ChatDraft) => void): () =
     set.delete(listener);
     if (!set.size) listeners.delete(key);
   };
+}
+
+/**
+ * The message a reply makes: the quoted piece as a Markdown quote, then what was written under it, as a
+ * messenger's reply reads. No quote, and it is the text as it is.
+ */
+export function withQuote(quote: string | undefined, text: string): string {
+  const lines = quote?.replace(/\r\n?/g, "\n").trim();
+  if (!lines) return text;
+  const block = lines
+    .split("\n")
+    .map((l) => (l.trim() ? `> ${l.trimEnd()}` : ">"))
+    .join("\n");
+  return text ? `${block}\n\n${text}` : block;
+}
+
+/**
+ * A message that starts with a Markdown quote, as {@link withQuote} makes a reply, taken apart again: the
+ * quoted piece without its markers, and what was written under it. Null for any other message.
+ */
+export function splitQuote(text: string): { quote: string; rest: string } | null {
+  const m = text.match(/^((?:>[^\n]*(?:\n|$))+)/);
+  if (!m) return null;
+  const quote = m[1]
+    .split("\n")
+    .map((l) => l.replace(/^> ?/, ""))
+    .join("\n")
+    .trim();
+  return quote ? { quote, rest: text.slice(m[1].length).replace(/^\s*\n/, "").trimEnd() } : null;
 }

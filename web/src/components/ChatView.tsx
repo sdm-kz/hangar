@@ -13,6 +13,7 @@ import {
   Paperclip,
   Pencil,
   Play,
+  Reply,
   Search,
   Send,
   Square,
@@ -26,6 +27,7 @@ import { ChatPlan, parsePlan } from "./ChatPlan";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
+import { ReplyToSelection } from "./ReplyToSelection";
 import { useChatFind } from "./ChatFind";
 import { CopyButton } from "./CopyPathButton";
 import type { Activity } from "./ActivityMark";
@@ -46,7 +48,7 @@ import { DropCue } from "./DropCue";
 import type { PostponedImage } from "@/lib/postponed";
 import type { ChatEntry, SessionStatus } from "@/types";
 import { sessionKey, useApi, useNodeId } from "@/lib/node";
-import { loadChatDraft, onChatDraft, saveChatDraft } from "@/lib/chatDraft";
+import { loadChatDraft, onChatDraft, saveChatDraft, splitQuote, withQuote } from "@/lib/chatDraft";
 import { postponeTo } from "@/lib/postponed";
 import { cn } from "@/lib/utils";
 
@@ -122,6 +124,8 @@ export function ChatView({
   const [limit, setLimit] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const draftKey = sessionKey(useNodeId(), sessionId);
   const atBottom = useRef(true);
   const [showJump, setShowJump] = useState(false);
   // The chat's own zoom, like the terminal's: one reading size for every session's chat, kept across
@@ -352,8 +356,20 @@ export function ChatView({
     window.setTimeout(() => pokeRef.current(), 300);
   };
 
+  // Text selected in the conversation, quoted over the message box for the reply to go under, as a
+  // messenger replies to a message. Through the draft, which the box hears changes of.
+  const reply = (quote: string) => {
+    saveChatDraft(draftKey, { ...loadChatDraft(draftKey), quote });
+    // At once, so what is typed straight after the click goes into the box.
+    const el = rootRef.current?.querySelector<HTMLTextAreaElement>("[data-chat-composer]");
+    if (!el) return;
+    el.focus();
+    el.selectionStart = el.selectionEnd = el.value.length;
+  };
+
   return (
     <div
+      ref={rootRef}
       data-owns-image-paste
       onKeyDown={onKeyDown}
       className="flex h-full min-h-0 flex-col bg-background"
@@ -362,6 +378,7 @@ export function ChatView({
         {/* Focusable, so a click in the conversation keeps the keyboard in the chat — and Ctrl+F with it. */}
         <div
           ref={scrollRef}
+          data-chat-scroll
           tabIndex={-1}
           onScroll={onScroll}
           className="h-full overflow-y-auto overscroll-contain outline-none"
@@ -529,6 +546,7 @@ export function ChatView({
           onPreview={(src, name, gallery) => setPreview({ src, name, gallery })}
         />
       )}
+      {!closed && <ReplyToSelection rootRef={contentRef} onReply={reply} />}
       {/* On the page itself: the panes it could open in are positioned, and would hold it to their box. */}
       {preview &&
         createPortal(
@@ -602,7 +620,7 @@ function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: b
             <CopyButton text={item.text} title="Copy message" className={cn(COPY_BUTTON, "group-hover/msg:opacity-100")} />
           )}
           <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-muted px-3.5 py-2 text-sm">
-            {item.text}
+            <UserText text={item.text} />
             {item.images.length > 0 && (
               <ChatImages images={item.images} source={images} name="Image" className={item.text ? "mt-2" : undefined} />
             )}
@@ -668,6 +686,18 @@ function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: b
     case "tool":
       return <ToolCard item={item} sessionBusy={sessionBusy} images={images} />;
   }
+}
+
+/** What the user wrote, a reply's quote (see {@link withQuote}) set off above it as a messenger shows one. */
+function UserText({ text }: { text: string }) {
+  const reply = splitQuote(text);
+  if (!reply) return <>{text}</>;
+  return (
+    <>
+      <span className="mb-1.5 block border-l-2 border-primary/60 pl-2 text-muted-foreground">{reply.quote}</span>
+      {reply.rest}
+    </>
+  );
 }
 
 /**
@@ -902,13 +932,16 @@ function Composer({
   const draftKey = sessionKey(useNodeId(), sessionId);
   const [text, setText] = useState(() => loadChatDraft(draftKey).text);
   const [images, setImages] = useState<PostponedImage[]>(() => loadChatDraft(draftKey).images);
-  useEffect(() => saveChatDraft(draftKey, { text, images }), [draftKey, text, images]);
+  // What the message replies to (see ChatView's reply), quoted over the box.
+  const [quote, setQuote] = useState(() => loadChatDraft(draftKey).quote);
+  useEffect(() => saveChatDraft(draftKey, { text, images, quote }), [draftKey, text, images, quote]);
   // Taken from here by the full-size composer, and sent or postponed from there.
   useEffect(
     () =>
       onChatDraft(draftKey, (d) => {
         setText(d.text);
         setImages(d.images);
+        setQuote(d.quote);
       }),
     [draftKey]
   );
@@ -968,7 +1001,7 @@ function Composer({
     }
     setSending(true);
     setError(null);
-    const ok = await term.sendMessage({ text: body, imagePaths: images.map((i) => i.fullPath) });
+    const ok = await term.sendMessage({ text: withQuote(quote, body), imagePaths: images.map((i) => i.fullPath) });
     setSending(false);
     if (!ok) {
       setError("The terminal disconnected before the message went. It is still here to send again.");
@@ -976,6 +1009,7 @@ function Composer({
     }
     setText("");
     setImages([]);
+    setQuote(undefined);
     onSent();
     // A bare /model, /config, /context… answers in the terminal; the chat would show nothing.
     const bare = body.match(/^\/(\S+)$/);
@@ -987,12 +1021,13 @@ function Composer({
   const postpone = () => {
     const body = text.trim();
     if ((!body && !images.length) || sending || uploading) return;
-    if (!postponeTo(draftKey, { text: body, images })) {
+    if (!postponeTo(draftKey, { text: withQuote(quote, body), images })) {
       setError("The postponed pool isn't here to take it. Try again in a moment.");
       return;
     }
     setText("");
     setImages([]);
+    setQuote(undefined);
     setError(null);
   };
   // Held, the chord turns the send button into Postpone, so the shortcut shows what it will do.
@@ -1009,6 +1044,25 @@ function Composer({
       <div className="relative mx-auto w-full max-w-3xl">
         <SlashSuggestions slash={slash} />
         {error && <p className="mb-1.5 text-xs text-destructive">{error}</p>}
+        {quote && (
+          <div className="mb-1.5 flex items-start gap-2 rounded-md border-l-2 border-primary bg-muted/60 py-1 pl-2.5 pr-1 text-xs">
+            <Reply className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-muted-foreground">Replying to</div>
+              <div title={quote} className="line-clamp-2 whitespace-pre-wrap break-words">
+                {quote}
+              </div>
+            </div>
+            <button
+              type="button"
+              title="Don't reply to this"
+              className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground"
+              onClick={() => setQuote(undefined)}
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
         {(images.length > 0 || uploading > 0) && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
             {images.map((img) => (

@@ -29,7 +29,7 @@ import {
 } from "@/lib/postponed";
 import type { TerminalPaneHandle } from "./TerminalPane";
 import { sessionKey, useApi, useNodeId } from "@/lib/node";
-import { loadChatDraft, saveChatDraft } from "@/lib/chatDraft";
+import { loadChatDraft, saveChatDraft, withQuote } from "@/lib/chatDraft";
 
 // Small delay between items in a "Send all" flush so Claude Code's TUI registers each as a distinct
 // queued message rather than merging back-to-back submits.
@@ -248,8 +248,9 @@ export function PostponedPool({
    */
   const composeButton = useCallback(() => {
     const chat = slot ? loadChatDraft(chatKey) : null;
-    if (chat && (chat.text.trim() || chat.images.length))
-      setComposer({ target: { kind: "chat" }, draft: { text: chat.text, images: chat.images } });
+    // A reply's quote comes along as the Markdown quote it is sent as.
+    if (chat && (chat.text.trim() || chat.images.length || chat.quote))
+      setComposer({ target: { kind: "chat" }, draft: { text: withQuote(chat.quote, chat.text), images: chat.images } });
     else openComposer();
   }, [slot, chatKey, openComposer]);
 

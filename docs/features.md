@@ -67,7 +67,9 @@ The web UI is a **session manager with a full terminal**:
   which has its own attach button. Images and files can be attached there, in the postponed pool's box and
   in the full-size composer by the button, by pasting, or by dropping them on the box: an image goes with
   the message as a pasted one does (its chip opens it full size, where ← and → go through the others attached, as they do through a message's images), and any other file is saved in the session's `.hangar/uploads/` and
-  named in the message by its path, for Claude to read. Typing `/` there suggests slash commands — Claude's own, yours, the
+  named in the message by its path, for Claude to read. To reply to part of the conversation, select it:
+  a **Reply** button by the selection quotes it over the message box, as a messenger's reply does (× drops
+  it), and it goes ahead of your message as a Markdown quote, shown set off in your message's bubble. Typing `/` there suggests slash commands — Claude's own, yours, the
   project's, plugins' and skills' — with their descriptions: arrows to choose, Tab or Enter to take one,
   Enter again to run it. It works anywhere in the text (a word that starts with `/`, at the caret), and
   in the postponed pool's box and the full-size composer too, and every command in the text that Claude
