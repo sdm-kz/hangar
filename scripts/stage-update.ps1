@@ -193,6 +193,7 @@ if ($LASTEXITCODE -ge 8) { throw "robocopy failed (exit $LASTEXITCODE): $publish
 if ($notes) {
   $stamped = [ordered]@{
     buildId    = $stamp.buildId
+    version    = $stamp.version
     commit     = $stamp.commit
     branch     = $stamp.branch
     builtAtUtc = $stamp.builtAtUtc

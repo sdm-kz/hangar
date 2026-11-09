@@ -11,6 +11,9 @@
 # Usage:  scripts/build.sh [--no-tray] [rid]
 #   rid: linux-x64 | linux-arm64 | osx-arm64 | osx-x64 -- defaults to this machine's.
 #
+# A release build sets HANGAR_VERSION (the release workflow does, from the tag: v1.2.3 is 1.2.3); it goes
+# into build.json and the binaries' version info. Unset, the build is named by its commit alone.
+#
 # It cross-builds from anywhere the .NET SDK and Node run, Git Bash on Windows included. A macOS build
 # made on another OS comes out unsigned, which Apple silicon refuses to run; scripts/install-unix.sh
 # signs it ad hoc when it installs it on the Mac.
@@ -49,6 +52,15 @@ case "$rid" in
   *) echo "Unsupported runtime id: $rid" >&2; exit 2 ;;
 esac
 
+# The release version, when this build is one (see the header).
+version=${HANGAR_VERSION:-}
+version_args=()
+if [ -n "$version" ]; then
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+    || { echo "HANGAR_VERSION must be a version like 1.2.3 or 1.2.3-rc.1; got '$version'." >&2; exit 2; }
+  version_args=("-p:Version=$version")
+fi
+
 publish="$root/publish"
 
 echo "==> Building frontend (web)"
@@ -63,6 +75,7 @@ rm -rf "$publish"
 dotnet publish "$root/server" -c Release -r "$rid" --self-contained true \
   -p:PublishSingleFile=true \
   -p:IncludeNativeLibrariesForSelfExtract=true \
+  ${version_args[@]+"${version_args[@]}"} \
   -o "$publish"
 
 # Published into a scratch folder and copied in, so its runtime files can't land on top of the daemon's.
@@ -76,6 +89,7 @@ dotnet publish "$root/ptyhost" -c Release -r "$rid" --self-contained true \
   -p:PublishSingleFile=true \
   -p:PublishTrimmed=true \
   -p:IncludeNativeLibrariesForSelfExtract=true \
+  ${version_args[@]+"${version_args[@]}"} \
   -o "$pty_out"
 cp -R "$pty_out"/. "$publish"/
 rm -rf "$pty_out"
@@ -95,8 +109,18 @@ if [ -n "$with_tray" ]; then
     # to others. On macOS the app bundle, which is what carries the app's name and icon: a bare
     # executable is listed as a blank "Unix executable" in Login Items, Finder and Activity Monitor.
     if [ "$host_os" = osx ]; then bundle_args="--bundles app"; else bundle_args="--no-bundle"; fi
-    # shellcheck disable=SC2086 # two words, on purpose
-    if (cd "$root/tray" && { [ -d node_modules ] || npm ci; } && npx tauri build $bundle_args); then
+    # The version, merged over tauri.conf.json: the plain major.minor.patch, as build.ps1 gives it.
+    tray_config=
+    if [ -n "$version" ]; then
+      tray_config=$(mktemp)
+      printf '{ "version": "%s" }\n' "${version%%-*}" > "$tray_config"
+      bundle_args="$bundle_args --config $tray_config"
+    fi
+    tray_ok=
+    # shellcheck disable=SC2086 # several words, on purpose
+    if (cd "$root/tray" && { [ -d node_modules ] || npm ci; } && npx tauri build $bundle_args); then tray_ok=1; fi
+    if [ -n "$tray_config" ]; then rm -f "$tray_config"; fi
+    if [ -n "$tray_ok" ]; then
       if [ "$host_os" = osx ]; then
         tray_app="Hangar Tray App.app"
         cp -R "$root/tray/src-tauri/target/release/bundle/macos/$tray_app" "$publish/$tray_app"
@@ -147,6 +171,7 @@ json_or_null() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi
 cat > "$publish/build.json" << EOF
 {
   "buildId": "$build_id",
+  "version": $(json_or_null "$version"),
   "commit": $(json_or_null "$commit"),
   "branch": $(json_or_null "$branch"),
   "builtAtUtc": "$built_at",
@@ -158,7 +183,7 @@ for exe in Hangar Hangar.PtyHost; do
   [ -f "$publish/$exe" ] || { echo "$exe is missing from $publish" >&2; exit 1; }
 done
 echo "==> Done. Published to: $publish ($rid)"
-echo "    Build stamp: $build_id"
+echo "    Build stamp: $build_id${version:+ (version $version)}"
 echo "    Run the server:   $publish/Hangar   (headless; browse to its port)"
 echo "    Tray app:         $tray_note"
 echo "    Install it:       scripts/install-unix.sh $publish   (systemd user unit or launchd agent)"

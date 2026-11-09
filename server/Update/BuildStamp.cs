@@ -47,12 +47,14 @@ public sealed record ReleaseNotes(string? Summary, IReadOnlyList<string>? Change
 /// <param name="Branch">Branch the build came from; null outside a git checkout.</param>
 /// <param name="BuiltAtUtc">When the build ran.</param>
 /// <param name="Notes">What changed since the build being replaced, when whoever staged it said.</param>
+/// <param name="Version">The release version ("1.2.3"), for a build made from a release tag; null otherwise.</param>
 public sealed record BuildStamp(
     string BuildId,
     string? Commit,
     string? Branch,
     DateTime? BuiltAtUtc,
-    ReleaseNotes? Notes = null)
+    ReleaseNotes? Notes = null,
+    string? Version = null)
 {
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 

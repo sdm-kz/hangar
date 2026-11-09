@@ -149,9 +149,10 @@ if ($RemoveFiles) {
       throw ("Still running from '$InstallPath': $(($busy | ForEach-Object Name) -join ', '). " +
         "Stop it (and any session host started from here) and run this again; nothing was deleted.")
     }
-    # What a deploy puts there, and nothing else.
+    # What a deploy puts there, and nothing else; scripts is where an install from a release keeps
+    # these scripts (scripts\install.ps1).
     $known = @("Hangar.exe", "Hangar.PtyHost.exe", "Hangar.Tray.exe", "Hangar.pdb", "Hangar.PtyHost.pdb",
-      "Hangar.Tray.pdb", "Hangar.staticwebassets.endpoints.json", "build.json", "web.config", "wwwroot")
+      "Hangar.Tray.pdb", "Hangar.staticwebassets.endpoints.json", "build.json", "web.config", "wwwroot", "scripts")
     $items = @(Get-ChildItem -LiteralPath $InstallPath -Force | Where-Object {
       $known -contains $_.Name -or ($_.Name -like "appsettings*.json" -and -not $_.PSIsContainer)
     })

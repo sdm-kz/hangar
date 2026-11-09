@@ -205,7 +205,10 @@ export function UpdatingOverlay({ targetBuildId }: { targetBuildId: string }) {
 function BuildLine({ stamp }: { stamp: BuildStamp }) {
   return (
     <span className="flex min-w-0 flex-col">
-      <span className="truncate font-mono text-xs">{stamp.buildId}</span>
+      <span className="truncate font-mono text-xs">
+        {stamp.version && `v${stamp.version} · `}
+        {stamp.buildId}
+      </span>
       <span className={cn("flex items-center gap-1 text-xs text-muted-foreground")}>
         {stamp.commit && (
           <>
@@ -254,7 +257,8 @@ function WhatsNew({ stamp }: { stamp: BuildStamp }) {
 /** One-line summary for the button's tooltip. */
 function describe(stamp: BuildStamp): string {
   const when = stamp.builtAtUtc ? new Date(stamp.builtAtUtc).toLocaleString() : stamp.buildId;
-  const build = stamp.commit ? `${stamp.commit}, built ${when}` : `built ${when}`;
+  const name = [stamp.version && `v${stamp.version}`, stamp.commit].filter(Boolean).join(" ");
+  const build = name ? `${name}, built ${when}` : `built ${when}`;
   // The summary first: it is the part that says whether this is worth restarting for right now.
   return stamp.notes?.summary ? `${stamp.notes.summary} (${build})` : build;
 }

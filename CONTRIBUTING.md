@@ -90,13 +90,15 @@ ptyhost/  the per-session pty host that owns each pseudoconsole
 shared/   source shared between projects: Pty/ (daemon <-> pty host), Common/, Contract/ (the wire records the tray reads)
 web/      React + Vite + TS + Tailwind + shadcn/ui web UI
 tray/     the tray app: tray menu and screenshots, a client of the daemon's API (Tauri: Rust + React)
-docs/     the documentation (install, features, configuration, updating, API, how it works, troubleshooting),
-          screenshots (images/) and design notes (design/)
+docs/     the documentation (install, features, configuration, updating, API, how it works, troubleshooting,
+          releasing), screenshots (images/) and design notes (design/)
+.github/  workflows/release.yml: a v* tag builds every platform and drafts a GitHub release (docs/releasing.md)
 scripts/  build.ps1, deploy.ps1, register-autostart.ps1, uninstall.ps1, install-service.ps1, uninstall-service.ps1,
           dev.ps1, run.ps1, deploy-wwwroot.ps1, stage-update.ps1 + apply-update.ps1 (the two halves of the in-app updater),
           _paths.ps1 (install/staging/data folder resolution, dot-sourced by the others), hgr-new-session.ps1;
           build.sh, install-unix.sh, stage-update.sh + apply-update.sh (the same, for Linux and macOS);
-          stage-update-remote.sh (stage a Linux/macOS build on another machine over ssh)
+          stage-update-remote.sh (stage a Linux/macOS build on another machine over ssh);
+          install.sh, install.ps1 (the one-line installers, attached to each release)
 ```
 
 ## Checks

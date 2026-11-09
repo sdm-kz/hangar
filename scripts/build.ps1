@@ -14,7 +14,9 @@
   Every step's exit code is checked and the first failure stops the build: a web build that failed must
   not leave the previous server\wwwroot to be published as if it were this one.
 
-  Writes publish\build.json, the stamp the in-app updater tells builds apart by.
+  Writes publish\build.json, the stamp the in-app updater tells builds apart by. A release build sets
+  HANGAR_VERSION (the release workflow does, from the tag: v1.2.3 is 1.2.3); it goes into build.json and
+  the exes' version resources. Unset, the build is named by its commit alone.
 
 .PARAMETER Rid
   The .NET runtime id to publish for: win-x64 or win-arm64. Defaults to this machine's own CPU.
@@ -56,6 +58,14 @@ function Get-HostRid {
 $hostRid = Get-HostRid
 if (-not $Rid) { $Rid = $hostRid }
 
+# The release version, when this build is one (see the help).
+$version = $env:HANGAR_VERSION
+if ($version -and $version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+  throw "HANGAR_VERSION must be a version like 1.2.3 or 1.2.3-rc.1; got '$version'."
+}
+# @(...): an if's lone result would come out a string, and a string splats as its characters.
+$versionArgs = @(if ($version) { "-p:Version=$version" })
+
 # The tray, when it can be built here (see the help). Decided up front so the summary can say why not.
 $trayNote = $null
 if ($NoTray) {
@@ -84,6 +94,7 @@ try {
   dotnet publish -c Release -r $Rid --self-contained true `
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true `
+    @versionArgs `
     -o $publish
   Assert-ExitCode "dotnet publish (server)"
 } finally { Pop-Location }
@@ -133,12 +144,13 @@ try {
     # The compiler finds the linker through vcvarsall.bat, which runs vswhere.exe by bare name: from a
     # shell whose PATH lacks the installer folder, its "not recognized" lands in the linker's path.
     $env:PATH = "$(Split-Path $vswhere);$env:PATH"
-    dotnet publish -c Release -r $Rid -p:PublishAot=true -o $ptyOut
+    dotnet publish -c Release -r $Rid -p:PublishAot=true @versionArgs -o $ptyOut
   } else {
     dotnet publish -c Release -r $Rid --self-contained true `
       -p:PublishSingleFile=true `
       -p:PublishTrimmed=true `
       -p:IncludeNativeLibrariesForSelfExtract=true `
+      @versionArgs `
       -o $ptyOut
   }
   Assert-ExitCode "dotnet publish (ptyhost)"
@@ -162,9 +174,19 @@ if ($withTray) {
   try {
     if (-not (Test-Path "node_modules")) { npm ci; Assert-ExitCode "npm ci (tray)" }
     # --no-bundle: the exe is all an install needs; installers (MSI/NSIS) are for handing it to others.
-    npx tauri build --no-bundle
+    $trayArgs = @("--no-bundle")
+    $trayConfig = $null
+    if ($version) {
+      # Merged over tauri.conf.json. The plain major.minor.patch: a Windows version resource has no
+      # room for "-rc.1". Written without a BOM, which Windows PowerShell's Set-Content would add.
+      $trayConfig = Join-Path ([IO.Path]::GetTempPath()) "hangar-tray-version-$PID.json"
+      [IO.File]::WriteAllText($trayConfig, (@{ version = ($version -split '-')[0] } | ConvertTo-Json))
+      $trayArgs += @("--config", $trayConfig)
+    }
+    npx tauri build @trayArgs
     Assert-ExitCode "tauri build (tray; pass -NoTray to build without it)"
   } finally {
+    if ($trayConfig) { Remove-Item $trayConfig -Force -ErrorAction SilentlyContinue }
     Pop-Location
   }
   Copy-Item (Join-Path $root "tray\src-tauri\target\release\hangar-tray.exe") (Join-Path $publish "Hangar.Tray.exe") -Force
@@ -180,6 +202,7 @@ $branch  = try { (git -C $root rev-parse --abbrev-ref HEAD 2>$null) } catch { $n
 $builtAt = (Get-Date).ToUniversalTime()
 $stamp = [ordered]@{
   buildId    = "{0}-{1}" -f $builtAt.ToString("yyyyMMdd'T'HHmmss'Z'"), $(if ($commit) { $commit } else { "nogit" })
+  version    = $(if ($version) { $version } else { $null })
   commit     = $commit
   branch     = $branch
   builtAtUtc = $builtAt.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
@@ -193,7 +216,7 @@ foreach ($exe in $expected) {
   if (-not (Test-Path (Join-Path $publish $exe))) { throw "$exe is missing from '$publish'." }
 }
 Write-Host "==> Done. Published to: $publish ($Rid)" -ForegroundColor Green
-Write-Host "    Build stamp: $($stamp.buildId)" -ForegroundColor DarkGray
+Write-Host "    Build stamp: $($stamp.buildId)$(if ($version) { " (version $version)" })" -ForegroundColor DarkGray
 Write-Host "    Pty host:            $ptyNote"
 Write-Host "    Run the server:      $publish\Hangar.exe        (headless; browse to its port)"
 Write-Host "    Tray app:            $trayNote"

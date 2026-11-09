@@ -300,6 +300,7 @@ export interface ReleaseNotes {
 /** Identity of one build of the app, written by scripts\build.ps1 as build.json next to the exe. */
 export interface BuildStamp {
   buildId: string; // UTC build timestamp + short commit; two builds are the same iff this matches
+  version: string | null; // the release version ("1.2.3") of a build made from a release tag
   commit: string | null;
   branch: string | null;
   builtAtUtc: string | null;

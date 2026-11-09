@@ -1,0 +1,191 @@
+# A tag v1.2.3 (or v1.2.3-rc.1) builds Hangar for every platform and makes a draft GitHub release of the
+# builds, their SHA256SUMS and the one-line installers. Look the draft over, then publish it by hand: a
+# published, non-prerelease release is what releases/latest -- and so the one-liners -- point at.
+# See docs/releasing.md.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Every platform runs to the end, so one run shows all that is wrong; the release needs them all.
+      fail-fast: false
+      matrix:
+        include:
+          # Native runners throughout: the tray (Tauri) builds only on the platform it is for. Linux on
+          # 22.04, the oldest supported image, so the tray runs on any glibc from 2.35 up.
+          - { rid: win-x64, os: windows-latest }
+          - { rid: win-arm64, os: windows-11-arm }
+          - { rid: osx-arm64, os: macos-latest }
+          - { rid: linux-x64, os: ubuntu-22.04 }
+          - { rid: linux-arm64, os: ubuntu-22.04-arm }
+    env:
+      RID: ${{ matrix.rid }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Version from the tag
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+            || { echo "::error::Tag $GITHUB_REF_NAME is not v<major>.<minor>.<patch>[-<pre>]"; exit 1; }
+          # Read by build.ps1 / build.sh.
+          echo "HANGAR_VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Rust
+        shell: bash
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Linux packages for the tray
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # Tauri's prerequisites, then what the screen capture (xcap) builds against; see tray/README.md.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential file libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev \
+            libxcb1-dev libxrandr-dev libdbus-1-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+            clang libclang-dev
+
+      # The release's signing identity, where build.sh looks for this Mac's own (setup-macos-signing.sh), so
+      # every installed tray carries the same signature and keeps its permissions across updates. Without
+      # the secrets the tray is signed ad hoc, and each update needs its permissions granted again.
+      - name: macOS signing identity
+        if: runner.os == 'macOS'
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_SIGNING_P12" ]; then
+            echo "::warning::No MACOS_SIGNING_P12 secret: the macOS tray is signed ad hoc."
+            exit 0
+          fi
+          dir="$HOME/Library/Application Support/Hangar/codesign"
+          keychain="$dir/signing.keychain-db"
+          mkdir -p "$dir" && chmod 700 "$dir"
+          password=$(openssl rand -hex 24)
+          (umask 077 && printf '%s' "$password" > "$dir/keychain-password")
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          p12="$RUNNER_TEMP/identity.p12"
+          printf '%s' "$MACOS_SIGNING_P12" | base64 --decode > "$p12"
+          security import "$p12" -k "$keychain" -P "$MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign > /dev/null
+          rm -f "$p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          # Not -v: a self-signed certificate is not "valid" to macOS, and needn't be (setup-macos-signing.sh).
+          security find-identity -p codesigning "$keychain" \
+            | sed -n 's/^ *1) \([0-9A-F]\{40\}\) .*/\1/p' > "$dir/identity"
+          [ -s "$dir/identity" ] || { echo "::error::MACOS_SIGNING_P12 holds no code-signing identity"; exit 1; }
+          echo "Signing with $(cat "$dir/identity")"
+
+      # From the lockfiles: the build scripts install only when node_modules is missing.
+      - name: Node packages
+        shell: bash
+        run: npm ci --prefix web && npm ci --prefix tray
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/build.ps1 -Rid $env:RID
+
+      - name: Build (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: scripts/build.sh "$RID"
+
+      # hangar-<rid>/: the build in publish/ and the scripts that install it, so an install from the
+      # archive is the same install a checkout makes (scripts/install.ps1 and install.sh run them).
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "hangar-$env:RID"
+          if (-not (Test-Path "publish/Hangar.Tray.exe")) { throw "The tray is missing from the build." }
+          New-Item -ItemType Directory "dist/$name/scripts" -Force | Out-Null
+          Copy-Item publish "dist/$name/publish" -Recurse
+          foreach ($s in "_paths.ps1", "deploy.ps1", "register-autostart.ps1", "install-service.ps1", "uninstall-service.ps1", "uninstall.ps1") {
+            Copy-Item "scripts/$s" "dist/$name/scripts/"
+          }
+          Copy-Item LICENSE, README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+
+      - name: Package (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          name="hangar-$RID"
+          # build.sh goes on without a tray that failed to build; a release doesn't.
+          [ -e publish/Hangar.Tray ] || { echo "::error::The tray is missing from the build."; exit 1; }
+          mkdir -p "dist/$name/scripts"
+          cp -Rp publish "dist/$name/publish"
+          cp scripts/install-unix.sh "dist/$name/scripts/"
+          cp LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hangar-${{ matrix.rid }}
+          path: dist/hangar-${{ matrix.rid }}.*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the release
+      id-token: write # the provenance attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: hangar-*
+          merge-multiple: true
+
+      - name: Installers and checksums
+        run: |
+          cp scripts/install.sh scripts/install.ps1 dist/
+          (cd dist && sha256sum -- *) > SHA256SUMS
+          mv SHA256SUMS dist/
+          cat dist/SHA256SUMS
+
+      # Signed records of which workflow run, at which commit, made each file: gh attestation verify
+      # <file> --repo sdm-kz/hangar. GitHub keeps these for public repositories only.
+      - uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
+        with:
+          subject-path: dist/*
+
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=
+          case "$GITHUB_REF_NAME" in *-*) prerelease=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --draft --verify-tag --generate-notes --title "Hangar ${GITHUB_REF_NAME#v}" $prerelease

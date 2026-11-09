@@ -186,6 +186,7 @@ function updateStatus(raw: unknown): UpdateStatus | null {
     const n = b.notes && typeof b.notes === "object" ? (b.notes as Record<string, unknown>) : null;
     return {
       buildId: b.buildId,
+      version: str(b.version),
       commit: str(b.commit),
       branch: str(b.branch),
       builtAtUtc: str(b.builtAtUtc),
