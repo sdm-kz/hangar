@@ -199,6 +199,7 @@ if ($withTray) {
 # folder (see scripts\stage-update.ps1 and server\Update\UpdateService.cs).
 $commit  = try { (git -C $root rev-parse --short HEAD 2>$null) } catch { $null }
 $branch  = try { (git -C $root rev-parse --abbrev-ref HEAD 2>$null) } catch { $null }
+if ($branch -eq "HEAD") { $branch = $null }   # a detached checkout: the release workflow builds a tag
 $builtAt = (Get-Date).ToUniversalTime()
 $stamp = [ordered]@{
   buildId    = "{0}-{1}" -f $builtAt.ToString("yyyyMMdd'T'HHmmss'Z'"), $(if ($commit) { $commit } else { "nogit" })

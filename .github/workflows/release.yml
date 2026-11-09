@@ -31,6 +31,10 @@ jobs:
           - { rid: win-x64, os: windows-latest }
           - { rid: win-arm64, os: windows-11-arm }
           - { rid: osx-arm64, os: macos-latest }
+          # GitHub's last Intel macOS image. When it is retired, the Intel build can move to the arm64
+          # runner, cross-compiled (Rust and .NET both target x86_64 from there), which build.sh would
+          # then have to allow for the tray.
+          - { rid: osx-x64, os: macos-15-intel }
           - { rid: linux-x64, os: ubuntu-24.04 }
           - { rid: linux-arm64, os: ubuntu-24.04-arm }
     env:

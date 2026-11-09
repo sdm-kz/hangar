@@ -165,6 +165,7 @@ rm -f "$publish/web.config"
 # --- Build stamp (see build.ps1) ------------------------------------------------------------------
 commit=$(git -C "$root" rev-parse --short HEAD 2> /dev/null || true)
 branch=$(git -C "$root" rev-parse --abbrev-ref HEAD 2> /dev/null || true)
+[ "$branch" = HEAD ] && branch= # a detached checkout: the release workflow builds a tag
 built_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 build_id="$(date -u '+%Y%m%dT%H%M%SZ')-${commit:-nogit}"
 json_or_null() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf 'null'; fi; }

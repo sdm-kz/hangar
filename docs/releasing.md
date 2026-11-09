@@ -15,7 +15,7 @@ git push origin v0.2.0
 
 The workflow then:
 
-1. builds `win-x64`, `win-arm64`, `osx-arm64`, `linux-x64` and `linux-arm64` with `scripts/build.ps1` /
+1. builds `win-x64`, `win-arm64`, `osx-arm64`, `osx-x64`, `linux-x64` and `linux-arm64` with `scripts/build.ps1` /
    `scripts/build.sh`, with `HANGAR_VERSION` set from the tag. The version lands in each build's
    `build.json` (and so in the Update dialog) and in the executables' version info;
 2. packs each as `hangar-<rid>.zip` (Windows) or `hangar-<rid>.tar.gz`: a `hangar-<rid>/` folder with the

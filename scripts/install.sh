@@ -40,7 +40,7 @@ main() {
   if [ "$os" = osx ] && [ "$(sysctl -n hw.optional.arm64 2> /dev/null || echo 0)" = 1 ]; then arch=arm64; fi
   rid=$os-$arch
   case "$rid" in
-    linux-x64 | linux-arm64 | osx-arm64) ;;
+    linux-x64 | linux-arm64 | osx-arm64 | osx-x64) ;;
     *) fail "There is no release build for $rid; build it from source: https://github.com/$repo#quick-start" ;;
   esac
 
@@ -91,7 +91,9 @@ main() {
   version=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$dir/publish/build.json" | head -n 1)
   say "Installing Hangar ${version:-(unversioned build)} for $rid"
 
-  command -v claude > /dev/null 2>&1 \
+  # ~/.local/bin is where claude's own installer puts it, and on no PATH a shell started over ssh has;
+  # install-unix.sh gives the daemon that folder too.
+  command -v claude > /dev/null 2>&1 || [ -x "$HOME/.local/bin/claude" ] \
     || warn "the Claude Code CLI (claude) is not on PATH. Hangar needs it: https://github.com/$repo/blob/main/docs/install.md#prerequisites"
 
   # Not reading this script's pipe: stdin is what is left of it.
