@@ -72,8 +72,20 @@
           // leave a gap between the composer and the keys. iOS keeps innerHeight at full height
           // while the keyboard is up, so a visual viewport well short of it means a keyboard.
           document.documentElement.toggleAttribute("data-keyboard", window.innerHeight - h > 150);
+          unscroll();
+        };
+        // iOS also scrolls the page to lift a focused field above the keyboard, measuring against
+        // the full-height layout viewport. With the app already shrunk above the keyboard, that
+        // scroll overshoots: the app slides up out of view, the field with it, and blank page is
+        // left above the keys. The app never scrolls as a whole, so put it back at the top. Not
+        // while pinch-zoomed, where panning around is the user's own.
+        var unscroll = function () {
+          if (vv.scale > 1.01) return;
+          if (window.scrollY || window.scrollX || vv.offsetTop || vv.offsetLeft) window.scrollTo(0, 0);
         };
         vv.addEventListener("resize", apply);
+        vv.addEventListener("scroll", unscroll);
+        window.addEventListener("scroll", unscroll);
         apply();
       })();
     </script>
