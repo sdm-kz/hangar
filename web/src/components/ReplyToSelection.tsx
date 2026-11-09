@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Reply } from "lucide-react";
 
@@ -28,11 +28,15 @@ export function ReplyToSelection({
   onReply: (text: string) => void;
 }) {
   const [spot, setSpot] = useState<Spot | null>(null);
+  // A finger on the button: the tap can drop the selection before its click, and the button is to stay
+  // under the finger for the click to reach it.
+  const tapping = useRef(false);
 
   useEffect(() => {
     const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
     let held = false;
     const update = () => {
+      if (tapping.current) return;
       const sel = window.getSelection();
       const root = rootRef.current;
       if (held || !root || !sel || sel.isCollapsed || !sel.rangeCount) return setSpot(null);
@@ -50,9 +54,10 @@ export function ReplyToSelection({
     };
     // A mouse dragging out a selection: not until it is let go, so the button doesn't chase the pointer.
     const down = (e: PointerEvent) => {
-      if (e.pointerType !== "mouse" || e.button !== 0) return;
       // The button itself: the selection stays for its click to take.
       if ((e.target as Element | null)?.closest?.("[data-reply-to-selection]")) return;
+      tapping.current = false;
+      if (e.pointerType !== "mouse" || e.button !== 0) return;
       held = true;
       setSpot(null);
     };
@@ -78,9 +83,12 @@ export function ReplyToSelection({
 
   if (!spot) return null;
   const take = () => {
-    onReply(spot.text);
+    tapping.current = false;
+    // The selection dropped before the message box takes the focus: dropped after, it can take the focus
+    // (and a phone's keyboard) away with it.
     window.getSelection()?.removeAllRanges();
     setSpot(null);
+    onReply(spot.text);
   };
   // On the page itself: fixed against the window, whatever pane the chat is in, and clear of its zoom.
   return createPortal(
@@ -88,12 +96,15 @@ export function ReplyToSelection({
       type="button"
       title="Reply to this (quote it in your message)"
       data-reply-to-selection
-      // A tap on a touch screen can drop the selection, and the button with it, before its click: taken on
-      // the touch itself. A mouse's press would end the selection and take the focus: kept from doing so.
+      // Taken on the click, not on the touch: the focus a phone gives the message box then is the tap's
+      // own, which nothing under the finger takes back, and opens the keyboard. A tap can drop the
+      // selection before its click, so the button is kept until then. A mouse's press would end the
+      // selection and take the focus: kept from doing so.
       onPointerDown={(e) => {
-        if (e.pointerType === "mouse") return;
-        e.preventDefault();
-        take();
+        if (e.pointerType !== "mouse") tapping.current = true;
+      }}
+      onPointerCancel={() => {
+        tapping.current = false;
       }}
       onMouseDown={(e) => e.preventDefault()}
       onClick={take}
