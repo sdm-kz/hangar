@@ -481,6 +481,27 @@ public sealed class SessionManager : IDisposable
         });
 
     /// <summary>
+    /// The UI-bag field saying Claude's tab shows the chat read from the terminal rather than the
+    /// terminal itself (web: lib/chatView.ts). True or false; absent when no choice was ever made.
+    /// </summary>
+    public const string ChatViewField = "chat";
+
+    /// <summary>
+    /// Give a session its host's chat-or-terminal view (see <see cref="ChatViewField"/>), unless it
+    /// already has one of its own or the host never had one. The bag carries it to every browser, and a
+    /// browser with no choice of its own for the session follows it — the same way a reopened session
+    /// comes back on the view it was left on.
+    /// </summary>
+    private void InheritChatView(string id, string hostId)
+    {
+        if (GetUi(hostId) is not { } hostUi
+            || !hostUi.State.TryGetValue(ChatViewField, out var chat)
+            || chat.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return;
+        if (GetUi(id) is not { } ui || ui.State.ContainsKey(ChatViewField)) return;
+        MergeUi(id, new Dictionary<string, JsonElement>(StringComparer.Ordinal) { [ChatViewField] = chat });
+    }
+
+    /// <summary>
     /// How many file tabs a session may hold. The panel itself has no limit — a person closes tabs —
     /// but this endpoint can be called in a loop, and a bag that grows past
     /// <see cref="SessionUiStore"/>'s per-entry cap stops being persisted at all. Past the limit the
@@ -1326,6 +1347,12 @@ public sealed class SessionManager : IDisposable
                 && GroupIdOf(host) is { } hostGroup
                 && SetGroup(new[] { session.Id }, hostGroup) is not null)
                 info = info with { GroupId = hostGroup };
+
+            // And the view: the child opens on the chat or the terminal, whichever its host is shown
+            // in — the session someone was working in when they launched this one from it. Only on a
+            // launch: a reopened child has a view of its own, kept with its conversation, or never had
+            // one, and either way its host's is not a choice anyone made for it.
+            if (adopt) InheritChatView(session.Id, host);
         }
         return info;
     }

@@ -82,7 +82,7 @@ param(
     # the list and nothing more — the new session gets its own conversation, so this is not a fork.
     # It does take that session's place in the list, though: its virtual folder, and its project when
     # no project claims the folder this one runs in — a row is only drawn under something in its own
-    # list.
+    # list — and its view: it opens on the chat or the terminal, whichever that session is on.
     [string] $NestUnderSessionId,
 
     # Nest under the session this script runs inside: -NestUnderSessionId filled in from

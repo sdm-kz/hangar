@@ -58,7 +58,8 @@ The web UI is a **session manager with a full terminal**:
   closed session's chat has the **Reopen** buttons too, and **Reopen with options…** starts its dialog on
   the view the session was left on. The
   **New session** dialog has a Chat / Terminal switch for the view the new session opens on, which starts
-  where the last session started from that browser did. The
+  where the last session started from that browser did. A session launched under another
+  (`hgr-new-session.ps1 -Child`) opens on the view its parent is on. The
   postponed-messages and compose buttons move from the terminal's corner into the chat's message box
   (Ctrl/⌘+Shift+Enter there postpones what is written, and the send button turns into Postpone while the
   chord is held; Compose carries on what is written there),
