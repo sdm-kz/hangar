@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DropCue } from "./DropCue";
-import { ImageLightbox } from "./ImageLightbox";
+import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
 import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import type { PostponedImage } from "@/lib/postponed";
 import { useApi } from "@/lib/node";
@@ -61,7 +61,7 @@ export function ComposerDialog({
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
+  const [preview, setPreview] = useState<{ src: string; name: string; gallery?: LightboxImage[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const slash = useSlashInput(sessionId, text, setText, textRef);
@@ -232,7 +232,11 @@ export function ComposerDialog({
                   <button
                     type="button"
                     onClick={() =>
-                      setPreview({ src: api.sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
+                      setPreview({
+                        src: api.sessionFileUrl(sessionId, img.path),
+                        name: baseName(img.path),
+                        gallery: images.map((i) => ({ src: api.sessionFileUrl(sessionId, i.path), name: baseName(i.path) })),
+                      })
                     }
                     title="Preview image"
                   >
@@ -317,7 +321,12 @@ export function ComposerDialog({
       </Dialog>
 
       {preview && (
-        <ImageLightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />
+        <ImageLightbox
+          src={preview.src}
+          name={preview.name}
+          gallery={preview.gallery}
+          onClose={() => setPreview(null)}
+        />
       )}
     </>
   );

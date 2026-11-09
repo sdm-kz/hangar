@@ -25,7 +25,7 @@ import { ChatQuestion, parseQuestions } from "./ChatQuestion";
 import { ChatPlan, parsePlan } from "./ChatPlan";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
-import { ImageLightbox } from "./ImageLightbox";
+import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
 import { useChatFind } from "./ChatFind";
 import { CopyButton } from "./CopyPathButton";
 import type { Activity } from "./ActivityMark";
@@ -127,7 +127,7 @@ export function ChatView({
   // The chat's own zoom, like the terminal's: one reading size for every session's chat, kept across
   // reloads, and apart from the terminal's — the two are set for different text.
   const [zoom, setZoom] = usePersistentZoom("chat");
-  const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
+  const [preview, setPreview] = useState<{ src: string; name: string; gallery?: LightboxImage[] } | null>(null);
 
   // ---- Reading the transcript ----
   const transcriptRef = useRef(transcript);
@@ -210,7 +210,7 @@ export function ChatView({
         conversation && image.at != null && image.n != null
           ? api.chatImageUrl(sessionId, conversation, { uuid: image.uuid, at: image.at, n: image.n })
           : null,
-      open: (src, name) => setPreview({ src, name }),
+      open: (src, name, gallery) => setPreview({ src, name, gallery }),
     }),
     [api, sessionId, conversation]
   );
@@ -526,13 +526,18 @@ export function ChatView({
           onShowTerminal={onShowTerminal}
           poolSlot={poolSlot}
           info={info}
-          onPreview={(src, name) => setPreview({ src, name })}
+          onPreview={(src, name, gallery) => setPreview({ src, name, gallery })}
         />
       )}
       {/* On the page itself: the panes it could open in are positioned, and would hold it to their box. */}
       {preview &&
         createPortal(
-          <ImageLightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />,
+          <ImageLightbox
+            src={preview.src}
+            name={preview.name}
+            gallery={preview.gallery}
+            onClose={() => setPreview(null)}
+          />,
           document.body
         )}
     </div>
@@ -583,7 +588,8 @@ function WaitingBar({
 interface ChatImageSource {
   /** The image's URL, or null when its node didn't say where it is. */
   url: (image: ChatImageRef) => string | null;
-  open: (src: string, name: string) => void;
+  /** Open one full size; `gallery` is the set it is one of, to go through with the arrow keys. */
+  open: (src: string, name: string, gallery?: LightboxImage[]) => void;
 }
 
 function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: boolean; images: ChatImageSource }) {
@@ -680,15 +686,20 @@ function ChatImages({
   name: string;
   className?: string;
 }) {
+  const label = (i: number) => (images.length > 1 ? `${name} ${i + 1}` : name);
+  // The ones that can be shown, in order: what the viewer goes through.
+  const gallery = images.flatMap((image, i) => {
+    const src = source.url(image);
+    return src ? [{ src, name: label(i) }] : [];
+  });
   return (
     <div className={cn("flex flex-wrap gap-1.5", className)}>
       {images.map((image, i) => {
-        const label = images.length > 1 ? `${name} ${i + 1}` : name;
         const src = source.url(image);
         return src ? (
-          <ChatThumb key={i} src={src} label={label} onOpen={() => source.open(src, label)} />
+          <ChatThumb key={i} src={src} label={label(i)} onOpen={() => source.open(src, label(i), gallery)} />
         ) : (
-          <ImagePlaceholder key={i} label={label} />
+          <ImagePlaceholder key={i} label={label(i)} />
         );
       })}
     </div>
@@ -882,8 +893,8 @@ function Composer({
   onShowTerminal: () => void;
   poolSlot?: (el: HTMLElement | null) => void;
   info: SessionLine;
-  /** Open an attached image full size. */
-  onPreview: (src: string, name: string) => void;
+  /** Open an attached image full size, among the others attached. */
+  onPreview: (src: string, name: string, gallery: LightboxImage[]) => void;
 }) {
   const api = useApi();
   // What was written here and not sent is kept per session, so a switch to another session and back
@@ -1007,7 +1018,13 @@ function Composer({
                   type="button"
                   title="Preview image"
                   className="flex min-w-0 cursor-zoom-in items-center gap-1 hover:text-foreground"
-                  onClick={() => onPreview(api.sessionFileUrl(sessionId, img.path), baseName(img.path))}
+                  onClick={() =>
+                    onPreview(
+                      api.sessionFileUrl(sessionId, img.path),
+                      baseName(img.path),
+                      images.map((i) => ({ src: api.sessionFileUrl(sessionId, i.path), name: baseName(i.path) }))
+                    )
+                  }
                 >
                   <ChipThumb src={api.sessionFileUrl(sessionId, img.path)} />
                   <span className="max-w-[10rem] truncate">{baseName(img.path)}</span>

@@ -1,16 +1,38 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Minus, Plus, RotateCcw, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Minus, Plus, RotateCcw, X } from "lucide-react";
 
 const MIN = 0.2;
 const MAX = 8;
+
+/** One picture the viewer can show. */
+export interface LightboxImage {
+  src: string;
+  name: string;
+}
 
 /**
  * Full-page image viewer with wheel/button zoom and drag-to-pan. Esc / +/- / 0 shortcuts. Opens with the
  * whole image in view: a picture bigger than the page is scaled down to fit it, a smaller one is shown at
  * its own size. Reset (and 0, and a double-click) goes back to that.
+ *
+ * `gallery` is the set the image was opened from (a message's images, the ones attached to a draft): with
+ * more than one, ← and → and the buttons at the sides go through them, round from the last to the first.
  */
-export function ImageLightbox({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
+export function ImageLightbox({
+  src,
+  name,
+  gallery,
+  onClose,
+}: {
+  src: string;
+  name: string;
+  gallery?: LightboxImage[];
+  onClose: () => void;
+}) {
+  const [at, setAt] = useState(() => gallery?.findIndex((g) => g.src === src) ?? -1);
+  const many = !!gallery && gallery.length > 1 && at >= 0;
+  const shown = (at >= 0 && gallery?.[at]) || { src, name };
   const [scale, setScale] = useState(1);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
@@ -46,6 +68,14 @@ export function ImageLightbox({ src, name, onClose }: { src: string; name: strin
     fitted.current = false;
     setScale((s) => clamp(s * by));
   };
+  // Another of the set, fitted afresh: its own size decides the fit, so it shows once it has loaded.
+  const step = (by: number) => {
+    if (!many) return;
+    setAt((i) => (i + by + gallery!.length) % gallery!.length);
+    fitted.current = true;
+    setReady(false);
+    setPos({ x: 0, y: 0 });
+  };
 
   useEffect(() => {
     window.addEventListener("resize", refit);
@@ -58,6 +88,14 @@ export function ImageLightbox({ src, name, onClose }: { src: string; name: strin
       else if (e.key === "+" || e.key === "=") zoom(1.2);
       else if (e.key === "-" || e.key === "_") zoom(1 / 1.2);
       else if (e.key === "0") reset();
+      // Kept from whatever has the keyboard under the viewer (a text box's caret).
+      else if (e.key === "ArrowLeft" && many) {
+        e.preventDefault();
+        step(-1);
+      } else if (e.key === "ArrowRight" && many) {
+        e.preventDefault();
+        step(1);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -82,7 +120,14 @@ export function ImageLightbox({ src, name, onClose }: { src: string; name: strin
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-black/90 safe-area-pad backdrop-blur-sm">
       <div className="flex items-center justify-between gap-2 px-4 py-2 text-white">
-        <span className="truncate text-sm">{name}</span>
+        <span className="truncate text-sm">
+          {shown.name}
+          {many && (
+            <span className="ml-2 tabular-nums text-white/60">
+              {at + 1} / {gallery!.length}
+            </span>
+          )}
+        </span>
         <div className="flex items-center gap-1">
           <IconBtn title="Zoom out" onClick={() => zoom(1 / 1.2)}>
             <Minus className="size-4" />
@@ -112,11 +157,14 @@ export function ImageLightbox({ src, name, onClose }: { src: string; name: strin
         style={{ cursor: scale > fit ? "grab" : "default", touchAction: "none" }}
       >
         <img
+          // A fresh element for each of the set, so its load (and the fit that follows it) is its own — by
+          // place as well, for a set that holds the same picture twice.
+          key={`${at}:${shown.src}`}
           ref={imgRef}
           onLoad={refit}
           onError={() => setReady(true)}
-          src={src}
-          alt={name}
+          src={shown.src}
+          alt={shown.name}
           draggable={false}
           className="pointer-events-none absolute left-1/2 top-1/2 max-h-none max-w-none select-none"
           style={{
@@ -124,8 +172,48 @@ export function ImageLightbox({ src, name, onClose }: { src: string; name: strin
             visibility: ready ? "visible" : "hidden",
           }}
         />
+        {many && (
+          <>
+            <SideBtn side="left" title="Previous image (←)" onClick={() => step(-1)}>
+              <ChevronLeft className="size-6" />
+            </SideBtn>
+            <SideBtn side="right" title="Next image (→)" onClick={() => step(1)}>
+              <ChevronRight className="size-6" />
+            </SideBtn>
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * A button at one side of the picture. A press on it is kept from the area under it, whose drag would
+ * capture the pointer and so take the click away from the button.
+ */
+function SideBtn({
+  side,
+  title,
+  onClick,
+  children,
+}: {
+  side: "left" | "right";
+  title: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      onPointerDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onClick={onClick}
+      className={`absolute top-1/2 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-black/50 text-white hover:bg-black/70 ${side === "left" ? "left-3" : "right-3"}`}
+    >
+      {children}
+    </button>
   );
 }
 

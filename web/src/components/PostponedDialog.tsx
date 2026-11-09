@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ImageLightbox } from "./ImageLightbox";
+import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
 import { loadPostponed, savePostponed, type PostponedMessage } from "@/lib/postponed";
 import { useApi } from "@/lib/node";
 
@@ -48,7 +48,7 @@ export function PostponedDialog({
   const [messages, setMessages] = useState<PostponedMessage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
+  const [preview, setPreview] = useState<{ src: string; name: string; gallery?: LightboxImage[] } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,6 +155,10 @@ export function PostponedDialog({
                             setPreview({
                               src: api.sessionFileUrl(sessionId, img.path),
                               name: baseName(img.path),
+                              gallery: m.images.map((i) => ({
+                                src: api.sessionFileUrl(sessionId, i.path),
+                                name: baseName(i.path),
+                              })),
                             })
                           }
                           title="Preview image"
@@ -189,7 +193,12 @@ export function PostponedDialog({
       </Dialog>
 
       {preview && (
-        <ImageLightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />
+        <ImageLightbox
+          src={preview.src}
+          name={preview.name}
+          gallery={preview.gallery}
+          onClose={() => setPreview(null)}
+        />
       )}
     </>
   );

@@ -16,7 +16,7 @@ import { attachError, insertPaths, placeCaret, uploadAttachments, useFileDrop } 
 import { DropCue } from "./DropCue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ImageLightbox } from "./ImageLightbox";
+import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
 import { ComposerDialog, type ComposerDraft } from "./ComposerDialog";
 import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import {
@@ -87,7 +87,10 @@ export function PostponedPool({
   const [flushing, setFlushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(0);
-  const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
+  const [preview, setPreview] = useState<{ src: string; name: string; gallery?: LightboxImage[] } | null>(null);
+  // A message's (or the draft's) images, for the viewer to go through.
+  const shots = (list: PostponedImage[]): LightboxImage[] =>
+    list.map((i) => ({ src: api.sessionFileUrl(sessionId, i.path), name: baseName(i.path) }));
   // Non-null while the full-size composer dialog is open: what it edits, plus its seed content.
   const [composer, setComposer] = useState<{ target: ComposerTarget; draft: ComposerDraft } | null>(null);
   // What the play button last asked for, until the server's report catches up — so the button answers
@@ -535,7 +538,11 @@ export function PostponedPool({
                       key={i}
                       type="button"
                       onClick={() =>
-                        setPreview({ src: api.sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
+                        setPreview({
+                          src: api.sessionFileUrl(sessionId, img.path),
+                          name: baseName(img.path),
+                          gallery: shots(m.images),
+                        })
                       }
                       className="shrink-0"
                       title="Preview image"
@@ -601,7 +608,11 @@ export function PostponedPool({
                   <button
                     type="button"
                     onClick={() =>
-                      setPreview({ src: api.sessionFileUrl(sessionId, img.path), name: baseName(img.path) })
+                      setPreview({
+                        src: api.sessionFileUrl(sessionId, img.path),
+                        name: baseName(img.path),
+                        gallery: shots(draftImages),
+                      })
                     }
                     title="Preview image"
                   >
@@ -757,7 +768,12 @@ export function PostponedPool({
       onClose={() => setComposer(null)}
     />
     {preview && (
-      <ImageLightbox src={preview.src} name={preview.name} onClose={() => setPreview(null)} />
+      <ImageLightbox
+          src={preview.src}
+          name={preview.name}
+          gallery={preview.gallery}
+          onClose={() => setPreview(null)}
+        />
     )}
     </>
   );
