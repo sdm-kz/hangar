@@ -9,6 +9,21 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
+    <script>
+      // iOS zooms the page in on any focused field whose text is under 16px -- which is every input,
+      // textarea and the terminal's hidden one here -- and leaves it zoomed after the keyboard goes.
+      // A maximum-scale of 1 is the one thing that stops it. Only on iOS: since iOS 10 Safari ignores
+      // the cap for the user's own pinch-zoom, but Android honours it and would lose pinch-zoom.
+      // iPadOS reports itself as a Mac, so a Mac with a touch screen is an iPad.
+      (function () {
+        var ios =
+          /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+          (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+        if (!ios) return;
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (meta) meta.setAttribute("content", meta.getAttribute("content") + ", maximum-scale=1");
+      })();
+    </script>
     <title>Hangar</title>
     <!-- PWA: required so iOS Safari (16.4+) allows Web Push once the app is added to the Home Screen. -->
     <link rel="manifest" href="/manifest.webmanifest" />
