@@ -886,25 +886,19 @@ function createApi(base: string) {
     },
     // Upload arbitrary files into a folder under the write root ("" = its root). Sent as multipart so
     // the browser sets the boundary; returns the paths written (de-duplicated server-side).
-    async uploadSessionFiles(id: string, folder: string, files: File[], dir?: string): Promise<{ paths: string[] }> {
+    uploadSessionFiles(id: string, folder: string, files: File[], dir?: string): Promise<{ paths: string[] }> {
       const form = new FormData();
       form.append("path", folder);
       if (dir) form.append("dir", dir);
       for (const f of files) form.append("files", f);
-      const headers = new Headers();
-      const token = getToken();
-      if (token) headers.set("Authorization", `Bearer ${token}`);
-      const res = await fetch(under(`/api/sessions/${id}/fs/upload`), { method: "POST", body: form, headers });
-      if (res.status === 401) {
-        setToken(null);
-        throw new ApiError(401, "unauthorized");
-      }
-      if (!res.ok) {
-        let msg = res.statusText;
-        try { msg = (await res.json()).error ?? msg; } catch { /* ignore */ }
-        throw new ApiError(res.status, msg);
-      }
-      return res.json();
+      return multipart(`/api/sessions/${id}/fs/upload`, form);
+    },
+    // Save files attached to a message under .hangar/uploads/, keeping their names, as a pasted image
+    // is; returns where each went, to name it in the message.
+    uploadSessionAttachments(id: string, files: File[]): Promise<{ files: { path: string; fullPath: string }[] }> {
+      const form = new FormData();
+      for (const f of files) form.append("files", f);
+      return multipart(`/api/sessions/${id}/fs/upload-attachment`, form);
     },
     // Create a folder (may be nested, e.g. "a/b/c") under the write root; returns its rel path.
     createSessionFolder(id: string, path: string, dir?: string): Promise<{ path: string }> {

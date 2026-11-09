@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  ImagePlus,
   Inbox,
+  Loader2,
   Maximize2,
+  Paperclip,
   Pause,
   PenLine,
   Play,
@@ -11,7 +12,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { uploadImageFile } from "@/lib/upload";
+import { attachError, insertPaths, placeCaret, uploadAttachments, useFileDrop } from "@/lib/attach";
+import { DropCue } from "./DropCue";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ImageLightbox } from "./ImageLightbox";
@@ -84,6 +86,7 @@ export function PostponedPool({
   const [open, setOpen] = useState(false);
   const [flushing, setFlushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(0);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   // Non-null while the full-size composer dialog is open: what it edits, plus its seed content.
   const [composer, setComposer] = useState<{ target: ComposerTarget; draft: ComposerDraft } | null>(null);
@@ -206,12 +209,13 @@ export function PostponedPool({
 
   const stash = useCallback(() => {
     const text = draft.trim();
-    if (!text && draftImages.length === 0) return;
+    // Not with an attachment still on its way: it would be left out, and land in the next draft.
+    if ((!text && draftImages.length === 0) || uploading) return;
     commit([...messages, newMessage(text, draftImages)]);
     setDraft("");
     setDraftImages([]);
     setError(null);
-  }, [draft, draftImages, messages, commit]);
+  }, [draft, draftImages, messages, commit, uploading]);
 
   // The chat's message box stashes here too (Ctrl+Shift+Enter), through the list as it stands.
   const commitRef = useRef(commit);
@@ -347,35 +351,44 @@ export function PostponedPool({
     setFlushing(false);
   }, [messages, flushing, terminalRef, commit, closeIfSentDry]);
 
-  const addImageFiles = useCallback(
+  // Images go with the message; any other file is named in it, by path, where the caret is.
+  const addFiles = useCallback(
     async (files: File[]) => {
-      const images = files.filter((f) => f.type.startsWith("image/"));
-      if (!images.length) return;
-      for (const file of images) {
-        try {
-          const { path, fullPath } = await uploadImageFile(api, sessionId, file);
-          setDraftImages((prev) => [...prev, { path, fullPath }]);
-          setError(null);
-        } catch {
-          setError("Image upload failed.");
-        }
-      }
-      // The image joins the draft, which lives in the drop-up — open it, or the attach looks like it
-      // did nothing (and an upload error would go unseen).
+      if (!files.length) return;
+      // What is attached joins the draft, which lives in the drop-up — open it, or the attach looks like
+      // it did nothing (and an upload error would go unseen).
       setOpen(true);
+      setUploading((n) => n + files.length);
+      try {
+        const got = await uploadAttachments(api, sessionId, files);
+        if (got.images.length) setDraftImages((prev) => [...prev, ...got.images]);
+        if (got.paths.length) {
+          let caret = 0;
+          setDraft((cur) => {
+            const next = insertPaths(cur, textareaRef.current, got.paths);
+            caret = next.caret;
+            return next.text;
+          });
+          placeCaret(textareaRef.current, () => caret);
+        }
+        setError(attachError(got));
+      } finally {
+        setUploading((n) => n - files.length);
+      }
     },
-    [sessionId]
+    [api, sessionId]
   );
+  const drop = useFileDrop((files) => void addFiles(files));
 
   const onPaste = useCallback(
     async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
-      if (!item) return; // text paste falls through to the textarea
+      // A screenshot, or files copied in a file manager; text falls through to the textarea.
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (!files.length) return;
       e.preventDefault();
-      const file = item.getAsFile();
-      if (file) await addImageFiles([file]);
+      await addFiles(files);
     },
-    [addImageFiles]
+    [addFiles]
   );
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -406,7 +419,7 @@ export function PostponedPool({
   // Not while auto-send is on either: the server is about to send, and a green Send all would invite a
   // click that races it.
   const idle = !closed && !busy && !auto && messages.length > 0;
-  const canStash = draft.trim().length > 0 || draftImages.length > 0;
+  const canStash = (draft.trim().length > 0 || draftImages.length > 0) && uploading === 0;
 
   const inline = !!slot;
   const body = (
@@ -423,17 +436,18 @@ export function PostponedPool({
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
         multiple
         className="hidden"
         onChange={(e) => {
-          addImageFiles(Array.from(e.target.files ?? []));
+          void addFiles(Array.from(e.target.files ?? []));
           e.target.value = ""; // allow re-picking the same file
         }}
       />
 
       {open && (
+        // Files dropped anywhere on it are attached to the draft.
         <div
+          {...drop.dropProps}
           className={cn(
             "absolute z-10 rounded-lg border bg-background p-2 shadow-lg",
             inline
@@ -655,11 +669,22 @@ export function PostponedPool({
               Stash
             </Button>
           </div>
+          {uploading > 0 && (
+            <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" /> Uploading…
+            </p>
+          )}
           {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+          {drop.over && <DropCue className="rounded-lg" />}
         </div>
       )}
 
-      <div className={inline ? "flex shrink-0 items-center" : "absolute bottom-1 right-5 z-10 flex items-center gap-1"}>
+      {/* The buttons take dropped files for the draft too. In the chat they sit in its message box, but
+          are not its: a file dropped on them is for a postponed message. */}
+      <div
+        className={inline ? "flex shrink-0 items-center" : "absolute bottom-1 right-5 z-10 flex items-center gap-1"}
+        {...drop.dropProps}
+      >
         {/* The pool's toggle: its count, green when Claude is idle and there is something to send
             (the nudge the old bar gave), and a dot for a draft left unstashed in the drop-up. */}
         <Button
@@ -694,10 +719,10 @@ export function PostponedPool({
             variant="outline"
             className="size-7 bg-background/90 px-0 shadow-md backdrop-blur [&_svg]:size-3.5"
             onClick={() => fileInputRef.current?.click()}
-            title="Attach an image (photo library or camera)"
-            aria-label="Attach an image"
+            title="Attach images or files to a postponed message (or drop them here)"
+            aria-label="Attach images or files"
           >
-            <ImagePlus />
+            <Paperclip />
           </Button>
         )}
         <Button

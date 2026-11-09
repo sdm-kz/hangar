@@ -8,9 +8,9 @@ import {
   Circle,
   Clock,
   ImageIcon,
-  ImagePlus,
   Inbox,
   Loader2,
+  Paperclip,
   Pencil,
   Play,
   Search,
@@ -41,7 +41,8 @@ import {
   type ChatItem,
   type ChatTranscript,
 } from "@/lib/chat";
-import { uploadImageFile } from "@/lib/upload";
+import { attachError, insertPaths, placeCaret, uploadAttachments, useFileDrop } from "@/lib/attach";
+import { DropCue } from "./DropCue";
 import type { PostponedImage } from "@/lib/postponed";
 import type { ChatEntry, SessionStatus } from "@/types";
 import { sessionKey, useApi, useNodeId } from "@/lib/node";
@@ -899,21 +900,28 @@ function Composer({
     el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight / 3))}px`;
   }, [text]);
 
+  // Images go with the message; any other file is named in it, by path, where the caret is.
   const addFiles = async (files: File[]) => {
-    const pics = files.filter((f) => f.type.startsWith("image/"));
-    if (!pics.length) return;
-    setUploading((n) => n + pics.length);
-    for (const f of pics) {
-      try {
-        const up = await uploadImageFile(api, sessionId, f);
-        setImages((cur) => [...cur, { path: up.path, fullPath: up.fullPath }]);
-      } catch {
-        setError("An image didn't upload.");
-      } finally {
-        setUploading((n) => n - 1);
+    if (!files.length) return;
+    setUploading((n) => n + files.length);
+    try {
+      const got = await uploadAttachments(api, sessionId, files);
+      if (got.images.length) setImages((cur) => [...cur, ...got.images]);
+      if (got.paths.length) {
+        let caret = 0;
+        setText((cur) => {
+          const next = insertPaths(cur, areaRef.current, got.paths);
+          caret = next.caret;
+          return next.text;
+        });
+        placeCaret(areaRef.current, () => caret);
       }
+      setError(attachError(got));
+    } finally {
+      setUploading((n) => n - files.length);
     }
   };
+  const drop = useFileDrop((files) => void addFiles(files));
 
   const send = async () => {
     const body = text.trim();
@@ -959,7 +967,9 @@ function Composer({
   const canSend = hasContent && !sending && uploading === 0 && !blocked;
   const canPostpone = hasContent && !sending && uploading === 0;
   return (
-    <div className="border-t bg-background px-4 pb-1.5 pt-2">
+    // Files dropped anywhere on it are attached, as the button and a paste attach them.
+    <div className="relative border-t bg-background px-4 pb-1.5 pt-2" {...drop.dropProps}>
+      {drop.over && <DropCue className="inset-1 rounded-lg" />}
       {/* relative: the postponed pool's drop-up opens above the message box, against its right edge. */}
       <div className="relative mx-auto w-full max-w-3xl">
         <SlashSuggestions slash={slash} />
@@ -992,15 +1002,14 @@ function Composer({
             variant="ghost"
             size="icon"
             className="size-7 shrink-0"
-            title="Attach an image"
+            title="Attach images or files (or drop them here)"
             onClick={() => fileRef.current?.click()}
           >
-            <ImagePlus className="size-4" />
+            <Paperclip className="size-4" />
           </Button>
           <input
             ref={fileRef}
             type="file"
-            accept="image/*"
             multiple
             hidden
             onChange={(e) => {
@@ -1033,7 +1042,8 @@ function Composer({
               if (error) setError(null);
             }}
             onPaste={(e) => {
-              const files = Array.from(e.clipboardData.files ?? []).filter((f) => f.type.startsWith("image/"));
+              // A screenshot, or files copied in a file manager.
+              const files = Array.from(e.clipboardData.files ?? []);
               if (!files.length) return;
               e.preventDefault();
               void addFiles(files);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ImagePlus, Inbox, Loader2, Send, X } from "lucide-react";
-import { uploadImageFile } from "@/lib/upload";
+import { Inbox, Loader2, Paperclip, Send, X } from "lucide-react";
+import { attachError, insertPaths, placeCaret, uploadAttachments, useFileDrop } from "@/lib/attach";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DropCue } from "./DropCue";
 import { ImageLightbox } from "./ImageLightbox";
 import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import type { PostponedImage } from "@/lib/postponed";
@@ -58,6 +59,7 @@ export function ComposerDialog({
   // directly would flip the title and the button label mid-fade.
   const [isEditing, setIsEditing] = useState(false);
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -79,33 +81,44 @@ export function ComposerDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const addImageFiles = useCallback(
+  // Images go with the message; any other file is named in it, by path, where the caret is.
+  const addFiles = useCallback(
     async (files: File[]) => {
-      for (const file of files.filter((f) => f.type.startsWith("image/"))) {
-        try {
-          const { path, fullPath } = await uploadImageFile(api, sessionId, file);
-          setImages((prev) => [...prev, { path, fullPath }]);
-          setError(null);
-        } catch {
-          setError("Image upload failed.");
+      if (!files.length) return;
+      setUploading((n) => n + files.length);
+      try {
+        const got = await uploadAttachments(api, sessionId, files);
+        if (got.images.length) setImages((prev) => [...prev, ...got.images]);
+        if (got.paths.length) {
+          let caret = 0;
+          setText((cur) => {
+            const next = insertPaths(cur, textRef.current, got.paths);
+            caret = next.caret;
+            return next.text;
+          });
+          placeCaret(textRef.current, () => caret);
         }
+        setError(attachError(got));
+      } finally {
+        setUploading((n) => n - files.length);
       }
     },
-    [sessionId]
+    [api, sessionId]
   );
+  const drop = useFileDrop((files) => void addFiles(files));
 
   const onPaste = useCallback(
     async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const item = Array.from(e.clipboardData?.items ?? []).find((i) => i.type.startsWith("image/"));
-      if (!item) return; // text paste falls through to the textarea
+      // A screenshot, or files copied in a file manager; text falls through to the textarea.
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (!files.length) return;
       e.preventDefault();
-      const file = item.getAsFile();
-      if (file) await addImageFiles([file]);
+      await addFiles(files);
     },
-    [addImageFiles]
+    [addFiles]
   );
 
-  const canSubmit = text.trim().length > 0 || images.length > 0;
+  const canSubmit = (text.trim().length > 0 || images.length > 0) && uploading === 0;
   const draft = (): ComposerDraft => ({ text: text.trim(), images });
 
   const send = useCallback(async () => {
@@ -147,6 +160,8 @@ export function ComposerDialog({
             document-level paste listener from also dropping them into the live input. */}
         <DialogContent
           data-owns-image-paste
+          // Files dropped anywhere on the dialog are attached.
+          {...drop.dropProps}
           // Esc with the slash-command suggestions up closes them, not the dialog.
           onEscapeKeyDown={(e) => {
             if (!slashRef.current.open) return;
@@ -155,6 +170,7 @@ export function ComposerDialog({
           }}
           className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-3"
         >
+          {drop.over && <DropCue className="rounded-lg" />}
           <DialogHeader className="shrink-0">
             <DialogTitle>{isEditing ? "Edit postponed message" : "Compose message"}</DialogTitle>
             <DialogDescription>
@@ -180,11 +196,10 @@ export function ComposerDialog({
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
               multiple
               className="hidden"
               onChange={(e) => {
-                addImageFiles(Array.from(e.target.files ?? []));
+                void addFiles(Array.from(e.target.files ?? []));
                 e.target.value = ""; // allow re-picking the same file
               }}
             />
@@ -193,11 +208,16 @@ export function ComposerDialog({
               size="icon"
               className="size-10 shrink-0 sm:size-9"
               onClick={() => fileInputRef.current?.click()}
-              title="Attach an image (photo library or camera)"
-              aria-label="Attach an image"
+              title="Attach images or files (or drop them on the dialog)"
+              aria-label="Attach images or files"
             >
-              <ImagePlus className="size-4" />
+              <Paperclip className="size-4" />
             </Button>
+            {uploading > 0 && (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" /> Uploading…
+              </span>
+            )}
             {text.length > 0 && (
               <span className="text-xs text-muted-foreground">
                 {text.length} chars · {text.split("\n").length} lines
@@ -258,8 +278,8 @@ export function ComposerDialog({
               // a shortcut that returns silently is worse than not mentioning it.
               placeholder={
                 closed
-                  ? "Write your message — Enter for a newline, Ctrl+Shift+Enter to postpone, paste an image to attach"
-                  : "Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste an image to attach"
+                  ? "Write your message — Enter for a newline, Ctrl+Shift+Enter to postpone, paste or drop images and files to attach"
+                  : "Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste or drop images and files to attach"
               }
               className="min-h-[35vh] flex-1 resize-none leading-6"
             />

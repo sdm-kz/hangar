@@ -12,6 +12,7 @@ import {
 import { presetFromSession, type RecentSession } from "@/lib/recentSessions";
 import { migrateLegacyRecents } from "@/lib/migrateRecents";
 import { carryChatView, chatViewOf } from "@/lib/chatView";
+import { guardFileDrops } from "@/lib/attach";
 import { readUrlState, patchUrlState, SSH_SHELLS } from "@/lib/urlState";
 import { migratePinnedSessions, move } from "@/lib/sessionOrder";
 import { forkDescendants } from "@/lib/sessionTree";
@@ -178,6 +179,8 @@ export function App() {
     urlSessionRef.current = activeIdRef.current ?? "";
     setActiveNode(null);
   }, [selfNode, activeNode]);
+  // A file dropped where nothing takes it would otherwise open in place of the app.
+  useEffect(() => guardFileDrops(), []);
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<RecentSession | null>(null);
   // Override for the dialog's "continue conversation" default; undefined = the dialog's own default.

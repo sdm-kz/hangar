@@ -428,6 +428,12 @@ internal static class Program
     private const int MaxImageBytes = 25 * 1024 * 1024;
 
     /// <summary>
+    /// upload-attachment's largest request: the files dropped on a message box, together. Under the 128 MB
+    /// a multipart form may hold by default, so this is the limit that answers.
+    /// </summary>
+    private const int MaxAttachmentBytes = 100 * 1024 * 1024;
+
+    /// <summary>
     /// Headers for a file served at this origin to be looked at in the browser. <c>nosniff</c>, so a file
     /// is never run as something other than the type it is served as. And for the types that can carry
     /// a script — an SVG, anything HTML or XML — <c>Content-Security-Policy: sandbox</c>, which gives the
@@ -1757,6 +1763,35 @@ internal static class Program
         // above, which Kestrel's default 30 MB body limit cuts off at ~22 MB — a full-screen 5K capture
         // of a photo gets there.
         .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(MaxImageBytes / 3 * 4 + 64 * 1024));
+
+        // Save files dropped on a message box (multipart "files") into .hangar/uploads/ under the working
+        // dir, as upload-image does with a pasted image, keeping each file's own name (made unique). The
+        // message names them by full path for Claude to read.
+        app.MapPost("/api/sessions/{id}/fs/upload-attachment", async (string id, HttpRequest req, SessionManager mgr) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            if (!req.HasFormContentType) return Results.BadRequest(new { error = "expected multipart form" });
+            var form = await req.ReadFormAsync();
+            if (form.Files.Count == 0) return Results.BadRequest(new { error = "no files" });
+
+            var folder = SessionFileBrowser.ResolveSafe(info.WorkingDirectory, UploadsFolder);
+            if (folder is null) return Results.BadRequest(new { error = "invalid path" });
+            Directory.CreateDirectory(folder);
+            SessionDataFolder.Claim(folder);
+
+            var files = new List<object>();
+            foreach (var file in form.Files)
+            {
+                await using var stream = file.OpenReadStream();
+                var rel = await SessionFileBrowser.SaveUpload(info.WorkingDirectory, UploadsFolder, file.FileName, stream);
+                if (rel is null) return Results.BadRequest(new { error = $"Couldn't save {file.FileName}" });
+                files.Add(new { path = rel, fullPath = SessionFileBrowser.ResolveSafe(info.WorkingDirectory, rel) });
+            }
+            return Results.Ok(new { files });
+        })
+        // A dropped file can be a log or a PDF bigger than Kestrel's default 30 MB body.
+        .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(MaxAttachmentBytes));
 
         // Upload one or more arbitrary files into a folder under the write root (multipart form:
         // a "path" field for the target folder — empty means the root — an optional "dir" naming a
