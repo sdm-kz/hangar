@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, Minus, Plus, RotateCcw, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, Maximize, Minus, Plus, X } from "lucide-react";
 
 const MIN = 0.2;
 const MAX = 8;
@@ -12,7 +12,7 @@ export interface LightboxImage {
 }
 
 /**
- * Full-page image viewer with wheel/button zoom and drag-to-pan. Esc / +/- / 0 shortcuts. Opens with the
+ * Full-page image viewer with wheel/button zoom and drag-to-pan. Esc / +/- / 0 / Ctrl+C shortcuts. Opens with the
  * whole image in view: a picture bigger than the page is scaled down to fit it, a smaller one is shown at
  * its own size. Reset (and 0, and a double-click) goes back to that.
  *
@@ -46,6 +46,10 @@ export function ImageLightbox({
   const clamp = (s: number) => Math.min(MAX, Math.max(Math.min(MIN, fit), s));
   // Still showing the fitted view, untouched: a resize of the window fits it again.
   const fitted = useRef(true);
+  // How the last copy went, shown on its button for a moment.
+  const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
+  const copiedTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 
   const fitScale = () => {
     const img = imgRef.current;
@@ -77,6 +81,24 @@ export function ImageLightbox({
     setPos({ x: 0, y: 0 });
   };
 
+  // The picture on show, onto the clipboard as a PNG — the one image type every browser writes there.
+  const copy = () => {
+    const done = (how: "ok" | "failed") => {
+      setCopied(how);
+      window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopied(null), 1500);
+    };
+    // Not on a page served over plain http from another machine: browsers keep the clipboard from those.
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") return done("failed");
+    // The item takes the picture still to come, so the write is made within the click that asked for it.
+    void navigator.clipboard
+      .write([new ClipboardItem({ "image/png": pngOf(shown.src) })])
+      .then(
+        () => done("ok"),
+        () => done("failed")
+      );
+  };
+
   useEffect(() => {
     window.addEventListener("resize", refit);
     return () => window.removeEventListener("resize", refit);
@@ -88,6 +110,10 @@ export function ImageLightbox({
       else if (e.key === "+" || e.key === "=") zoom(1.2);
       else if (e.key === "-" || e.key === "_") zoom(1 / 1.2);
       else if (e.key === "0") reset();
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && !String(window.getSelection())) {
+        e.preventDefault();
+        copy();
+      }
       // Kept from whatever has the keyboard under the viewer (a text box's caret).
       else if (e.key === "ArrowLeft" && many) {
         e.preventDefault();
@@ -137,7 +163,26 @@ export function ImageLightbox({
             <Plus className="size-4" />
           </IconBtn>
           <IconBtn title="Fit to the page (0)" onClick={reset}>
-            <RotateCcw className="size-4" />
+            <Maximize className="size-4" />
+          </IconBtn>
+          <IconBtn
+            title={
+              copied === "ok"
+                ? "Copied"
+                : copied === "failed"
+                  ? "The browser didn't let the image be copied"
+                  : `Copy image (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘C" : "Ctrl+C"})`
+            }
+            onClick={copy}
+          >
+            {copied === "ok" ? (
+              <Check className="size-4 text-emerald-400" />
+            ) : copied === "failed" ? (
+              // Not an X: that is the close button's, beside it.
+              <Copy className="size-4 text-red-400" />
+            ) : (
+              <Copy className="size-4" />
+            )}
           </IconBtn>
           <IconBtn title="Close (Esc)" onClick={onClose}>
             <X className="size-5" />
@@ -184,6 +229,23 @@ export function ImageLightbox({
         )}
       </div>
     </div>
+  );
+}
+
+/** The picture at `src` as a PNG: as it is when it is one, drawn out again when it is another type. */
+async function pngOf(src: string): Promise<Blob> {
+  const res = await fetch(src);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  if (blob.type === "image/png") return blob;
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Couldn't make a PNG"))), "image/png")
   );
 }
 
