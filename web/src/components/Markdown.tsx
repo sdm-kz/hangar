@@ -13,7 +13,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { Element, ElementContent, Root, RootContent } from "hast";
 import type { PluggableList } from "unified";
-import { Loader2 } from "lucide-react";
+import { Code, Eye, Loader2 } from "lucide-react";
 import { getTheme, subscribeTheme } from "@/lib/theme";
 import { mdAssetUrl } from "@/lib/mdAssets";
 import { useApi } from "@/lib/node";
@@ -33,7 +33,11 @@ import { CopyButton } from "./CopyPathButton";
  * Pass `docPath` (the document's absolute path on the server) to make its own images render —
  * without it, a relative `![](img/x.png)` resolves against the app's URL and 404s.
  *
- * Pass `copyCode` to give each code block a copy button in its top right corner (the chat does).
+ * Pass `copyCode` to give each code block a copy button in its top right corner (the chat does). With
+ * it, a ```markdown (or ```md) block is also shown rendered, in a frame, with a switch to its source:
+ * in a chat that is a draft written for somewhere else (a ticket, a PR description), which reads
+ * better as it will look there. A file preview keeps it as code: a document that fences Markdown is
+ * showing its source on purpose.
  */
 // GitHub's sanitize schema minus the `user-content-` id clamp: documents place explicit
 // `<a id="…"></a>` anchors and link to them as `[§2.4](#s-2-4)`, so ids must survive verbatim
@@ -292,13 +296,13 @@ function heading(Tag: HeadingTag) {
       anchorTo(id, e.currentTarget);
     };
     return (
-      <Tag {...props} id={id} className="group scroll-mt-4" onClick={onClick}>
+      <Tag {...props} id={id} className="group/heading scroll-mt-4" onClick={onClick}>
         {children}
         {id && (
           <a
             href={`#${encodeURIComponent(id)}`}
             title="Link to this section"
-            className="ml-2 font-normal text-muted-foreground no-underline opacity-0 transition-opacity group-hover:opacity-100"
+            className="ml-2 font-normal text-muted-foreground no-underline opacity-0 transition-opacity group-hover/heading:opacity-100"
             onClick={(e) => {
               e.preventDefault();
               anchorTo(id, e.currentTarget.closest("h1,h2,h3,h4,h5,h6"));
@@ -326,6 +330,10 @@ const components: Components = {
   h6: heading("h6"),
 };
 
+// A code block's corner buttons: shown on hover (always on a touch screen), or while one has focus.
+const CORNER_BUTTON =
+  "grid size-6 select-none place-items-center rounded-md border bg-background/80 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/code:opacity-100 [@media(pointer:coarse)]:opacity-100";
+
 // The same, with a copy button on each code block. The button sits outside the <pre>, which scrolls
 // sideways, so that it stays in the corner; the wrapper takes over the block's margins for it.
 const copyComponents: Components = {
@@ -333,6 +341,8 @@ const copyComponents: Components = {
   pre({ node, children, ...props }) {
     const code = mermaidSource(node);
     if (code !== null) return <MermaidDiagram code={code} />;
+    const markdown = fenceSource(node, ["markdown", "md"]);
+    if (markdown !== null) return <MarkdownFence source={markdown.replace(/\n$/, "")} />;
     return (
       <div className="group/code relative my-5 [&>pre]:my-0">
         <pre {...props}>{children}</pre>
@@ -340,7 +350,7 @@ const copyComponents: Components = {
           <CopyButton
             text={() => hastText(node).replace(/\n$/, "")}
             title="Copy code"
-            className="absolute right-1.5 top-1.5 grid size-6 select-none place-items-center rounded-md border bg-background/80 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/code:opacity-100 [@media(pointer:coarse)]:opacity-100"
+            className={`absolute right-1.5 top-1.5 ${CORNER_BUTTON}`}
           />
         )}
       </div>
@@ -348,13 +358,46 @@ const copyComponents: Components = {
   },
 };
 
+/**
+ * A ```markdown block, rendered in a frame that marks where it starts and ends, or — switched — as
+ * the code block it was. Copy takes the source either way: that is what gets pasted elsewhere.
+ */
+function MarkdownFence({ source }: { source: string }) {
+  const [raw, setRaw] = useState(false);
+  const label = raw ? "Show rendered" : "Show Markdown source";
+  return (
+    <div className="group/code relative my-5">
+      {raw ? (
+        <pre className="my-0">
+          <code>{source}</code>
+        </pre>
+      ) : (
+        <div className="rounded-md border px-4 [&>div>:first-child]:mt-3 [&>div>:last-child]:mb-3">
+          <Markdown text={source} copyCode />
+        </div>
+      )}
+      <div className="absolute right-1.5 top-1.5 flex gap-1">
+        <button type="button" onClick={() => setRaw((r) => !r)} title={label} aria-label={label} className={CORNER_BUTTON}>
+          {raw ? <Eye className="size-3.5" /> : <Code className="size-3.5" />}
+        </button>
+        <CopyButton text={source} title="Copy Markdown" className={CORNER_BUTTON} />
+      </div>
+    </div>
+  );
+}
+
 /** If this <pre> wraps a ```mermaid fence, return the fence's source text; otherwise null. */
 function mermaidSource(node: Element | undefined): string | null {
+  return fenceSource(node, ["mermaid"]);
+}
+
+/** If this <pre> wraps a fence in one of these languages, return the fence's source text; otherwise null. */
+function fenceSource(node: Element | undefined, languages: string[]): string | null {
   const child = node?.children?.[0];
   if (!child || child.type !== "element" || child.tagName !== "code") return null;
   const cls = child.properties?.className;
   const classes = Array.isArray(cls) ? cls : [cls];
-  if (!classes.includes("language-mermaid")) return null;
+  if (!languages.some((l) => classes.includes(`language-${l}`))) return null;
   return hastText(child);
 }
 

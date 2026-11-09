@@ -41,7 +41,8 @@ The web UI is a **session manager with a full terminal**:
   by name in the app's session list (computer icon + green dot), so you can carry on from there.
 - **Chat view** — the chat icon in Claude's tab (next to the terminal one) shows the same
   session as a chat: your messages as bubbles, Claude's replies rendered as Markdown, each tool call as
-  a card that opens to its input and output. It is read from the transcript Claude writes as it goes
+  a card that opens to its input and output. A ```` ```markdown ```` block in a reply (a drafted ticket or PR
+  description) is shown rendered in a frame, with a switch to its source and a button that copies it. It is read from the transcript Claude writes as it goes
   (`~/.claude/projects/…/<conversation>.jsonl`), and what you write goes into the terminal the way
   typing it there would, so the terminal stays the session and switching loses nothing. A turn can be
   stopped from the chat, a tool permission answered with **Allow** / **Deny**, and a question Claude asks
