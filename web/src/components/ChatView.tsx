@@ -83,6 +83,7 @@ const COPY_BUTTON =
  */
 export function ChatView({
   sessionId,
+  conversation: reported,
   closed,
   busy,
   activity,
@@ -92,6 +93,8 @@ export function ChatView({
   poolSlot,
 }: {
   sessionId: string;
+  /** The conversation the session last reported running: a new one (a /clear) is read at once. */
+  conversation?: string | null;
   /** No live terminal: the conversation can be read, not added to. */
   closed: boolean;
   busy: boolean;
@@ -178,9 +181,11 @@ export function ChatView({
 
   // A change of state is the moment something new was written: a turn ended, a tool started, a dialog
   // came up. Read then rather than waiting out the idle interval.
+  // So is a new conversation: a /clear changes nothing else the session reports, and the chat would go
+  // on showing the one it left until the next idle read.
   useEffect(() => {
     pokeRef.current();
-  }, [busy, activity]);
+  }, [busy, activity, reported]);
 
   const items = useMemo(() => chatItems(transcript.entries), [transcript.entries]);
   // A closed session's queue went with it: nothing in it is coming.

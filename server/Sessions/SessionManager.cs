@@ -1448,11 +1448,11 @@ public sealed class SessionManager : IDisposable
     /// the session state file, for a Restorable reopen, and on the launch preset it came from, so
     /// reusing that preset with "continue" resumes this exact conversation).
     /// </summary>
-    private void OnClaudeSessionIdCaptured(string sessionId, string claudeSessionId)
+    private void OnClaudeSessionIdCaptured(string sessionId, string? previous, string claudeSessionId)
     {
         try
         {
-            if (!_sessions.ContainsKey(sessionId)) return;
+            if (!_sessions.TryGetValue(sessionId, out var s)) return;
             SavePersisted();
             if (_launchedFrom.TryGetValue(sessionId, out var preset))
                 _recents.SetClaudeSessionId(preset, claudeSessionId);
@@ -1465,6 +1465,20 @@ public sealed class SessionManager : IDisposable
             _sessionUi.Rekey(SessionUiStore.SessionKey(sessionId), claudeSessionId);
             // And for a virtual folder it was dropped into in those same first seconds.
             _projects.Rekey(ProjectStore.SessionKey(sessionId), claudeSessionId);
+
+            // A /clear starts a new conversation in the same terminal (so does a /resume of another
+            // one): still the same row, in the same folder, pinned and laid out as it was. What was kept
+            // under the conversation it left goes with it. A resumed session's first report names the
+            // conversation it was started on, which is nothing to move.
+            var left = previous ?? s.OwnConversationId;
+            if (left is not null && left != claudeSessionId)
+            {
+                _pins.Rekey(left, claudeSessionId);
+                _activityPaused.Rekey(left, claudeSessionId);
+                _sessionUi.Rekey(left, claudeSessionId);
+                _projects.Rekey(left, claudeSessionId);
+                _log.LogInformation("Session {Id} moved on to conversation {New} from {Old}", sessionId, claudeSessionId, left);
+            }
         }
         catch (Exception ex)
         {

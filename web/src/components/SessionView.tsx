@@ -1142,6 +1142,7 @@ export function SessionView({
                   <ChatView
                     key={session.id}
                     sessionId={session.id}
+                    conversation={session.claudeSessionId}
                     closed={closed}
                     busy={!!busy}
                     activity={activity}

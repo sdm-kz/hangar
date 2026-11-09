@@ -93,8 +93,11 @@ public abstract class ConversationFlagStore
         lock (_lock)
         {
             if (!_index.Contains(from)) return false;
-            for (var node = _keys.First; node is not null; node = node.Next)
-                if (node.Value == from) { node.Value = to; break; }
+            // Already set under the new key (a /resume into a conversation flagged before): one entry is enough.
+            if (_index.Contains(to)) _keys.Remove(from);
+            else
+                for (var node = _keys.First; node is not null; node = node.Next)
+                    if (node.Value == from) { node.Value = to; break; }
             _index.Remove(from);
             _index.Add(to);
             Save();

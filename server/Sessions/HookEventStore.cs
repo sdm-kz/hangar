@@ -64,11 +64,13 @@ public sealed class HookEventStore
 
     /// <summary>
     /// Raised the first time (and on any change) we learn Claude's own session id for one of our
-    /// sessions: <c>(ourSessionId, claudeSessionId)</c>. Lets <see cref="SessionManager"/> stamp the id
-    /// where it's needed for an exact <c>--resume</c> later — the persisted state file and the matching
-    /// "recent" launch preset — at the moment it becomes known rather than on the next incidental save.
+    /// sessions: <c>(ourSessionId, previousClaudeSessionId, claudeSessionId)</c>. Lets <see cref="SessionManager"/>
+    /// stamp the id where it's needed for an exact <c>--resume</c> later — the persisted state file and the
+    /// matching "recent" launch preset — at the moment it becomes known rather than on the next incidental
+    /// save. The previous id is null on the first report; a later change is a <c>/clear</c> (or a
+    /// <c>/resume</c> of another conversation) in the same terminal.
     /// </summary>
-    public event Action<string, string>? ClaudeSessionIdCaptured;
+    public event Action<string, string?, string>? ClaudeSessionIdCaptured;
 
     /// <summary>Current hook-derived status for a session, or false if it hasn't produced an event yet.</summary>
     public bool TryGetStatus(string sessionId, out HookStatus status)
@@ -114,11 +116,13 @@ public sealed class HookEventStore
 
         var s = _byId.GetOrAdd(sessionId, _ => new State());
         var newClaudeSessionId = false;
+        string? previousClaudeSessionId = null;
         lock (s.Gate)
         {
             s.LastEventAt = DateTimeOffset.Now;
             if (!string.IsNullOrEmpty(claudeSessionId) && s.ClaudeSessionId != claudeSessionId)
             {
+                previousClaudeSessionId = s.ClaudeSessionId;
                 s.ClaudeSessionId = claudeSessionId;
                 newClaudeSessionId = true;
             }
@@ -201,7 +205,7 @@ public sealed class HookEventStore
         }
 
         _log.LogTrace("Hook {Event} for session {Id} (tool={Tool}, notif={Notif})", evt, sessionId, tool, notif);
-        if (newClaudeSessionId) ClaudeSessionIdCaptured?.Invoke(sessionId, claudeSessionId!);
+        if (newClaudeSessionId) ClaudeSessionIdCaptured?.Invoke(sessionId, previousClaudeSessionId, claudeSessionId!);
         Changed?.Invoke();
     }
 
