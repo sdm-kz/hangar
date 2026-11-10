@@ -36,4 +36,21 @@ public sealed class UpdateOptions
 
     /// <summary>Seconds the updater lets this app close on its own before forcing it down.</summary>
     public int ShutdownWaitSeconds { get; set; } = 45;
+
+    /// <summary>
+    /// Where updates come from. <c>auto</c> (the default): a build made from a release tag — one whose
+    /// build.json carries a version — also looks for newer releases on GitHub and stages them itself;
+    /// a build made from a checkout only watches the staging folder, which stage-update fills.
+    /// <c>github</c> looks for releases whatever the build; <c>staging</c> never does.
+    /// </summary>
+    public string Source { get; set; } = "auto";
+
+    /// <summary>The GitHub repository whose releases are looked for ("owner/name"): a fork's own, say.</summary>
+    public string Repo { get; set; } = "sdm-kz/hangar";
+
+    /// <summary>Hours between looks at the releases. At least 1.</summary>
+    public double CheckHours { get; set; } = 6;
+
+    /// <summary>Offer prereleases (v1.2.0-rc.1) as well as releases.</summary>
+    public bool Prereleases { get; set; }
 }

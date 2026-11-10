@@ -13,13 +13,15 @@ namespace Hangar.Server.Update;
 /// <param name="Staged">The build waiting in the staging folder, if any.</param>
 /// <param name="State">Whether an update is currently being applied.</param>
 /// <param name="Error">Why the last apply attempt failed, when <see cref="State"/> is Failed.</param>
+/// <param name="Releases">The last look at GitHub's releases; null when this build doesn't look (Update:Source).</param>
 public sealed record UpdateStatus(
     bool Enabled,
     bool Available,
     BuildStamp? Current,
     BuildStamp? Staged,
     UpdateState State,
-    string? Error);
+    string? Error,
+    ReleaseCheck? Releases = null);
 
 /// <summary>
 /// The in-app half of the updater. Watches the staging folder scripts\stage-update.ps1 publishes into
@@ -54,6 +56,7 @@ public sealed class UpdateService : BackgroundService
     private BuildStamp? _staged;
     private UpdateState _state = UpdateState.Idle;
     private string? _error;
+    private ReleaseCheck? _releases;
 
     /// <summary>Raised when the staged build or the apply state changes, so the hub can push it.</summary>
     public event Action? Changed;
@@ -79,7 +82,7 @@ public sealed class UpdateService : BackgroundService
             lock (_gate)
             {
                 var available = _options.Enabled && _staged?.IsNewerThan(_current) == true;
-                return new UpdateStatus(_options.Enabled, available, _current, _staged, _state, _error);
+                return new UpdateStatus(_options.Enabled, available, _current, _staged, _state, _error, _releases);
             }
         }
     }
@@ -122,10 +125,10 @@ public sealed class UpdateService : BackgroundService
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite,
                 EnableRaisingEvents = true,
             };
-            _watcher.Created += (_, _) => Wake();
-            _watcher.Changed += (_, _) => Wake();
-            _watcher.Renamed += (_, _) => Wake();
-            _watcher.Deleted += (_, _) => Wake();
+            _watcher.Created += OnStagingChanged;
+            _watcher.Changed += OnStagingChanged;
+            _watcher.Renamed += OnStagingChanged;
+            _watcher.Deleted += OnStagingChanged;
             // A watcher whose buffer overflows stops reporting; the poll loop carries on regardless.
             _watcher.Error += (_, e) => _log.LogDebug(e.GetException(), "Staging watcher error");
         }
@@ -133,6 +136,45 @@ public sealed class UpdateService : BackgroundService
         {
             _log.LogWarning(ex, "Could not watch {Path}; falling back to polling only.", _options.StagingPath);
         }
+    }
+
+    /// <summary>The build running now, as its build.json says; null for one not made by the build scripts.</summary>
+    public BuildStamp? Current => _current;
+
+    /// <summary>
+    /// Put a build into the staging folder with <paramref name="swap"/>, unless an update is being
+    /// applied: the updater has checked the payload by then and is about to copy it, and a payload
+    /// changed under it would install a build nobody was shown. Under the same lock as <see cref="Apply"/>,
+    /// so the two can't cross. Re-reads the payload before returning, so <see cref="Status"/> has it.
+    /// </summary>
+    internal bool Stage(Action swap)
+    {
+        lock (_gate)
+        {
+            if (_state == UpdateState.Applying) return false;
+            swap();
+        }
+        RereadStaged();
+        return true;
+    }
+
+    /// <summary>What <see cref="GitHubReleaseSource"/> last found, for <see cref="Status"/> to carry.</summary>
+    public void ReportReleases(ReleaseCheck check)
+    {
+        lock (_gate)
+        {
+            if (check == _releases) return;
+            _releases = check;
+        }
+        Changed?.Invoke();
+    }
+
+    // Not for what GitHubReleaseSource downloads and unpacks in its own folder in here: a write every few
+    // kilobytes for a minute or two, and none of it the payload. Its swap into the payload re-reads anyway.
+    private void OnStagingChanged(object? _, FileSystemEventArgs e)
+    {
+        var work = Path.Combine(_options.StagingPath, GitHubReleaseSource.WorkFolder);
+        if (!e.FullPath.StartsWith(work, StringComparison.OrdinalIgnoreCase)) Wake();
     }
 
     private void Wake()
@@ -216,13 +258,13 @@ public sealed class UpdateService : BackgroundService
         var status = new UpdateStatus(
             _options.Enabled,
             _staged?.IsNewerThan(_current) == true,
-            _current, _staged, _state, _error);
+            _current, _staged, _state, _error, _releases);
         Task.Run(() => Changed?.Invoke());
         return status;
     }
 
     /// <summary>The server's executable in an install folder: an .exe on Windows, a bare name elsewhere.</summary>
-    private static string ServerExe => OperatingSystem.IsWindows() ? "Hangar.exe" : "Hangar";
+    internal static string ServerExe => OperatingSystem.IsWindows() ? "Hangar.exe" : "Hangar";
 
     // The unit this daemon runs as on Linux or macOS, if any (see CaptureServiceManager).
     private static string? _serviceManager;

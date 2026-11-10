@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BuildStamp, Project, SessionInfo, SessionNotice, UpdateStatus } from "@/types";
+import type { BuildStamp, Project, ReleaseCheck, SessionInfo, SessionNotice, UpdateStatus } from "@/types";
 import { apiFor } from "./api";
 import type { ActivityDetail } from "./sessionActivity";
 import type { ShellActivity } from "./shellActivity";
@@ -187,6 +187,7 @@ function updateStatus(raw: unknown): UpdateStatus | null {
     return {
       buildId: b.buildId,
       version: str(b.version),
+      releaseUrl: httpsUrl(b.releaseUrl),
       commit: str(b.commit),
       branch: str(b.branch),
       builtAtUtc: str(b.builtAtUtc),
@@ -206,7 +207,21 @@ function updateStatus(raw: unknown): UpdateStatus | null {
     staged: stamp(u.staged),
     state: u.state === "Applying" || u.state === "Failed" ? u.state : "Idle",
     error: str(u.error),
+    releases: releaseCheck(u.releases),
   };
+}
+
+function releaseCheck(v: unknown): ReleaseCheck | null {
+  if (!v || typeof v !== "object") return null;
+  const r = v as Record<string, unknown>;
+  if (typeof r.repo !== "string") return null;
+  return { repo: r.repo, checkedAtUtc: str(r.checkedAtUtc), latest: str(r.latest), error: str(r.error) };
+}
+
+/** A link the dialog may put in front of someone: https only, whatever a peer sends. */
+function httpsUrl(v: unknown): string | null {
+  const s = str(v);
+  return s && /^https:\/\//i.test(s) ? s : null;
 }
 
 /**

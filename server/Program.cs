@@ -330,6 +330,9 @@ internal static class Program
         builder.Services.AddSingleton(updateOptions);
         builder.Services.AddSingleton<Update.UpdateService>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<Update.UpdateService>());
+        // For a build made from a release: newer releases on GitHub, staged into the same folder.
+        builder.Services.AddSingleton<Update.GitHubReleaseSource>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<Update.GitHubReleaseSource>());
         builder.Services.AddSingleton<RecentsStore>();
         // Pinned sessions, keyed by conversation id so a pin survives a reopen and follows the user
         // between browsers (it rides the session list as SessionInfo.Pinned).
@@ -1446,6 +1449,18 @@ internal static class Program
         // The running build, the staged one, and whether they differ. Also carried on the /hub/events
         // snapshot, so the button appears the moment a build is staged; this is the initial read.
         app.MapGet("/api/update", (Update.UpdateService updates) => Results.Ok(updates.Status));
+
+        // Look for a newer release now rather than at the next interval (a release build only; see
+        // Update:Source). Waits for the answer, download and staging included, and returns the status;
+        // the look carries on if the request goes away first. Within a minute of the last look, that one's.
+        app.MapPost("/api/update/check", async (Update.UpdateService updates, Update.GitHubReleaseSource releases,
+            CancellationToken ct) =>
+        {
+            if (!releases.Active)
+                return Results.Conflict(new { error = "this build does not look for releases (Update:Source)" });
+            await releases.CheckNowAsync(ct);
+            return Results.Ok(updates.Status);
+        });
 
         // Apply the staged build: hand off to the detached updater and start shutting down. The reply
         // is the last thing this build says — the browser reconnects to the new one a few seconds later,

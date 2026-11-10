@@ -52,6 +52,10 @@ The tray's first run takes the server's port from `Server:Urls` in the `appsetti
 | `Update:PollSeconds`        | Re-read the staged build this often (a watcher already catches it sooner) | `30` |
 | `Update:InstallPath`        | Install folder to update; empty = the folder the running exe is in | `""`   |
 | `Update:ShutdownWaitSeconds`| How long the updater lets the app close before forcing it down | `45`       |
+| `Update:Source`             | Where updates come from: `auto` looks for GitHub releases from a release build and only watches the staging folder otherwise; `github` always looks; `staging` never does | `auto` |
+| `Update:Repo`               | The GitHub repository whose releases are looked for (`owner/name`) | `sdm-kz/hangar` |
+| `Update:CheckHours`         | Hours between looks at the releases (at least 1) | `6` |
+| `Update:Prereleases`        | Offer prereleases (`v1.2.0-rc.1`) too | `false` |
 | `FileSystem:DefaultFolder`  | Folder the picker opens at when creating a session; empty = your user profile | `""` |
 | `Push:Subject`              | VAPID subject for Web Push (`mailto:` or `https:`); unset = `Server:PublicUrl` | (unset) |
 | `Ui:LightTheme`             | Colour theme a browser that hasn't picked one shows in light mode (a theme id, below) | `light` |

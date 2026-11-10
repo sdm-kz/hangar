@@ -301,6 +301,7 @@ export interface ReleaseNotes {
 export interface BuildStamp {
   buildId: string; // UTC build timestamp + short commit; two builds are the same iff this matches
   version: string | null; // the release version ("1.2.3") of a build made from a release tag
+  releaseUrl?: string | null; // the release's page, for a build staged from GitHub
   commit: string | null;
   branch: string | null;
   builtAtUtc: string | null;
@@ -327,6 +328,15 @@ export interface UpdateStatus {
   staged: BuildStamp | null;
   state: "Idle" | "Applying" | "Failed";
   error: string | null; // why the last apply attempt failed, when state is Failed
+  releases?: ReleaseCheck | null; // the last look at GitHub's releases; null when this build doesn't look
+}
+
+/** What the last look at GitHub's releases came to (server/Update/GitHubReleaseSource.cs). */
+export interface ReleaseCheck {
+  repo: string; // "owner/name"
+  checkedAtUtc: string | null; // null before the first look has answered
+  latest: string | null; // the newest release there for this machine
+  error: string | null;
 }
 
 /**

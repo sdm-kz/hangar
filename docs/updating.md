@@ -4,9 +4,23 @@
 
 ## From a release
 
-Run the [one-line installer](install.md#from-a-release) again. It installs the latest release over the
-one you have, keeping settings (`appsettings*.json`), the app's data, running sessions and, on Windows,
-your sign-in entries.
+An install from a release updates itself. A minute after it starts, and every 6 hours from then
+(`Update:CheckHours`), it looks at the [releases](https://github.com/sdm-kz/hangar/releases). When there
+is a newer one, it downloads this machine's archive, checks it against the release's `SHA256SUMS` and
+stages it. The **Update** button then appears with the release's "what's new", and the rest is the
+[in-app update](#in-app-updates) below. `POST /api/update/check` looks right away. Prereleases are left
+out unless `Update:Prereleases` is `true`; `Update:Source` and `Update:Repo` choose where updates come
+from ([configuration](configuration.md)). A build staged from a checkout, newer than the one running
+and not installed yet, is not replaced by a release.
+
+The in-app update replaces what is in the install folder, as a redeploy does. When a release changes
+the installer itself (the service or unit it writes, a menu entry), its notes say so: run the
+[one-line installer](install.md#from-a-release) again. It installs the latest release over the one you
+have, keeping settings (`appsettings*.json`), the app's data, running sessions and, on Windows, your
+sign-in entries.
+
+A build made from a checkout never looks for releases: it is updated by a redeploy or by staging, as
+below.
 
 ## From a checkout on the same machine
 

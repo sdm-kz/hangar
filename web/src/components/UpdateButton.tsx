@@ -15,9 +15,9 @@ import {
 
 /**
  * The "Update available" affordance in the sidebar footer (or a header, with the sidebar hidden),
- * plus the full-screen overlay that covers the restart. A build staged by `scripts\stage-update.ps1`
- * reaches the UI on the /hub/events snapshot; clicking through stops this build, installs the staged
- * one and brings the running sessions back. See {@link UpdatingOverlay} for what happens after the click.
+ * plus the full-screen overlay that covers the restart. A build staged by `scripts\stage-update.ps1`, or
+ * by the server itself from a newer release on GitHub (server/Update/GitHubReleaseSource.cs), reaches
+ * the UI on the /hub/events snapshot; clicking through stops this build, installs the staged one and brings the running sessions back. See {@link UpdatingOverlay} for what happens after the click.
  *
  * A peer's, on its heading in the sidebar, is the same button inside that node's NodeProvider: each node
  * updates itself, from its own staged build and with its own "what's new" (plans/multi-node.md §8). There
@@ -113,6 +113,16 @@ export function UpdateButton({
           </DialogHeader>
 
           <WhatsNew stamp={status.staged} />
+          {status.staged.releaseUrl && (
+            <a
+              className="text-sm text-primary underline-offset-4 hover:underline"
+              href={status.staged.releaseUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Release notes on GitHub
+            </a>
+          )}
 
           <dl className="grid grid-cols-[auto,minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
             <dt className="text-muted-foreground">New</dt>
