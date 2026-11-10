@@ -263,8 +263,9 @@ export function PullRequestView({
   // for the same reason. Only the seed, not every remote write: a fold someone makes elsewhere
   // should not refold what is under the reader's eyes.
   const [seedEpoch, setSeedEpoch] = useState(0);
-  // Reading size for the code itself. Shares the app's zoom stops and its storage convention, under
-  // a key of its own so a review's size is not whatever the last file preview was left at.
+  // Reading size for the code itself, and the description read alongside it. Shares the app's zoom
+  // stops and its storage convention, under a key of its own so a review's size is not whatever the
+  // last file preview was left at.
   const [zoom, setZoom] = usePersistentZoom("prDiff");
   // The line-number column, at this zoom. The grid and the divider both measure against it, so it is
   // worked out once here rather than in each of them.
@@ -1035,13 +1036,14 @@ export function PullRequestView({
             jump twice on the way to it. */}
         {(files.length > 0 || inCommit) && (
           <div className="flex shrink-0 items-center">
-            {/* Reading size for the code. The percentage resets, the way it does on every other
-                zoomed view in the app — and it is the only label here, so it goes on narrow panes. */}
+            {/* Reading size for the code and the description. The percentage resets, the way it does
+                on every other zoomed view in the app — and it is the only label here, so it goes on
+                narrow panes. */}
             <button
               type="button"
               onClick={() => stepZoom(-1)}
               disabled={zoom === ZOOM_LEVELS[0]}
-              title="Make the code smaller"
+              title="Make the code and description smaller"
               className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
             >
               <ZoomOut className="size-4" />
@@ -1049,7 +1051,7 @@ export function PullRequestView({
             <button
               type="button"
               onClick={() => setZoom(1)}
-              title="Reset the code to 100%"
+              title="Reset the code and description to 100%"
               className="mt-0.5 hidden min-w-10 rounded px-1 py-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground sm:block"
             >
               {Math.round(zoom * 100)}%
@@ -1058,7 +1060,7 @@ export function PullRequestView({
               type="button"
               onClick={() => stepZoom(1)}
               disabled={zoom === ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}
-              title="Make the code bigger"
+              title="Make the code and description bigger"
               className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
             >
               <ZoomIn className="size-4" />
@@ -1250,9 +1252,15 @@ export function PullRequestView({
                   {/* The same typography the file preview renders Markdown with. Without it
                       Tailwind's reset has already taken the headings' size and the lists' markers
                       away, and a description comes out as one flat run of text — which is what a
-                      pull request body, all headings and bullets, least survives. */}
+                      pull request body, all headings and bullets, least survives. Zoomed with the
+                      code: it is read like the code, not looked past like the headers, and CSS zoom
+                      rather than a font size takes its headings, code blocks and spacing along, as
+                      the file preview's Markdown does. */}
                   {descriptionOpen && (
-                    <div className="prose prose-sm max-w-none px-4 pb-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
+                    <div
+                      style={{ zoom }}
+                      className="prose prose-sm max-w-none px-4 pb-4 dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground"
+                    >
                       <Markdown text={detail.body} />
                     </div>
                   )}
