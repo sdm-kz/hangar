@@ -27,6 +27,13 @@ launchd_label=com.hangar.server
 # The tray app on macOS (build.sh); elsewhere it is the Hangar.Tray executable alone.
 tray_app="Hangar Tray App.app"
 tray_bundle_id=io.github.sdm-kz.hangar.tray # tray/src-tauri/tauri.conf.json's identifier
+# Linux: the tray's entry in the desktop's app menu, and the sign-in entry its own "Start when I sign
+# in" writes (tauri-plugin-autostart: in ~/.config/autostart whatever XDG_CONFIG_HOME says, named after
+# the executable). The app-menu entry is named by the app id the
+# tray gives the desktop's shortcuts portal (tray/src-tauri/src/portal_hotkeys.rs), which is where the
+# desktop finds the name and icon to show when it asks about the tray's hotkeys.
+desktop_entry="${XDG_DATA_HOME:-$HOME/.local/share}/applications/io.github.sdm_kz.hangar.tray.desktop"
+autostart_entry="$HOME/.config/autostart/Hangar.Tray.desktop"
 
 case "$(uname -s)" in
   Linux) platform=linux ;;
@@ -53,7 +60,10 @@ stop_unit() {
 if [ "${1:-}" = "--uninstall" ]; then
   stop_unit
   rm -f "$(unit_path)"
-  [ "$platform" = linux ] && systemctl --user daemon-reload
+  if [ "$platform" = linux ]; then
+    systemctl --user daemon-reload
+    rm -f "$desktop_entry" "$autostart_entry"
+  fi
   echo "Removed $(unit_path). Running sessions keep running; the install folder and the app's data are kept."
   exit 0
 fi
@@ -72,6 +82,9 @@ target=$(cd "$target" && pwd) # the unit needs it absolute
 [ -f "$publish/Hangar.PtyHost" ] || { echo "No Hangar.PtyHost in $publish." >&2; exit 1; }
 
 # --- Files ---------------------------------------------------------------------------------------
+# A first install starts the tray at the end; an update restarts one that is running.
+first_install=1
+[ -e "$target/Hangar" ] && first_install=
 # Stop first: a running daemon would be replaced underneath itself. Its sessions are not touched.
 stop_unit
 echo "==> Installing $publish -> $target"
@@ -207,6 +220,71 @@ EOF
   echo "==> Started $launchd_label (launchctl print gui/$(id -u)/$launchd_label)"
 fi
 
+# --- Tray ----------------------------------------------------------------------------------------
+# Linux: an entry in the desktop's app menu, which a bare executable doesn't get (macOS lists the bundle
+# itself). In a Desktop Entry's Exec a quoted argument escapes \ " ` and $ with a \, and then every \ of
+# the value is doubled again, as in any string of the file; % stands for %%.
+if [ "$platform" = linux ] && [ -f "$target/Hangar.Tray" ]; then
+  desktop_q() { printf '%s' "$1" | sed -e 's/[\\"`$]/\\&/g' -e 's/\\/\\\\/g' -e 's/%/%%/g'; }
+  mkdir -p "$(dirname "$desktop_entry")"
+  cat > "$desktop_entry" << ENTRY
+[Desktop Entry]
+Type=Application
+Name=Hangar Tray
+Comment=Hangar's running sessions, its server, and screenshots sent to a session
+Exec="$(desktop_q "$target/Hangar.Tray")"
+Icon=$target/Hangar.Tray.png
+Terminal=false
+Categories=Development;Utility;
+ENTRY
+fi
+
+# Started on a first install, and restarted when it is running, so that an update doesn't leave the old
+# build in the menu bar until the next sign-in. Only where there is a desktop session to show it in.
+tray_cmd=
+# Matched by the path its process runs from, which is the resolved one: a home reached through a link
+# (/home -> /var/home, say) would otherwise never match.
+target_real=$(cd "$target" && pwd -P)
+if [ -d "$target/$tray_app" ]; then
+  tray_cmd="$target_real/$tray_app/Contents/MacOS/"
+elif [ -f "$target/Hangar.Tray" ]; then
+  tray_cmd="$target_real/Hangar.Tray"
+fi
+re_escape() { printf '%s' "$1" | sed -e 's/[][\.*^$+?(){}|]/\\&/g'; }
+tray_running() { pgrep -f "^$(re_escape "$tray_cmd")" > /dev/null 2>&1; }
+# $1: --autostart on a restart, so it comes back without opening its settings.
+start_tray() {
+  if [ "$platform" = macos ]; then
+    open -g "$target/$tray_app" ${1:+--args "$1"} 2> /dev/null
+  elif command -v systemd-run > /dev/null 2>&1 \
+    && systemctl --user show-environment 2> /dev/null | grep -E '^(WAYLAND_)?DISPLAY=' > /dev/null; then
+    # A unit of the user's manager rather than a child of this shell, which may be an ssh session about
+    # to end; the manager has the desktop session's environment.
+    systemd-run --user --collect --quiet "$target/Hangar.Tray" ${1:+"$1"}
+  elif [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
+    (setsid "$target/Hangar.Tray" ${1:+"$1"} > /dev/null 2>&1 &)
+  else
+    return 1
+  fi
+}
+if [ -n "$tray_cmd" ]; then
+  if tray_running; then
+    pkill -f "^$(re_escape "$tray_cmd")" 2> /dev/null || true
+    # Gone before the new one starts: a second instance would hand itself to the first and exit.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      tray_running || break
+      sleep 0.5
+    done
+    if start_tray --autostart; then
+      echo "==> Restarted the tray on the new build"
+    else
+      echo "    The tray was stopped for the update; start it again from $tray_cmd"
+    fi
+  elif [ -n "$first_install" ] && start_tray; then
+    echo "==> Started the tray"
+  fi
+fi
+
 # The port as the app reads it: appsettings.Local.json (this machine's own settings) over appsettings.json.
 port=
 for settings in "$target/appsettings.Local.json" "$target/appsettings.json"; do
@@ -219,5 +297,6 @@ echo "    Your settings: $target/appsettings.Local.json -- it overrides appsetti
 if [ -d "$target/$tray_app" ]; then
   echo "    Tray app: $target/$tray_app -- its menu's \"Start when I sign in\" keeps it in the menu bar."
 elif [ -f "$target/Hangar.Tray" ]; then
-  echo "    Tray app: $target/Hangar.Tray -- its menu's \"Start when I sign in\" keeps it in the menu bar or panel."
+  echo "    Tray app: \"Hangar Tray\" in your app menu ($target/Hangar.Tray) -- its menu's \"Start when I sign in\""
+  echo "    keeps it in the panel."
 fi

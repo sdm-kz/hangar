@@ -147,6 +147,8 @@ EOF
         tray_note="$publish/$tray_app"
       else
         cp "$root/tray/src-tauri/target/release/hangar-tray" "$publish/Hangar.Tray"
+        # The icon of the app-menu entry install-unix.sh writes for it (a bare executable has none).
+        cp "$root/tray/src-tauri/icons/128x128@2x.png" "$publish/Hangar.Tray.png"
         tray_note="$publish/Hangar.Tray"
       fi
       chmod +x "$publish/Hangar.Tray"
