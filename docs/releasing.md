@@ -21,13 +21,19 @@ The workflow then:
 2. packs each as `hangar-<rid>.zip` (Windows) or `hangar-<rid>.tar.gz`: a `hangar-<rid>/` folder with the
    build in `publish/` and the scripts that install it in `scripts/`;
 3. adds `install.sh`, `install.ps1` and `SHA256SUMS`, records build provenance for every file (public
-   repository only), and creates a **draft** release with notes generated from the merged pull requests
-   and commits.
+   repository only), and creates a **draft** release whose text lists the `feat`, `fix` and `perf`
+   commits since the last release (a prerelease's previous release is the last that was not one).
 
 A build that fails, a tray included, fails the release: there is no release with a platform missing.
 
-Look the draft over, edit its notes, and **Publish** it. Only a published release that is not a
-prerelease is `releases/latest`, which is where the one-line installers download from:
+Look the draft over, edit its notes, and **Publish** it. The text is also what an installed Hangar shows
+as "what's new" before it updates itself (see [Updating](updating.md#from-a-release)), so write it for
+the people reading it there: each `- ` line is one change, and a plain line above them is the summary on
+the Update button's tooltip. Headings and the "Full Changelog" link are left out. A user skipping
+releases sees the changes of every release since theirs.
+
+Only a published release that is not a prerelease is `releases/latest`, which is where the one-line
+installers download from, and what installed Hangars update to:
 
 ```bash
 curl -fsSL https://github.com/sdm-kz/hangar/releases/latest/download/install.sh | sh
