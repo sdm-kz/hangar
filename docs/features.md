@@ -85,8 +85,8 @@ screenshot is this session as a chat):
   is untouched, and only when neither you nor the project has a status line of your own) — the terminal shows it too, as
   "Opus 5.5 · 24% context". A session started before that shows its tokens in context instead of the
   percentage, until it is restarted. The chat zooms on its own, like the terminal: the buttons in its corner,
-  Ctrl/⌘ with + − 0, or Ctrl/⌘-wheel; the message box below it writes at the same size. The size is shared by
-  every session's chat and remembered.
+  Ctrl/⌘ with + − 0, or Ctrl/⌘-wheel; the message box below it, and the full-size Compose window, write at
+  the same size. The size is shared by every session's chat and remembered.
 - **Fork a session** — branch a conversation in two from the sessions list or the session header:
   name the fork, and it launches beside the original with the same folder and settings, picking up
   its history (`claude --resume <id> --fork-session`). The original keeps running, untouched. Forks

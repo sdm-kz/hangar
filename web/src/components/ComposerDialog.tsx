@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Inbox, Loader2, Paperclip, Send, X } from "lucide-react";
 import { attachError, insertPaths, placeCaret, uploadAttachments, useFileDrop } from "@/lib/attach";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import {
 import { DropCue } from "./DropCue";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
 import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
+import { storedZoom } from "./ZoomControls";
 import type { PostponedImage } from "@/lib/postponed";
 import { useApi } from "@/lib/node";
 
@@ -80,6 +81,10 @@ export function ComposerDialog({
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  // Written at the chat's size, as the message box under it is. Read as it opens: the chat's zoom can't
+  // change under the dialog, and the dialog opens from the terminal too, where there is no chat to ask.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const zoom = useMemo(() => storedZoom("chat"), [open]);
 
   // Images go with the message; any other file is named in it, by path, where the caret is.
   const addFiles = useCallback(
@@ -285,7 +290,9 @@ export function ComposerDialog({
                   ? "Write your message — Enter for a newline, Ctrl+Shift+Enter to postpone, paste or drop images and files to attach"
                   : "Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste or drop images and files to attach"
               }
-              className="min-h-[35vh] flex-1 resize-none leading-6"
+              className="min-h-[35vh] flex-1 resize-none"
+              // text-sm and leading-6 at the chat's zoom.
+              style={{ fontSize: `${0.875 * zoom}rem`, lineHeight: `${1.5 * zoom}rem` }}
             />
           </div>
 
