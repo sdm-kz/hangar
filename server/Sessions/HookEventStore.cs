@@ -212,12 +212,14 @@ public sealed class HookEventStore
     }
 
     /// <summary>
-    /// End a turn that was interrupted with Esc, which no hook reports: <c>Stop</c> doesn't run on a
-    /// user interrupt, so the session would read as working until its next prompt. The caller has seen
-    /// the interruption on screen; <paramref name="seenAfter"/> is the event time it read the status at,
-    /// and a hook that has landed since is newer than that screen, so it wins and nothing changes.
+    /// End a turn that the screen says is over but no hook did: one interrupted with Esc (<c>Stop</c>
+    /// doesn't run on a user interrupt), or one whose <c>Stop</c> never landed or was overtaken by a
+    /// stray event. Either way the session would read as working until its next prompt.
+    /// <paramref name="why"/> is what the caller saw, kept with the recent events; <paramref name="seenAfter"/>
+    /// is the event time it read the status at, and a hook that has landed since is newer than that
+    /// screen, so it wins and nothing changes.
     /// </summary>
-    public bool EndInterruptedTurn(string sessionId, DateTimeOffset seenAfter)
+    public bool EndTurnSeenOnScreen(string sessionId, DateTimeOffset seenAfter, string why)
     {
         if (!_byId.TryGetValue(sessionId, out var s)) return false;
         lock (s.Gate)
@@ -225,10 +227,10 @@ public sealed class HookEventStore
             if (s.LastEventAt != seenAfter || (!s.Busy && !s.Waiting)) return false;
             s.Busy = false; s.Waiting = false; s.CurrentTool = null;
             Unblock(s);
-            s.Recent.Enqueue("Interrupted");
+            s.Recent.Enqueue(why);
             while (s.Recent.Count > RecentCapacity) s.Recent.Dequeue();
         }
-        _log.LogDebug("Session {Id}: turn interrupted on screen, no longer busy", sessionId);
+        _log.LogDebug("Session {Id}: turn over on screen ({Why}), no longer busy", sessionId, why);
         Changed?.Invoke();
         return true;
     }

@@ -363,8 +363,11 @@ screenshot is this session as a chat):
   rather than scraped off the terminal: a green pulse while it works, a cooler one while it compacts,
   an **amber ring** when it is blocked on you, a **red cross** when the last turn died on an API
   error, and a green tick for a turn that finished while you were looking elsewhere (that one clears
-  once you have read it). The two that want you name themselves: hover a waiting row and it says
-  which command the permission dialog is asking to run — *Wants to run Bash: git push --force* — and
+  once you have read it). Where the hooks never say a turn ended (you pressed Esc, or its last
+  callback was lost) the screen settles it: the interruption notice at once, or Claude sitting at its
+  prompt for three minutes with nothing drawn and no callback. The two that want you name
+  themselves: hover a waiting row and it says which command the permission dialog is asking to
+  run — *Wants to run Bash: git push --force* — and
   a failed one says what it died on, a rate limit being the usual answer. A failed turn is worth its
   own mark because it is invisible otherwise: a turn that hit its limit stops printing exactly like
   one that finished, so without this the session just looks done. Both also raise a notification —

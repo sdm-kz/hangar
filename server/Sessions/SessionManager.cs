@@ -688,7 +688,7 @@ public sealed class SessionManager : IDisposable
     /// <summary>Ids of live sessions where Claude is currently generating output (for the "active" dot).</summary>
     public IReadOnlyCollection<string> BusySessionIds()
     {
-        foreach (var s in _sessions.Values) EndInterruptedTurn(s);
+        foreach (var s in _sessions.Values) EndTurnSeenOnScreen(s);
         return _sessions.Values
             .Where(s => s.State == SessionState.Running && IsBusy(s))
             .Select(s => s.Id)
@@ -696,30 +696,61 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
-    /// Settle a turn you cut short with Esc. The hooks say working until a <c>Stop</c>, and none comes
-    /// for an interrupt, so without this the session kept its working mark (and its share of the
-    /// activity count) until the next prompt. The screen is the only witness: the notice Claude leaves
-    /// above its input box, read once the terminal has gone quiet and no hook has arrived for a moment.
-    /// Run where the marks are read (the hub's snapshot) and when the terminal goes quiet, so it holds
-    /// whether or not a browser is watching — the schedules read the hook status directly.
+    /// Settle a turn the hooks never closed. The hooks say working until a <c>Stop</c>, and there are
+    /// two ways not to get one: you cut the turn short with Esc, which runs no <c>Stop</c> by design, or
+    /// the turn ended and its <c>Stop</c> was lost or overtaken by a stray event. Either way the session
+    /// kept its working mark (and its share of the activity count) until the next prompt, and its
+    /// schedules held their prompts back. The screen is the only witness: for an interrupt, the notice
+    /// Claude leaves above its input box, read once the terminal has gone quiet and no hook has arrived
+    /// for a moment; otherwise, Claude sitting at its prompt with nothing drawn and nothing heard for
+    /// <see cref="StaleTurnAfter"/>. Run where the marks are read (the hub's snapshot) and when the
+    /// terminal goes quiet, so it holds whether or not a browser is watching — the schedules read the
+    /// hook status directly.
     /// </summary>
-    private void EndInterruptedTurn(ClaudeSession s, bool lookAgain = false)
+    private void EndTurnSeenOnScreen(ClaudeSession s, bool lookAgain = false)
     {
         if (s.State != SessionState.Running || s.Terminal is not { IsBusy: false } term) return;
         if (!_hooks.TryGetStatus(s.Id, out var st) || !(st.Busy || st.Waiting)) return;
         // A hook this fresh is newer news than anything on screen: a prompt just sent, a tool starting.
-        var settle = InterruptSettle - (DateTimeOffset.Now - st.LastEventAt);
+        var sinceHook = DateTimeOffset.Now - st.LastEventAt;
+        var settle = InterruptSettle - sinceHook;
         if (settle > TimeSpan.Zero)
         {
             // The terminal going quiet is the one edge there is. Esc soon after a hook lands here, and
             // with nobody reading the marks nothing would ever look again — so look once that hook has aged.
-            if (lookAgain) _ = Task.Delay(settle).ContinueWith(_ => EndInterruptedTurn(s), TaskScheduler.Default);
+            if (lookAgain) _ = Task.Delay(settle).ContinueWith(_ => EndTurnSeenOnScreen(s, lookAgain: true), TaskScheduler.Default);
             return;
         }
-        if (term.ShowsInterrupted) _hooks.EndInterruptedTurn(s.Id, st.LastEventAt);
+        if (term.ShowsInterrupted)
+        {
+            _hooks.EndTurnSeenOnScreen(s.Id, st.LastEventAt, "Interrupted");
+            return;
+        }
+
+        // Waiting is left alone: a dialog that sits for an hour is a dialog nobody has answered yet.
+        if (!st.Busy || st.Waiting) return;
+        // A turn keeps its spinner moving (its clock counts the seconds) and every tool it runs is a
+        // hook, so minutes of neither is a turn that is over. Both clocks, because thinking can go a
+        // while without a hook, and because the spinner's words, which the screen check below looks
+        // for, are cut from its line on a narrow screen.
+        var sinceOutput = TimeSpan.FromMilliseconds(term.MillisSinceOutput);
+        var wait = StaleTurnAfter - (sinceHook < sinceOutput ? sinceHook : sinceOutput);
+        if (wait > TimeSpan.Zero)
+        {
+            if (lookAgain) _ = Task.Delay(wait).ContinueWith(_ => EndTurnSeenOnScreen(s), TaskScheduler.Default);
+            return;
+        }
+        if (term.ShowsIdlePrompt && _hooks.EndTurnSeenOnScreen(s.Id, st.LastEventAt, "Stale"))
+            _log.LogInformation(
+                "Session {Id} ('{Name}'): hooks said working, but it has sat at its prompt for {Minutes:F0} min " +
+                "with no hook since {LastEvent:HH:mm:ss}; marking it idle", s.Id, s.Name, sinceOutput.TotalMinutes, st.LastEventAt);
     }
 
     private static readonly TimeSpan InterruptSettle = TimeSpan.FromSeconds(2);
+
+    /// <summary>How long a session that the hooks call working must sit idle at its prompt, unheard
+    /// from, before <see cref="EndTurnSeenOnScreen"/> calls the turn over.</summary>
+    private static readonly TimeSpan StaleTurnAfter = TimeSpan.FromMinutes(3);
 
     /// <summary>
     /// Whether Claude is generating in a session. Prefers the authoritative hook-derived status (exact
@@ -1792,7 +1823,7 @@ public sealed class SessionManager : IDisposable
         session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
         session.ProcessExited += _ => { SavePersisted(); RaiseChanged(); };
         // Busy/waiting/watchdog changes are not persisted — they just need to reach the browser.
-        session.StateChanged += s => { EndInterruptedTurn(s, lookAgain: true); RaiseChanged(); };
+        session.StateChanged += s => { EndTurnSeenOnScreen(s, lookAgain: true); RaiseChanged(); };
     }
 
     /// <summary>

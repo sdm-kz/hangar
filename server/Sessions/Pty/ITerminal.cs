@@ -95,6 +95,12 @@ public interface ITerminal : IDisposable
     /// </summary>
     bool ShowsInterrupted { get; }
 
+    /// <summary>
+    /// True when Claude's input box is up with no turn's spinner above it. Read off the screen like
+    /// <see cref="HasInputDraft"/>.
+    /// </summary>
+    bool ShowsIdlePrompt { get; }
+
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     bool IsCompacting { get; }
 

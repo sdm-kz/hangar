@@ -91,6 +91,24 @@ internal static class ClaudeInputBox
         return false;
     }
 
+    // How far above the box a turn's spinner line can sit: Claude draws its task list between the two.
+    private const int SpinnerReach = 15;
+
+    /// <summary>
+    /// Whether Claude is sitting at its prompt rather than in a turn: the box is up, and no spinner line
+    /// (<c>✻ Thinking… (12s · esc to interrupt)</c>) is drawn in the rows above it. A dialog in place of
+    /// the box reads as not idle, and so does the phrase quoted anywhere near the box — both of which
+    /// only ever err towards leaving a turn running. A narrow screen can drop the phrase from a real
+    /// spinner line, so this is never the only witness: see <c>SessionManager.EndTurnSeenOnScreen</c>.
+    /// </summary>
+    public static bool Idle(ScreenModel screen)
+    {
+        if (FindBox(screen) is not var (top, _)) return false;
+        for (var y = top - 1; y >= Math.Max(0, top - SpinnerReach); y--)
+            if (RowText(screen, y).Contains("esc to interrupt", StringComparison.OrdinalIgnoreCase)) return false;
+        return true;
+    }
+
     private static string RowText(ScreenModel screen, int y)
     {
         var line = new StringBuilder(screen.Cols);
