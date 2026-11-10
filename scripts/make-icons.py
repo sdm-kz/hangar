@@ -78,6 +78,11 @@ def main() -> None:
     # corners stay inside it (its half-diagonal is ~0.65 of its width, hence 0.6).
     for size in (192, 512):
         fit(logo, size, 0.6, TILE).save(web / "public" / "icons" / f"icon-{size}.png", optimize=True)
+    # The same app installed on a desktop (Windows' taskbar and Start menu, macOS's Dock from Chrome):
+    # the manifest's "any" icon, drawn as it is with nothing behind it, so the tile would be a white
+    # square among icons that have none. The logo alone instead, as large as the exe's.
+    for size in (192, 512):
+        fit(logo, size, 0.98).save(web / "public" / "icons" / f"logo-{size}.png", optimize=True)
     # iOS rounds the corners itself and masks nothing else.
     fit(logo, 180, 0.72, TILE).save(web / "public" / "icons" / "apple-touch-icon.png", optimize=True)
     # A notification's small badge (Android): drawn from the alpha alone, so a white silhouette.
