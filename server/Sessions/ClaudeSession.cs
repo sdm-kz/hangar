@@ -63,12 +63,22 @@ public sealed class ClaudeSession : IDisposable
     public string? NestedUnderId { get; internal set; }
 
     /// <summary>
-    /// This session's own conversation id as best we know it before any hook has reported one — used as
-    /// the fallback for a later reopen/fork. An ordinary resumed session kept the id it resumed; a
-    /// <em>fork</em> deliberately got a new one, so its <see cref="ResumeSessionId"/> names the PARENT's
-    /// conversation and must never stand in for its own (resuming it would rejoin the parent).
+    /// The conversation id this launch gave claude (<c>--session-id</c>) for a conversation that starts
+    /// here: a fresh session or a fork. Null for a session that resumes one (its id is
+    /// <see cref="ResumeSessionId"/>), for an adopted one (never launched by this object), and for a
+    /// bare <c>--continue</c>, which claude won't take a session id with.
     /// </summary>
-    public string? OwnConversationId => ForkSession ? null : ResumeSessionId;
+    public string? AssignedConversationId { get; private set; }
+
+    /// <summary>
+    /// This session's own conversation id as best we know it before any hook has reported one — used as
+    /// the fallback for a later reopen/fork, and what the chat reads when hooks can't tell it (they are
+    /// switched off, or another Hangar owns them). A conversation started here has the id this launch
+    /// chose; an ordinary resumed session kept the id it resumed; a <em>fork</em> with no assigned id has
+    /// none, since its <see cref="ResumeSessionId"/> names the PARENT's conversation and must never stand
+    /// in for its own (resuming it would rejoin the parent).
+    /// </summary>
+    public string? OwnConversationId => AssignedConversationId ?? (ForkSession ? null : ResumeSessionId);
     public SessionState State { get; private set; } = SessionState.Running;
 
     /// <summary>
@@ -434,6 +444,16 @@ public sealed class ClaudeSession : IDisposable
         // resume, which the constructor already guarantees.
         if (ForkSession)
             args.Add("--fork-session");
+        // A conversation that starts here gets its id from us rather than from claude, so the transcript
+        // it writes (~/.claude/projects/<folder>/<id>.jsonl) is known from the first moment, hooks or
+        // no hooks. Not with a bare --continue (claude refuses a session id there unless forking), and
+        // not with --resume, whose id is already known.
+        bool newConversation = ForkSession || (ResumeSessionId is null && !Continue);
+        if (newConversation)
+        {
+            AssignedConversationId ??= Guid.NewGuid().ToString();
+            args.Add("--session-id=" + AssignedConversationId);
+        }
         // Permission mode controls how much the session runs unattended (there's no human at the
         // pseudo-terminal to answer prompts). "default" leaves decisions to the interactive Claude
         // Code app. "bypassPermissions" skips ALL checks via --dangerously-skip-permissions; its
