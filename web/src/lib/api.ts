@@ -44,6 +44,7 @@ import type {
   ShellInfo,
   ShellOption,
   UpdateStatus,
+  ClaudeHooksStatus,
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
 import type { ChatImageRef } from "@/lib/chat";
@@ -682,6 +683,15 @@ function createApi(base: string) {
      */
     applyUpdate(): Promise<UpdateStatus> {
       return request("/api/update/apply", { method: "POST" });
+    },
+
+    // ---- Claude's hooks: whether they report to this instance (see HooksWarning) ----
+    getClaudeHooks(): Promise<ClaudeHooksStatus> {
+      return request("/api/claude-hooks");
+    },
+    /** Point them here, away from the instance live on their port; its sessions stop reporting to it. */
+    takeOverClaudeHooks(): Promise<ClaudeHooksStatus> {
+      return request("/api/claude-hooks/take-over", { method: "POST" });
     },
 
     // ---- Nodes: this machine's identity and the other machines it is paired with ----

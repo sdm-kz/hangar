@@ -6,6 +6,16 @@
 from another device, or through a proxy, with no password set. Set `Auth:Password`
 ([First run](install.md#first-run-set-a-password)).
 
+**"Claude's hooks report to another Hangar on port N, not to this one."** Claude Code's hooks live in
+one global file, `~/.claude/settings.json`, so on a machine they report to one Hangar only. One that
+starts and finds another live on the port they name leaves them there rather than cut that one off,
+and shows this in the sidebar. Without them a session's status (working, waiting on you, a permission
+prompt) is guessed from its terminal, and its chat loses track after `/clear`. Usually the other one is
+an older install still running (a `ClaudeWeb` from before the rename, say): uninstall it, and this one
+takes the hooks over by itself (an open page checks every minute). Or keep both and choose with **Use this Hangar…**, which moves
+the hooks here; the other's sessions then stop reporting to it. Sessions already running keep the hooks
+they started with until they are restarted. `Hooks:Force=true` does the same at every start.
+
 **"Too many wrong passwords."** Login is rate-limited per client (5 free attempts, then 30 s doubling up
 to 15 min). Wait for the time it names, or restart the server, which forgets the counts.
 

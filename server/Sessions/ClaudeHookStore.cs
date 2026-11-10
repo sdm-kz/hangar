@@ -48,7 +48,8 @@ public static class ClaudeHookStore
     /// case where it isn't — a stale registration whose port some unrelated process now holds.
     /// </param>
     /// <param name="settingsPath">The settings file to write; <c>~/.claude/settings.json</c> unless given.</param>
-    public static void EnsureConfigured(int port, ILogger log, bool force = false, string? settingsPath = null)
+    /// <returns>What came of it, for <see cref="ClaudeHookStatus"/> to show.</returns>
+    public static HookRegistration EnsureConfigured(int port, ILogger log, bool force = false, string? settingsPath = null)
     {
         try
         {
@@ -89,7 +90,7 @@ public static class ClaudeHookStore
                     "receive hook events, so its session status falls back to terminal heuristics. Set " +
                     "Hooks:Force=true to take them over, or Hooks:Enabled=false to stop asking.",
                     owner, port);
-                return;
+                return new HookRegistration(HookRegistration.Elsewhere, owner);
             }
 
             bool changed = false;
@@ -141,7 +142,7 @@ public static class ClaudeHookStore
             }
 
             if (!changed)
-                return; // nothing to write — hooks already current
+                return new HookRegistration(HookRegistration.Ours); // nothing to write — hooks already current
 
             // One-time backup so the user can restore if anything looks wrong.
             var backup = path + ".hangar-hooks-backup";
@@ -162,10 +163,12 @@ public static class ClaudeHookStore
             }
 
             log.LogInformation("Registered Hangar hooks in ~/.claude/settings.json (endpoint {Url})", url);
+            return new HookRegistration(HookRegistration.Ours);
         }
         catch (Exception ex)
         {
             log.LogWarning(ex, "Could not register Hangar hooks");
+            return new HookRegistration(HookRegistration.Failed);
         }
     }
 
@@ -196,7 +199,7 @@ public static class ClaudeHookStore
     /// table rather than by connecting: this runs on the startup path, and a connect to a port that
     /// blackholes would sit there for the whole handshake timeout.
     /// </summary>
-    private static bool IsListening(int port)
+    internal static bool IsListening(int port)
     {
         try
         {

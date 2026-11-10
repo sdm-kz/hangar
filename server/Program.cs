@@ -65,14 +65,10 @@ internal static class Program
         // Register Hangar's Claude Code hooks in ~/.claude/settings.json so launched sessions report
         // their lifecycle back to /api/hooks (driving reliable busy/idle/waiting status). Opt out with
         // Hooks:Enabled=false; the app then falls back to terminal-scraping heuristics.
-        if (app.Configuration.GetValue("Hooks:Enabled", true))
-        {
-            var hookLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Hooks");
-            // Hooks:Force overrides the "another instance is live on the registered port" guard —
-            // see ClaudeHookStore.EnsureConfigured.
-            Sessions.ClaudeHookStore.EnsureConfigured(
-                port, hookLog, app.Configuration.GetValue("Hooks:Force", false));
-        }
+        // Hooks:Force overrides the "another instance is live on the registered port" guard — see
+        // ClaudeHookStore.EnsureConfigured. ClaudeHookStatus keeps the outcome for the UI.
+        app.Services.GetRequiredService<Sessions.ClaudeHookStatus>().Start(
+            port, app.Configuration.GetValue("Hooks:Enabled", true), app.Configuration.GetValue("Hooks:Force", false));
 
         // Freeze the session state file the moment anything says we're going down, so the entries stay
         // marked as running and are there to be matched against the live pty hosts on the next start.
@@ -317,6 +313,7 @@ internal static class Program
         // Collects Claude hook callbacks and derives live busy/waiting status; consumed by SessionManager
         // and pushed by SessionHub.
         builder.Services.AddSingleton<HookEventStore>();
+        builder.Services.AddSingleton<ClaudeHookStatus>();
         builder.Services.AddSingleton<StatusLineStore>();
         builder.Services.AddSingleton<SessionManager>();
         // The session-list push hub is one instance shared as both a singleton (so the endpoint can
@@ -529,6 +526,17 @@ internal static class Program
         });
 
         app.MapGet("/api/sessions", (SessionManager mgr) => Results.Ok(mgr.List()));
+
+        // Whether Claude's hooks in ~/.claude/settings.json point at this instance, for the UI to say so
+        // when they don't. Not under /api/hooks, which skips the token check for claude's own callbacks.
+        app.MapGet("/api/claude-hooks", async (ClaudeHookStatus status) => Results.Ok(await status.CurrentAsync()));
+        // Point them here even though another instance is live on the port they name (Hooks:Force for a
+        // running app). That instance's sessions then stop reporting to it.
+        app.MapPost("/api/claude-hooks/take-over", async (ClaudeHookStatus status) =>
+            status.Enabled
+                ? Results.Ok(await status.TakeOverAsync())
+                : Results.Json(new { error = "Claude hooks are switched off here (Hooks:Enabled=false)" },
+                    statusCode: StatusCodes.Status409Conflict));
 
         // Claude hook callback: each launched session's http hooks POST their event JSON here, tagged
         // with X-Session-Id (our GUID) and X-Hook-Token (per-run secret), both sourced from env vars we

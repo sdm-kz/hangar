@@ -7,6 +7,7 @@ import { NodesDialog } from "./NodesDialog";
 import { NotificationToggle } from "./NotificationToggle";
 import { SessionsProgressContext } from "./SessionsProgressMenu";
 import { ThemeToggle } from "./ThemeToggle";
+import { HooksWarning } from "./HooksWarning";
 import logo from "@/assets/hangar-logo.png";
 
 export type SidebarTab = "sessions" | "files" | "shells";
@@ -82,6 +83,8 @@ export function AppSidebar({
           )}
         </div>
       </div>
+      {/* Only while Claude's hooks report to some other instance: what explains an empty chat. */}
+      <HooksWarning />
       {/* Positioned so the Sessions fraction's list hangs from the row's left edge, inside the sidebar.
           A container, so the tabs drop their words by the sidebar's own width, not the window's. */}
       <div className="@container relative flex h-10 shrink-0 border-b">

@@ -307,6 +307,18 @@ export interface BuildStamp {
   notes: ReleaseNotes | null; // what this build brought, when whoever staged it said
 }
 
+/**
+ * Whether Claude's hooks in ~/.claude/settings.json point at this Hangar. They are global, one
+ * registration for every Claude Code session on the machine, and an instance that finds another live
+ * one owning them leaves them there (server/Sessions/ClaudeHookStatus.cs).
+ */
+export interface ClaudeHooksStatus {
+  state: "ours" | "elsewhere" | "failed" | "off";
+  port: number; // this instance's
+  ownerPort: number | null; // where they point instead, for "elsewhere"
+  ownerIsHangar: boolean | null; // whether a Hangar answers there
+}
+
 /** The updater's view of itself: what's running, what's staged, and whether one is being installed. */
 export interface UpdateStatus {
   enabled: boolean; // the updater is switched on server-side (Update:Enabled)
