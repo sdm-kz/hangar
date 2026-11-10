@@ -543,6 +543,7 @@ export function ChatView({
           onShowTerminal={onShowTerminal}
           poolSlot={poolSlot}
           info={info}
+          zoom={zoom}
           onPreview={(src, name, gallery) => setPreview({ src, name, gallery })}
         />
       )}
@@ -906,6 +907,7 @@ function Composer({
   onShowTerminal,
   poolSlot,
   info,
+  zoom,
   onPreview,
 }: {
   sessionId: string;
@@ -923,6 +925,8 @@ function Composer({
   onShowTerminal: () => void;
   poolSlot?: (el: HTMLElement | null) => void;
   info: SessionLine;
+  /** The conversation's zoom: what is written here is the size of what is read above it. */
+  zoom: number;
   /** Open an attached image full size, among the others attached. */
   onPreview: (src: string, name: string, gallery: LightboxImage[]) => void;
 }) {
@@ -966,7 +970,7 @@ function Composer({
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight / 3))}px`;
-  }, [text]);
+  }, [text, zoom]);
 
   // Images go with the message; any other file is named in it, by path, where the caret is.
   const addFiles = async (files: File[]) => {
@@ -1138,7 +1142,10 @@ function Composer({
             }
             data-chat-composer
             {...slash.inputProps}
-            className="min-h-7 resize-none border-0 px-1 py-1 leading-5 shadow-none focus-visible:ring-0"
+            className="min-h-7 resize-none border-0 px-1 py-1 shadow-none focus-visible:ring-0"
+            // The text only, as the conversation's (text-sm, leading-5) at its zoom: the box and its
+            // buttons stay the size they are, as the conversation's frame does.
+            style={{ fontSize: `${0.875 * zoom}rem`, lineHeight: `${1.25 * zoom}rem` }}
             onChange={(e) => {
               setText(e.target.value);
               slash.track(e.target);
