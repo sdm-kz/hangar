@@ -7,8 +7,9 @@
 An install from a release updates itself. A minute after it starts, and every 6 hours from then
 (`Update:CheckHours`), it looks at the [releases](https://github.com/sdm-kz/hangar/releases). When there
 is a newer one, it downloads this machine's archive, checks it against the release's `SHA256SUMS` and
-stages it. The **Update** button then appears with the release's "what's new", and the rest is the
-[in-app update](#in-app-updates) below. `POST /api/update/check` looks right away. Prereleases are left
+that file's signature by the [release key](releasing.md#the-release-signing-key), and stages it; a release
+that isn't signed with it is not offered. The **Update** button then appears with the release's "what's
+new", and the rest is the [in-app update](#in-app-updates) below. `POST /api/update/check` looks right away. Prereleases are left
 out unless `Update:Prereleases` is `true`; `Update:Source` and `Update:Repo` choose where updates come
 from ([configuration](configuration.md)). A build staged from a checkout, newer than the one running
 and not installed yet, is not replaced by a release.

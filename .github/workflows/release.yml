@@ -188,6 +188,25 @@ jobs:
           mv SHA256SUMS dist/
           cat dist/SHA256SUMS
 
+      # What an installed Hangar checks before staging a release (server/Update/GitHubReleaseSource.cs):
+      # SHA256SUMS comes from the release itself, so only a signature by a key the app already knows
+      # tells it the release came from this workflow. Checked here against the public half the app is
+      # built with, so a secret that doesn't match it fails the release rather than publishing one no
+      # install takes. scripts/setup-release-signing.sh makes the key.
+      - name: Sign the checksums
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::error::The RELEASE_SIGNING_KEY secret is not set (scripts/setup-release-signing.sh)."
+            exit 1
+          fi
+          key=$(mktemp)
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key"
+          openssl dgst -sha256 -sign "$key" -out dist/SHA256SUMS.sig dist/SHA256SUMS
+          rm -f "$key"
+          openssl dgst -sha256 -verify server/Update/release-key.pem -signature dist/SHA256SUMS.sig dist/SHA256SUMS
+
       # Signed records of which workflow run, at which commit, made each file: gh attestation verify
       # <file> --repo sdm-kz/hangar. GitHub keeps these for public repositories only.
       - uses: actions/attest-build-provenance@v2

@@ -4,6 +4,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -20,8 +22,9 @@ public sealed record ReleaseCheck(string Repo, DateTime? CheckedAtUtc, string? L
 /// <summary>
 /// The other way an update gets staged: for a build made from a release, a newer release on GitHub.
 /// Every few hours this asks GitHub for the repository's releases, and when one is newer than the
-/// running build it downloads this machine's archive, checks it against the release's SHA256SUMS and
-/// stages what is in its publish folder exactly as stage-update does — into
+/// running build it downloads this machine's archive, checks it against the release's SHA256SUMS,
+/// signed by the release key (see <see cref="SignedBy"/>), and stages what is in its publish folder
+/// exactly as stage-update does — into
 /// <c>&lt;StagingPath&gt;/payload</c>, by way of payload.tmp. From there <see cref="UpdateService"/>
 /// takes over unchanged: the Update button, the dialog, the hand-off to apply-update.
 ///
@@ -61,6 +64,7 @@ public sealed partial class GitHubReleaseSource : BackgroundService
     private readonly ILogger<GitHubReleaseSource> _log;
     private readonly CancellationToken _stopping;
     private readonly string? _rid = Rid();
+    private readonly string? _releaseKey;
     private readonly SemaphoreSlim _running = new(1, 1);
 
     // The last answer and its ETag. A 304 saves reading the list again; it still counts against the
@@ -80,6 +84,7 @@ public sealed partial class GitHubReleaseSource : BackgroundService
         _updates = updates;
         _stopping = lifetime.ApplicationStopping;
         _log = log;
+        _releaseKey = string.IsNullOrWhiteSpace(options.ReleaseKey) ? BuiltInReleaseKey() : options.ReleaseKey;
     }
 
     private string Mode => (_options.Source ?? "auto").Trim().ToLowerInvariant();
@@ -88,6 +93,7 @@ public sealed partial class GitHubReleaseSource : BackgroundService
     public bool Active =>
         _options.Enabled
         && _rid is not null
+        && _releaseKey is not null
         && RepoPattern().IsMatch(_options.Repo ?? "")
         && Mode switch
         {
@@ -103,6 +109,7 @@ public sealed partial class GitHubReleaseSource : BackgroundService
             if (_options.Enabled && Mode is "auto" or "github")
                 _log.LogDebug("Not looking for releases: {Why}.",
                     _rid is null ? "no release is built for this platform"
+                    : _releaseKey is null ? "this build has no release key to check a release with"
                     : !RepoPattern().IsMatch(_options.Repo ?? "") ? $"Update:Repo '{_options.Repo}' is not owner/name"
                     : "this build was not made from a release");
             return;
@@ -146,7 +153,8 @@ public sealed partial class GitHubReleaseSource : BackgroundService
                 _checkedAt = DateTime.UtcNow;
                 var usable = releases
                     .Where(r => _options.Prereleases || !r.Version.IsPrerelease)
-                    .Where(r => r.Archive(_rid!) is not null && r.Asset("SHA256SUMS") is not null)
+                    .Where(r => r.Archive(_rid!) is not null && r.Asset("SHA256SUMS") is not null
+                                && r.Asset("SHA256SUMS.sig") is not null)
                     .OrderByDescending(r => r.Version)
                     .ToList();
                 latest = usable.FirstOrDefault()?.Version.ToString();
@@ -265,8 +273,13 @@ public sealed partial class GitHubReleaseSource : BackgroundService
         Directory.CreateDirectory(work);
         try
         {
-            var sums = await GetStringAsync(release.Asset("SHA256SUMS")!, ct);
-            var expected = ExpectedHash(sums, archiveName)
+            // The checksums, then the signature over them: the one thing in a release its assets can't
+            // forge, since the key that makes it is the release workflow's alone.
+            var sums = await GetBytesAsync(release.Asset("SHA256SUMS")!, ct);
+            var signature = await GetBytesAsync(release.Asset("SHA256SUMS.sig")!, ct);
+            if (!SignedBy(_releaseKey!, sums, signature))
+                throw new InvalidOperationException($"SHA256SUMS of {release.Tag} is not signed with the release key");
+            var expected = ExpectedHash(Encoding.UTF8.GetString(sums), archiveName)
                 ?? throw new InvalidOperationException($"SHA256SUMS of {release.Tag} has no line for {archiveName}");
 
             var archive = Path.Combine(work, archiveName);
@@ -399,7 +412,28 @@ public sealed partial class GitHubReleaseSource : BackgroundService
         return null;
     }
 
-    private async Task<string> GetStringAsync(Uri url, CancellationToken ct)
+    /// <summary>
+    /// Whether <paramref name="signature"/> is the key's over <paramref name="data"/>: ECDSA with SHA-256,
+    /// DER-encoded, as <c>openssl dgst -sha256 -sign</c> writes it in the release workflow. The key checked
+    /// with is the public half built into this app (server/Update/release-key.pem), or Update:ReleaseKey.
+    /// </summary>
+    internal static bool SignedBy(string publicKeyPem, byte[] data, byte[] signature)
+    {
+        using var key = ECDsa.Create();
+        key.ImportFromPem(publicKeyPem);
+        return key.VerifyData(data, signature, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
+    }
+
+    /// <summary>The public key embedded at build time; null in a build made without one.</summary>
+    private static string? BuiltInReleaseKey()
+    {
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Hangar.Server.release-key.pem");
+        if (stream is null) return null;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    private async Task<byte[]> GetBytesAsync(Uri url, CancellationToken ct)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         Headers(req);
@@ -407,7 +441,7 @@ public sealed partial class GitHubReleaseSource : BackgroundService
         cts.CancelAfter(ApiTimeout);
         using var resp = await Http.SendAsync(req, cts.Token);
         resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadAsStringAsync(cts.Token);
+        return await resp.Content.ReadAsByteArrayAsync(cts.Token);
     }
 
     /// <summary>Save <paramref name="url"/> to <paramref name="path"/>, hashing as it goes; returns the SHA-256 in hex.</summary>

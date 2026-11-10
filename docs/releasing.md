@@ -20,7 +20,8 @@ The workflow then:
    `build.json` (and so in the Update dialog) and in the executables' version info;
 2. packs each as `hangar-<rid>.zip` (Windows) or `hangar-<rid>.tar.gz`: a `hangar-<rid>/` folder with the
    build in `publish/` and the scripts that install it in `scripts/`;
-3. adds `install.sh`, `install.ps1` and `SHA256SUMS`, records build provenance for every file (public
+3. adds `install.sh`, `install.ps1`, `SHA256SUMS` and its signature `SHA256SUMS.sig` (see
+   [the release signing key](#the-release-signing-key)), records build provenance for every file (public
    repository only), and creates a **draft** release whose text lists the `feat`, `fix` and `perf`
    commits since the last release (a prerelease's previous release is the last that was not one).
 
@@ -56,6 +57,29 @@ $env:HANGAR_VERSION = "0.2.0-rc.1"; irm https://github.com/sdm-kz/hangar/release
 The asset names carry no version, so that `releases/latest/download/<name>` always resolves; the release
 says which version it is, and so does each build's `build.json`.
 
+## The release signing key
+
+An installed Hangar stages a newer release by itself, and it takes one only when the release's
+`SHA256SUMS` is signed with the release key: `SHA256SUMS` comes from the release itself, so on its own it
+proves the download whole, not where it came from. The workflow signs it with the private key in the
+`RELEASE_SIGNING_KEY` secret (ECDSA P-256, `openssl dgst -sha256 -sign`), and every build carries the public
+half, [`server/Update/release-key.pem`](../server/Update/release-key.pem). The workflow checks its own
+signature against that file too, and fails without the secret or with one that doesn't match.
+
+Make the key once, anywhere with `openssl` and a signed-in `gh`, keeping the private key in a folder of
+your own:
+
+```bash
+scripts/setup-release-signing.sh <folder for the private key>
+git add server/Update/release-key.pem && git commit -m "build(release): the release signing key"
+```
+
+Keep the private key safe and offline. Every install trusts the key it was built with: a new key leaves
+the installs built with the old one unable to update themselves, each needing the one-line installer run
+again, and the script refuses to replace a key that is there. A fork makes its own and sets
+`Update:Repo` and `Update:ReleaseKey` ([configuration](configuration.md)) in the builds it hands out, or
+commits its own `release-key.pem`.
+
 ## The macOS signing identity
 
 Without an Apple Developer ID, the tray is signed with a self-signed certificate so that macOS keeps the
@@ -87,9 +111,14 @@ release install on a Mac whose tray was signed with that Mac's own identity.
 
 ## Checking a download
 
-`SHA256SUMS` comes from the same release as the archives, so the installers' check catches a corrupted
-or truncated download, not a release that was tampered with. For that, check the provenance, which
-GitHub signs with the identity of the workflow run that built the file:
+The one-line installers check the download against `SHA256SUMS`, which catches a corrupted or truncated
+download; the in-app updater checks its signature as well (above). By hand, either check the signature:
+
+```bash
+openssl dgst -sha256 -verify server/Update/release-key.pem -signature SHA256SUMS.sig SHA256SUMS
+```
+
+or the provenance, which GitHub signs with the identity of the workflow run that built the file:
 
 ```bash
 gh attestation verify hangar-linux-x64.tar.gz --repo sdm-kz/hangar

@@ -66,6 +66,11 @@
     <!-- Its Linux and macOS counterpart. Kept LF by .gitattributes: a CRLF checkout on Windows would
          otherwise embed a script /bin/sh can't run. -->
     <EmbeddedResource Include="..\scripts\apply-update.sh" LogicalName="Hangar.Server.apply-update.sh" />
+    <!-- The public half of the key the release workflow signs SHA256SUMS with: what a release install
+         checks a newer release against before staging it (Update/GitHubReleaseSource.cs). A build without
+         it doesn't look for releases. -->
+    <EmbeddedResource Include="Update\release-key.pem" LogicalName="Hangar.Server.release-key.pem"
+                      Condition="Exists('Update\release-key.pem')" />
   </ItemGroup>
 
   <!-- The built React app lives in wwwroot; the Web SDK includes and publishes it automatically. -->

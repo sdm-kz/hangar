@@ -53,4 +53,10 @@ public sealed class UpdateOptions
 
     /// <summary>Offer prereleases (v1.2.0-rc.1) as well as releases.</summary>
     public bool Prereleases { get; set; }
+
+    /// <summary>
+    /// The public key (PEM) a release's SHA256SUMS.sig is checked with. Empty (the default) means the
+    /// one built in, which is sdm-kz/hangar's; a fork that sets <see cref="Repo"/> sets its own here.
+    /// </summary>
+    public string? ReleaseKey { get; set; }
 }

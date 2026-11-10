@@ -56,6 +56,7 @@ The tray's first run takes the server's port from `Server:Urls` in the `appsetti
 | `Update:Repo`               | The GitHub repository whose releases are looked for (`owner/name`) | `sdm-kz/hangar` |
 | `Update:CheckHours`         | Hours between looks at the releases (at least 1) | `6` |
 | `Update:Prereleases`        | Offer prereleases (`v1.2.0-rc.1`) too | `false` |
+| `Update:ReleaseKey`         | Public key (PEM) a release's `SHA256SUMS.sig` must verify with; a fork's own, with `Update:Repo` | (built in) |
 | `FileSystem:DefaultFolder`  | Folder the picker opens at when creating a session; empty = your user profile | `""` |
 | `Push:Subject`              | VAPID subject for Web Push (`mailto:` or `https:`); unset = `Server:PublicUrl` | (unset) |
 | `Ui:LightTheme`             | Colour theme a browser that hasn't picked one shows in light mode (a theme id, below) | `light` |
