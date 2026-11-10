@@ -969,12 +969,31 @@ export function PullRequestView({
         </button>
         <StateIcon className={cn("mt-1 size-4 shrink-0", stateClass)} />
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-baseline gap-1.5">
-            <span className="shrink-0 text-sm text-muted-foreground">#{number}</span>
-            <span className="min-w-0 truncate text-sm font-medium">
-              {pull?.title ?? (loading ? "Loading…" : "Pull request")}
-            </span>
-          </div>
+          {/* The number and title open the pull request on GitHub once its address is known — the
+              place anyone reaches for first, ahead of the small icon at the far end of the row. */}
+          {(() => {
+            const heading = (
+              <>
+                <span className="shrink-0 text-sm text-muted-foreground">#{number}</span>
+                <span className="min-w-0 truncate text-sm font-medium">
+                  {pull?.title ?? (loading ? "Loading…" : "Pull request")}
+                </span>
+              </>
+            );
+            return pull?.url ? (
+              <a
+                href={pull.url}
+                target="_blank"
+                rel="noreferrer"
+                title="Open this pull request on GitHub"
+                className="flex w-fit max-w-full min-w-0 items-baseline gap-1.5 underline-offset-2 hover:underline"
+              >
+                {heading}
+              </a>
+            ) : (
+              <div className="flex min-w-0 items-baseline gap-1.5">{heading}</div>
+            );
+          })()}
           {pull && (
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
               <span className="truncate">{pull.author}</span>
