@@ -289,7 +289,7 @@ fn monitor_rect(r: Rect, scale: f32) -> Rect {
 
 /// Under Wayland the only windows xcap can list are XWayland ones — a partial list is worse than none,
 /// so region and window modes work off the frames alone there.
-fn is_wayland() -> bool {
+pub(crate) fn is_wayland() -> bool {
     cfg!(target_os = "linux")
         && (std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.eq_ignore_ascii_case("wayland"))
             || std::env::var_os("WAYLAND_DISPLAY").is_some())

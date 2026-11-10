@@ -195,10 +195,14 @@ a server on this machine.
   the builds with a certificate of its own instead, and the permissions then survive updates. The app
   runs in the menu bar, with no Dock icon.
 - **Linux, X11**: everything works. The tray needs `libayatana-appindicator3`.
-- **Linux, Wayland**: apps can't register global hotkeys or list windows, so bind
-  `Hangar.Tray --capture region` (or `window`, `fullscreen`, `freeform`) in your desktop's keyboard
-  settings. Region and freeform still work on the frozen screen; window mode falls back to the whole
-  screen.
+- **Linux, Wayland**: an app can't grab keys there, so the tray asks the desktop for its hotkeys
+  through the GlobalShortcuts portal (GNOME 48+, KDE Plasma 5.27+, Hyprland). The first time, the
+  desktop shows them to you to accept or change; after that it keeps your choice, and changing them is
+  done in the desktop's settings rather than the tray's. Where there is no such portal, or you decline,
+  the hotkeys reach the tray only while an X11 app has focus: bind `Hangar.Tray --capture region` (or
+  `window`, `fullscreen`, `freeform`) in your desktop's keyboard settings instead. Apps can't list
+  windows on Wayland either: region and freeform still work on the frozen screen, and window mode falls
+  back to the whole screen.
 - **Windows**: `Ctrl+Shift+digit` overrides apps that use those keys (Excel's number formats, for
   example). Change them in Settings; a combo another app already holds is reported there.
 

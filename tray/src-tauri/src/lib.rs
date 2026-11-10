@@ -22,6 +22,8 @@ mod geometry;
 mod host;
 mod imageops;
 mod menu;
+#[cfg(target_os = "linux")]
+mod portal_hotkeys;
 mod progress;
 mod server;
 mod session_tree;
@@ -812,6 +814,8 @@ struct SettingsView {
     signed_in: bool,
     hotkeys: Hotkeys,
     hotkey_errors: Vec<String>,
+    /// The desktop holds the hotkeys (Wayland's shortcuts portal): they are changed in its settings, not here.
+    hotkeys_by_desktop: bool,
     autostart: bool,
     platform: &'static str,
 }
@@ -825,6 +829,7 @@ fn settings_view(app: &AppHandle) -> SettingsView {
         signed_in: settings.token.is_some(),
         hotkeys: settings.hotkeys,
         hotkey_errors,
+        hotkeys_by_desktop: hotkeys_by_desktop(),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         platform: std::env::consts::OS,
     }
@@ -960,6 +965,14 @@ fn open_settings(app: AppHandle) {
 
 // ---- Hotkeys and tray -----------------------------------------------------------------------------
 
+/// Whether the desktop holds the hotkeys rather than the tray (see `portal_hotkeys`).
+fn hotkeys_by_desktop() -> bool {
+    #[cfg(target_os = "linux")]
+    return portal_hotkeys::active();
+    #[cfg(not(target_os = "linux"))]
+    return false;
+}
+
 fn hotkey_for(hotkeys: &Hotkeys, mode: Mode) -> &str {
     match mode {
         Mode::Region => &hotkeys.region,
@@ -976,6 +989,15 @@ fn apply_hotkeys(app: &AppHandle) {
     let hotkeys = st.settings.lock().unwrap().hotkeys.clone();
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
+    // On Wayland the desktop's portal holds them once the user has accepted them (see portal_hotkeys);
+    // the X11 grab stays let go, and a change is made in the desktop's settings, not here.
+    if hotkeys_by_desktop() {
+        st.hotkeys.lock().unwrap().clear();
+        st.hotkey_errors.lock().unwrap().clear();
+        refresh_tray(app);
+        let _ = app.emit("settings-changed", ());
+        return;
+    }
     let mut map = HashMap::new();
     let mut errors = Vec::new();
     for mode in Mode::ALL {
@@ -1418,6 +1440,10 @@ pub fn run() {
             build_tray(&handle, &hotkeys)?;
             server::start(&handle, connection);
             apply_hotkeys(&handle);
+            #[cfg(target_os = "linux")]
+            if portal_hotkeys::wanted() {
+                portal_hotkeys::start(&handle, hotkeys.clone());
+            }
             prewarm(&handle);
 
             let args: Vec<String> = std::env::args().collect();

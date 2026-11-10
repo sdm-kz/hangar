@@ -117,6 +117,7 @@ export interface SettingsView {
   signedIn: boolean;
   hotkeys: Hotkeys;
   hotkeyErrors: string[];
+  hotkeysByDesktop: boolean; // Wayland: the desktop's shortcuts portal holds them, changed in its settings
   autostart: boolean;
   platform: "windows" | "macos" | "linux" | string;
 }

@@ -181,7 +181,11 @@ export default function Settings() {
                   <div className="font-medium">{m.label}</div>
                   <div className="text-[12px] text-muted-foreground">{m.detail}</div>
                 </div>
-                <HotkeyField value={hotkeys[m.key]} onChange={(v) => setHotkeys({ ...hotkeys, [m.key]: v })} />
+                <HotkeyField
+                  value={hotkeys[m.key]}
+                  onChange={(v) => setHotkeys({ ...hotkeys, [m.key]: v })}
+                  disabled={saved.hotkeysByDesktop}
+                />
                 <button
                   className="rounded-md px-2 py-1 text-[12px] text-muted-foreground hover:bg-muted hover:text-foreground"
                   onClick={() => void api.startCapture(m.mode)}
@@ -197,7 +201,7 @@ export default function Settings() {
               {e}
             </p>
           ))}
-          <PlatformNote platform={saved.platform} />
+          <PlatformNote platform={saved.platform} byDesktop={saved.hotkeysByDesktop} />
         </Section>
 
         <Section title="General">
@@ -242,7 +246,7 @@ function StatusDot({ status }: { status: ConnectionStatus | "checking" | null })
 }
 
 /** Click, then press the keys. Backspace clears it; Esc keeps what was there. */
-function HotkeyField({ value, onChange }: { value: string; onChange(v: string): void }) {
+function HotkeyField({ value, onChange, disabled }: { value: string; onChange(v: string): void; disabled?: boolean }) {
   const [recording, setRecording] = useState(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -276,18 +280,19 @@ function HotkeyField({ value, onChange }: { value: string; onChange(v: string): 
     <button
       onClick={() => setRecording((r) => !r)}
       onBlur={() => setRecording(false)}
+      disabled={disabled}
       className={clsx(
-        "h-8 min-w-[140px] rounded-md border px-2.5 text-[12.5px] tabular-nums",
-        recording ? "border-accent bg-accent/10 text-accent" : "border-border bg-background hover:bg-muted",
+        "h-8 min-w-[140px] rounded-md border px-2.5 text-[12.5px] tabular-nums disabled:opacity-60",
+        recording ? "border-accent bg-accent/10 text-accent" : "border-border bg-background enabled:hover:bg-muted",
       )}
-      title="Click, then press the new keys (Backspace for none)"
+      title={disabled ? "Your desktop holds this hotkey: change it in its keyboard settings" : "Click, then press the new keys (Backspace for none)"}
     >
       {recording ? "Press keys…" : value ? displayCombo(value, isMac) : <span className="text-muted-foreground">None</span>}
     </button>
   );
 }
 
-function PlatformNote({ platform }: { platform: string }) {
+function PlatformNote({ platform, byDesktop }: { platform: string; byDesktop: boolean }) {
   if (platform === "macos") {
     return (
       <p className="text-[12px] text-muted-foreground">
@@ -296,10 +301,19 @@ function PlatformNote({ platform }: { platform: string }) {
       </p>
     );
   }
+  if (platform === "linux" && byDesktop) {
+    return (
+      <p className="text-[12px] text-muted-foreground">
+        Your desktop holds these hotkeys: you accepted them when the tray first asked, and you change them in its own keyboard
+        settings. The keys above are what the tray suggested.
+      </p>
+    );
+  }
   if (platform === "linux") {
     return (
       <p className="text-[12px] text-muted-foreground">
-        On Wayland, apps can't register global hotkeys. Bind <code>Hangar.Tray --capture region</code> (or <code>window</code>,{" "}
+        On Wayland the tray asks the desktop for these hotkeys (GNOME 48+, KDE Plasma 5.27+). Where it can't, they work only
+        while an X11 app has focus: bind <code>Hangar.Tray --capture region</code> (or <code>window</code>,{" "}
         <code>fullscreen</code>, <code>freeform</code>) in your desktop's keyboard settings instead.
       </p>
     );
