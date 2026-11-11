@@ -138,7 +138,10 @@ public sealed class TokenStore
 
     public string? Login(string? password)
     {
-        if (AuthDisabled) return NewToken();
+        if (AuthDisabled)
+            // Under SetFirstPassword's lock, so a token minted while open can't land after it cleared them.
+            lock (_setLock)
+                if (AuthDisabled) return NewToken();
         if (password is null) return null;
         // Verify against the stored salted hash (PasswordHasher does the constant-time compare).
         return PasswordHasher.Verify(password, _passwordHash) ? NewToken() : null;
@@ -189,6 +192,41 @@ public sealed class TokenStore
         var b = System.Text.Encoding.UTF8.GetBytes(_options.ApiKey);
         return CryptographicOperations.FixedTimeEquals(a, b);
     }
+
+    /// <summary>
+    /// Set the password of an instance that has none, from the page (<c>POST /api/auth/password</c>):
+    /// the same hash an <c>Auth:Password</c> bootstrap stores, without the file edit and the restart. Only
+    /// while <see cref="AuthDisabled"/> — changing a password that is set stays the bootstrap's, so a
+    /// browser left signed in is not enough to lock its owner out. The tokens minted while there was no
+    /// password are dropped, since anyone on this machine could have had one, so other browsers sign in
+    /// when they next connect (a socket already open is checked only when it opens); the caller gets a
+    /// new token instead. Nothing changes unless the hash reaches the disk: a password that held for this run only
+    /// would leave the instance open again after the next restart, with its owner thinking it closed.
+    /// </summary>
+    /// <returns>The caller's new token; null when a password is already set or the hash couldn't be saved.</returns>
+    public string? SetFirstPassword(string password)
+    {
+        lock (_setLock)
+        {
+            if (!AuthDisabled) return null;
+            _passwordHash = PasswordHasher.Hash(password);
+            if (!SaveAuthState())
+            {
+                _passwordHash = null;
+                return null;
+            }
+            _tokens.Clear();
+            if (!Save())
+                _logger.LogWarning(
+                    "A password was set, but {File} could not be rewritten: the tokens handed out while there was " +
+                    "none come back after a restart. Delete that file to sign every browser out.", _stateFile);
+            _logger.LogInformation("A password was set from the page; it is stored in {AuthFile}", _authFile);
+            return NewToken();
+        }
+    }
+
+    // Makes SetFirstPassword's "is there none yet?" and its set one step, so two at once can't both win.
+    private readonly object _setLock = new();
 
     public void Revoke(string? token)
     {
@@ -247,13 +285,21 @@ public sealed class TokenStore
         }
     }
 
-    private void Save()
+    /// <returns>Whether the tokens reached the disk; most callers can do without knowing.</returns>
+    private bool Save()
     {
-        if (_tokensUnusable) return; // see Load: don't write over a file we couldn't use
+        if (_tokensUnusable) return false; // see Load: don't write over a file we couldn't use
         lock (_saveLock)
         {
-            try { StateFile.Write(_stateFile, JsonSerializer.Serialize(_tokens)); }
-            catch { /* best-effort — a failed persist just means re-login after the next restart */ }
+            try
+            {
+                StateFile.Write(_stateFile, JsonSerializer.Serialize(_tokens));
+                return true;
+            }
+            catch
+            {
+                return false; // best-effort — a failed persist just means re-login after the next restart
+            }
         }
     }
 

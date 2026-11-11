@@ -157,7 +157,11 @@ More in [Linux and macOS details](#linux-and-macos-details).
 ## First run: set a password
 
 Without a password Hangar works from this machine only, which is fine for trying it out. Before using
-it from anywhere else:
+it from anywhere else, set one. Opened on the machine itself, Hangar offers that under the sidebar's
+header: **Set a password…** asks for it twice (at least 8 characters), stores its hash in the data
+folder (`auth.json`) and keeps this browser signed in, with no restart.
+
+To set it without the page, or to **change** a password that is set (which the page doesn't do):
 
 1. Create **`appsettings.Local.json`** next to the executable (`%LocalAppData%\Programs\Hangar\` on
    Windows, `~/.local/opt/hangar/` on Linux and macOS):

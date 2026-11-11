@@ -82,8 +82,9 @@ Treat its password the way you would treat your account's.
   as the `Origin` and `Sec-Fetch-Site` saying the request is not cross-site. Another website open in
   your browser therefore cannot drive it, and neither can another local web server's page. Everything else
   (the UI, the API, the sockets) gets a `403` telling you to set a password.
-- **Set `Auth:Password` before exposing it** on your LAN or behind a reverse proxy. It is hashed (PBKDF2)
-  into the data folder on first start; then remove the plaintext. See [First run](docs/install.md#first-run-set-a-password).
+- **Set a password before exposing it** on your LAN or behind a reverse proxy: **Set a password…** in
+  the page, on the machine itself, or `Auth:Password` in the settings. Either way it is stored hashed
+  (PBKDF2) in the data folder. See [First run](docs/install.md#first-run-set-a-password).
 - **Always set a password behind a reverse proxy.** A proxy on the same machine connects from loopback.
   Hangar recognises a proxied request by its forwarding headers (`X-Forwarded-For`, `Forwarded`, …),
   and a proxy that adds none (nginx at its defaults, for one) is indistinguishable from you sitting at

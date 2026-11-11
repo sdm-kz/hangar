@@ -22,7 +22,8 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens,
         if (tokens.AuthDisabled && !LocalRequest.Is(ctx) && !tokens.IsLocalToken(ExtractToken(ctx.Request)))
         {
             const string refusal = "This Hangar has no password set, so it only answers requests made on this machine " +
-                                   "(http://localhost:<port>). Set Auth:Password to use it from anywhere else.";
+                                   "(http://localhost:<port>). To use it from anywhere else, open it there and set a " +
+                                   "password (or set Auth:Password).";
             ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
             if (path.StartsWithSegments("/api") || path.StartsWithSegments("/hub") || path.StartsWithSegments("/n"))
                 await ctx.Response.WriteAsJsonAsync(new { error = refusal });

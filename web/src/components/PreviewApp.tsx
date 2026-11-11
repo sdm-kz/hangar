@@ -22,7 +22,9 @@ export function PreviewApp({ path }: { path: string }) {
       try {
         const cfg = await api.authConfig();
         if (!cfg.authRequired) {
-          setToken("dev"); // any token passes when auth is disabled
+          // Any token passes when auth is disabled; one already stored may be the first password's,
+          // set by another tab a moment ago.
+          if (!getToken()) setToken("dev");
           setAuth("authed");
         } else {
           setAuth(getToken() ? "authed" : "anon");

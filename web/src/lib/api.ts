@@ -56,6 +56,15 @@ const TOKEN_KEY = "hangar.token";
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
+/**
+ * Forget `sent` after the server turned it down, unless another token has been stored since: a request
+ * still out when the page signed in again (or set its first password, which swaps the token it used while
+ * there was none for a real one) must not sign the page out on its way back.
+ */
+function dropToken(sent: string | null) {
+  if (getToken() === sent) setToken(null);
+}
+
 export function setToken(token: string | null) {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
@@ -99,7 +108,7 @@ async function requestAt<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const res = await fetch(path, { ...init, headers });
   if (res.status === 401) {
-    setToken(null);
+    dropToken(token);
     throw new ApiError(401, "unauthorized");
   }
   if (!res.ok) {
@@ -184,8 +193,17 @@ function createApi(base: string) {
     socketUrl: (path: string) => socketUrlAt(under(path)),
     sessionsStreamUrl: () => socketUrlAt(under("/hub/events")),
 
-    async authConfig(): Promise<{ authRequired: boolean }> {
+    /** `canSetPassword`: none is set, and this page is on the machine itself, so it may set one. */
+    async authConfig(): Promise<{ authRequired: boolean; canSetPassword?: boolean }> {
       return request("/api/auth/config");
+    },
+    /** Set the first password (only while none is); signs this page in with it. */
+    async setPassword(password: string): Promise<void> {
+      const res = await request<{ token: string }>("/api/auth/password", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+      setToken(res.token);
     },
     async login(password: string): Promise<string> {
       const res = await request<{ token: string }>("/api/auth/login", {
@@ -392,7 +410,7 @@ function createApi(base: string) {
       if (token) headers.set("Authorization", `Bearer ${token}`);
       const res = await fetch(under("/api/fs/upload"), { method: "POST", body: form, headers });
       if (res.status === 401) {
-        setToken(null);
+        dropToken(token);
         throw new ApiError(401, "unauthorized");
       }
       if (!res.ok) {
@@ -1142,7 +1160,7 @@ async function multipartAt<T>(path: string, form: FormData): Promise<T> {
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(path, { method: "POST", body: form, headers });
   if (res.status === 401) {
-    setToken(null);
+    dropToken(token);
     throw new ApiError(401, "unauthorized");
   }
   if (!res.ok) {

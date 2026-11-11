@@ -465,6 +465,10 @@ internal static class Program
     private static readonly HashSet<string> AllowedImageExts =
         new(StringComparer.OrdinalIgnoreCase) { "png", "jpg", "jpeg", "gif", "webp", "bmp" };
 
+    // The shortest password the page will set (POST /api/auth/password). Auth:Password is the operator's
+    // own call and isn't held to it.
+    private const int MinPasswordLength = 8;
+
     private static void MapEndpoints(WebApplication app)
     {
         // Throttled per client (LoginThrottle), together with a node pairing's password check: both are
@@ -498,8 +502,37 @@ internal static class Program
             return Results.Ok();
         });
 
-        app.MapGet("/api/auth/config", (TokenStore tokens) =>
-            Results.Ok(new { authRequired = !tokens.AuthDisabled }));
+        // canSetPassword: no password is set and the asker is at this machine, so the page may offer to set
+        // one (below). Everyone else learns no more than authRequired already says.
+        app.MapGet("/api/auth/config", (HttpContext ctx, TokenStore tokens) =>
+            Results.Ok(new
+            {
+                authRequired = !tokens.AuthDisabled,
+                canSetPassword = tokens.AuthDisabled && LocalRequest.Is(ctx),
+            }));
+
+        // Set the first password from the page instead of Auth:Password and a restart. Only with none set,
+        // and only from this machine: an instance with no password answers nobody else anyway (see
+        // TokenAuthMiddleware), and that is checked again here rather than leaned on. Changing a password
+        // that is set is Auth:Password's. The reply's token is the caller's new login; other browsers sign in
+        // when they next connect.
+        app.MapPost("/api/auth/password", (LoginRequest body, HttpContext ctx, TokenStore tokens) =>
+        {
+            if (!LocalRequest.Is(ctx))
+                return Results.Json(new { error = "Only a browser on this machine can set the first password." },
+                    statusCode: StatusCodes.Status403Forbidden);
+            if (!tokens.AuthDisabled)
+                return Results.Conflict(new { error = "A password is already set. Change it with Auth:Password (see docs/install.md)." });
+            var password = body.Password ?? "";
+            if (password.Length < MinPasswordLength)
+                return Results.BadRequest(new { error = $"Use at least {MinPasswordLength} characters." });
+            if (password.Length > 1024)
+                return Results.BadRequest(new { error = "That is longer than a password needs to be." });
+            return tokens.SetFirstPassword(password) is { } token
+                ? Results.Ok(new { token })
+                : Results.Json(new { error = "The password could not be saved; see the server log." },
+                    statusCode: StatusCodes.Status500InternalServerError);
+        });
 
         // Who this daemon is running as, and whether claude's files are where that identity looks for
         // them — the report it also logs at startup (see EnvironmentReport). Behind auth: it names paths.
