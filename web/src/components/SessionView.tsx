@@ -386,7 +386,6 @@ export function SessionView({
   const [copiedPath, setCopiedPath] = useState(false);
   // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
   const [wdEnabled, setWdEnabled] = useState(session.watchdogEnabled);
-  const [nowTick, setNowTick] = useState(() => Date.now()); // ticks so the header uptime stays live
   const fileBrowserRef = useRef<FileBrowserHandle>(null);
   // Each shell's terminal, so a group taking focus from the keyboard can put the keys into it.
   const shellHandles = useRef(new Map<string, TerminalPaneHandle>());
@@ -599,13 +598,6 @@ export function SessionView({
   const paneTabs = useMemo<FileTabs>(() => ({ ...fileTabs, open: openFile }), [fileTabs, openFile]);
 
   useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
-
-  // Keep the header uptime ticking while the process runs.
-  useEffect(() => {
-    if (session.state !== "Running") return;
-    const t = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [session.state]);
 
   const toggleWatchdog = useCallback(() => {
     setWdEnabled((prev) => {
@@ -1385,21 +1377,14 @@ export function SessionView({
             </div>
           </div>
 
-          {/* Right side of the title row: uptime · info popup · RC badge — desktop only; the phone
-              gets the same set through the "⋯" menu below. */}
+          {/* Right side of the title row: info popup · RC badge · actions — desktop only; the phone
+              gets the same set through the "⋯" menu below. No uptime: the right-hand cluster does not
+              shrink, so every pixel it holds is taken off the branch and the folder opposite, and
+              uptime is a number for the info popup, not the header. */}
           <div className="ml-auto hidden shrink-0 items-center gap-2 md:flex">
-              {/* First to go when the row is tight. The right-hand cluster does not shrink, so every
-                  pixel it holds is taken off the branch and the folder opposite -- and those name the
-                  thing you are looking at, where uptime is a number you glance at. It is in the info
-                  popup beside it either way, so nothing is actually lost by dropping it here. */}
-              {session.state === "Running" && (
-                <span className="hidden shrink-0 font-mono text-[11px] text-muted-foreground @min-[64rem]:inline">
-                  up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
-                </span>
-              )}
               {/* The pane's arrangement: presets, and the keys that split and move between groups. */}
               <LayoutMenu groups={groups.length} onPick={(preset) => update((l) => applyPreset(l, preset))} />
-              <SessionInfoPopover session={session} nowTick={nowTick} />
+              <SessionInfoPopover session={session} />
               {session.remoteControl &&
                 (session.state === "Running" ? (
                   <a
@@ -1498,7 +1483,6 @@ export function SessionView({
 
           <SessionActionsMenu
             session={session}
-            nowTick={nowTick}
             wdEnabled={wdEnabled}
             onToggleWatchdog={toggleWatchdog}
             onContinue={sendContinue}
@@ -1686,7 +1670,7 @@ function ForkedFrom({
 }
 
 // The "i" popup holding the session details that used to crowd the header line (pid, model, …).
-function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTick: number }) {
+function SessionInfoPopover({ session }: { session: SessionInfo }) {
   const [open, setOpen] = useState(false);
   const ref = useDismissable(open, useCallback(() => setOpen(false), []));
 
@@ -1706,15 +1690,22 @@ function SessionInfoPopover({ session, nowTick }: { session: SessionInfo; nowTic
       </button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md popover-edge bg-popover p-3 text-popover-foreground shadow-md">
-          <SessionInfoList session={session} nowTick={nowTick} />
+          <SessionInfoList session={session} />
         </div>
       )}
     </div>
   );
 }
 
-function SessionInfoList({ session, nowTick }: { session: SessionInfo; nowTick: number }) {
+function SessionInfoList({ session }: { session: SessionInfo }) {
   const api = useApi();
+  // Ticks so the uptime stays live, and only while the list is open: nothing else shows it.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (session.state !== "Running") return;
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [session.state]);
   const paused = !!session.activityPaused;
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
@@ -1766,13 +1757,12 @@ function SessionInfoList({ session, nowTick }: { session: SessionInfo; nowTick: 
 }
 
 /**
- * Phone-sized replacement for the header's right-hand cluster: one "⋯" button holding uptime, the
- * RC link, the watchdog toggle, continue, stop and the full info list. Everything the wide header
- * shows inline lives here, so the title row can spend its width on the session name and folder.
+ * Phone-sized replacement for the header's right-hand cluster: one "⋯" button holding the RC link,
+ * the watchdog toggle, continue, stop and the full info list. Everything the wide header shows inline
+ * lives here, so the title row can spend its width on the session name and folder.
  */
 function SessionActionsMenu({
   session,
-  nowTick,
   wdEnabled,
   onToggleWatchdog,
   onContinue,
@@ -1782,7 +1772,6 @@ function SessionActionsMenu({
   stopping,
 }: {
   session: SessionInfo;
-  nowTick: number;
   wdEnabled: boolean;
   onToggleWatchdog: () => void;
   onContinue: () => void;
@@ -1810,11 +1799,6 @@ function SessionActionsMenu({
       </Button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md popover-edge bg-popover text-popover-foreground shadow-md">
-          {running && (
-            <div className="border-b px-3 py-2 font-mono text-[11px] text-muted-foreground">
-              up {formatUptime(nowTick - new Date(session.createdAt).getTime())}
-            </div>
-          )}
           <div className="flex flex-col py-1">
             {session.remoteControl && running && (
               <a
@@ -1891,7 +1875,7 @@ function SessionActionsMenu({
             )}
           </div>
           <div className="max-h-64 overflow-auto border-t p-3">
-            <SessionInfoList session={session} nowTick={nowTick} />
+            <SessionInfoList session={session} />
           </div>
         </div>
       )}
