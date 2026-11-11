@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/hangar-logo.png" alt="Hangar" width="140"></p>
 
-# Hangar
+<h1 align="center">Hangar</h1>
 
 **Run and control Claude Code CLI sessions from your browser, on every machine you own.**
 
