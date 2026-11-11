@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Api } from "./api";
+import { setChatView } from "./chatView";
 
 // Far more than anyone puts on one conversation, but bounded: the file is rewritten whole on each change.
 const MAX = 1000;
@@ -401,4 +402,32 @@ export function stepsOf(content: Element, range: Range): MarkAnchor[] {
     at.selectNodeContents(block);
     return [{ itemKey: key, quote, n: occurrenceAt(flat, at, quote) }];
   });
+}
+
+// ---- Opening a session's list from elsewhere: the counter on its row ----
+
+const OPEN_EVENT = "hangar:open-chat-marks";
+// Sessions whose list was asked for and not yet opened: one not on screen opens it once it is.
+const wanted = new Set<string>();
+
+/**
+ * Open the list of the session {@link sessionKey} names, in its chat: switched to the chat, and the list
+ * opened by it — at once if it is on screen, or as soon as it is.
+ */
+export function openChatMarks(key: string) {
+  wanted.add(key);
+  setChatView(key, true);
+  window.dispatchEvent(new CustomEvent<string>(OPEN_EVENT, { detail: key }));
+}
+
+/** Whether the session's list was asked for; answered yes once. */
+export function takeChatMarksRequest(key: string): boolean {
+  return wanted.delete(key);
+}
+
+/** Hear the asking. Returns the unsubscribe. */
+export function onOpenChatMarks(listener: (key: string) => void): () => void {
+  const on = (e: Event) => listener((e as CustomEvent<string>).detail);
+  window.addEventListener(OPEN_EVENT, on);
+  return () => window.removeEventListener(OPEN_EVENT, on);
 }

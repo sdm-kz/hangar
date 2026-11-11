@@ -220,6 +220,7 @@ public sealed class ClaudeSession : IDisposable
         SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color,
         ResumeExact: p.ClaudeSessionId is not null,
         PostponedCount: PostponedStore.Count(p.WorkingDirectory, p.Id),
+        OpenTodoCount: ChatMarkStore.OpenTodos(p.WorkingDirectory, p.ClaudeSessionId),
         ClaudeSessionId: p.ClaudeSessionId,
         CanFork: p.ClaudeSessionId is not null,
         ParentSessionId: p.ParentSessionId,
@@ -239,6 +240,7 @@ public sealed class ClaudeSession : IDisposable
         // Only while it runs: a session that exited by itself has nothing left to send into, and the
         // marker it leaves behind must not paint a queue as running.
         PostponedAutoSend: State == SessionState.Running && PostponedStore.IsAutoSend(WorkingDirectory, Id),
+        OpenTodoCount: ChatMarkStore.OpenTodos(WorkingDirectory, claudeSessionId ?? OwnConversationId),
         ClaudeSessionId: claudeSessionId ?? OwnConversationId,
         CanFork: (claudeSessionId ?? OwnConversationId) is not null,
         ParentSessionId: ParentSessionId,

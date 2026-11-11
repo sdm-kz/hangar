@@ -14,7 +14,8 @@ import {
   type ProjectSection,
 } from "@/lib/projects";
 import { groupIcon } from "@/lib/groupIcons";
-import { NodeProvider, useApi } from "@/lib/node";
+import { NodeProvider, sessionKey, useApi } from "@/lib/node";
+import { openChatMarks } from "@/lib/chatMarks";
 import type { PeerNode, SelfNode } from "@/lib/nodeStream";
 import { ProjectDialog } from "./ProjectDialog";
 import { GroupDialog } from "./GroupDialog";
@@ -81,6 +82,7 @@ import {
   ArrowRightLeft,
   Brain,
   Inbox,
+  ListTodo,
   Play,
   Plus,
   Settings,
@@ -2752,6 +2754,27 @@ export function SessionSidebar({
                 in the colours of the activity marks -- green and pulsing while a command runs, green
                 once one has finished, red when it failed -- until the tab has been looked at. */}
             {shellMarks?.get(s.id) && editingId !== s.id && <ShellRowMark mark={shellMarks.get(s.id)!} />}
+            {/* To-dos put on the conversation in the chat and not ticked off yet, beside the postponed
+                pool's counter for the same reason: something left to come back to, seen from the list.
+                Clicking it opens the session on its chat, with the list of them open. */}
+            {(s.openTodoCount ?? 0) > 0 && (
+              <button
+                type="button"
+                title={`${s.openTodoCount} to-do${s.openTodoCount === 1 ? "" : "s"} not done — click to see them`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openChatMarks(sessionKey(s.nodeId ?? null, s.id));
+                  onSelect(s.id);
+                }}
+                className={cn(
+                  badgeVariants({ variant: "secondary" }),
+                  "gap-0.5 px-1.5 transition-colors hover:bg-accent"
+                )}
+              >
+                <ListTodo className="size-3" />
+                {s.openTodoCount}
+              </button>
+            )}
             {/* Postponed-message counter, so a stashed pool is discoverable from the list. It sits
                 left of the menu button, which holds the right edge of every row. Clicking it opens
                 the pool itself: the number was the only thing a closed session showed of its stash,

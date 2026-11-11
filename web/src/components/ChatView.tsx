@@ -57,7 +57,9 @@ import {
   itemElement,
   markRange,
   newMark,
+  onOpenChatMarks,
   stepsOf,
+  takeChatMarksRequest,
   useChatMarks,
   type ChatMark,
 } from "@/lib/chatMarks";
@@ -400,6 +402,18 @@ export function ChatView({
     setMarkFocus(null);
   }, []);
   const doneEditing = useCallback(() => setMarkEditing(null), []);
+  // Asked for from the session's row, by the counter of its to-dos: opened here once the chat is up.
+  const openMarksRef = useRef(openMarks);
+  openMarksRef.current = openMarks;
+  useEffect(() => {
+    const take = () => {
+      if (takeChatMarksRequest(draftKey)) openMarksRef.current();
+    };
+    take();
+    return onOpenChatMarks((key) => {
+      if (key === draftKey) take();
+    });
+  }, [draftKey]);
   // On an item of the conversation only: what is queued isn't one yet, and has no place to keep a mark.
   const markSelection = (action: SelectionAction, range: Range) => {
     const content = contentRef.current;

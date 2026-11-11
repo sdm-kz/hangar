@@ -96,7 +96,9 @@ screenshot is this session as a chat):
   icon in the margin by it. The button left of find, in the chat's corner, lists them in the order of the
   conversation, under **To do** (the ones not done yet, their count on the button, which then stays in
   view), **All** and **Notes**: a row goes to its text in the chat, and its buttons write the note, make it
-  a to-do or not, or take it away. They are kept per conversation on the node, in the session's
+  a to-do or not, or take it away. The to-dos not done yet are counted on the session's row in the
+  sessions list too, beside the postponed messages' counter, and clicking that number opens the session's
+  chat with the list open. They are kept per conversation on the node, in the session's
   `.hangar/marks/<conversation>.json`, so every device sees the same ones and a reopened session (which
   resumes the same conversation) still has them. A fork starts without any. They are yours alone: nothing
   of them is sent to Claude.

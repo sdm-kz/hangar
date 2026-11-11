@@ -11,6 +11,7 @@ import {
   syncSessionUi,
 } from "@/lib/sessionUi";
 import { chatViewOf, localChatView, setChatView } from "@/lib/chatView";
+import { onOpenChatMarks } from "@/lib/chatMarks";
 import { EXPLORER_GUARD, fileEntryFromPath, useFileTabs, type FileTabs } from "@/lib/useFileTabs";
 import { linkTabLabel, MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
 import { parsePullKey, pullKey, useSessionPulls } from "@/lib/sessionPulls";
@@ -373,6 +374,16 @@ export function SessionView({
   };
   const chatModeRef = useRef(chatMode);
   chatModeRef.current = chatMode;
+  // The counter on the session's row opens its marks: the chat, if this was on the terminal.
+  const setChatModeRef = useRef(setChatMode);
+  setChatModeRef.current = setChatMode;
+  useEffect(
+    () =>
+      onOpenChatMarks((key) => {
+        if (key === uiKey && !chatModeRef.current) setChatModeRef.current(true);
+      }),
+    [uiKey]
+  );
   const claudePaneRef = useRef<HTMLDivElement>(null);
   // The chat's message box, where the postponed pool's buttons sit while the chat is showing.
   const [poolSlot, setPoolSlot] = useState<HTMLElement | null>(null);

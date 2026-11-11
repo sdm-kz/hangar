@@ -148,4 +148,9 @@ public sealed record SessionInfo(
     /// (<see cref="ProjectMembership.ForDirectory"/>), or null when none does. Worked out here so a
     /// client that only lists sessions — the screenshot app — needn't carry its own copy of that rule.
     /// </summary>
-    string? ProjectId = null);
+    string? ProjectId = null,
+    /// <summary>
+    /// How many to-dos the user has put on this session's conversation in the chat and not yet ticked
+    /// off (<c>ChatMarkStore</c>), for the counter on its row beside <see cref="PostponedCount"/>.
+    /// </summary>
+    int OpenTodoCount = 0);

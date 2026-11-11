@@ -106,6 +106,9 @@ export interface SessionInfo {
   // The pool is on auto-send: the server types the next stashed message in each time a turn ends.
   // Optional only because a server that predates it sends nothing, which reads as off.
   postponedAutoSend?: boolean;
+  // To-dos put on the conversation in the chat and not ticked off yet (lib/chatMarks.ts). Optional only
+  // because a server that predates them sends nothing, which reads as none.
+  openTodoCount?: number;
   // Claude's own id for this conversation, once its first hook has reported one. The handle that
   // outlives the session — ours is minted afresh on every reopen — so anything meant to find this
   // conversation again later (a schedule) holds this rather than `id`.

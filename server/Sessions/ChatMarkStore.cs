@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
 using Hangar.Server.FileSystem;
 
 namespace Hangar.Server.Sessions;
@@ -45,5 +47,59 @@ public static class ChatMarkStore
                 return false;
             }
         }
+    }
+
+    private sealed record Entry(long WriteTicks, long Length, int Count);
+
+    private static readonly ConcurrentDictionary<string, Entry> _cache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// How many of the conversation's to-dos are not done yet (0 if none, or no conversation), for the
+    /// counter on the session's row. Asked for every session on every ~1s tick of the hub, so cached
+    /// by the file's last-write time and size, as <see cref="PostponedStore.Count"/> is.
+    /// </summary>
+    public static int OpenTodos(string workingDirectory, string? conversationId)
+    {
+        if (!ClaudeProjectData.IsConversationId(conversationId)) return 0;
+        var full = SessionFileBrowser.ResolveSafe(workingDirectory, RelPathFor(conversationId!));
+        if (full is null) return 0;
+
+        FileInfo fi;
+        try
+        {
+            fi = new FileInfo(full);
+            if (!fi.Exists)
+            {
+                _cache.TryRemove(full, out _);
+                return 0;
+            }
+        }
+        catch { return 0; }
+
+        var ticks = fi.LastWriteTimeUtc.Ticks;
+        var len = fi.Length;
+        if (_cache.TryGetValue(full, out var cached) && cached.WriteTicks == ticks && cached.Length == len)
+            return cached.Count;
+
+        var count = ParseOpenTodos(full);
+        _cache[full] = new Entry(ticks, len, count);
+        return count;
+    }
+
+    private static int ParseOpenTodos(string full)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(full));
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return 0;
+            var n = 0;
+            foreach (var mark in doc.RootElement.EnumerateArray())
+                if (mark.ValueKind == JsonValueKind.Object
+                    && mark.TryGetProperty("todo", out var todo) && todo.ValueKind == JsonValueKind.Object
+                    && !(todo.TryGetProperty("done", out var done) && done.ValueKind == JsonValueKind.True))
+                    n++;
+            return n;
+        }
+        catch { return 0; }
     }
 }

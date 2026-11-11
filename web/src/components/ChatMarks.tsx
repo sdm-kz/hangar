@@ -289,16 +289,24 @@ export function MarksPanel({
   const [tab, setTab] = useState<Tab>(() => (anyTodo && !focus && !editing ? "todo" : "all"));
   const [edit, setEdit] = useState<{ id: string; text: string; fresh: boolean } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Opened before the marks were read (from the session's row, say), the list starts on All with
+  // nothing in it: what is left to do is what it opens on once they are in, unless a tab was picked.
+  const picked = useRef(!!focus || !!editing);
+  useEffect(() => {
+    if (anyTodo && !picked.current) setTab("todo");
+  }, [anyTodo]);
 
   // A note to write as soon as its mark is made.
   useEffect(() => {
     if (!editing) return;
+    picked.current = true;
     setTab("all");
     setEdit({ id: editing, text: "", fresh: true });
     onEdited();
   }, [editing, onEdited]);
   useEffect(() => {
     if (!focus) return;
+    picked.current = true;
     if (tab !== "all") setTab("all");
     requestAnimationFrame(() =>
       rootRef.current?.querySelector(`[data-mark-id="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: "nearest" })
@@ -363,7 +371,10 @@ export function MarksPanel({
             <button
               key={t}
               type="button"
-              onClick={() => setTab(t)}
+              onClick={() => {
+                picked.current = true;
+                setTab(t);
+              }}
               className={cn(
                 "rounded-md px-2 py-1 text-xs font-medium",
                 tab === t ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
