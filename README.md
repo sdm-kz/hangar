@@ -11,10 +11,12 @@ also in the Claude Code app (claude.ai/code and mobile). Install Hangar on sever
 workstation, a laptop, a home server), pair them, and one sidebar shows and runs the sessions of all of
 them.
 
+<a href="docs/images/hangar-light.png">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/hangar-dark.png">
   <img src="docs/images/hangar-light.png" alt="Hangar in the browser: a sidebar with two machines, workstation and home-server, their projects and sessions, and one session open as a chat: the prompt as a bubble, Claude's file reads as cards, and its reply with a diff and a table">
 </picture>
+</a>
 
 ### What you get
 
@@ -67,15 +69,19 @@ HTTPS is what the phone app and push notifications need. **Set a password first*
 in to Hangar has a shell on that machine as you (see [Security model](#security-model)).
 
 <p align="center">
+  <a href="docs/images/phone-sessions-light.png">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/phone-sessions-dark.png">
     <img src="docs/images/phone-sessions-light.png" alt="Hangar on an iPhone: the session list, grouped by machine and project" width="280">
   </picture>
+  </a>
   &nbsp;&nbsp;
+  <a href="docs/images/phone-chat-light.png">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/phone-chat-dark.png">
     <img src="docs/images/phone-chat-light.png" alt="Hangar on an iPhone: a session's chat, with a drafted Markdown section shown rendered" width="280">
   </picture>
+  </a>
 </p>
 
 **Runs on** Windows, Linux and macOS. **Needs** the Claude Code CLI (v2.1.51 or later), logged in with a

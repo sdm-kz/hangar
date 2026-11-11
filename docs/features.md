@@ -2,10 +2,12 @@
 
 # Features
 
+<a href="images/files-diff-light.png">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/files-diff-dark.png">
   <img src="images/files-diff-light.png" alt="A session's Files tab: the project tree with a changed file marked, and that file's diff">
 </picture>
+</a>
 
 Hangar is two programs:
 
@@ -34,10 +36,12 @@ Hangar is two programs:
 
   See [tray/README.md](../tray/README.md).
 
+<a href="images/terminal-light.png">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/terminal-dark.png">
   <img src="images/terminal-light.png" alt="A session's terminal: the same conversation the README shows as a chat, in Claude Code's own interface">
 </picture>
+</a>
 
 The web UI is a **session manager with a full terminal**, and a chat view of it (the README's
 screenshot is this session as a chat):
