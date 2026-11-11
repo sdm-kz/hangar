@@ -88,6 +88,18 @@ screenshot is this session as a chat):
   percentage, until it is restarted. The chat zooms on its own, like the terminal: the buttons in its corner,
   Ctrl/⌘ with + − 0, or Ctrl/⌘-wheel; the message box below it, and the full-size Compose window, write at
   the same size. The size is shared by every session's chat and remembered.
+- **Bookmarks, notes and to-dos in the chat** — beside **Reply**, the buttons by a selection in the chat
+  bookmark it, make it a to-do, or put a note on it. Selected text that spans a list of steps (list items,
+  or paragraphs that open as "1." / "Step 2" do, as Claude writes steps with a command under each) offers
+  **N steps** too: a to-do for each. A mark sits on the first message the selection touches. Marked text is
+  underlined in the chat, with a to-do's box (to tick it off where it is read) or a bookmark's or note's
+  icon in the margin by it. The button left of find, in the chat's corner, lists them in the order of the
+  conversation, under **To do** (the ones not done yet, their count on the button, which then stays in
+  view), **All** and **Notes**: a row goes to its text in the chat, and its buttons write the note, make it
+  a to-do or not, or take it away. They are kept per conversation on the node, in the session's
+  `.hangar/marks/<conversation>.json`, so every device sees the same ones and a reopened session (which
+  resumes the same conversation) still has them. A fork starts without any. They are yours alone: nothing
+  of them is sent to Claude.
 - **Fork a session** — branch a conversation in two from the sessions list or the session header:
   name the fork, and it launches beside the original with the same folder and settings, picking up
   its history (`claude --resume <id> --fork-session`). The original keeps running, untouched. Forks

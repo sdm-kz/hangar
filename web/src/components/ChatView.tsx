@@ -27,8 +27,9 @@ import { ChatPlan, parsePlan } from "./ChatPlan";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
-import { ReplyToSelection } from "./ReplyToSelection";
-import { useChatFind } from "./ChatFind";
+import { SelectionActions, type SelectionAction } from "./SelectionActions";
+import { foldsAround, useChatFind } from "./ChatFind";
+import { flashRange, MarkMargin, MarksButton, MarksPanel, useMarkPaint } from "./ChatMarks";
 import { CopyButton } from "./CopyPathButton";
 import type { Activity } from "./ActivityMark";
 import type { TerminalPaneHandle } from "./TerminalPane";
@@ -50,6 +51,17 @@ import type { ChatEntry, SessionStatus } from "@/types";
 import { sessionKey, useApi, useNodeId } from "@/lib/node";
 import { loadChatDraft, onChatDraft, saveChatDraft, splitQuote, withQuote } from "@/lib/chatDraft";
 import { postponeTo } from "@/lib/postponed";
+import {
+  anchorOf,
+  countSteps as stepCount,
+  itemElement,
+  markRange,
+  newMark,
+  stepsOf,
+  useChatMarks,
+  type ChatMark,
+} from "@/lib/chatMarks";
+import { reveal } from "@/lib/codeNav";
 import { cn } from "@/lib/utils";
 
 // How often the transcript is read: often while Claude is writing to it, rarely while it sits idle, and
@@ -124,6 +136,7 @@ export function ChatView({
   const [limit, setLimit] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const draftKey = sessionKey(useNodeId(), sessionId);
   const atBottom = useRef(true);
@@ -367,6 +380,87 @@ export function ChatView({
     el.selectionStart = el.selectionEnd = el.value.length;
   };
 
+  // ---- Marks: bookmarks, notes and to-dos on the conversation's text, kept on the node ----
+  const marks = useChatMarks(api, sessionId, conversation);
+  const order = useMemo(() => new Map(items.map((it, i) => [it.key, i])), [items]);
+  const spots = useMarkPaint({ marks: marks.marks, contentRef, layerRef, zoom, drawn: items, shownFrom: hidden });
+  const [marksOpen, setMarksOpen] = useState(false);
+  // The mark the list is opened on (from its marker), and one whose note is to be written at once.
+  const [markFocus, setMarkFocus] = useState<string | null>(null);
+  const [markEditing, setMarkEditing] = useState<string | null>(null);
+  const openTodos = marks.marks.filter((m) => m.todo && !m.todo.done).length;
+  const openMarks = (focus: string | null = null) => {
+    setMarkFocus(focus);
+    setMarksOpen(true);
+    // Another device may have changed them since they were read.
+    marks.refresh();
+  };
+  const closeMarks = useCallback(() => {
+    setMarksOpen(false);
+    setMarkFocus(null);
+  }, []);
+  const doneEditing = useCallback(() => setMarkEditing(null), []);
+  // On an item of the conversation only: what is queued isn't one yet, and has no place to keep a mark.
+  const markSelection = (action: SelectionAction, range: Range) => {
+    const content = contentRef.current;
+    if (!content || !conversation) return;
+    if (action === "steps") {
+      const steps = stepsOf(content, range).filter((a) => order.has(a.itemKey));
+      if (steps.length) marks.add(steps.map((a) => newMark(a, "todo")));
+      return;
+    }
+    const anchor = anchorOf(content, range);
+    if (!anchor || !order.has(anchor.itemKey)) return;
+    const mark = newMark(anchor, action === "note" ? "bookmark" : action);
+    marks.add([mark]);
+    if (action === "note") {
+      setMarkEditing(mark.id);
+      openMarks(mark.id);
+    }
+  };
+  const countSteps = useCallback(
+    (range: Range) => (contentRef.current ? stepCount(contentRef.current, range) : 0),
+    []
+  );
+  // Going to a mark from the list: drawn first if it is further back than the chat has drawn.
+  const goingTo = useRef<ChatMark | null>(null);
+  const showMark = useCallback(
+    (mark: ChatMark) => {
+      const content = contentRef.current;
+      if (!content) return;
+      let range = markRange(content, mark);
+      if (!range) {
+        // Its text is gone from the item (Claude rewrote it while writing): the item, then.
+        const item = itemElement(content, mark.itemKey);
+        if (!item) return;
+        range = document.createRange();
+        range.selectNodeContents(item);
+      }
+      for (const fold of foldsAround(range)) fold.open = true;
+      reveal(range);
+      onScroll();
+      flashRange(range);
+      // On a phone the list covers the chat: out of the way of what it went to.
+      if (window.matchMedia?.("(max-width: 640px)").matches) closeMarks();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [closeMarks]
+  );
+  const goToMark = (mark: ChatMark) => {
+    const i = order.get(mark.itemKey);
+    if (i === undefined) return;
+    if (i < hidden) {
+      goingTo.current = mark;
+      revealItem(i);
+    } else showMark(mark);
+  };
+  useLayoutEffect(() => {
+    const mark = goingTo.current;
+    if (!mark || (order.get(mark.itemKey) ?? -1) < hidden) return;
+    goingTo.current = null;
+    showMark(mark);
+  }, [shown, order, hidden, showMark]);
+
   return (
     <div
       ref={rootRef}
@@ -383,76 +477,93 @@ export function ChatView({
           onScroll={onScroll}
           className="h-full overflow-y-auto overscroll-contain outline-none"
         >
-          {/* CSS zoom rather than a font size: it scales the cards, code and spacing with the text, and
-              takes part in layout, so the scroll height and the stick-to-bottom stay right. */}
-          <div ref={contentRef} style={{ zoom }} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4">
-            {hidden > 0 ? (
-              <button
-                type="button"
-                className="self-center rounded-full border px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
-                onClick={showEarlier}
-              >
-                Show earlier ({hidden})
-              </button>
-            ) : (
-              transcript.truncated && (
-                <p className="self-center text-xs text-muted-foreground">
-                  The start of this long conversation isn't loaded here. The terminal has all of it.
+          {/* The margin's markers are laid out around the content, outside its zoom: placed by where the
+              marked lines are on screen, which the zoom has already had its say in. */}
+          <div ref={layerRef} className="relative">
+            {/* CSS zoom rather than a font size: it scales the cards, code and spacing with the text, and
+                takes part in layout, so the scroll height and the stick-to-bottom stay right. On a phone the
+                margin is too narrow for the markers: given room while there are any. */}
+            <div
+              ref={contentRef}
+              style={{ zoom }}
+              className={cn(
+                "mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 py-4",
+                marks.marks.length > 0 && "max-sm:pl-7"
+              )}
+            >
+              {hidden > 0 ? (
+                <button
+                  type="button"
+                  className="self-center rounded-full border px-3 py-1 text-xs text-muted-foreground hover:bg-muted"
+                  onClick={showEarlier}
+                >
+                  Show earlier ({hidden})
+                </button>
+              ) : (
+                transcript.truncated && (
+                  <p className="self-center text-xs text-muted-foreground">
+                    The start of this long conversation isn't loaded here. The terminal has all of it.
+                  </p>
+                )
+              )}
+              {!loaded ? (
+                <p className="flex items-center gap-2 self-center py-8 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  {failed ? "Couldn't read the conversation. Trying again…" : "Reading the conversation…"}
                 </p>
-              )
-            )}
-            {!loaded ? (
-              <p className="flex items-center gap-2 self-center py-8 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                {failed ? "Couldn't read the conversation. Trying again…" : "Reading the conversation…"}
-              </p>
-            ) : items.length === 0 && queued.length === 0 ? (
-              <p className="self-center py-8 text-center text-sm text-muted-foreground">
-                {closed
-                  ? "This session left no conversation to show."
-                  : transcript.conversation
-                    ? "Nothing said yet."
-                    : "Nothing said yet. Write below, or in the terminal."}
-              </p>
-            ) : (
-              // Each in a box of its own, with nothing of its own to lay out, for find to know it by.
-              shown.map((item) => (
-                <div key={item.key} data-find-key={item.key} className="contents">
-                  {item.kind === "tool" && item.name === "AskUserQuestion" && parseQuestions(item.input) ? (
-                    <ChatQuestion
-                      input={item.input}
-                      result={item.result}
-                      pending={item.key === questionKey}
-                      onAnswer={answerQuestion}
-                      onShowTerminal={onShowTerminal}
-                    />
-                  ) : item.kind === "tool" && item.name === "ExitPlanMode" && parsePlan(item.input) ? (
-                    <ChatPlan
-                      callId={item.id}
-                      input={item.input}
-                      result={item.result}
-                      pending={item.key === planKey}
-                      readScreen={readScreen}
-                      onAnswer={answerQuestion}
-                      onShowTerminal={onShowTerminal}
-                    />
-                  ) : (
-                    <ChatRow item={item} sessionBusy={busy} images={images} />
-                  )}
-                </div>
-              ))
-            )}
-            {loaded &&
-              queued.map((q) => (
-                <div key={q.key} data-find-key={q.key} className="flex flex-col items-end gap-1">
-                  <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-dashed px-3.5 py-2 text-sm text-muted-foreground">
-                    {q.text}
+              ) : items.length === 0 && queued.length === 0 ? (
+                <p className="self-center py-8 text-center text-sm text-muted-foreground">
+                  {closed
+                    ? "This session left no conversation to show."
+                    : transcript.conversation
+                      ? "Nothing said yet."
+                      : "Nothing said yet. Write below, or in the terminal."}
+                </p>
+              ) : (
+                // Each in a box of its own, with nothing of its own to lay out, for find to know it by.
+                shown.map((item) => (
+                  <div key={item.key} data-find-key={item.key} className="contents">
+                    {item.kind === "tool" && item.name === "AskUserQuestion" && parseQuestions(item.input) ? (
+                      <ChatQuestion
+                        input={item.input}
+                        result={item.result}
+                        pending={item.key === questionKey}
+                        onAnswer={answerQuestion}
+                        onShowTerminal={onShowTerminal}
+                      />
+                    ) : item.kind === "tool" && item.name === "ExitPlanMode" && parsePlan(item.input) ? (
+                      <ChatPlan
+                        callId={item.id}
+                        input={item.input}
+                        result={item.result}
+                        pending={item.key === planKey}
+                        readScreen={readScreen}
+                        onAnswer={answerQuestion}
+                        onShowTerminal={onShowTerminal}
+                      />
+                    ) : (
+                      <ChatRow item={item} sessionBusy={busy} images={images} />
+                    )}
                   </div>
-                  <span data-find-skip className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                    <Clock className="size-3" /> Queued — Claude reads it as soon as it can
-                  </span>
-                </div>
-              ))}
+                ))
+              )}
+              {loaded &&
+                queued.map((q) => (
+                  <div key={q.key} data-find-key={q.key} className="flex flex-col items-end gap-1">
+                    <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-dashed px-3.5 py-2 text-sm text-muted-foreground">
+                      {q.text}
+                    </div>
+                    <span data-find-skip className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <Clock className="size-3" /> Queued — Claude reads it as soon as it can
+                    </span>
+                  </div>
+                ))}
+            </div>
+            <MarkMargin
+              spots={spots}
+              onToggle={(m) => marks.update(m.id, { todo: { done: !m.todo?.done } })}
+              onOpen={(m) => openMarks(m.id)}
+            />
           </div>
         </div>
         {/* In the corner, like the terminal's. Shown on hover, and pinned open once zoomed, since a size
@@ -464,25 +575,43 @@ export function ChatView({
             zoom={zoom}
             onChange={setZoom}
             leading={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7"
-                title={`Find in the chat (${MAC ? "⌘F" : "Ctrl+F"})`}
-                aria-pressed={find.open}
-                onClick={find.open ? find.close : find.start}
-              >
-                <Search className="size-4" />
-              </Button>
+              <>
+                <MarksButton marks={marks.marks} open={marksOpen} onClick={() => (marksOpen ? closeMarks() : openMarks())} />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7"
+                  title={`Find in the chat (${MAC ? "⌘F" : "Ctrl+F"})`}
+                  aria-pressed={find.open}
+                  onClick={find.open ? find.close : find.start}
+                >
+                  <Search className="size-4" />
+                </Button>
+              </>
             }
             className={cn(
               "relative mr-0 transition-opacity",
               zoom === 1 &&
                 !find.open &&
+                !marksOpen &&
+                !openTodos &&
                 "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
             )}
           />
         </div>
+        {marksOpen && (
+          <div className="absolute right-4 top-12 z-20">
+            <MarksPanel
+              store={marks}
+              order={order}
+              focus={markFocus}
+              editing={markEditing}
+              onEdited={doneEditing}
+              onGo={goToMark}
+              onClose={closeMarks}
+            />
+          </div>
+        )}
         {showJump && (
           <button
             type="button"
@@ -547,7 +676,12 @@ export function ChatView({
           onPreview={(src, name, gallery) => setPreview({ src, name, gallery })}
         />
       )}
-      {!closed && <ReplyToSelection rootRef={contentRef} onReply={reply} />}
+      <SelectionActions
+        rootRef={contentRef}
+        onReply={closed ? undefined : reply}
+        onMark={markSelection}
+        countSteps={countSteps}
+      />
       {/* On the page itself: the panes it could open in are positioned, and would hold it to their box. */}
       {preview &&
         createPortal(

@@ -118,7 +118,7 @@ function itemText(item: ChatItem, cache: Map<string, ItemText>): string {
 }
 
 /** The folded cards and thinking blocks a range is out of sight in: its summary line shows, the rest doesn't. */
-function foldsAround(range: Range): HTMLDetailsElement[] {
+export function foldsAround(range: Range): HTMLDetailsElement[] {
   const folds: HTMLDetailsElement[] = [];
   const start = range.startContainer;
   for (let el = start.parentElement; el; el = el.parentElement) {

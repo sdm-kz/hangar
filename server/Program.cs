@@ -1991,6 +1991,38 @@ internal static class Program
         app.MapPost("/api/sessions/{id}/postponed/auto", (string id, PostponedAutoRequest body, SessionManager mgr) =>
             mgr.SetPostponedAutoSend(id, body.Enabled) ? Results.Ok() : Results.NotFound());
 
+        // The chat's marks — bookmarks, notes and to-dos on the conversation's text — kept per conversation
+        // in .hangar/marks/<conversation>.json (ChatMarkStore), so they survive a reopen and are shared
+        // across devices. Only the conversation the session is on: one the chat has moved away from (a
+        // /clear) is no longer drawn there to mark, and checking it is what keeps the file name ours.
+        // A closed session answers too: its conversation is still read, and ticking off its to-dos is
+        // exactly what one does after.
+        app.MapGet("/api/sessions/{id}/marks", (string id, string conversation, SessionManager mgr) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null || info.ClaudeSessionId is not { } conv || conv != conversation
+                || !ClaudeProjectData.IsConversationId(conv)) return Results.NotFound();
+            return Results.Content(ChatMarkStore.ReadJson(info.WorkingDirectory, conv) ?? "[]", "application/json");
+        });
+
+        app.MapPut("/api/sessions/{id}/marks", async (string id, string conversation, HttpContext ctx, SessionManager mgr) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null || info.ClaudeSessionId is not { } conv || conv != conversation
+                || !ClaudeProjectData.IsConversationId(conv)) return Results.NotFound();
+            // As the postponed pool's: a cap in characters, and a body never buffered past what that many could take.
+            const int maxChars = 512 * 1024;
+            if (ctx.Request.ContentLength > maxChars * 4L) return Results.BadRequest(new { error = "too large" });
+            if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit)
+                limit.MaxRequestBodySize = maxChars * 4L;
+            using var reader = new StreamReader(ctx.Request.Body);
+            var body = await reader.ReadToEndAsync();
+            if (body.Length > maxChars) return Results.BadRequest(new { error = "too large" });
+            return ChatMarkStore.Write(info.WorkingDirectory, conv, System.Text.Encoding.UTF8.GetBytes(body))
+                ? Results.Ok()
+                : Results.BadRequest(new { error = "Could not save the marks." });
+        });
+
         // Filesystem change counter — the UI polls this to auto-refresh the tree.
         app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
         {

@@ -2,9 +2,10 @@ namespace Hangar.Server.FileSystem;
 
 /// <summary>
 /// The folder Hangar keeps its own files in under a session's working directory: images pasted into
-/// a session (<c>uploads/</c>), postponed messages (<c>postponed/</c>) and pull-request reviews
-/// (<c>reviews/</c>). It ignores itself: the first write into it leaves a <c>.gitignore</c> of
-/// <c>*</c> there, so git never lists it and no repo's own <c>.gitignore</c> has to mention it.
+/// a session (<c>uploads/</c>), postponed messages (<c>postponed/</c>), the chat's marks
+/// (<c>marks/</c>) and pull-request reviews (<c>reviews/</c>). It ignores itself: the first write into
+/// it leaves a <c>.gitignore</c> of <c>*</c> there, so git never lists it and no repo's own
+/// <c>.gitignore</c> has to mention it.
 /// </summary>
 public static class SessionDataFolder
 {

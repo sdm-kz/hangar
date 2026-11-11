@@ -389,3 +389,25 @@
 .dark ::highlight(chat-find-current) {
   background-color: rgb(249 115 22 / 0.45);
 }
+
+/* The chat's marks (ChatMarks): bookmarked, noted or to-do text, a done to-do struck through, and the one
+   just gone to from the list. Underlined rather than filled, to stay apart from find's matches. */
+::highlight(chat-mark) {
+  background-color: rgb(245 158 11 / 0.12);
+  text-decoration: underline 2px rgb(245 158 11 / 0.7);
+  text-underline-offset: 3px;
+}
+::highlight(chat-mark-done) {
+  color: var(--muted-foreground);
+  text-decoration: line-through 1px;
+}
+::highlight(chat-mark-current) {
+  background-color: rgb(245 158 11 / 0.4);
+}
+.dark ::highlight(chat-mark) {
+  background-color: rgb(245 158 11 / 0.1);
+  text-decoration: underline 2px rgb(245 158 11 / 0.6);
+}
+.dark ::highlight(chat-mark-current) {
+  background-color: rgb(245 158 11 / 0.35);
+}

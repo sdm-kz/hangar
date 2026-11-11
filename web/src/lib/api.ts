@@ -438,6 +438,19 @@ function createApi(base: string) {
       });
     },
 
+    // ---- The chat's marks (server-backed per conversation, in .hangar/marks/<conversation>.json) ----
+    // Bookmarks, notes and to-dos on the conversation's text. Raw parsed JSON (an array); the caller
+    // validates the shape. Only for the conversation the session is on: another answers 404.
+    getChatMarks(sessionId: string, conversation: string): Promise<unknown> {
+      return request(`/api/sessions/${sessionId}/marks?conversation=${encodeURIComponent(conversation)}`);
+    },
+    putChatMarks(sessionId: string, conversation: string, body: string): Promise<void> {
+      return request(`/api/sessions/${sessionId}/marks?conversation=${encodeURIComponent(conversation)}`, {
+        method: "PUT",
+        body,
+      });
+    },
+
     // ---- Recent launch presets & folders (server-backed, shared across devices) ----
     // Each mutation returns the full updated set so the caller can setState from the response.
     getRecents(): Promise<Recents> {
