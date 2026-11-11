@@ -523,11 +523,24 @@ export const TerminalPane = forwardRef<
     // a drag the TUI is tracking for itself (mouse reporting on) never makes a selection here in the
     // first place. Touch is excluded: xterm's selection runs on mouse events iOS only synthesizes for
     // a tap, which is why that path has the Select-text overlay instead.
+    //
+    // Only a press that began in THIS terminal copies. xterm keeps a selection after the user moves
+    // on, and every mounted pane hears every mouseup on the page, so without the check a hidden
+    // shell tab put its stale selection back on the clipboard at any click elsewhere: copy in the
+    // chat, click the shell's tab, paste, and out came the old shell text. Capture phase, because
+    // xterm stops the mousedown it starts a selection with.
+    let pressedHere = false;
+    const onMouseDown = () => {
+      pressedHere = true;
+    };
     const onMouseUp = () => {
+      if (!pressedHere) return;
+      pressedHere = false;
       if (isTouch || !term.hasSelection()) return;
       const text = term.getSelection();
       if (text) void writeToClipboard(text);
     };
+    host.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("mouseup", onMouseUp);
     // GPU renderer. The default DOM renderer rebuilds row elements on every scroll step, which is
     // what makes touch scrolling lag behind the finger on phones; WebGL repaints the whole grid in
@@ -1151,6 +1164,7 @@ export const TerminalPane = forwardRef<
         retryTimerRef.current = null;
       }
       document.removeEventListener("paste", onPaste, true);
+      host.removeEventListener("mousedown", onMouseDown, true);
       document.removeEventListener("mouseup", onMouseUp);
       window.clearTimeout(resizeTimer);   // a size this terminal will never send now
       themeSub();
