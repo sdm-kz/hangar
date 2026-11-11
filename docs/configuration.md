@@ -58,8 +58,8 @@ The tray's first run takes the server's port from `Server:Urls` in the `appsetti
 
 ## Colour themes
 
-The web UI ships with these themes, picked in the sidebar's **Themes** dialog (the palette icon beside
-the light/dark switch):
+The web UI ships with these themes, picked in **Settings → Appearance** (the gear at the bottom of the
+sidebar, or Ctrl+Shift+S):
 
 | Light                                   | Dark                                                         |
 | --------------------------------------- | ------------------------------------------------------------ |

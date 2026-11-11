@@ -259,8 +259,7 @@ screenshot is this session as a chat):
   Files panel, or the other way round, or between two SSH tabs, or within one host (where a copy is
   a native `cp -a`). The selection bar and Ctrl+C / Ctrl+X / Ctrl+V in either tree do the same. A
   paste never overwrites — a name already taken gets " (1)", as an upload does.
-- **Nodes (other machines running Hangar)** — the network button at the bottom of the sidebar opens
-  **Nodes**: this machine's name, colour and the address other nodes reach it at, the nodes it is
+- **Nodes (other machines running Hangar)** — **Settings → Nodes**: this machine's name, colour and the address other nodes reach it at, the nodes it is
   paired with, and the nodes allowed to reach it. **Pair** takes the other node's address and
   password, once; the password is not kept — each side keeps a token the other minted instead (in
   `nodes.json`, sealed with DPAPI on Windows; the tokens it issued are kept hashed in
@@ -396,7 +395,14 @@ screenshot is this session as a chat):
   as a PWA over HTTPS: *Install app* in Chrome or Edge, *Add to Home Screen* on an iPhone, *Add to
   Dock* in Safari on a Mac. It then opens in its own window, and push notifications reach it with the
   app closed; on an iPhone, push works only in the home-screen app (iOS 16.4 or later).
-- **Colour themes** — a light/dark switch, plus a Themes dialog with sixteen built-in themes (GitHub,
+- **Settings** — the gear at the bottom of the sidebar, or **Ctrl+Shift+S** (⌘⇧S on a Mac) from
+  anywhere, terminal included: one dialog for Appearance, Notifications, Nodes, Projects, Schedules,
+  Security (set or change the password, sign out), Claude's hooks, and every node's Updates. Its
+  search box finds a setting by name, and also any project, node, theme or schedule; picking a result
+  opens its tab, on the right node, and points at it. The controls used in passing stay where they
+  were: the project gear, Schedules, the light/dark switch, the bell and Update. Tabs about one node
+  (Projects, Schedules, Hooks) pick which at the top; Nodes and Security are always this node's.
+- **Colour themes** — a light/dark switch, plus Settings → Appearance with sixteen built-in themes (GitHub,
   Solarized, One, Catppuccin, Gruvbox, Rosé Pine, Dracula, Nord, Tokyo Night and Hangar's own), one
   picked for light mode and one for dark, optionally following the system's setting. A theme colours
   the interface, highlighted code and the terminal alike. **Customize colors** copies a theme and

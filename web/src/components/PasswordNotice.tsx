@@ -16,7 +16,6 @@ import {
 // Hidden for good once dismissed here: an instance kept to this machine on purpose needs no reminder.
 const HIDDEN_KEY = "hangar.passwordNoticeHidden";
 const MIN_LENGTH = 8; // the server's own minimum (MinPasswordLength in server/Program.cs)
-const DOCS = "https://github.com/sdm-kz/hangar/blob/main/docs/install.md#first-run-set-a-password";
 
 function hiddenHere(): boolean {
   try {
@@ -31,7 +30,7 @@ function hiddenHere(): boolean {
  * such an instance answers), with a dialog that sets one. Until this existed the first password meant
  * writing appsettings.Local.json and restarting the server, which is a lot to ask of someone trying
  * Hangar out, and it is the step that matters before reaching it from a phone. Changing a password that
- * is set is still Auth:Password's (docs/install.md).
+ * is set is Settings → Security's.
  */
 export function PasswordNotice() {
   const api = useApi();
@@ -82,7 +81,8 @@ export function PasswordNotice() {
   );
 }
 
-function SetPasswordDialog({ onClose, onSet }: { onClose: () => void; onSet: () => void }) {
+/** Set the first password: the strip's "Set a password…", and Settings → Security's. */
+export function SetPasswordDialog({ onClose, onSet }: { onClose: () => void; onSet: () => void }) {
   const api = useApi();
   const [password, setPassword] = useState("");
   const [repeat, setRepeat] = useState("");
@@ -145,13 +145,7 @@ function SetPasswordDialog({ onClose, onSet }: { onClose: () => void; onSet: () 
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <p className="text-xs text-muted-foreground">
-            To change it later, see{" "}
-            <a href={DOCS} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-              setting a password
-            </a>
-            .
-          </p>
+          <p className="text-xs text-muted-foreground">To change it later: Settings → Security.</p>
 
           <DialogFooter>
             <Button type="button" variant="outline" disabled={busy} onClick={onClose}>

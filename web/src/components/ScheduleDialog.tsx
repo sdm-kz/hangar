@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { ScheduleEntry, ScheduleMode, SessionInfo, SessionTemplate } from "@/types";
 import type { SchedulePatch } from "@/lib/api";
 import { useApi } from "@/lib/node";
@@ -59,21 +59,56 @@ import {
  * machine's broken autologin must not hide behind another's green.
  */
 export function ScheduleDialog({
-  sessions,
+  onClose,
+  ...panel
+}: Omit<SchedulesPanelProps, "heading" | "onClose"> & { onClose: () => void }) {
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] max-w-2xl">
+        <SchedulesPanel
+          {...panel}
+          onClose={onClose}
+          heading={(title, description) => (
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CalendarClock className="size-4" />
+                {title}
+              </DialogTitle>
+              <DialogDescription>{description}</DialogDescription>
+            </DialogHeader>
+          )}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface SchedulesPanelProps {
+  sessions: SessionInfo[];
   /** Pre-fill a new schedule that continues this session's conversation (the row's ⋯ menu). */
+  initialTarget?: { conversationId: string; name: string } | null;
+  /** The list's Close: the dialog's; Settings has its own way out and passes none. */
+  onClose?: () => void;
+  nodes?: LaunchNode[];
+  node?: string | null;
+  onNodeChange?: (node: string | null) => void;
+  /** Draws the title and the line under it, which change between the list and the editor. */
+  heading: (title: string, description: string) => ReactNode;
+}
+
+/**
+ * The list and the editor, without the dialog round them: the Schedules dialog's body, and Settings →
+ * Schedules. Inside the NodeProvider of the machine whose schedules they are.
+ */
+export function SchedulesPanel({
+  sessions,
   initialTarget,
   onClose,
   nodes = [],
   node = null,
   onNodeChange,
-}: {
-  sessions: SessionInfo[];
-  initialTarget?: { conversationId: string; name: string } | null;
-  onClose: () => void;
-  nodes?: LaunchNode[];
-  node?: string | null;
-  onNodeChange?: (node: string | null) => void;
-}) {
+  heading,
+}: SchedulesPanelProps) {
   const api = useApi();
   const [entries, setEntries] = useState<ScheduleEntry[] | null>(null);
   // Fetched here rather than threaded down, exactly as the New Session dialog fetches them: they are
@@ -121,56 +156,49 @@ export function ScheduleDialog({
   }, [reload]);
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[calc(100dvh-2rem)] max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <CalendarClock className="size-4" />
-            {editing ? (isNew ? "New schedule" : "Schedule settings") : "Schedules"}
-          </DialogTitle>
-          <DialogDescription>
-            {editing
-              ? "A schedule runs a template on a clock. It lives in the server, so it keeps its clock across a restart or a reboot."
-              : "Templates run on a clock, whether or not anyone is at the machine."}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      {heading(
+        editing ? (isNew ? "New schedule" : "Schedule settings") : "Schedules",
+        editing
+          ? "A schedule runs a template on a clock. It lives in the server, so it keeps its clock across a restart or a reboot."
+          : "Templates run on a clock, whether or not anyone is at the machine."
+      )}
 
-        {/* Which machine's list — not while editing: a schedule being edited is that machine's. */}
-        {!editing && <NodePicker nodes={nodes} value={node} onChange={(id) => onNodeChange?.(id)} />}
+      {/* Which machine's list — not while editing: a schedule being edited is that machine's. */}
+      {!editing && <NodePicker nodes={nodes} value={node} onChange={(id) => onNodeChange?.(id)} />}
 
-        {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-sm text-red-500">{error}</p>}
 
-        {editing ? (
-          // Keyed so switching between schedules (or from one to a new one) remounts the editor:
-          // its fields are useState initialisers, which would otherwise keep showing the first
-          // schedule opened.
-          <ScheduleEditor
-            key={"schedule" in editing ? editing.schedule.id : "new"}
-            entry={"schedule" in editing ? editing : null}
-            templates={templates}
-            templatesLoaded={loaded}
-            sessions={sessions}
-            initialTarget={"schedule" in editing ? null : editing.target}
-            onSaved={(list) => {
-              setEntries(list);
-              setEditing(null);
-            }}
-            onCancel={() => setEditing(null)}
-          />
-        ) : (
-          <ScheduleList
-            entries={entries}
-            templates={templates}
-            onChanged={setEntries}
-            onReload={reload}
-            onError={setError}
-            onEdit={setEditing}
-            onNew={() => setEditing({ target: null })}
-            onClose={onClose}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
+      {editing ? (
+        // Keyed so switching between schedules (or from one to a new one) remounts the editor:
+        // its fields are useState initialisers, which would otherwise keep showing the first
+        // schedule opened.
+        <ScheduleEditor
+          key={"schedule" in editing ? editing.schedule.id : "new"}
+          entry={"schedule" in editing ? editing : null}
+          templates={templates}
+          templatesLoaded={loaded}
+          sessions={sessions}
+          initialTarget={"schedule" in editing ? null : editing.target}
+          onSaved={(list) => {
+            setEntries(list);
+            setEditing(null);
+          }}
+          onCancel={() => setEditing(null)}
+        />
+      ) : (
+        <ScheduleList
+          entries={entries}
+          templates={templates}
+          onChanged={setEntries}
+          onReload={reload}
+          onError={setError}
+          onEdit={setEditing}
+          onNew={() => setEditing({ target: null })}
+          onClose={onClose}
+        />
+      )}
+    </>
   );
 }
 
@@ -191,7 +219,7 @@ function ScheduleList({
   onError: (message: string | null) => void;
   onEdit: (entry: ScheduleEntry) => void;
   onNew: () => void;
-  onClose: () => void;
+  onClose?: () => void;
 }) {
   const api = useApi();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -255,6 +283,7 @@ function ScheduleList({
           return (
             <div
               key={s.id}
+              data-setting={`schedule:${s.id}`}
               className={cn(
                 "flex items-start gap-3 rounded-md border p-3 text-sm",
                 !s.enabled && "opacity-60"
@@ -365,9 +394,11 @@ function ScheduleList({
           <Button variant="ghost" onClick={refresh} title="Re-read the schedules and their history">
             <RotateCw className="size-4" /> Refresh
           </Button>
-          <Button variant="ghost" onClick={onClose}>
-            Close
-          </Button>
+          {onClose && (
+            <Button variant="ghost" onClick={onClose}>
+              Close
+            </Button>
+          )}
         </div>
       </DialogFooter>
     </>

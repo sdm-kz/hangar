@@ -161,7 +161,10 @@ it from anywhere else, set one. Opened on the machine itself, Hangar offers that
 header: **Set a password…** asks for it twice (at least 8 characters), stores its hash in the data
 folder (`auth.json`) and keeps this browser signed in, with no restart.
 
-To set it without the page, or to **change** a password that is set (which the page doesn't do):
+To **change** it later, use **Settings → Security** (the gear at the bottom of the sidebar): it asks for
+the current password and the new one, and signs every other browser out. Paired nodes keep working.
+
+To set or reset it without the page (a forgotten password, say):
 
 1. Create **`appsettings.Local.json`** next to the executable (`%LocalAppData%\Programs\Hangar\` on
    Windows, `~/.local/opt/hangar/` on Linux and macOS):
@@ -176,7 +179,8 @@ To set it without the page, or to **change** a password that is set (which the p
    `systemctl --user restart hangar`, or `launchctl kickstart -k gui/$(id -u)/com.hangar.server`). On
    start it hashes the password into the data folder (`auth.json`) and logs a reminder.
 3. **Remove the `Password` line** again. The stored hash is what logins are checked against; a password
-   left in the file would simply be re-applied on every start. Setting it again later rotates it.
+   left in the file would simply be re-applied on every start, and while it is there Settings → Security
+   refuses to change the password, since the next start would put this one back.
 
 To reach it from other devices on your LAN, also set `"Server": { "Urls": "http://0.0.0.0:5099" }` in
 the same file (Windows shows a firewall prompt for `Hangar.exe` the first time). On Linux there is no

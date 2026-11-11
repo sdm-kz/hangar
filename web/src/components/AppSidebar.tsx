@@ -1,9 +1,9 @@
-import { useContext, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useContext, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { filesUrl } from "@/lib/urlState";
 import { Button } from "@/components/ui/button";
-import { FolderTree, LogOut, MessagesSquare, Network, PanelLeftClose, Plus, SquareTerminal } from "lucide-react";
-import { NodesDialog } from "./NodesDialog";
+import { useSettings } from "@/lib/settings";
+import { FolderTree, LogOut, MessagesSquare, PanelLeftClose, Plus, Settings, SquareTerminal } from "lucide-react";
 import { NotificationToggle } from "./NotificationToggle";
 import { SessionsProgressContext } from "./SessionsProgressMenu";
 import { ThemeToggle } from "./ThemeToggle";
@@ -52,7 +52,11 @@ export function AppSidebar({
 }) {
   // The Sessions count, while it shows, is what crowds the row -- see TabLabel.
   const crowded = useContext(SessionsProgressContext).active > 0;
-  const [nodesOpen, setNodesOpen] = useState(false);
+  const settings = useSettings();
+  // Settings can change what the bell and the strips say (push off, a password set, the hooks taken
+  // over), and each reads its own state when it mounts: mounted afresh once Settings closes -- not as it
+  // opens, which would take a strip's own dialog away from under the shortcut.
+  const fresh = settings.closes;
   return (
     <div className="flex h-full flex-col bg-card">
       {/* App header sits above the tabs so the branding is always on top. */}
@@ -85,9 +89,9 @@ export function AppSidebar({
         </div>
       </div>
       {/* Only while Claude's hooks report to some other instance: what explains an empty chat. */}
-      <HooksWarning />
+      <HooksWarning key={`hooks-${fresh}`} />
       {/* Only on the machine itself while no password is set: offers to set one. */}
-      <PasswordNotice />
+      <PasswordNotice key={`password-${fresh}`} />
       {/* Positioned so the Sessions fraction's list hangs from the row's left edge, inside the sidebar.
           A container, so the tabs drop their words by the sidebar's own width, not the window's. */}
       <div className="@container relative flex h-10 shrink-0 border-b">
@@ -136,15 +140,14 @@ export function AppSidebar({
           variant="ghost"
           size="icon"
           className="size-8 text-muted-foreground"
-          title="Nodes — other machines running Hangar"
-          onClick={() => setNodesOpen(true)}
+          title={/Mac|iPhone|iPad/.test(navigator.userAgent) ? "Settings (⌘⇧S)" : "Settings (Ctrl+Shift+S)"}
+          onClick={() => settings.open()}
         >
-          <Network className="size-4" />
+          <Settings className="size-4" />
         </Button>
-        {nodesOpen && <NodesDialog onClose={() => setNodesOpen(false)} />}
         <div className="ml-auto flex items-center gap-1">
           {update}
-          <NotificationToggle />
+          <NotificationToggle key={`bell-${fresh}`} />
           <ThemeToggle />
         </div>
       </div>

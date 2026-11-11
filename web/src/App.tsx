@@ -45,6 +45,9 @@ import { ForkSessionDialog } from "@/components/ForkSessionDialog";
 import { CarryDialog, type CarryMode } from "@/components/CarryDialog";
 import { matchFolder } from "@/lib/carry";
 import { ScheduleDialog } from "@/components/ScheduleDialog";
+import { SettingsDialog } from "@/components/SettingsDialog";
+import { type NodeUpdate } from "@/components/SettingsPanels";
+import { SettingsContext, type SettingsOpener, type SettingsTab } from "@/lib/settings";
 import { type LaunchNode } from "@/components/NodePicker";
 import { isOverdue } from "@/lib/schedules";
 import { SessionSearchDialog } from "@/components/SessionSearch";
@@ -219,6 +222,10 @@ export function App() {
   const [scheduling, setScheduling] = useState<
     { target: { conversationId: string; name: string } | null; node: string | null } | null
   >(null);
+  // Settings, and the tab (and setting) it opens on. Owned here for the schedules' reason, and so the
+  // shortcut opens it with the sidebar hidden.
+  const [settings, setSettings] = useState<{ tab?: SettingsTab; setting?: string } | null>(null);
+  const [settingsCloses, setSettingsCloses] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("hangar.sidebarCollapsed") === "1"
@@ -800,17 +807,26 @@ export function App() {
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
   }, []);
 
-  // Ctrl+Shift+F (⌘⇧F on Mac) opens the session search popup from anywhere. Capture phase with
-  // stopPropagation so it wins even while the terminal has focus (the keystroke would otherwise go
-  // to the pty); a shifted combo because plain Ctrl+letter chords belong to the shell and the TUI —
-  // and a terminal can't encode Ctrl+Shift+F distinctly anyway, so intercepting it costs nothing.
+  // Ctrl+Shift+F (⌘⇧F on Mac) opens the session search popup from anywhere, and Ctrl+Shift+S (⌘⇧S)
+  // Settings. Capture phase with stopPropagation so they win even while the terminal has focus (the
+  // keystroke would otherwise go to the pty); shifted combos because plain Ctrl+letter chords belong to
+  // the shell and the TUI — and a terminal can't encode Ctrl+Shift+F or S distinctly anyway, so
+  // intercepting them costs nothing.
   useEffect(() => {
     if (auth !== "authed") return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
+      // The key's letter, or the key itself where the layout's letter isn't Latin (Ы on a Russian one).
+      const key = e.key.toLowerCase();
+      if (key === "f" || e.code === "KeyF") {
         e.preventDefault();
         e.stopPropagation();
         setSearching(true);
+      } else if (key === "s" || e.code === "KeyS") {
+        e.preventDefault();
+        e.stopPropagation();
+        setSettings((open) => open ?? {});
+        setSidebarOpen(false);
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -1031,7 +1047,7 @@ export function App() {
   // popup shows says so in its list, but one machine's broken autologin must not hide behind another's
   // green while it shows the other.
   const [overdueNodes, setOverdueNodes] = useState<Set<string>>(() => new Set());
-  const schedulesOpen = !!scheduling;
+  const schedulesOpen = !!scheduling || !!settings;
   // The machines to ask: asked again when one comes online with the popup open (just after the page
   // loads, say). None to ask on a single machine, whose popup shows its one list anyway.
   const onlinePeers = mesh.peers.filter((p) => p.status === "online").map((p) => p.id).join(",");
@@ -1058,6 +1074,35 @@ export function App() {
         warning: overdueNodes.has(n.id ?? "") ? "a schedule is overdue" : null,
       })),
     [launchNodes, overdueNodes, mesh.peers]
+  );
+
+  const settingsOpener = useMemo<SettingsOpener>(
+    () => ({
+      open: (tab, setting) => {
+        setSettings({ tab, setting });
+        setSidebarOpen(false);
+      },
+      closes: settingsCloses,
+    }),
+    [settingsCloses]
+  );
+  const closeSettings = useCallback(() => {
+    setSettings(null);
+    setSettingsCloses((n) => n + 1);
+  }, []);
+  // Every node's build for Settings → Updates: this one's from its own snapshot, a peer's off the mesh.
+  const nodeUpdates = useMemo<NodeUpdate[]>(
+    () => [
+      { id: null, name: selfNode?.name ?? "This machine", color: selfNode?.color ?? null, status: update, online: true },
+      ...mesh.peers.map((p) => ({
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        status: p.snap?.update ?? null,
+        online: p.status === "online",
+      })),
+    ],
+    [selfNode, update, mesh.peers]
   );
 
   /**
@@ -1679,8 +1724,10 @@ export function App() {
   );
 
   return (
-    // Feeds the Sessions tab's fraction and, with the sidebar collapsed, each view's "Show sidebar".
+    // Feeds the Sessions tab's fraction and, with the sidebar collapsed, each view's "Show sidebar";
+    // and opens Settings from the footer's gear, wherever the sidebar is drawn.
     <SessionsProgressContext.Provider value={sessionsProgress}>
+    <SettingsContext.Provider value={settingsOpener}>
       <div className="flex h-full overflow-hidden">
         {/* Covers the app while the server is replaced and restarted; reloads once the new build answers. */}
         {installing && <UpdatingOverlay targetBuildId={installing} />}
@@ -2048,7 +2095,30 @@ export function App() {
             onNodeChange={setNewNode}
           />
         </NodeProvider>
+
+        {settings && (
+          <SettingsDialog
+            initialTab={settings.tab}
+            initialSetting={settings.setting}
+            onClose={closeSettings}
+            selfName={selfNode?.name ?? "This machine"}
+            nodes={scheduleNodes}
+            projectsOf={projectsOf}
+            onProjectsChange={(node, list) => (node ? mesh.setProjects(node, list) : setProjects(list))}
+            sessionsOf={sessionsOf}
+            updates={nodeUpdates}
+            onApplying={(buildId) => {
+              closeSettings();
+              setInstalling(buildId);
+            }}
+            onLogout={() => {
+              closeSettings();
+              void onLogout();
+            }}
+          />
+        )}
       </div>
+    </SettingsContext.Provider>
     </SessionsProgressContext.Provider>
   );
 }

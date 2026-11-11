@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Ban, Loader2, Lock, Network, Plus, RefreshCw, ShieldAlert, ShieldQuestion } from "lucide-react";
+import { Ban, Loader2, Lock, Plus, RefreshCw, ShieldAlert, ShieldQuestion } from "lucide-react";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
 
@@ -31,9 +31,10 @@ const ago = (iso: string, what: string) => {
 /**
  * Settings → Nodes: this machine's identity, and the other machines running Hangar it is paired with, in
  * both directions — the nodes it reaches (with the token they issued it) and the nodes allowed to reach it
- * (with a token it issued them). See plans/multi-node.md.
+ * (with a token it issued them). See plans/multi-node.md. Always this node's: each machine manages its own
+ * end of a pairing, so this is never drawn inside another node's NodeProvider.
  */
-export function NodesDialog({ onClose }: { onClose: () => void }) {
+export function NodesPanel() {
   const [self, setSelf] = useState<NodeInfo | null>(null);
   const [peers, setPeers] = useState<PeerNode[]>([]);
   const [allowed, setAllowed] = useState<AllowedNode[]>([]);
@@ -149,94 +150,80 @@ export function NodesDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="grid-rows-[auto_minmax(0,1fr)] max-h-[calc(100dvh-2rem)] max-w-xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Network className="size-4 shrink-0" />
-            Nodes
-          </DialogTitle>
-          <DialogDescription>
-            Other machines running Hangar. A paired node can do anything on this one that you can — run a
-            shell, read and write files — so pair only machines you would give your password to.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <div className="flex flex-col gap-5">
+        {error && <p className="text-xs text-destructive">{error}</p>}
 
-        {/* -mx-1 px-1: room for the focus rings a scroller would clip (see GroupDialog). */}
-        <div className="-mx-1 flex min-h-0 flex-col gap-5 overflow-y-auto overscroll-contain px-1">
-          {error && <p className="text-xs text-destructive">{error}</p>}
+        {self && <ThisNode node={self} onSaved={setSelf} />}
 
-          {self && <ThisNode node={self} onSaved={setSelf} />}
+        <section className="flex flex-col gap-2" data-setting="nodes.peers">
+          <h3 className="text-sm font-medium">Nodes this one reaches</h3>
+          {!loaded ? (
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          ) : peers.length === 0 ? (
+            <p className="text-xs text-muted-foreground">None yet.</p>
+          ) : (
+            <ul className="flex flex-col divide-y rounded-md border">
+              {peers.map((peer) => (
+                <PeerRow
+                  key={peer.id}
+                  peer={peer}
+                  status={statuses[peer.id]}
+                  onRefresh={() => probe(peer.id)}
+                  onEnabled={(on) => void setEnabled(peer, on)}
+                  onForget={() => void forget(peer)}
+                  onTrust={(cert) => void trust(peer, cert)}
+                />
+              ))}
+            </ul>
+          )}
+          <div data-setting="nodes.add">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setPaired(null);
+                setAdding(true);
+              }}
+            >
+              <Plus className="mr-1.5 size-3.5" />
+              Add node
+            </Button>
+          </div>
+          {paired && <p className="text-xs text-muted-foreground">{paired}</p>}
+        </section>
 
-          <section className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium">Nodes this one reaches</h3>
-            {!loaded ? (
-              <Loader2 className="size-4 animate-spin text-muted-foreground" />
-            ) : peers.length === 0 ? (
-              <p className="text-xs text-muted-foreground">None yet.</p>
-            ) : (
-              <ul className="flex flex-col divide-y rounded-md border">
-                {peers.map((peer) => (
-                  <PeerRow
-                    key={peer.id}
-                    peer={peer}
-                    status={statuses[peer.id]}
-                    onRefresh={() => probe(peer.id)}
-                    onEnabled={(on) => void setEnabled(peer, on)}
-                    onForget={() => void forget(peer)}
-                    onTrust={(cert) => void trust(peer, cert)}
-                  />
-                ))}
-              </ul>
-            )}
-            <div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setPaired(null);
-                  setAdding(true);
-                }}
-              >
-                <Plus className="mr-1.5 size-3.5" />
-                Add node
-              </Button>
-            </div>
-            {paired && <p className="text-xs text-muted-foreground">{paired}</p>}
-          </section>
-
-          <section className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium">Allowed in</h3>
-            {!loaded ? null : allowed.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No other node can reach this one.</p>
-            ) : (
-              <ul className="flex flex-col divide-y rounded-md border">
-                {allowed.map((node) => (
-                  <li key={node.key} className="flex items-center gap-2 px-3 py-2 text-sm">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate">{node.name ?? node.nodeId.slice(0, 8)}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {node.url ?? "address unknown"}
-                        {ago(node.issuedAt, "paired")}
-                        {node.lastUsedAt ? ago(node.lastUsedAt, "last seen") : " · not used yet"}
-                      </div>
+        <section className="flex flex-col gap-2" data-setting="nodes.allowed">
+          <h3 className="text-sm font-medium">Allowed in</h3>
+          {!loaded ? null : allowed.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No other node can reach this one.</p>
+          ) : (
+            <ul className="flex flex-col divide-y rounded-md border">
+              {allowed.map((node) => (
+                <li key={node.key} className="flex items-center gap-2 px-3 py-2 text-sm" data-setting={`allowed:${node.key}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{node.name ?? node.nodeId.slice(0, 8)}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {node.url ?? "address unknown"}
+                      {ago(node.issuedAt, "paired")}
+                      {node.lastUsedAt ? ago(node.lastUsedAt, "last seen") : " · not used yet"}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive"
-                      aria-label={`Revoke ${node.name ?? node.nodeId.slice(0, 8)}`}
-                      onClick={() => void revoke(node)}
-                    >
-                      Revoke
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
-      </DialogContent>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive"
+                    aria-label={`Revoke ${node.name ?? node.nodeId.slice(0, 8)}`}
+                    onClick={() => void revoke(node)}
+                  >
+                    Revoke
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
 
       {adding && (
         <AddNodeDialog
@@ -249,7 +236,7 @@ export function NodesDialog({ onClose }: { onClose: () => void }) {
           }}
         />
       )}
-    </Dialog>
+    </>
   );
 }
 
@@ -279,14 +266,14 @@ function ThisNode({ node, onSaved }: { node: NodeInfo; onSaved: (node: NodeInfo)
   };
 
   return (
-    <section className="flex flex-col gap-2">
+    <section className="flex flex-col gap-2" data-setting="nodes.self">
       <h3 className="text-sm font-medium">This node</h3>
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5" data-setting="nodes.name">
           <Label htmlFor="node-name">Name</Label>
           <Input id="node-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5" data-setting="nodes.url">
           <Label htmlFor="node-url">Address for other nodes</Label>
           <Input
             id="node-url"
@@ -297,7 +284,7 @@ function ThisNode({ node, onSaved }: { node: NodeInfo; onSaved: (node: NodeInfo)
           />
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5" data-setting="nodes.color">
         {COLOR_CHOICES.map((c) => (
           <button
             key={c.name}
@@ -370,7 +357,7 @@ function PeerRow({
   const accent = sessionColor(peer.color);
   const look = status && status !== "checking" ? STATUS_LOOK[status.status] : null;
   return (
-    <li className="flex flex-col gap-1.5 px-3 py-2 text-sm">
+    <li className="flex flex-col gap-1.5 px-3 py-2 text-sm" data-setting={`node:${peer.id}`}>
       <div className="flex items-center gap-2">
         <span
           className="size-2.5 shrink-0 rounded-full border"

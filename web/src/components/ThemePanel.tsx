@@ -23,7 +23,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ArrowLeft, Monitor, Moon, Palette, RotateCcw, Sun, Trash2 } from "lucide-react";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
@@ -46,10 +45,10 @@ function useThemeVersion() {
 }
 
 /**
- * The sidebar's Themes dialog: light, dark or the system's choice; which theme each of the two shows;
- * and the colours of a theme of your own, made from any other and kept on the server.
+ * Settings → Appearance: light, dark or the system's choice; which theme each of the two shows; and the
+ * colours of a theme of your own, made from any other and kept on the server.
  */
-export function ThemeDialog({ onClose }: { onClose: () => void }) {
+export function ThemePanel() {
   useThemeVersion();
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,69 +86,64 @@ export function ThemeDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[calc(var(--app-height,100dvh)-2rem)] max-w-2xl overflow-y-auto p-4 sm:p-6">
-        <DialogHeader>
-          <DialogTitle>Themes</DialogTitle>
-          <DialogDescription>
-            {editable
-              ? "Changes show as you make them, and are kept for every browser signed in here."
-              : "Pick a theme for light mode and one for dark. Your picks stay in this browser."}
-          </DialogDescription>
-        </DialogHeader>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        {editable ? (
-          <ThemeEditor key={editable.id} theme={editable} onBack={() => setEditing(null)} onError={setError} />
-        ) : (
-          <>
-            <div className="flex gap-1 rounded-lg bg-muted p-1" role="radiogroup" aria-label="Mode">
-              {MODES.map(({ mode: m, label, icon: Icon }) => (
-                <button
-                  key={m}
-                  type="button"
-                  role="radio"
-                  aria-checked={mode === m}
-                  className={cn(
-                    "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
-                    mode === m ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                  )}
-                  onClick={() => setThemeMode(m)}
-                >
-                  <Icon className="size-4" />
-                  {label}
-                </button>
-              ))}
-            </div>
-            {(["light", "dark"] as Theme[]).map((kind) => (
-              <ThemeGrid
-                key={kind}
-                kind={kind}
-                themes={themes.filter((t) => t.kind === kind)}
-                chosen={getThemeChoice(kind)}
-                showing={showing === kind}
-              />
+    <div className="grid gap-4">
+      <p className="text-sm text-muted-foreground">
+        {editable
+          ? "Changes show as you make them, and are kept for every browser signed in here."
+          : "Pick a theme for light mode and one for dark. Your picks stay in this browser."}
+      </p>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {editable ? (
+        <ThemeEditor key={editable.id} theme={editable} onBack={() => setEditing(null)} onError={setError} />
+      ) : (
+        <>
+          <div className="flex gap-1 rounded-lg bg-muted p-1" role="radiogroup" aria-label="Mode" data-setting="appearance.mode">
+            {MODES.map(({ mode: m, label, icon: Icon }) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={mode === m}
+                className={cn(
+                  "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
+                  mode === m ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                )}
+                onClick={() => setThemeMode(m)}
+              >
+                <Icon className="size-4" />
+                {label}
+              </button>
             ))}
-            {active && (
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
-                <p className="text-sm text-muted-foreground">
-                  Showing <span className="font-medium text-foreground">{active.name}</span>
-                </p>
-                <Button variant="outline" size="sm" disabled={busy} onClick={() => customize(active)}>
-                  <Palette />
-                  {active.source === "custom" ? "Edit colors" : "Customize colors"}
-                </Button>
-              </div>
-            )}
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+          </div>
+          {(["light", "dark"] as Theme[]).map((kind) => (
+            <ThemeGrid
+              key={kind}
+              kind={kind}
+              themes={themes.filter((t) => t.kind === kind)}
+              chosen={getThemeChoice(kind)}
+              showing={showing === kind}
+            />
+          ))}
+          {active && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4" data-setting="appearance.customize">
+              <p className="text-sm text-muted-foreground">
+                Showing <span className="font-medium text-foreground">{active.name}</span>
+              </p>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => customize(active)}>
+                <Palette />
+                {active.source === "custom" ? "Edit colors" : "Customize colors"}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
 function ThemeGrid({ kind, themes, chosen, showing }: { kind: Theme; themes: ThemeEntry[]; chosen: string; showing: boolean }) {
   return (
-    <section className="grid gap-2">
+    <section className="grid gap-2" data-setting={`appearance.${kind}`}>
       <h3 className="flex items-center gap-2 text-sm font-medium">
         {kind === "light" ? "Light theme" : "Dark theme"}
         {showing && <span className="text-xs font-normal text-muted-foreground">showing now</span>}
@@ -172,6 +166,7 @@ function ThemeSwatch({ theme, selected, onClick }: { theme: ThemeEntry; selected
       type="button"
       aria-pressed={selected}
       title={theme.name}
+      data-setting={`theme:${theme.id}`}
       className={cn(
         "grid min-w-0 gap-1.5 rounded-lg p-1.5 text-left transition-colors hover:bg-accent",
         selected && "bg-accent ring-2 ring-primary"

@@ -62,7 +62,23 @@ export function getToken(): string | null {
  * there was none for a real one) must not sign the page out on its way back.
  */
 function dropToken(sent: string | null) {
-  if (getToken() === sent) setToken(null);
+  if (!rotating && getToken() === sent) setToken(null);
+}
+
+/**
+ * Set while a password is being set or changed. The server drops every token and cuts this page's sockets
+ * before its answer, with this page's new token, comes back; what this page sent with the old one meanwhile
+ * is turned down, and that is the change, not a sign-out.
+ */
+let rotating = false;
+
+async function rotateToken(send: () => Promise<{ token: string }>): Promise<void> {
+  rotating = true;
+  try {
+    setToken((await send()).token);
+  } finally {
+    rotating = false;
+  }
 }
 
 export function setToken(token: string | null) {
@@ -199,11 +215,19 @@ function createApi(base: string) {
     },
     /** Set the first password (only while none is); signs this page in with it. */
     async setPassword(password: string): Promise<void> {
-      const res = await request<{ token: string }>("/api/auth/password", {
-        method: "POST",
-        body: JSON.stringify({ password }),
-      });
-      setToken(res.token);
+      await rotateToken(() =>
+        request<{ token: string }>("/api/auth/password", { method: "POST", body: JSON.stringify({ password }) })
+      );
+    },
+    /** Change the password that is set, given the current one. Signs every other browser out; this page
+        stays in, on the new token the reply carries. */
+    async changePassword(current: string, password: string): Promise<void> {
+      await rotateToken(() =>
+        request<{ token: string }>("/api/auth/password/change", {
+          method: "POST",
+          body: JSON.stringify({ current, password }),
+        })
+      );
     },
     async login(password: string): Promise<string> {
       const res = await request<{ token: string }>("/api/auth/login", {

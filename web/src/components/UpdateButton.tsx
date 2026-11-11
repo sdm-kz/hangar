@@ -27,12 +27,15 @@ export function UpdateButton({
   status,
   onApplying,
   nodeName,
+  compact = !!nodeName,
 }: {
   status: UpdateStatus | null;
   /** The apply request went through: the server is going down and the overlay should take over. */
   onApplying?: (targetBuildId: string) => void;
-  /** A peer's name: the button is that machine's, drawn small on its heading. */
+  /** A peer's name: the button is that machine's. */
   nodeName?: string;
+  /** Drawn small, at a heading's size, as on a peer's heading; Settings → Updates draws a peer's full. */
+  compact?: boolean;
 }) {
   const api = useApi();
   const [open, setOpen] = useState(false);
@@ -60,13 +63,13 @@ export function UpdateButton({
 
   return (
     <>
-      {nodeName && status.state === "Applying" ? (
+      {compact && status.state === "Applying" ? (
         // Installing over there: nothing to click until the heading goes offline and comes back.
         <Loader2
           className="size-3.5 shrink-0 animate-spin text-sky-600 dark:text-sky-500"
-          aria-label={`${nodeName}: updating`}
+          aria-label={`${nodeName ?? "Hangar"}: updating`}
         />
-      ) : nodeName ? (
+      ) : compact ? (
         // On a heading: the same colour, at the heading's size — amber when the last try failed.
         <button
           type="button"
@@ -212,7 +215,7 @@ export function UpdatingOverlay({ targetBuildId }: { targetBuildId: string }) {
   );
 }
 
-function BuildLine({ stamp }: { stamp: BuildStamp }) {
+export function BuildLine({ stamp }: { stamp: BuildStamp }) {
   return (
     <span className="flex min-w-0 flex-col">
       <span className="truncate font-mono text-xs">
