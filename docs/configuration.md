@@ -12,7 +12,7 @@ Settings are read in this order, each overriding the one before:
 4. **Command-line arguments**, `--Section:Key=value`.
 
 For a dev checkout, `server/appsettings.Local.json` plays the same role. Restart the server after
-editing; a pty host keeps the `Watchdog` options it was started with.
+editing.
 
 The tray's first run takes the server's port from `Server:Urls` in the `appsettings.json` beside it
 (or `Server__Urls`); after that the address is the tray's own setting (Settings → *Hangar address*).
@@ -40,13 +40,6 @@ The tray's first run takes the server's port from `Server:Urls` in the `appsetti
 | `Schedules:MaxConcurrentRuns` | Most scheduled runs in flight at once, across every schedule | `4`         |
 | `Schedules:DoneAfterIdleSeconds` | How long a run must sit idle before **Stop when done** stops it | `20`   |
 | `Schedules:RestoreWaitSeconds` | How long to wait for a reopened session's terminal before giving up on poking it | `45` |
-| `Watchdog:Enabled`          | Master switch for auto-recovery; off means no host ever auto-continues | `true` |
-| `Watchdog:PollIntervalMs`   | How often a host re-examines its own session      | `2000`               |
-| `Watchdog:CooldownMs`       | Minimum gap between auto-continues for one session| `20000`              |
-| `Watchdog:MaxConsecutive`   | Attempts before giving up and flagging for attention | `3`               |
-| `Watchdog:SendSequence`     | What is typed to recover, and by the manual **Continue** button | `continue\r` |
-| `Watchdog:ErrorPatterns`    | Case-insensitive regexes that mean "this session looks hung" | (API/stream errors) |
-| `Watchdog:PromptGuardPatterns` | Regexes for an on-screen prompt; any match and the watchdog stays silent | (dialog wording) |
 | `Update:Enabled`            | Offer in-app updates from the staging folder        | `true`               |
 | `Update:StagingPath`        | Folder updates are staged into (the build lands in its `payload` subfolder). Must be writable only by you: whatever lands there runs as you. A relative path is taken from the install folder | `<data>/updates` |
 | `Update:PollSeconds`        | Re-read the staged build this often (a watcher already catches it sooner) | `30` |

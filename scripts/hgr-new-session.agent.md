@@ -50,7 +50,6 @@ so the server's own default applies — omit rather than guess.
 | `-Color` | string | none | Session color name (same values `/color` accepts), for visual grouping in the list. |
 | `-NestUnderSessionId` | string | none | Draw the new session under this one in the sessions list (its `nestedUnderId`). An arrangement of the list only — the new session has its own conversation and is not a fork. It opens on the chat or the terminal, whichever that session is on. An id no session answers to is a 400, not a silently top-level session. |
 | `-Child` | switch | off | Nest under the session this runs inside: fills `-NestUnderSessionId` from `$env:HANGAR_SESSION_ID`. Without it set it exits 1 instead of launching at the top level. An explicit `-NestUnderSessionId` wins. Use this whenever you launch a session from inside one. |
-| `-WatchdogEnabled` | switch | off | Lets the hang watchdog auto-continue this session if it stalls. |
 | `-BaseUrl` | string | `$env:HANGAR_URL` (set inside a session), else `http://127.0.0.1:5099` | Server base URL — set it when targeting another machine. |
 | `-ApiKey` | string | `$env:HANGAR_API_KEY` | Sent as the `X-Api-Key` header; no header when there is no key. |
 | `-PassThru` | switch | off | Return the session object instead of printing a formatted list — use this when you need to read the result. |

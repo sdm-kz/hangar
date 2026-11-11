@@ -50,10 +50,6 @@ public sealed record SessionInfo(
     DateTimeOffset CreatedAt,
     /// <summary>claude.ai deep link to this session, sniffed from its terminal; null until printed.</summary>
     string? RemoteUrl = null,
-    /// <summary>Whether the hang watchdog may auto-continue this session.</summary>
-    bool WatchdogEnabled = true,
-    /// <summary>Watchdog view of the session: "healthy" | "recovering" | "attention".</summary>
-    string WatchdogStatus = "healthy",
     /// <summary>Session color (a color name set via <c>/color</c>), shown in the sessions list. Null = none.</summary>
     string? Color = null,
     /// <summary>

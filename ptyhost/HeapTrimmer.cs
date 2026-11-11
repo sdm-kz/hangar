@@ -13,7 +13,7 @@ namespace Hangar.PtyHost;
 /// ordinary full collection returns none of it. One of these hosts runs per session and per shell tab,
 /// for days, so the difference is multiplied by everything open.</para>
 /// <para>Quiet is read off the terminal (<see cref="TerminalChannel.BytesProcessed"/>) rather than the
-/// allocation counter: the watchdog works out and pushes the session's state every second, so the host
+/// allocation counter: the state reporter works out and pushes the session's state every second, so the host
 /// never stops allocating, but it does stop printing. A collection follows only real work since the last one, so an idle
 /// session isn't collected over and over; and only after two ticks without any, so a TUI that is still
 /// drawing isn't paused mid-frame. A host's heap is a few megabytes, which an aggressive collection gets

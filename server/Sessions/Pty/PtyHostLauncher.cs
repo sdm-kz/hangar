@@ -72,8 +72,7 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
     /// </summary>
     public async Task<PtyHostClient> StartAsync(
         string sessionId, string fileName, IReadOnlyList<string> arguments, string workingDirectory,
-        IReadOnlyDictionary<string, string> environment, short cols, short rows,
-        WatchdogOptions watchdog, bool watchdogEnabled, bool verbatimArguments = false,
+        IReadOnlyDictionary<string, string> environment, short cols, short rows, bool verbatimArguments = false,
         CancellationToken ct = default)
     {
         var exe = ResolveLaunchPath();
@@ -96,10 +95,6 @@ public sealed class PtyHostLauncher(PtyHostOptions options, ILogger log)
             Rows: rows,
             Environment: environment,
             BuildStamp: _buildStamp,
-            // The watchdog runs host-side, so its tunables travel with the spawn. A host keeps the
-            // ones it started with: a config change reaches an existing session only when it relaunches.
-            Watchdog: watchdog,
-            WatchdogEnabled: watchdogEnabled,
             VerbatimArguments: verbatimArguments));
 
         int hostPid;

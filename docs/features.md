@@ -171,8 +171,8 @@ screenshot is this session as a chat):
   this" is provenance, not activity.
 
   Runs are unattended, so the template's **permission mode** is doing real work: a run that hits a
-  permission prompt just sits there, and the watchdog deliberately won't answer it. Web Push already
-  fires on "newly waiting on a prompt", so a 03:00 run that blocks wakes your phone.
+  permission prompt just sits there, and nothing answers it for you. Web Push already fires on "newly
+  waiting on a prompt", so a 03:00 run that blocks wakes your phone.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:
@@ -400,23 +400,12 @@ screenshot is this session as a chat):
 - **Auto-resume after a reboot.** A pseudoconsole child cannot survive a reboot, so for that case the
   persisted launch metadata does the work: on the next start the app **relaunches the sessions
   that were running**, each resuming its own conversation (`--resume <id>` when Claude's session id
-  was captured from a hook, else `--continue`). The original prompt is not re-fired and the watchdog
-  setting is carried over; a relaunched session gets a **new id** in the UI. Sessions that had
+  was captured from a hook, else `--continue`). The original prompt is not re-fired; a relaunched
+  session gets a **new id** in the UI. Sessions that had
   already exited on their own are not resurrected, and a folder that's gone (or a failed launch)
   just stays a manual **Reopen** entry. Turn it off with `Sessions:ResumeOnStart=false`, or per
   launch with `--no-resume-sessions`. Pair it with starting at sign-in and a reboot restores your
   working set by itself.
-- **Hang watchdog.** Claude Code sometimes stalls on an API or streaming error and sits there. When
-  a session opts in, the watchdog notices the error banner on screen and writes `continue` for it. It
-  never acts while Claude is emitting (that covers Claude's own retry) or while a permission prompt
-  is on screen, waits out `Watchdog:CooldownMs` between attempts, and after `Watchdog:MaxConsecutive`
-  tries gives up and flags the session for **attention** in the sidebar instead. Toggle it per
-  session in the UI; a manual **Continue** clears the give-up flag.
-
-  It runs **inside each session's pty host**, not in the web app — so a session that stalls overnight,
-  or during an in-app update, is recovered whether or not the app is running, and you see what
-  happened when the browser reconnects. A host keeps the options it was launched with, so a change
-  under `Watchdog:` in the settings applies to sessions started after it.
 - **Shells survive an app restart too**, for the same reason sessions do — each shell tab is its own
   pty host — so a build or a `tail -f` left running in one is still going, and still streaming, after
   an update. They are namespaced separately (`<instance>-sh`), which is what keeps a shell from

@@ -565,8 +565,7 @@ public sealed class ScheduleService : BackgroundService
             RemoteControl: t.RemoteControl,
             Model: string.IsNullOrWhiteSpace(t.Model) ? null : t.Model,
             InitialPrompt: prompt,
-            PermissionMode: t.PermissionMode,
-            WatchdogEnabled: t.WatchdogEnabled), ct: ct);
+            PermissionMode: t.PermissionMode), ct: ct);
 
         run.SessionId = info.Id;
         var launched = _launched.GetOrAdd(s.Id, _ => new List<string>());

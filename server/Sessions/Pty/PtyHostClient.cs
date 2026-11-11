@@ -13,11 +13,10 @@ namespace Hangar.Server.Sessions.Pty;
 /// <para><b>Disposing this does not end the session.</b> It closes the pipe and nothing else — the
 /// host keeps the child running and holds the scrollback until someone attaches again. That
 /// asymmetry is the whole point of the split, so read <see cref="Dispose"/> before changing it.</para>
-/// <para>Busy / waiting / compacting / watchdog status are <b>pushed</b> by the host and cached here, never asked
-/// for: <c>SessionHub</c> samples them about once a second per session, and a synchronous round-trip
-/// over the pipe per sample would be absurd. The host is also the only honest place to compute them,
-/// now that the watchdog lives there — it keeps watching, and keeps recovering the session, while no
-/// web app is attached at all.</para>
+/// <para>Busy / waiting / compacting are <b>pushed</b> by the host and cached here, never asked for:
+/// <c>SessionHub</c> samples them about once a second per session, and a synchronous round-trip over
+/// the pipe per sample would be absurd. The host is also the only honest place to compute them: the
+/// screen text they are read off never leaves it.</para>
 /// </remarks>
 public sealed class PtyHostClient : ITerminal
 {
@@ -46,11 +45,10 @@ public sealed class PtyHostClient : ITerminal
     private short _wantRows;
 
     // Last `state` push from the host. The defaults are the safe reading for a session we have not
-    // heard about yet: not busy, not waiting, not compacting, healthy.
+    // heard about yet: not busy, not waiting, not compacting.
     private bool _busy;
     private bool _waiting;
     private bool _compacting;
-    private string _watchdogStatus = "healthy";
     private ShellCommandState _command = ShellCommandState.None;
 
     /// <summary>The session's id, for log lines that have to be readable months later.</summary>
@@ -115,9 +113,6 @@ public sealed class PtyHostClient : ITerminal
 
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     public bool IsCompacting { get { lock (_lock) return _compacting; } }
-
-    /// <summary>The host watchdog's view of the session: "healthy" | "recovering" | "attention".</summary>
-    public string WatchdogStatus { get { lock (_lock) return _watchdogStatus; } }
 
     /// <summary>
     /// The command running at a shell prompt, and how the last one ended, from the shell's
@@ -307,23 +302,20 @@ public sealed class PtyHostClient : ITerminal
                         _screen.Resize(msg.Cols, msg.Rows);
                 break;
 
-            // Pushed on every busy / waiting / watchdog transition, and on a heartbeat besides, so the
+            // Pushed on every busy / waiting / compacting transition, and on a heartbeat besides, so the
             // cache is never more than a few seconds stale even for a session sitting perfectly still.
             case "state":
                 bool changed;
                 lock (_lock)
                 {
-                    var status = string.IsNullOrEmpty(msg.WatchdogStatus) ? _watchdogStatus : msg.WatchdogStatus!;
                     var command = new ShellCommandState(
                         msg.ShellIntegration, msg.CommandRunning,
                         msg.CommandStartedAt, msg.CommandEndedAt, msg.CommandExitCode, msg.CommandWaiting);
                     changed = _busy != msg.Busy || _waiting != msg.Waiting
-                        || _compacting != msg.Compacting || _watchdogStatus != status
-                        || _command != command;
+                        || _compacting != msg.Compacting || _command != command;
                     _busy = msg.Busy;
                     _waiting = msg.Waiting;
                     _compacting = msg.Compacting;
-                    _watchdogStatus = status;
                     _command = command;
                 }
                 // Only on a real change: the heartbeat exists to keep the cache honest, and waking the
@@ -606,14 +598,6 @@ public sealed class PtyHostClient : ITerminal
         Volatile.Write(ref _lastResizeTick, Environment.TickCount64);
         _ = SendControlAsync(new PtyControl { Type = "resize", Cols = cols, Rows = rows });
     }
-
-    /// <summary>
-    /// Tell the host whether its watchdog may auto-continue this session, optionally clearing the
-    /// give-up flag and the attempt counter. The web app owns this setting — sessions.json is the
-    /// source of truth for it — so it is re-sent on every attach, not only when the user toggles it.
-    /// </summary>
-    public Task SetWatchdogAsync(bool enabled, bool reset = false, CancellationToken ct = default) =>
-        SendControlAsync(new PtyControl { Type = "watchdog", Enabled = enabled, Reset = reset }, ct);
 
     /// <summary>
     /// Ask the host to end the session and stand down. Awaited briefly by <see cref="ClaudeSession.Stop"/>,

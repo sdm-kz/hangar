@@ -53,8 +53,6 @@ pub enum Activity {
     Compacting,
     Busy,
     Waiting,
-    Attention,
-    Recovering,
     Failed,
     Background,
     Done,
@@ -63,17 +61,12 @@ pub enum Activity {
 /// What a session is doing, in the web app's order of precedence (`sessionActivity`): anything it is
 /// doing now outranks the past-tense "finished". None for a session doing nothing worth showing.
 pub fn activity(s: &HubSession, ids: &Ids, done: bool) -> Option<Activity> {
-    let watchdog = s.watchdog_status.as_deref().unwrap_or_default();
     if ids.compacting.contains(&s.id) {
         Some(Activity::Compacting)
     } else if ids.busy.contains(&s.id) {
         Some(Activity::Busy)
     } else if ids.waiting.contains(&s.id) {
         Some(Activity::Waiting)
-    } else if watchdog.eq_ignore_ascii_case("attention") {
-        Some(Activity::Attention)
-    } else if watchdog.eq_ignore_ascii_case("recovering") {
-        Some(Activity::Recovering)
     } else if ids.failed.contains(&s.id) {
         Some(Activity::Failed)
     } else if ids.background.contains_key(&s.id) {
@@ -87,8 +80,8 @@ pub fn activity(s: &HubSession, ids: &Ids, done: bool) -> Option<Activity> {
 
 /// The dropdown's groups, most urgent first; every activity falls in exactly one.
 pub const GROUPS: [(&str, &[Activity]); 3] = [
-    ("Waiting on you", &[Activity::Waiting, Activity::Attention, Activity::Failed]),
-    ("Working", &[Activity::Busy, Activity::Compacting, Activity::Recovering, Activity::Background]),
+    ("Waiting on you", &[Activity::Waiting, Activity::Failed]),
+    ("Working", &[Activity::Busy, Activity::Compacting, Activity::Background]),
     ("Finished", &[Activity::Done]),
 ];
 
@@ -328,7 +321,7 @@ mod tests {
 
     #[test]
     fn activity_follows_the_web_apps_precedence() {
-        let mut s = session("a");
+        let s = session("a");
         let all = Ids {
             busy: HashSet::from(["a".into()]),
             waiting: HashSet::from(["a".into()]),
@@ -337,9 +330,6 @@ mod tests {
             background: HashMap::from([("a".into(), 2)]),
         };
         assert_eq!(activity(&s, &all, true), Some(Activity::Compacting));
-        s.watchdog_status = Some("attention".into());
-        assert_eq!(activity(&s, &ids(&[], &[]), true), Some(Activity::Attention));
-        s.watchdog_status = Some("healthy".into());
         assert_eq!(activity(&s, &ids(&[], &[]), true), Some(Activity::Done));
         assert_eq!(activity(&s, &ids(&[], &[]), false), None);
     }

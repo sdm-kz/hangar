@@ -9,12 +9,12 @@ using WebPush;
 namespace Hangar.Server.Push;
 
 /// <summary>
-/// Sends a Web Push notification when a session newly needs attention or newly starts waiting on a
-/// prompt — the same two transitions the in-page UI surfaces (<c>web/src/App.tsx</c>), but detected
+/// Sends a Web Push notification when a session newly starts waiting on a prompt or newly ends a turn
+/// on an error — the same transitions the in-page UI surfaces (<c>web/src/App.tsx</c>), but detected
 /// server-side so the alert still fires when every tab is closed (the whole point of push).
 ///
 /// It mirrors how <see cref="SessionHub"/> stays current: recompute on a slow tick (to catch
-/// poll-only transitions like the watchdog flipping to "attention") and immediately on any explicit
+/// poll-only transitions like a prompt appearing on screen) and immediately on any explicit
 /// <see cref="SessionManager.Changed"/> / hook change. Transitions are diffed against the previous
 /// snapshot, seeded on the first tick so a session already stuck/waiting at startup doesn't alert.
 ///
@@ -48,11 +48,10 @@ public sealed class PushNotifier : BackgroundService
 
     /// <summary>The marks a node's sessions carried at the last check — the state a transition is measured from.</summary>
     // Notices are the ids of the ones already sent: unlike the rest, each is an event, not a state.
-    private sealed record Marks(HashSet<string> Attention, HashSet<string> Waiting, HashSet<string> Failed,
-        HashSet<string> Notices);
+    private sealed record Marks(HashSet<string> Waiting, HashSet<string> Failed, HashSet<string> Notices);
 
     /// <summary>A session as far as an alert needs it, whichever node it is on.</summary>
-    private sealed record Row(string Id, string Name, string? WatchdogStatus, bool WatchdogEnabled);
+    private sealed record Row(string Id, string Name);
 
     private Marks? _prev;
     // Per peer, from its first snapshot after it came online: a peer that was away (or this node, starting) doesn't
@@ -101,7 +100,6 @@ public sealed class PushNotifier : BackgroundService
     private async Task CheckAsync()
     {
         var sessions = _mgr.List();
-        var attention = sessions.Where(s => s.WatchdogStatus == "attention").Select(s => s.Id).ToHashSet();
         var waiting = _mgr.AwaitingInputIds().ToHashSet();
         var failed = _mgr.FailedSessionIds().ToHashSet();
         // What the waiting/failed sets are about, where the hooks said: a permission dialog names the
@@ -112,11 +110,11 @@ public sealed class PushNotifier : BackgroundService
         var notices = _notices.Recent();
 
         var prev = _prev;
-        var now = new Marks(attention, waiting, failed, notices.Select(n => n.Id).ToHashSet());
+        var now = new Marks(waiting, failed, notices.Select(n => n.Id).ToHashSet());
         _prev = now;
         if (prev is null) return; // first tick: seed only
 
-        await AlertAsync(_identity.Current.Id, null, sessions.Select(s => new Row(s.Id, s.Name, s.WatchdogStatus, s.WatchdogEnabled)),
+        await AlertAsync(_identity.Current.Id, null, sessions.Select(s => new Row(s.Id, s.Name)),
             now, prev, id => details.GetValueOrDefault(id), notices);
     }
 
@@ -129,9 +127,8 @@ public sealed class PushNotifier : BackgroundService
             if (node.Snapshot is not { } snap) continue;
             online.Add(node.Id);
             var rows = Rows(snap);
-            var attention = rows.Where(r => r.WatchdogStatus == "attention").Select(r => r.Id).ToHashSet();
             var notices = Notices(snap);
-            var now = new Marks(attention, Ids(snap, "waiting"), Ids(snap, "failed"), notices.Select(n => n.Id).ToHashSet());
+            var now = new Marks(Ids(snap, "waiting"), Ids(snap, "failed"), notices.Select(n => n.Id).ToHashSet());
             var hadPrev = _prevPeers.TryGetValue(node.Id, out var prev);
             _prevPeers[node.Id] = now;
             if (!hadPrev)
@@ -181,12 +178,6 @@ public sealed class PushNotifier : BackgroundService
             // session from its own node and from a peer of it should see one notification, not two.
             var key = $"{nodeId}:{s.Id}";
             var peer = nodeName is null ? null : nodeId;
-            if (now.Attention.Contains(s.Id) && !prev.Attention.Contains(s.Id))
-                await SendToAllAsync(
-                    $"{name} — needs attention",
-                    "Claude stopped recovering after repeated API errors.",
-                    $"watchdog-{key}", s.Id, peer);
-
             if (now.Waiting.Contains(s.Id) && !prev.Waiting.Contains(s.Id))
                 await SendToAllAsync(
                     $"{name} — Claude needs your input",
@@ -196,11 +187,7 @@ public sealed class PushNotifier : BackgroundService
             // A turn that died on a rate limit stops exactly like one that finished, so nothing else
             // here would ever fire for it — and it is the case where knowing early matters most, since
             // the session sits there doing nothing until someone comes back and retries it.
-            //
-            // Unless the watchdog has the session, in which case it is about to try the error again
-            // and this alert would be telling you about a problem that is already being handled. That
-            // one has its own alert for when it gives up, which is the point at which you are needed.
-            if (now.Failed.Contains(s.Id) && !prev.Failed.Contains(s.Id) && !s.WatchdogEnabled)
+            if (now.Failed.Contains(s.Id) && !prev.Failed.Contains(s.Id))
                 await SendToAllAsync(
                     $"{name} — Claude stopped early",
                     FailureLine(detailOf(s.Id)),
@@ -219,8 +206,7 @@ public sealed class PushNotifier : BackgroundService
             // An id is a GUID's hex: anything else is no session of a build this one knows, and it would ride
             // the push payload (the tag, the session) to every device.
             if (s.ValueKind != JsonValueKind.Object || Str(s, "id") is not { Length: > 0 and <= 64 } id) continue;
-            rows.Add(new Row(id, Clip(Str(s, "name") ?? "Session", 120), Str(s, "watchdogStatus"),
-                s.TryGetProperty("watchdogEnabled", out var w) && w.ValueKind == JsonValueKind.True));
+            rows.Add(new Row(id, Clip(Str(s, "name") ?? "Session", 120)));
         }
         return rows;
     }

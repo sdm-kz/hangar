@@ -45,7 +45,7 @@ Hangar  (the daemon: ASP.NET Core Minimal API, headless)   ← restarts, updates
    │  named pipe \\.\pipe\hangar-pty-<instance>-<sessionId>  (a Unix socket on Linux/macOS)
    ▼
 Hangar.PtyHost   (one per session — and one per shell tab — detached; owns the pseudoconsole)
-   │  pseudoconsole + 512 KB scrollback ring + fan-out + the hang watchdog
+   │  pseudoconsole + 512 KB scrollback ring + fan-out + busy/waiting state
    ▼
 claude --remote-control=<name> --name=<name>
    │  registers with api.anthropic.com  ──►  appears in the Claude Code app

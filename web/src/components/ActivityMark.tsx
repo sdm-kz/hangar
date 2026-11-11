@@ -47,7 +47,7 @@ export function HeadingActivityMark({
 /**
  * The glyph an activity is drawn as. Live states are a coloured dot — the smallest thing that can
  * still say "something is happening here" — but "finished, unseen" is not a live state, and drawn
- * as a sixth dot it would be one more colour to learn on a list that is mostly quiet. A tick reads
+ * as one more dot it would be one more colour to learn on a list that is mostly quiet. A tick reads
  * as past tense at a glance and needs no legend, so it is the one activity with a shape of its own.
  *
  * One element, used both in a row's corner and on a heading's icon, so the two can't drift apart.
@@ -93,8 +93,6 @@ export type Activity =
   | "background"
   | "waiting"
   | "failed"
-  | "attention"
-  | "recovering"
   | "done";
 export const ACTIVITY_MARK: Record<
   Activity,
@@ -129,24 +127,17 @@ export const ACTIVITY_MARK: Record<
   },
   waiting: {
     className: "bg-amber-400 animate-pulse ring-2 ring-amber-400/40",
-    // The halo stays on the ring too: it is what tells waiting (the most urgent mark) apart from
-    // the near-identical amber of recovering.
+    // The halo stays on the ring too: it is what says waiting is the most urgent mark.
     hollowClassName: "border-amber-400 animate-pulse ring-2 ring-amber-400/40",
     label: "Claude is waiting for your input",
   },
   // The tick's opposite number, and drawn like it for the same reason: a turn that died is over, not
-  // happening, and a seventh dot would be one more colour to learn. A cross says "this stopped, and
+  // happening, and one more dot would be one more colour to learn. A cross says "this stopped, and
   // not well" with no legend — the session is sitting there waiting to be picked back up.
   failed: {
     className: "text-red-500",
     label: "Claude’s last turn ended on an error",
     Icon: X,
-  },
-  attention: { className: "bg-red-500", hollowClassName: "border-red-500", label: "Session needs attention" },
-  recovering: {
-    className: "bg-amber-500 animate-pulse",
-    hollowClassName: "border-amber-500 animate-pulse",
-    label: "Watchdog is auto-recovering this session",
   },
   // The green pulse's own past tense, so the two read as one story: the same green, no longer
   // moving. It is the only activity you can clear by looking at it — see useDoneSessions.
@@ -164,10 +155,6 @@ export function sessionActivity(s: SessionInfo, ids: ActivityIds): Activity | nu
   if (ids.compacting.has(s.id)) return "compacting";
   if (ids.busy.has(s.id)) return "busy";
   if (ids.waiting.has(s.id)) return "waiting";
-  if (s.watchdogStatus === "attention") return "attention";
-  // Above the failed turn it is presumably retrying: the watchdog having the session in hand is the
-  // newer fact, and the one that says whether you have to do anything about the error yourself.
-  if (s.watchdogStatus === "recovering") return "recovering";
   if (ids.failed.has(s.id)) return "failed";
   // Ahead of the tick: the turn finished, but the work it started hasn't, and that is what you are
   // waiting on. useDoneSessions holds the tick back until the shells end anyway.

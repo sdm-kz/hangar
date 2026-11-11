@@ -15,10 +15,9 @@ namespace Hangar.Server.Sessions.Pty;
 /// (<see cref="ClaudeSession"/>, <see cref="TerminalSocket"/>, <see cref="SessionManager"/>) carry on
 /// almost unchanged.
 ///
-/// <para><see cref="IsBusy"/>, <see cref="IsAwaitingInput"/> and <see cref="WatchdogStatus"/> are
-/// cached values the host pushes, not questions asked over the pipe: they are sampled about once a
-/// second per session. The screen text they are derived from never leaves the host, which is where
-/// the watchdog reads it.</para>
+/// <para><see cref="IsBusy"/> and <see cref="IsAwaitingInput"/> are cached values the host pushes,
+/// not questions asked over the pipe: they are sampled about once a second per session. The screen
+/// text they are derived from never leaves the host, which is where they are worked out.</para>
 /// </remarks>
 public interface ITerminal : IDisposable
 {
@@ -33,7 +32,7 @@ public interface ITerminal : IDisposable
     /// </summary>
     byte[] Snapshot();
 
-    /// <summary>Write to the child's stdin (a keystroke, a paste, the watchdog's recovery sequence).</summary>
+    /// <summary>Write to the child's stdin (a keystroke, a paste, a scheduled prompt).</summary>
     ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct);
 
     /// <summary>
@@ -103,9 +102,6 @@ public interface ITerminal : IDisposable
 
     /// <summary>True while Claude is compacting the conversation (auto-compaction or <c>/compact</c>).</summary>
     bool IsCompacting { get; }
-
-    /// <summary>The watchdog's view of the session: "healthy" | "recovering" | "attention".</summary>
-    string WatchdogStatus { get; }
 
     /// <summary>The claude.ai deep link for this session, once printed; otherwise null.</summary>
     string? RemoteUrl { get; }

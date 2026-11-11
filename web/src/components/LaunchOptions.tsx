@@ -2,13 +2,13 @@ import type { ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Activity, Radio, Zap } from "lucide-react";
+import { Radio, Zap } from "lucide-react";
 
 /**
- * The settings a launch carries besides its folder and its prompt — the model, the permission mode,
- * Remote Control and the hang watchdog.
+ * The settings a launch carries besides its folder and its prompt — the model, the permission mode
+ * and Remote Control.
  *
- * They live here rather than in the New Session dialog because three places now set the same four
+ * They live here rather than in the New Session dialog because three places now set the same three
  * things: that dialog, the Templates tab beside it, and the template editor, which stores them as a
  * template's defaults. One list of models and one wording of what "bypass all" means beats three
  * that drift.
@@ -51,7 +51,6 @@ export interface LaunchOptions {
   model: string;
   remoteControl: boolean;
   permissionMode: string;
-  watchdog: boolean;
 }
 
 /** What a plain "New session" starts from, and what a new template is created with. */
@@ -59,21 +58,18 @@ export const DEFAULT_LAUNCH: LaunchOptions = {
   model: "",
   remoteControl: true,
   permissionMode: "auto",
-  watchdog: false, // the hang watchdog is opt-in, here as everywhere
 };
 
-/** The same four settings read off a stored template. */
+/** The same three settings read off a stored template. */
 export function launchFromTemplate(t: {
   model: string;
   remoteControl: boolean;
   permissionMode: string;
-  watchdogEnabled: boolean;
 }): LaunchOptions {
   return {
     model: t.model ?? "",
     remoteControl: t.remoteControl,
     permissionMode: t.permissionMode || "auto",
-    watchdog: t.watchdogEnabled,
   };
 }
 
@@ -180,16 +176,6 @@ export function LaunchFields({
       >
         Start Claude with <code className="font-mono">--remote-control</code> so this session appears in
         the Claude Code app (claude.ai/code &amp; mobile) and you control it from there.
-      </ToggleCard>
-
-      <ToggleCard
-        checked={value.watchdog}
-        onCheckedChange={(v) => onChange({ watchdog: v })}
-        icon={<Activity className="size-3.5" />}
-        title="Hang watchdog"
-      >
-        Auto-sends <code className="font-mono">continue</code> when the session hangs on an API or
-        streaming error. Off by default; you can also toggle it later from the session header.
       </ToggleCard>
 
       <div className="space-y-2 rounded-lg border p-3">

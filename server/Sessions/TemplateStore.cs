@@ -35,8 +35,6 @@ public sealed record SessionTemplate(
     bool RemoteControl,
     /// <summary>default | auto | acceptEdits | bypassPermissions.</summary>
     string PermissionMode,
-    /// <summary>Whether launches from this template opt into the hang watchdog.</summary>
-    bool WatchdogEnabled,
     /// <summary>One line under the name in the picker, saying what this template is for. Null = none.</summary>
     string? Description,
     /// <summary>Placeholder for the "details" box — what to paste in. Null = a generic one.</summary>
@@ -55,7 +53,6 @@ public sealed record SessionTemplatePatch(
     string? Model = null,
     bool? RemoteControl = null,
     string? PermissionMode = null,
-    bool? WatchdogEnabled = null,
     string? Description = null,
     string? InputHint = null);
 
@@ -116,7 +113,6 @@ public sealed class TemplateStore
                 CleanModel(p.Model),
                 p.RemoteControl ?? true,
                 CleanPermissionMode(p.PermissionMode),
-                p.WatchdogEnabled ?? false,
                 Blank(p.Description) ? null : Clip(p.Description!.Trim(), MaxHintLength),
                 Blank(p.InputHint) ? null : Clip(p.InputHint!.Trim(), MaxHintLength)));
             Save();
@@ -156,7 +152,6 @@ public sealed class TemplateStore
                 PermissionMode = p.PermissionMode is null
                     ? t.PermissionMode
                     : CleanPermissionMode(p.PermissionMode),
-                WatchdogEnabled = p.WatchdogEnabled ?? t.WatchdogEnabled,
                 Description = p.Description is null
                     ? t.Description
                     : Blank(p.Description) ? null : Clip(p.Description.Trim(), MaxHintLength),

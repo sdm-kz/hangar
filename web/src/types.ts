@@ -100,8 +100,6 @@ export interface SessionInfo {
   processId: number;
   createdAt: string;
   remoteUrl: string | null; // claude.ai deep link to this session, once printed to its terminal
-  watchdogEnabled: boolean; // whether the hang watchdog may auto-continue this session
-  watchdogStatus: "healthy" | "recovering" | "attention"; // watchdog's view of the session
   color: string | null; // color name set via /color in the terminal; shown in the sessions list
   resumeExact: boolean; // Restorable: reopen can --resume the exact conversation (vs --continue fallback)
   postponedCount: number; // number of "postponed" messages stashed for this session (0 = none)
@@ -159,7 +157,6 @@ export interface CreateSessionRequest {
   model?: string | null;
   initialPrompt?: string | null;
   permissionMode?: string | null;
-  watchdogEnabled?: boolean; // opt into the hang watchdog (auto-continue on API errors); off by default
   continue?: boolean; // resume the folder's most recent conversation (claude --continue) instead of starting fresh
   resumeSessionId?: string | null; // resume this exact Claude conversation (claude --resume <id>); wins over `continue`
   forkSession?: boolean; // with resumeSessionId: branch it into a new conversation (--fork-session) rather than continue it
@@ -507,7 +504,6 @@ export interface SessionTemplate {
   model: string; // "", "opus", "sonnet", "haiku"
   remoteControl: boolean;
   permissionMode: string; // default | auto | acceptEdits | bypassPermissions
-  watchdogEnabled: boolean;
   description: string | null; // one line under the name in the picker
   inputHint: string | null; // placeholder for the details box — what to paste in
 }

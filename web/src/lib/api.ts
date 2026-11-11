@@ -320,17 +320,6 @@ function createApi(base: string) {
         body: JSON.stringify({ state, quiet }),
       });
     },
-    // Enable/disable the hang watchdog (auto-continue) for a session.
-    setWatchdog(id: string, enabled: boolean): Promise<void> {
-      return request(`/api/sessions/${id}/watchdog`, {
-        method: "POST",
-        body: JSON.stringify({ enabled }),
-      });
-    },
-    // Manually send "continue" to a session and clear its watchdog give-up state.
-    continueSession(id: string): Promise<void> {
-      return request(`/api/sessions/${id}/continue`, { method: "POST" });
-    },
 
     // Sessions still running that the app no longer tracks — usually the result of a detach.
     listOrphans(): Promise<PtyOrphan[]> {

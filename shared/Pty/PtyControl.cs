@@ -10,8 +10,9 @@ namespace Hangar.Pty;
 /// a host left running by the previous build instead of orphaning (or killing) its session.
 /// </summary>
 /// <remarks>
-/// Client to host: <c>hello</c> · <c>resize</c> · <c>repaint</c> · <c>ping</c> · <c>watchdog</c> ·
-/// <c>shutdown</c>.
+/// Client to host: <c>hello</c> · <c>resize</c> · <c>repaint</c> · <c>ping</c> · <c>shutdown</c>.
+/// (A <c>watchdog</c> message, and the state's <c>watchdogStatus</c>, belong to builds that had a hang
+/// watchdog: a host from one of those may still send the status, which is ignored.)
 /// Host to client: <c>welcome</c> · <c>pong</c> · <c>renamed</c> · <c>color</c> · <c>remoteUrl</c> ·
 /// <c>state</c> · <c>exited</c>.
 /// </remarks>
@@ -70,23 +71,12 @@ public sealed record PtyControl
     /// <summary>shutdown: also kill the child, rather than just letting the host stand down.</summary>
     public bool Kill { get; init; }
 
-    /// <summary>watchdog: whether the host may auto-continue this session.</summary>
-    public bool Enabled { get; init; }
-
-    /// <summary>
-    /// watchdog: clear the give-up flag and the consecutive-attempt counter, so auto-recovery starts
-    /// from a clean slate. Sent after a manual "Continue" from the UI.
-    /// </summary>
-    public bool Reset { get; init; }
-
     /// <summary>state: the child is emitting output.</summary>
     public bool Busy { get; init; }
     /// <summary>state: a prompt appears to be waiting on the user.</summary>
     public bool Waiting { get; init; }
     /// <summary>state: the child is compacting its conversation (auto or <c>/compact</c>).</summary>
     public bool Compacting { get; init; }
-    /// <summary>state: "healthy" | "recovering" | "attention".</summary>
-    public string? WatchdogStatus { get; init; }
 
     /// <summary>
     /// state: the child prints shell-integration marks (OSC 133), so the command fields below mean

@@ -34,9 +34,6 @@ pub struct HubSession {
     /// The project whose folders cover its working directory, as the server works it out.
     #[serde(default)]
     pub project_id: Option<String>,
-    /// The watchdog's view of it: `healthy`, `recovering` or `attention`.
-    #[serde(default)]
-    pub watchdog_status: Option<String>,
     /// Its activity is paused: left out of the Activity menu, as the web app leaves it out of its
     /// headings and totals. Absent from a server on an older build.
     #[serde(default)]
@@ -314,7 +311,6 @@ mod tests {
             parent_session_id: None,
             group_id: None,
             project_id: None,
-            watchdog_status: None,
             activity_paused: false,
         }
     }

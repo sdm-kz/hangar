@@ -3,9 +3,9 @@ using System.Text.RegularExpressions;
 namespace Hangar.Pty;
 
 /// <summary>
-/// Minimal VT/ANSI stripping so on-screen <i>text</i> can be pattern-matched (e.g. by the watchdog).
+/// Minimal VT/ANSI stripping so on-screen <i>text</i> can be pattern-matched (e.g. for a prompt).
 /// This is not a terminal emulator — it just removes the escape sequences xterm.js would consume,
-/// leaving the human-visible characters. Good enough for spotting an error banner in recent output.
+/// leaving the human-visible characters. Good enough for spotting a dialog in recent output.
 /// </summary>
 public static partial class Vt
 {
@@ -47,7 +47,7 @@ public static partial class Vt
     /// still tell which kind it was. Claude's TUI starts a fresh screen row that way as often as it
     /// emits CRLF — a repaint jumps to the row it is about to draw — so a scanner that anchors on
     /// line starts (the /rename and /color sniffers) has to see those rows as separate lines. The
-    /// watchdog deliberately does NOT: it counts lines to size its window, and a repaint's per-row
+    /// state reporter deliberately does NOT: it counts lines to size its window, and a repaint's per-row
     /// cursor moves would shrink that window to a few characters of the screen.
     /// </summary>
     public static string Strip(string s, bool cursorMovesEndLines)

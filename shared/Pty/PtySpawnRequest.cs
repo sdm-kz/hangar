@@ -26,17 +26,6 @@ public sealed record PtySpawnRequest(
     IReadOnlyDictionary<string, string> Environment,
     string? BuildStamp = null,
     /// <summary>
-    /// Watchdog tunables, since the watchdog runs host-side. Null falls back to the defaults, which
-    /// keeps an older web app able to spawn a newer host.
-    /// </summary>
-    WatchdogOptions? Watchdog = null,
-    /// <summary>
-    /// Whether the watchdog may auto-continue THIS session. The per-session opt-in, as opposed to the
-    /// machine-wide <see cref="WatchdogOptions.Enabled"/> master switch; re-sent over the pipe
-    /// whenever the user toggles it, and again on every re-attach so sessions.json stays authoritative.
-    /// </summary>
-    bool WatchdogEnabled = false,
-    /// <summary>
     /// Hand the arguments to the child as a <b>verbatim</b> command line — joined with spaces,
     /// already quoted by the caller — instead of letting the pty library quote each one.
     /// <para>Load-bearing for shells. Porta.Pty quotes every argument unconditionally, which most

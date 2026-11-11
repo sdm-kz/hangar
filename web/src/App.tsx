@@ -514,7 +514,7 @@ export function App() {
   }, [everywhere]);
 
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
-  // (new/renamed/exited sessions, Claude going active/idle, watchdog status), so the UI stays current
+  // (new/renamed/exited sessions, Claude going active/idle), so the UI stays current
   // without polling. If the socket drops, the interval polls below take over until it reconnects.
   const wsRef = useRef<WebSocket | null>(null);
   const lastHubMsgRef = useRef<number>(0); // wall-clock of the last frame, for the liveness watchdog
@@ -693,42 +693,15 @@ export function App() {
     };
   }, [auth, streamUp, installing]);
 
-  // Raise a browser (OS) notification when a session newly flips to "attention" (the watchdog gave
-  // up auto-recovering it). Compare against the previous poll so we only notify on the transition,
-  // and seed on first run so pre-existing attention states don't alert on page load.
+  // Notify when a session newly starts waiting on a prompt (idle -> waiting). Compare against the
+  // previous set so we only fire on the transition, and seed on first run so a session already
+  // waiting at page load doesn't alert.
   //
   // Over every machine's sessions, keyed as `everywhere` is. A peer is seeded the way the page is: what it
   // already had going when it came online (or when this page first heard of it) isn't news.
   //
   // None before the stream has said which node this is: the tag carries it (see alertTag), and an alert
   // tagged without it wouldn't replace the push about the same thing on this device.
-  const wdStatusRef = useRef<{ status: Map<string, string>; nodes: Set<string> } | null>(null);
-  useEffect(() => {
-    if (auth !== "authed" || !selfNode) return;
-    const prev = wdStatusRef.current;
-    wdStatusRef.current = {
-      status: new Map(everywhere.sessions.map((s) => [s.id, s.watchdogStatus])),
-      nodes: everywhere.nodes,
-    };
-    if (prev === null) return; // first run: seed only, don't fire for already-stuck sessions
-
-    const newlyStuck = everywhere.sessions.filter(
-      (s) => s.watchdogStatus === "attention" && prev.status.get(s.id) !== "attention" && wasListed(s.id, prev.nodes)
-    );
-    osNotify(
-      newlyStuck.map((s) => ({
-        id: s.id,
-        title: `${alertName(s)} — needs attention`,
-        body: "Claude stopped recovering after repeated API errors.",
-        tag: alertTag("watchdog", s.id),
-      })),
-      openFromNotification
-    );
-  }, [everywhere, auth, selfNode]);
-
-  // Notify when a session newly starts waiting on a prompt (idle -> waiting), mirroring the watchdog
-  // "attention" alert. Compare against the previous set so we only fire on the transition, and seed
-  // on first run so a session already waiting at page load doesn't alert.
   const prevWaitingRef = useRef<{ ids: Set<string>; nodes: Set<string> } | null>(null);
   useEffect(() => {
     if (auth !== "authed" || !selfNode) return;
@@ -763,13 +736,10 @@ export function App() {
     prevFailedRef.current = { ids: new Set(everywhere.failed), nodes: everywhere.nodes };
     if (prev === null) return; // first run: seed only
 
-    // A session the watchdog is minding is about to retry the error by itself, so an alert here would
-    // be about a problem already in hand — it has its own for when it gives up. Same rule as the push
-    // notifier's, so the phone and the tab agree about which failures are worth interrupting you for.
     const newly = [...everywhere.failed]
       .filter((key) => !prev.ids.has(key) && wasListed(key, prev.nodes))
       .map((key) => everywhere.sessions.find((s) => s.id === key))
-      .filter((s): s is SessionInfo => s !== undefined && !s.watchdogEnabled);
+      .filter((s): s is SessionInfo => s !== undefined);
     osNotify(
       newly.map((s) => ({
         id: s.id,

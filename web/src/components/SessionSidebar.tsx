@@ -215,9 +215,7 @@ function groupByFolder<T extends { workingDirectory: string }>(items: T[]) {
  * prompt behind a session that happens to be generating — the whole point of surfacing it up here.
  */
 const FOLDER_URGENCY: Record<Activity, number> = {
-  waiting: 7,
-  attention: 6,
-  recovering: 5,
+  waiting: 5,
   // Above the working states, unlike the tick below them: a finished turn resolves itself the moment
   // you look at it, while a turn that died on an error stays dead until someone retries it. A folder
   // must not hide that behind a session that happens to be generating.

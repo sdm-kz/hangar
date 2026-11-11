@@ -21,8 +21,6 @@ public sealed record CreateSessionRequest(
     string? ResumeSessionId = null,
     /// <summary>Session color (a color name set via <c>/color</c>); carried across a restore. Null = none.</summary>
     string? Color = null,
-    /// <summary>Whether the hang watchdog may auto-continue this session. Off by default.</summary>
-    bool WatchdogEnabled = false,
     /// <summary>
     /// Branch the resumed conversation instead of continuing it (<c>--fork-session</c>): Claude replays
     /// <see cref="ResumeSessionId"/>'s history into a NEW conversation id, so the original is untouched
@@ -84,11 +82,6 @@ public sealed record PersistedSession(
     /// See <see cref="SessionManager.ResumePersistedAsync"/>.
     /// </summary>
     bool WasRunning = false,
-    /// <summary>
-    /// Whether the hang watchdog was enabled for this session, so an auto-resumed session comes back
-    /// with the same unattended-recovery setting instead of silently reverting to off.
-    /// </summary>
-    bool WatchdogEnabled = false,
     /// <summary>Our id of the session this one was forked from (null when not a fork).</summary>
     string? ParentSessionId = null,
     /// <summary>The parent's display name at fork time, so the link survives the parent's removal.</summary>

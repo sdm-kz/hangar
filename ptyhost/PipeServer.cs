@@ -36,10 +36,10 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
     public event Action? ShutdownRequestedEvent;
 
     /// <summary>
-    /// The session's watchdog, once the host has built it. Set rather than injected because the
-    /// watchdog pushes through <see cref="Broadcast"/> and so needs this server first.
+    /// The session's state reporter, once the host has built it. Set rather than injected because the
+    /// reporter pushes through <see cref="Broadcast"/> and so needs this server first.
     /// </summary>
-    public SessionWatchdog? Watchdog { get; set; }
+    public SessionStateReporter? Reporter { get; set; }
 
     /// <summary>Ask the accept loop to stop (the child exited, or a client sent <c>shutdown</c>).</summary>
     public void Stop() => _stopping.Cancel();
@@ -196,9 +196,9 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
 
             // Only now — the handshake above is a fixed welcome-then-one-output-frame sequence, and
             // slipping a control frame into the middle of it would leave the client reading the
-            // scrollback as something else. Seeds the newcomer with the current busy/waiting/watchdog
-            // view so it has something truthful to show without waiting out the next state push.
-            if (Watchdog is { } w)
+            // scrollback as something else. Seeds the newcomer with the current busy/waiting view so it
+            // has something truthful to show without waiting out the next state push.
+            if (Reporter is { } w)
                 client.Outbox.Writer.TryWrite(PtyFrame.Pack(PtyFrameType.Control, w.CurrentState().ToPayload()));
 
             // 3) Live output feeds the same outbox the broadcast control frames use, so every write to
@@ -295,12 +295,6 @@ public sealed class PipeServer(string pipeName, TerminalChannel terminal)
                 ShutdownRequestedEvent?.Invoke();
                 Stop();
                 return true;
-
-            // The per-session watchdog opt-in lives in the web app's sessions.json, so it is pushed
-            // down here on every attach as well as whenever the user toggles it.
-            case "watchdog":
-                Watchdog?.Configure(msg.Enabled, msg.Reset);
-                return false;
 
             default:
                 return false;

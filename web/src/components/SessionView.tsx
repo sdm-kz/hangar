@@ -102,8 +102,6 @@ import {
   Radio,
   RotateCcw,
   Server,
-  ShieldCheck,
-  ShieldOff,
   Square,
   SquareArrowOutUpRight,
   TerminalSquare,
@@ -360,8 +358,8 @@ export function SessionView({
   const uiKey = useSessionKey(session.id);
   const confirm = useConfirm();
   // Closed: the session is a row and a folder, with no process behind either. Everything reading the
-  // folder works as it always did; what needs something to talk to — the terminal, the watchdog,
-  // "continue", stopping — is out, and the Reopen button stands where the terminal would be.
+  // folder works as it always did; what needs something to talk to — the terminal, stopping — is
+  // out, and the Reopen button stands where the terminal would be.
   const closed = session.state === "Restorable";
   const terminalRef = useRef<TerminalPaneHandle>(null);
   // Whether Claude's tab shows the terminal or the chat read from it: this browser's choice, else the
@@ -384,8 +382,6 @@ export function SessionView({
   // The files this session has open. Each is a tab in whichever group of the pane holds it.
   const { fileTabs, closeGuard, settleCloseGuard } = useFileTabs(uiKey);
   const [copiedPath, setCopiedPath] = useState(false);
-  // Optimistic mirror of the watchdog toggle so it flips instantly, then syncs from the session poll.
-  const [wdEnabled, setWdEnabled] = useState(session.watchdogEnabled);
   const fileBrowserRef = useRef<FileBrowserHandle>(null);
   // Each shell's terminal, so a group taking focus from the keyboard can put the keys into it.
   const shellHandles = useRef(new Map<string, TerminalPaneHandle>());
@@ -596,24 +592,6 @@ export function SessionView({
   );
   // The tab api the file browsers get: the same, except that opening a file also shows it.
   const paneTabs = useMemo<FileTabs>(() => ({ ...fileTabs, open: openFile }), [fileTabs, openFile]);
-
-  useEffect(() => setWdEnabled(session.watchdogEnabled), [session.watchdogEnabled]);
-
-  const toggleWatchdog = useCallback(() => {
-    setWdEnabled((prev) => {
-      const next = !prev;
-      // Ask for notification permission here — a real click — so the first "needs attention" alert
-      // isn't lost to browsers that ignore permission prompts not triggered by a user gesture.
-      if (next && "Notification" in window && Notification.permission === "default")
-        Notification.requestPermission().catch(() => {});
-      api.setWatchdog(session.id, next).catch(() => setWdEnabled(prev)); // revert on failure
-      return next;
-    });
-  }, [session.id]);
-
-  const sendContinue = useCallback(() => {
-    api.continueSession(session.id).catch(() => {});
-  }, [session.id]);
 
   const copyPath = useCallback(async () => {
     await writeToClipboard(session.workingDirectory);
@@ -1334,16 +1312,6 @@ export function SessionView({
                 </button>
               )}
               <StateBadge state={session.state} />
-              {session.state === "Running" && session.watchdogStatus === "recovering" && (
-                <Badge variant="warning" title="Watchdog detected an error and is auto-continuing">
-                  Auto-recovering
-                </Badge>
-              )}
-              {session.state === "Running" && session.watchdogStatus === "attention" && (
-                <Badge variant="destructive" title="Watchdog gave up after repeated errors — needs you">
-                  Needs attention
-                </Badge>
-              )}
             </div>
 
             {/* Second line on a phone, same line from md up: where the session lives. From md up its
@@ -1424,37 +1392,6 @@ export function SessionView({
               >
                 <GitFork className="size-4" />
               </Button>
-              {session.state === "Running" && (
-                <>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-[30px]"
-                    onClick={toggleWatchdog}
-                    title={
-                      wdEnabled
-                        ? "Hang watchdog on — auto-sends “continue” on API errors. Click to disable."
-                        : "Hang watchdog off. Click to enable auto-recovery."
-                    }
-                    aria-pressed={wdEnabled}
-                  >
-                    {wdEnabled ? (
-                      <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-500" />
-                    ) : (
-                      <ShieldOff className="size-4 text-muted-foreground" />
-                    )}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="size-[30px]"
-                    onClick={sendContinue}
-                    title="Send “continue” to this session now"
-                  >
-                    <Play className="size-4" />
-                  </Button>
-                </>
-              )}
               {/* A closed session has no process to stop — the one thing its header can do is start
                   it again, so the button in the same corner reopens it instead. */}
               {closed ? (
@@ -1483,9 +1420,6 @@ export function SessionView({
 
           <SessionActionsMenu
             session={session}
-            wdEnabled={wdEnabled}
-            onToggleWatchdog={toggleWatchdog}
-            onContinue={sendContinue}
             onFork={() => onFork(session)}
             onStop={stop}
             onReopen={onReopen}
@@ -1725,7 +1659,6 @@ function SessionInfoList({ session }: { session: SessionInfo }) {
       {session.model && <InfoRow label="Model">{session.model}</InfoRow>}
       {session.permissionMode && <InfoRow label="Permissions">{session.permissionMode}</InfoRow>}
       <InfoRow label="Remote Control">{session.remoteControl ? "on" : "off"}</InfoRow>
-      <InfoRow label="Watchdog">{session.watchdogEnabled ? "on" : "off"}</InfoRow>
       {/* Paused: what it does shows on its own row and nowhere above it. No optimistic flip -- the
           session list pushed back after the write carries it, here and in every other browser. */}
       <InfoRow label="Activity">
@@ -1758,23 +1691,17 @@ function SessionInfoList({ session }: { session: SessionInfo }) {
 
 /**
  * Phone-sized replacement for the header's right-hand cluster: one "⋯" button holding the RC link,
- * the watchdog toggle, continue, stop and the full info list. Everything the wide header shows inline
- * lives here, so the title row can spend its width on the session name and folder.
+ * fork, stop and the full info list. Everything the wide header shows inline lives here, so the title
+ * row can spend its width on the session name and folder.
  */
 function SessionActionsMenu({
   session,
-  wdEnabled,
-  onToggleWatchdog,
-  onContinue,
   onFork,
   onStop,
   onReopen,
   stopping,
 }: {
   session: SessionInfo;
-  wdEnabled: boolean;
-  onToggleWatchdog: () => void;
-  onContinue: () => void;
   onFork: () => void;
   onStop: () => void;
   onReopen: () => void;
@@ -1810,31 +1737,6 @@ function SessionActionsMenu({
               >
                 <Radio className="size-4" /> Open in Claude Code app
               </a>
-            )}
-            {running && (
-              <>
-                <MenuItem
-                  onClick={() => {
-                    onToggleWatchdog();
-                    setOpen(false);
-                  }}
-                >
-                  {wdEnabled ? (
-                    <ShieldCheck className="size-4 text-emerald-600 dark:text-emerald-500" />
-                  ) : (
-                    <ShieldOff className="size-4 text-muted-foreground" />
-                  )}
-                  Hang watchdog: {wdEnabled ? "on" : "off"}
-                </MenuItem>
-                <MenuItem
-                  onClick={() => {
-                    onContinue();
-                    setOpen(false);
-                  }}
-                >
-                  <Play className="size-4" /> Send “continue”
-                </MenuItem>
-              </>
             )}
             <MenuItem
               disabled={!session.canFork}

@@ -230,9 +230,6 @@ public sealed class ShellManager : IDisposable
 
             var client = await _hosts.StartAsync(
                 id, launch.FileName, launch.Arguments, fullDir, BuildEnvironment(launch), 120, 30,
-                // The hang watchdog reads a Claude TUI; against a shell prompt it has nothing to say,
-                // so it is spawned switched off rather than left to interpret somebody's build output.
-                new WatchdogOptions { Enabled = false }, watchdogEnabled: false,
                 verbatimArguments: true, ct: ct);
 
             var shell = new Shell(id, req.SessionId, fullDir, option.Id, option.Label, option.Kind, DateTimeOffset.Now, remote);

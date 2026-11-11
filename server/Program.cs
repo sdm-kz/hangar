@@ -261,7 +261,7 @@ internal static class Program
         // Run as a Windows service when hosted by the SCM; a no-op when launched interactively.
         builder.Host.UseWindowsService(o => o.ServiceName = "Hangar");
 
-        // A faulting hosted service (e.g. the watchdog) must NOT tear the whole host down — the
+        // A faulting hosted service (e.g. the push notifier) must NOT tear the whole host down — the
         // default is StopHost, which would take the app with it. Isolate it so one loop dying can't
         // exit the process; the fault is logged instead (and the crash handlers capture the detail).
         builder.Services.Configure<HostOptions>(o =>
@@ -279,7 +279,6 @@ internal static class Program
 
         var authOptions = builder.Configuration.GetSection("Auth").Get<AuthOptions>() ?? new AuthOptions();
         var sessionOptions = builder.Configuration.GetSection("Sessions").Get<SessionManagerOptions>() ?? new SessionManagerOptions();
-        var watchdogOptions = builder.Configuration.GetSection("Watchdog").Get<WatchdogOptions>() ?? new WatchdogOptions();
         var updateOptions = builder.Configuration.GetSection("Update").Get<Update.UpdateOptions>() ?? new Update.UpdateOptions();
         // A relative staging folder means one beside the install, where the settings naming it are read
         // from — as the staging scripts take it (scripts\_paths.ps1) — not the process's working
@@ -320,10 +319,6 @@ internal static class Program
         // reach it) and a hosted service (so its broadcast loop runs for the app's lifetime).
         builder.Services.AddSingleton<SessionHub>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<SessionHub>());
-        // The watchdog itself now runs inside each session's pty host — that is what lets it recover a
-        // session that hangs while this app is stopped. These options are still bound here, handed to
-        // each host at spawn, and read by the manual "Continue" endpoint for its send sequence.
-        builder.Services.AddSingleton(watchdogOptions);
         // Watches the update staging folder and, on request, hands off to the external updater. One
         // instance shared as a singleton (the endpoints and the hub read its status) and as a hosted
         // service (its watch loop runs for the app's lifetime).
@@ -1075,7 +1070,6 @@ internal static class Program
             return null;
         }
 
-        // Enable/disable the hang watchdog for a session.
         // Pin/unpin a session. The manager resolves which conversation the pin belongs to; the client
         // only ever names a session, and reads the result back off the session list.
         app.MapPost("/api/sessions/{id}/pin", (string id, PinRequest body, SessionManager mgr) =>
@@ -1095,20 +1089,6 @@ internal static class Program
         app.MapPost("/api/sessions/{id}/ui", (string id, SessionUiRequest body, SessionManager mgr) =>
             mgr.MergeUi(id, body.State, body.Quiet) is { } ui ? Results.Ok(ui) : Results.NotFound());
 
-        app.MapPost("/api/sessions/{id}/watchdog", async (string id, WatchdogRequest body, SessionManager mgr) =>
-            await mgr.SetWatchdogEnabledAsync(id, body.Enabled) ? Results.Ok() : Results.NotFound());
-
-        // Manually send the recovery sequence ("continue") to a session and clear its watchdog state.
-        app.MapPost("/api/sessions/{id}/continue", async (string id, SessionManager mgr, WatchdogOptions wd) =>
-        {
-            var info = mgr.Get(id);
-            if (info is null || info.State != SessionState.Running) return Results.NotFound();
-            var term = mgr.GetTerminal(id);
-            if (term is null) return Results.NotFound();
-            await term.WriteAsync(System.Text.Encoding.UTF8.GetBytes(wd.SendSequence), CancellationToken.None);
-            await mgr.ResetWatchdogAsync(id);
-            return Results.Ok();
-        });
 
         // Send one message to a session's Claude, as typing it into the terminal would. The browser
         // has always been able to do this over the terminal socket; this is the same thing for
@@ -2493,7 +2473,6 @@ internal record LoginRequest(string? Password);
 
 /// <summary>Body for <c>POST /api/pty/orphans/stop</c>; a null id means "all of them".</summary>
 internal record StopOrphansRequest(string? SessionId);
-internal record WatchdogRequest(bool Enabled);
 internal record PinRequest(bool Pinned);
 internal record ActivityPausedRequest(bool Paused);
 internal record PostponedAutoRequest(bool Enabled);

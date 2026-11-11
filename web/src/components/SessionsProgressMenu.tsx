@@ -43,8 +43,8 @@ export const SessionsProgressContext = createContext<SessionsProgress>({
  * has landed since you last looked. Every activity the fraction counts falls in exactly one.
  */
 const GROUPS: { title: string; activities: Activity[] }[] = [
-  { title: "Waiting on you", activities: ["waiting", "attention", "failed"] },
-  { title: "Working", activities: ["busy", "compacting", "recovering", "background"] },
+  { title: "Waiting on you", activities: ["waiting", "failed"] },
+  { title: "Working", activities: ["busy", "compacting", "background"] },
   { title: "Finished", activities: ["done"] },
 ];
 

@@ -22,16 +22,16 @@ namespace Hangar.PtyHost.Pty;
 /// </remarks>
 public sealed partial class TerminalChannel : IDisposable
 {
-    private const int RecentCapacity = 32 * 1024; // small tail scanned for on-screen text (watchdog)
+    private const int RecentCapacity = 32 * 1024; // small tail scanned for on-screen text (a prompt)
 
     private readonly PtySession _pty;
     // The screen the child has drawn, kept by running its output through a terminal of our own. What
     // an attaching viewer gets is a snapshot of this — see ScreenModel for why a recording of the
     // bytes cannot be replayed, and what that was doing to the scrollback.
     private readonly ScreenModel _screen;
-    // A short tail of the most recent raw VT bytes, ANSI-stripped on demand so the watchdog can scan
-    // roughly the current screen for an error banner. Kept raw rather than read off the screen model:
-    // the watchdog matches on text as it was streamed, which is not quite the text as it was laid out.
+    // A short tail of the most recent raw VT bytes, ANSI-stripped on demand so the state reporter can
+    // scan the latest output for a prompt. Kept raw rather than read off the screen model: the reporter
+    // matches on text as it was streamed, which is not quite the text as it was laid out.
     private readonly RingBuffer _recentRaw = new(RecentCapacity);
     private readonly Dictionary<Guid, ChannelWriter<byte[]>> _subs = new();
     private readonly object _lock = new();
@@ -86,11 +86,11 @@ public sealed partial class TerminalChannel : IDisposable
 
     /// <summary>
     /// The most recent on-screen text with ANSI escapes stripped (roughly the current screen).
-    /// Used by the watchdog to spot an error banner. Latin1 maps each VT byte 1:1 to a char, so the
-    /// visible ASCII survives; computed on demand since only the watchdog poll needs it.
+    /// Used by the state reporter to spot a prompt. Latin1 maps each VT byte 1:1 to a char, so the
+    /// visible ASCII survives; computed on demand since only the reporter's tick needs it.
     /// </summary>
     /// <remarks>
-    /// Kept until more output arrives. The watchdog asks every second, and working it out costs a
+    /// Kept until more output arrives. The reporter asks every second, and working it out costs a
     /// copy of the tail, a string of it and a stripped string: a few hundred KB a second of garbage
     /// from a session that prints nothing, which grew the heap straight back after every
     /// <see cref="HeapTrimmer"/> pass.

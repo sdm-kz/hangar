@@ -45,7 +45,7 @@ came from. Clicking one opens it in the browser, on this server or on the paired
 
 **Activity** is the web UI's Sessions-tab fraction: of the sessions doing anything, here and on the
 paired machines, how many have finished a turn. It opens onto them grouped as that fraction's list is:
-waiting on you (a prompt, the watchdog asking, a turn that failed), working, and finished. "Finished" is
+waiting on you (a prompt, a turn that failed), working, and finished. "Finished" is
 the tray's own: a turn that ended since you last opened that session from the tray. A browser keeps its
 own the same way, so the two can differ. Opening a session, or **Mark all seen**, clears it.
 

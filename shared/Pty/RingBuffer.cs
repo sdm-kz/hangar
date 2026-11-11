@@ -3,7 +3,7 @@ namespace Hangar.Pty;
 /// <summary>
 /// Fixed-capacity circular byte buffer holding the most recent <c>capacity</c> bytes. Both sides of
 /// the pipe keep one: the host for the scrollback it replays to a connecting client, the web app for
-/// the recent screen text the watchdog scans.
+/// the recent screen text the state reporter scans.
 /// </summary>
 public sealed class RingBuffer(int capacity)
 {

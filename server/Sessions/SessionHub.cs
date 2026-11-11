@@ -14,9 +14,8 @@ namespace Hangar.Server.Sessions;
 /// UI no longer has to poll <c>/api/sessions</c> and <c>/api/sessions/activity</c>. A single server
 /// loop recomputes the snapshot — the session list plus the set of "busy" ids — and fans it out to
 /// every client, but only when it actually differs from what was last sent. It recomputes on a slow
-/// tick (to catch poll-only transitions: Claude going busy/idle, a process exiting, the watchdog
-/// changing status) and immediately on any explicit change (<see cref="SessionManager.Changed"/>:
-/// create/rename/remove/restore/watchdog). Each client is also seeded with the current snapshot the
+/// tick (to catch poll-only transitions: Claude going busy/idle, a process exiting) and immediately on
+/// any explicit change (<see cref="SessionManager.Changed"/>: create/rename/remove/restore). Each client is also seeded with the current snapshot the
 /// moment it connects. The socket is server → client only, but for the two words a peer node sends on it
 /// (see <see cref="ClientKind.Peer"/>); any other client message other than Close is ignored.
 ///

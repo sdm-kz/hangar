@@ -91,9 +91,6 @@ param(
     # -NestUnderSessionId wins.
     [switch] $Child,
 
-    # Let the hang watchdog auto-continue this session.
-    [switch] $WatchdogEnabled,
-
     [string] $BaseUrl,
 
     # Sent as the X-Api-Key header.
@@ -134,7 +131,6 @@ if ($ResumeSessionId)  { $payload.resumeSessionId = $ResumeSessionId }
 if ($Color)            { $payload.color           = $Color }
 if ($NestUnderSessionId) { $payload.nestedUnderId = $NestUnderSessionId }
 if ($Continue)         { $payload.continue        = $true }
-if ($WatchdogEnabled)  { $payload.watchdogEnabled = $true }
 if ($PSBoundParameters.ContainsKey('RemoteControl')) { $payload.remoteControl = $RemoteControl }
 
 $body = $payload | ConvertTo-Json -Depth 4

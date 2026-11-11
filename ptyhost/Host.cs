@@ -95,12 +95,10 @@ public static class Host
 
         var server = new PipeServer(request.PipeName, terminal);
 
-        // The watchdog runs here too, and for the same reason as everything else in this process: a
-        // session that hangs while the web app is stopped still has to be recovered. It also derives
-        // the on-screen busy/waiting signals and pushes them, so the web app never has to ask.
-        var watchdog = new SessionWatchdog(
-            terminal, request.Watchdog ?? new WatchdogOptions(), request.WatchdogEnabled, server.Broadcast);
-        server.Watchdog = watchdog;
+        // The on-screen busy/waiting signals are derived here, beside the screen they are read off, and
+        // pushed, so the web app never has to ask.
+        var reporter = new SessionStateReporter(terminal, server.Broadcast);
+        server.Reporter = reporter;
 
         // The sniffers run here (they have to — a web app that restarts must not have missed a
         // rename), so their results are pushed to whoever is attached.
@@ -113,7 +111,7 @@ public static class Host
         terminal.SizeApplied += (cols, rows) => server.Broadcast(new PtyControl { Type = "size", Cols = cols, Rows = rows });
         // A shell command starting or ending rides the state message, and goes out at once rather than
         // on the next tick: the tab's "running" mark should follow the prompt, not trail it.
-        terminal.CommandStateChanged += watchdog.PushNow;
+        terminal.CommandStateChanged += reporter.PushNow;
 
         // Two independent reasons to stand down, and the host must wake on EITHER: the child ending
         // by itself, or a client asking us to stop. (Waiting on the child alone deadlocks a Stop from
@@ -146,7 +144,7 @@ public static class Host
 
         using var stopping = new CancellationTokenSource();
         var serving = server.RunAsync(stopping.Token);
-        var watching = watchdog.RunAsync(stopping.Token);
+        var reporting = reporter.RunAsync(stopping.Token);
         var trimming = new HeapTrimmer(terminal).RunAsync(stopping.Token);
 
         standDown.Wait();
@@ -162,7 +160,7 @@ public static class Host
 
         stopping.Cancel();
         server.Stop();
-        try { Task.WaitAll([serving, watching, trimming], TimeSpan.FromSeconds(2)); } catch { }
+        try { Task.WaitAll([serving, reporting, trimming], TimeSpan.FromSeconds(2)); } catch { }
 
         // Disposing closes the pseudoconsole and the job handle (on Unix, signals the child's process
         // group), which terminates the whole child tree if any of it is somehow still up (see

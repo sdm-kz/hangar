@@ -60,7 +60,7 @@ export function TemplateDialog({
   const [launch, setLaunch] = useState<LaunchOptions>(
     template ? launchFromTemplate(template) : DEFAULT_LAUNCH
   );
-  // The launch settings fold away: most templates are name + folder + prompt, and the four settings
+  // The launch settings fold away: most templates are name + folder + prompt, and the three settings
   // under here are the ones you set once and never look at again.
   const [showSettings, setShowSettings] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -85,7 +85,6 @@ export function TemplateDialog({
         model: launch.model,
         remoteControl: launch.remoteControl,
         permissionMode: launch.permissionMode,
-        watchdogEnabled: launch.watchdog,
       };
       onSaved(
         template ? await api.updateTemplate(template.id, patch) : await api.createTemplate(patch)
@@ -310,6 +309,5 @@ export function TemplateDialog({
 function launchSummary(l: LaunchOptions): string {
   const parts = [l.model ? l.model : "default model", l.permissionMode];
   if (!l.remoteControl) parts.push("no remote control");
-  if (l.watchdog) parts.push("watchdog");
   return parts.join(" · ");
 }

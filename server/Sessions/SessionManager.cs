@@ -94,16 +94,11 @@ public sealed class SessionManager : IDisposable
     // One-shot timer for that corrective re-save; created idle and rescheduled (never stacked), so a
     // burst of exits costs a single timer.
     private readonly System.Threading.Timer _exitRecheck;
-    // Same prompt patterns the watchdog uses to avoid auto-answering a dialog — reused here to
-    // surface "Claude is waiting for you" as a first-class signal (a permission/selection prompt on
-    // screen while Claude isn't emitting).
-    // Handed to every pty host at spawn: the watchdog that uses them runs there, not here.
-    private readonly WatchdogOptions _watchdog;
     private readonly Pty.PtyHostOptions _ptyHost;
 
     /// <summary>
     /// Raised whenever the session set or a session's metadata changes (create, rename, remove,
-    /// restore, watchdog toggle). Lets a live view (<see cref="SessionHub"/>) push an update
+    /// restore). Lets a live view (<see cref="SessionHub"/>) push an update
     /// immediately instead of waiting for its next tick. Poll-only transitions (Claude going
     /// busy/idle, a process exiting) are picked up by the hub's periodic recompute, not this event.
     /// </summary>
@@ -111,12 +106,11 @@ public sealed class SessionManager : IDisposable
 
     private void RaiseChanged() => Changed?.Invoke();
 
-    public SessionManager(SessionManagerOptions options, WatchdogOptions watchdog, Pty.PtyHostOptions ptyHost,
+    public SessionManager(SessionManagerOptions options, Pty.PtyHostOptions ptyHost,
         TokenStore tokens, HookEventStore hooks, RecentsStore recents, PinStore pins,
         ActivityPauseStore activityPaused, ProjectStore projects, SessionUiStore sessionUi, ILoggerFactory loggerFactory)
     {
         _options = options;
-        _watchdog = watchdog;
         _ptyHost = ptyHost;
         _hosts = new Pty.PtyHostLauncher(ptyHost, loggerFactory.CreateLogger<Pty.PtyHostLauncher>());
         _tokens = tokens;
@@ -855,9 +849,9 @@ public sealed class SessionManager : IDisposable
 
     /// <summary>
     /// Ids of live sessions that appear to be waiting on the user — a permission/confirmation dialog
-    /// or numbered selection menu is on screen and Claude isn't emitting. Best-effort (keys off the
-    /// same on-screen prompt patterns as the watchdog guard); reliable for dialogs, not for
-    /// open-ended free-text questions that just idle at the normal input box.
+    /// or numbered selection menu is on screen and Claude isn't emitting. Best-effort (the pty host
+    /// matches the dialog's wording on screen); reliable for dialogs, not for open-ended free-text
+    /// questions that just idle at the normal input box.
     /// </summary>
     public IReadOnlyCollection<string> AwaitingInputIds() =>
         _sessions.Values
@@ -1003,9 +997,6 @@ public sealed class SessionManager : IDisposable
     public Pty.ITerminal? GetTerminal(string id) =>
         _sessions.TryGetValue(id, out var s) ? s.Terminal : null;
 
-    /// <summary>Live sessions, for the watchdog to sweep.</summary>
-    internal IEnumerable<ClaudeSession> LiveSessions() => _sessions.Values;
-
     /// <summary>
     /// Rename a session from the UI (or from the session itself via <c>POST /api/self/name</c>). For a
     /// live session this updates the display name and injects a <c>/rename &lt;name&gt;</c> into its
@@ -1042,30 +1033,6 @@ public sealed class SessionManager : IDisposable
     }
 
     /// <summary>
-    /// Toggle the watchdog for one session; disabling also clears any pending state. The setting is
-    /// ours to persist, but the watchdog acting on it lives in the pty host, so this pushes it down.
-    /// </summary>
-    public async Task<bool> SetWatchdogEnabledAsync(string id, bool enabled)
-    {
-        if (!_sessions.TryGetValue(id, out var s)) return false;
-        await s.SetWatchdogAsync(enabled);
-        SavePersisted(); // the opt-in survives a restart, and is re-sent to the host on re-attach
-        RaiseChanged();
-        return true;
-    }
-
-    /// <summary>
-    /// Reset a session's watchdog state (e.g. after a manual "Continue"): clears the give-up flag and
-    /// the consecutive-attempt counter, host-side, so auto-recovery resumes from a clean slate.
-    /// </summary>
-    public async Task ResetWatchdogAsync(string id)
-    {
-        if (!_sessions.TryGetValue(id, out var s)) return;
-        await s.SetWatchdogAsync(enabled: null, reset: true);
-        RaiseChanged();
-    }
-
-    /// <summary>
     /// The gap the TUI needs between two submits. Back-to-back Enters are coalesced into one message
     /// by Claude Code's input box, so a caller sending several in a row must space them out; the
     /// browser's "send all" flush has used the same 150 ms since it shipped
@@ -1080,8 +1047,7 @@ public sealed class SessionManager : IDisposable
     ///
     /// <para>This used to exist only in the browser (<c>TerminalPane.sendMessage</c>), which meant
     /// nothing server-side could talk to a session: the scheduler needs to, and so does anything
-    /// driving a session from a script. The transport underneath is the one the watchdog has always
-    /// used — <see cref="Pty.ITerminal.WriteAsync"/>.</para>
+    /// driving a session from a script. The transport underneath is <see cref="Pty.ITerminal.WriteAsync"/>.</para>
     ///
     /// <para>Returns false when the id is unknown, the session isn't running, or its terminal has
     /// gone — never throws for those, because every caller here is reacting to a timer rather than
@@ -1304,7 +1270,6 @@ public sealed class SessionManager : IDisposable
             req with { WorkingDirectory = fullDir },
             _exe,
             _hosts,
-            _watchdog,
             _loggerFactory.CreateLogger<ClaudeSession>(),
             _tokens.HookToken,
             _options.SelfUrl);
@@ -1402,7 +1367,6 @@ public sealed class SessionManager : IDisposable
         string workingDirectory, parentName, conversationId, permissionMode;
         bool remoteControl;
         string? model;
-        bool watchdogEnabled;
 
         if (_sessions.TryGetValue(id, out var live))
         {
@@ -1414,7 +1378,6 @@ public sealed class SessionManager : IDisposable
             remoteControl = live.RemoteControl;
             model = live.Model;
             permissionMode = live.PermissionMode;
-            watchdogEnabled = live.WatchdogEnabled;
         }
         else if (_restorable.TryGetValue(id, out var p))
         {
@@ -1426,7 +1389,6 @@ public sealed class SessionManager : IDisposable
             remoteControl = p.RemoteControl;
             model = p.Model;
             permissionMode = p.PermissionMode ?? "";
-            watchdogEnabled = p.WatchdogEnabled;
         }
         else return null;
 
@@ -1446,7 +1408,6 @@ public sealed class SessionManager : IDisposable
             Continue: false,
             ResumeSessionId: conversationId,
             Color: null, // a distinct branch — let it get its own /color rather than mirroring the parent
-            WatchdogEnabled: watchdogEnabled,
             ForkSession: true,
             ParentSessionId: id,
             ParentName: parentName));
@@ -1565,7 +1526,6 @@ public sealed class SessionManager : IDisposable
                 Continue: true, // fallback when we never captured the Claude session id
                 ResumeSessionId: p.ClaudeSessionId, // reopen the EXACT conversation when known
                 Color: p.Color,
-                WatchdogEnabled: p.WatchdogEnabled,
                 // Reopening resumes the conversation as-is — it is NOT a fork, whatever this entry once
                 // was — but it keeps its place in the fork tree.
                 ForkSession: false,
@@ -1635,8 +1595,7 @@ public sealed class SessionManager : IDisposable
     /// relaunched with <c>--resume</c> on top of itself.
     /// </summary>
     /// <remarks>
-    /// <para><c>sessions.json</c> stays the source of truth for metadata (name, colour, model, parent,
-    /// watchdog). The pty state directory only answers "is it still alive, and where do I reach it?" —
+    /// <para><c>sessions.json</c> stays the source of truth for metadata (name, colour, model, parent). The pty state directory only answers "is it still alive, and where do I reach it?" —
     /// so a state file with no matching persisted entry is an orphan we can't identify and is left for
     /// the user to deal with rather than resurrected half-formed.</para>
     /// <para>A state file whose host doesn't answer is stale (the machine rebooted, or the host was
@@ -1804,14 +1763,12 @@ public sealed class SessionManager : IDisposable
             Continue: false,
             ResumeSessionId: p.ClaudeSessionId,
             Color: p.Color,
-            WatchdogEnabled: p.WatchdogEnabled,
             ForkSession: false,
             ParentSessionId: p.ParentSessionId,
             ParentName: p.ParentName,
             NestedUnderId: p.NestedUnderId),
         _exe,
         _hosts,
-        _watchdog,
         _loggerFactory.CreateLogger<ClaudeSession>(),
         _tokens.HookToken,
         _options.SelfUrl,
@@ -1822,7 +1779,7 @@ public sealed class SessionManager : IDisposable
     {
         session.MetadataChanged += _ => { SavePersisted(); RaiseChanged(); };
         session.ProcessExited += _ => { SavePersisted(); RaiseChanged(); };
-        // Busy/waiting/watchdog changes are not persisted — they just need to reach the browser.
+        // Busy/waiting changes are not persisted — they just need to reach the browser.
         session.StateChanged += s => { EndTurnSeenOnScreen(s, lookAgain: true); RaiseChanged(); };
     }
 
@@ -2059,8 +2016,8 @@ public sealed class SessionManager : IDisposable
 
     // ---- Persistence: the metadata behind both re-attaching and reopening -------------------------
     // A session's pseudoconsole lives in its own pty host now, so it usually survives an app restart
-    // and AdoptRunningHostsAsync re-attaches to it — this file supplies the name, colour, model, fork
-    // links and watchdog setting that the pty state file deliberately doesn't carry. When the host is
+    // and AdoptRunningHostsAsync re-attaches to it — this file supplies the name, colour, model and fork
+    // links that the pty state file deliberately doesn't carry. When the host is
     // genuinely gone (a reboot: a ConPTY child can't survive one), the same entry is offered as
     // "Restorable" and reopened with --resume/--continue, exactly as before.
 

@@ -21,7 +21,6 @@ namespace Hangar.Server.Sessions;
 public sealed class ClaudeSession : IDisposable
 {
     private readonly ExecutableSpec _exe;
-    private readonly WatchdogOptions _watchdog; // handed to the pty host, which is where it runs
     private readonly ILogger _log;
     private readonly string? _hookToken; // injected into the child's env so its hooks can authenticate back
     private readonly string? _selfUrl;   // ditto: the base URL the child calls back on (/api/self/*)
@@ -121,28 +120,6 @@ public sealed class ClaudeSession : IDisposable
     /// </summary>
     public DateTime? ExitedAt { get; private set; }
 
-    // ---- Watchdog (auto-recover from a hung API/streaming error) -------------------------------
-    // The watchdog itself runs in the pty host, so it keeps working while this app is stopped. What
-    // stays here is the user's per-session opt-in, which is persisted in sessions.json and pushed down
-    // to the host on every attach; the status comes back the other way, on the host's state pushes.
-
-    /// <summary>Whether the hang watchdog may auto-continue this session (user-toggleable). Off by
-    /// default; the launch request opts in, and it can be toggled later per session.</summary>
-    public bool WatchdogEnabled { get; private set; }
-
-    /// <summary>Current watchdog view of the session: "healthy" | "recovering" | "attention".</summary>
-    public string WatchdogStatus => _terminal?.WatchdogStatus ?? "healthy";
-
-    /// <summary>
-    /// Turn the watchdog on or off for this session, optionally clearing the host's give-up flag and
-    /// attempt counter (after a manual "Continue"). Returns once the host has been told.
-    /// </summary>
-    public async Task SetWatchdogAsync(bool? enabled, bool reset = false, CancellationToken ct = default)
-    {
-        if (enabled is { } e) WatchdogEnabled = e;
-        if (_terminal is { } t) await t.SetWatchdogAsync(WatchdogEnabled, reset, ct);
-    }
-
     /// <summary>Bumped whenever the working directory changes; the UI polls it to auto-refresh.</summary>
     public long FsVersion => Interlocked.Read(ref _fsVersion);
 
@@ -150,7 +127,7 @@ public sealed class ClaudeSession : IDisposable
     public event Action<ClaudeSession>? MetadataChanged;
 
     /// <summary>
-    /// Raised when the host pushes new busy / waiting / watchdog state. Nothing persisted changes, so
+    /// Raised when the host pushes new busy / waiting / compacting state. Nothing persisted changes, so
     /// this only asks the session hub to re-broadcast.
     /// </summary>
     public event Action<ClaudeSession>? StateChanged;
@@ -209,11 +186,9 @@ public sealed class ClaudeSession : IDisposable
     /// from a previous run, which must keep its id or every fork link, hook correlation and postponed
     /// message pointing at it would break.
     /// </param>
-    public ClaudeSession(CreateSessionRequest req, ExecutableSpec exe, PtyHostLauncher hosts,
-        WatchdogOptions watchdog, ILogger log,
+    public ClaudeSession(CreateSessionRequest req, ExecutableSpec exe, PtyHostLauncher hosts, ILogger log,
         string? hookToken = null, string? selfUrl = null, string? id = null)
     {
-        _watchdog = watchdog;
         _hookToken = hookToken;
         _selfUrl = selfUrl;
         _hosts = hosts;
@@ -231,7 +206,6 @@ public sealed class ClaudeSession : IDisposable
         ParentSessionId = string.IsNullOrWhiteSpace(req.ParentSessionId) ? null : req.ParentSessionId;
         ParentName = string.IsNullOrWhiteSpace(req.ParentName) ? null : SanitizeName(req.ParentName);
         NestedUnderId = string.IsNullOrWhiteSpace(req.NestedUnderId) ? null : req.NestedUnderId;
-        WatchdogEnabled = req.WatchdogEnabled;
         Name = string.IsNullOrWhiteSpace(req.Name)
             ? new DirectoryInfo(req.WorkingDirectory).Name
             : req.Name!.Trim();
@@ -245,10 +219,6 @@ public sealed class ClaudeSession : IDisposable
         p.Id, p.Name, p.WorkingDirectory, p.RemoteControl, p.Model, p.PermissionMode,
         SessionState.Restorable, ProcessId: 0, p.CreatedAt, Color: p.Color,
         ResumeExact: p.ClaudeSessionId is not null,
-        // Carried across explicitly: the contract's default is `true`, so leaving it out reported
-        // every closed session as watchdogged whatever it was switched to — which the session header
-        // now shows, and which a reopen then contradicts (RestoreAsync relaunches with this value).
-        WatchdogEnabled: p.WatchdogEnabled,
         PostponedCount: PostponedStore.Count(p.WorkingDirectory, p.Id),
         ClaudeSessionId: p.ClaudeSessionId,
         CanFork: p.ClaudeSessionId is not null,
@@ -264,8 +234,6 @@ public sealed class ClaudeSession : IDisposable
     public SessionInfo ToInfo(string? claudeSessionId = null) => new(
         Id, Name, WorkingDirectory, RemoteControl, Model, PermissionMode, State, ProcessId, CreatedAt,
         RemoteUrl: _terminal?.RemoteUrl,
-        WatchdogEnabled: WatchdogEnabled,
-        WatchdogStatus: WatchdogStatus,
         Color: Color,
         PostponedCount: PostponedStore.Count(WorkingDirectory, Id),
         // Only while it runs: a session that exited by itself has nothing left to send into, and the
@@ -284,7 +252,6 @@ public sealed class ClaudeSession : IDisposable
         // seconds ago may well have been killed by a machine shutdown rather than have ended on its
         // own. See SessionManager.ShouldResume.
         WasRunning: State == SessionState.Running,
-        WatchdogEnabled: WatchdogEnabled,
         ParentSessionId: ParentSessionId,
         ParentName: ParentName,
         NestedUnderId: NestedUnderId);
@@ -330,7 +297,7 @@ public sealed class ClaudeSession : IDisposable
         {
             var client = await _hosts.StartAsync(
                 Id, _exe.FileName, launchArgs, WorkingDirectory, BuildEnvironment(), 120, 30,
-                _watchdog, WatchdogEnabled, verbatimArguments: verbatim, ct: ct);
+                verbatimArguments: verbatim, ct: ct);
             Bind(client);
             State = SessionState.Running;
             PromptToType = FiresInitialPrompt && !PromptOnCommandLine ? InitialPrompt : null;
@@ -383,14 +350,11 @@ public sealed class ClaudeSession : IDisposable
                 _log.LogInformation("Session {Id} color set to '{Color}' via terminal /color", Id, Color);
         };
         client.Exited += OnChildExited;
-        // A pushed busy/waiting/watchdog change should reach the browser at once rather than waiting
+        // A pushed busy/waiting change should reach the browser at once rather than waiting
         // for the hub's next tick.
         client.StateChanged += () => StateChanged?.Invoke(this);
         ProcessId = client.ProcessId;
         _processStartTicks = client.ProcessStartTicks;
-        // sessions.json is the source of truth for the per-session opt-in, so tell the host what it is
-        // — on a fresh launch and, just as importantly, on every re-attach.
-        _ = client.SetWatchdogAsync(WatchdogEnabled);
     }
 
     /// <summary>

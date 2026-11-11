@@ -206,18 +206,16 @@ export function NewSessionDialog({
     // (cloning a live session wants a fresh conversation alongside the original).
     setContinueSession(defaultContinue ?? !!preset);
     // A preset's settings are prefilled; without one the last launch's are kept, so a model or a
-    // permission mode picked once holds for the next session started from this page. The watchdog is
-    // the exception either way: it is opt-in per session, so it always comes back off.
-    setLaunch((prev) => ({
-      ...(preset
+    // permission mode picked once holds for the next session started from this page.
+    setLaunch((prev) =>
+      preset
         ? {
             model: preset.model,
             remoteControl: preset.remoteControl,
             permissionMode: preset.permissionMode || "auto",
           }
-        : prev),
-      watchdog: false,
-    }));
+        : prev
+    );
     // A project with exactly one linked folder has an unambiguous answer, so fill it in. With several
     // there is nothing to guess between, and the chips below are one click away.
     if (project && !preset) setDir(project.folders.length === 1 ? project.folders[0] : "");
@@ -293,7 +291,6 @@ export function NewSessionDialog({
         model: opts.model || null,
         initialPrompt: prompt || null,
         permissionMode: opts.permissionMode,
-        watchdogEnabled: opts.watchdog,
         // Continuing a conversation skips the start command, so it is never offered for a template —
         // the prompt *is* the point of the launch.
         continue: !fromTemplate && continueSession,
