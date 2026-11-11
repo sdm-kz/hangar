@@ -126,6 +126,16 @@ public sealed class TokenAuthMiddleware(RequestDelegate next, TokenStore tokens,
             return;
         }
 
+        // A browser's socket is cut when the password is set or changed, as a peer's is when it is revoked:
+        // otherwise a terminal opened with a token just dropped stays open until it disconnects. Not the tray's
+        // local token, which no password change touches.
+        if (ctx.WebSockets.IsWebSocketRequest && !tokens.IsLocalToken(token))
+        {
+            using (tokens.SignedOut.Register(ctx.Abort))
+                await next(ctx);
+            return;
+        }
+
         await next(ctx);
     }
 

@@ -143,8 +143,13 @@ public sealed class TokenStore
             lock (_setLock)
                 if (AuthDisabled) return NewToken();
         if (password is null) return null;
-        // Verify against the stored salted hash (PasswordHasher does the constant-time compare).
-        return PasswordHasher.Verify(password, _passwordHash) ? NewToken() : null;
+        // Verify against the stored salted hash (PasswordHasher does the constant-time compare) -- outside the
+        // lock, being slow on purpose, and then mint under it only if that hash is still the one: a password
+        // changed meanwhile must not let a login with the old one land after it cleared the tokens.
+        var hash = _passwordHash;
+        if (!PasswordHasher.Verify(password, hash)) return null;
+        lock (_setLock)
+            return ReferenceEquals(hash, _passwordHash) ? NewToken() : null;
     }
 
     /// <summary>
@@ -196,11 +201,11 @@ public sealed class TokenStore
     /// <summary>
     /// Set the password of an instance that has none, from the page (<c>POST /api/auth/password</c>):
     /// the same hash an <c>Auth:Password</c> bootstrap stores, without the file edit and the restart. Only
-    /// while <see cref="AuthDisabled"/> — changing a password that is set stays the bootstrap's, so a
-    /// browser left signed in is not enough to lock its owner out. The tokens minted while there was no
-    /// password are dropped, since anyone on this machine could have had one, so other browsers sign in
-    /// when they next connect (a socket already open is checked only when it opens); the caller gets a
-    /// new token instead. Nothing changes unless the hash reaches the disk: a password that held for this run only
+    /// while <see cref="AuthDisabled"/> — changing a password that is set is <see cref="ChangePassword"/>'s,
+    /// which asks for the current one, so a browser left signed in is not enough to lock its owner out. The tokens minted while there was no
+    /// password are dropped, since anyone on this machine could have had one, and the sockets they opened
+    /// are cut (<see cref="SignedOut"/>), so other browsers sign in again; the caller gets a new token
+    /// instead. Nothing changes unless the hash reaches the disk: a password that held for this run only
     /// would leave the instance open again after the next restart, with its owner thinking it closed.
     /// </summary>
     /// <returns>The caller's new token; null when a password is already set or the hash couldn't be saved.</returns>
@@ -215,7 +220,7 @@ public sealed class TokenStore
                 _passwordHash = null;
                 return null;
             }
-            _tokens.Clear();
+            SignEveryoneOut();
             if (!Save())
                 _logger.LogWarning(
                     "A password was set, but {File} could not be rewritten: the tokens handed out while there was " +
@@ -225,8 +230,70 @@ public sealed class TokenStore
         }
     }
 
-    // Makes SetFirstPassword's "is there none yet?" and its set one step, so two at once can't both win.
+    /// <summary>
+    /// Whether <c>Auth:Password</c> holds a plaintext. It is hashed over whatever auth.json has on every
+    /// start (see the constructor), so a password changed from the page would quietly come undone at the
+    /// next restart: <c>POST /api/auth/password/change</c> refuses while it is there.
+    /// </summary>
+    public bool PasswordFromConfig => !string.IsNullOrEmpty(_options.Password);
+
+    /// <summary>Whether auth.json is there but couldn't be used, which refuses every password (see <see cref="AuthDisabled"/>).</summary>
+    public bool AuthUnusable => _authUnusable;
+
+    /// <summary>
+    /// Change a password that is set, from the page (<c>POST /api/auth/password/change</c>), given the one it
+    /// replaces: knowing it is the check, so a browser that was merely left signed in can't lock its owner
+    /// out. Every browser token goes with the old password — a changed password usually means someone else
+    /// may have had it — and the caller gets a new one, as with <see cref="SetFirstPassword"/>. Peer tokens
+    /// are another store's and stay: a paired node holds a token, never the password. Nothing changes unless
+    /// the new hash reaches the disk.
+    /// </summary>
+    /// <returns>The caller's new token; null when <paramref name="current"/> is wrong (<paramref name="wrong"/>
+    /// says so), no password is set, or the hash couldn't be saved.</returns>
+    public string? ChangePassword(string? current, string next, out bool wrong)
+    {
+        lock (_setLock)
+        {
+            wrong = !CheckPassword(current);
+            if (wrong) return null;
+            var previous = _passwordHash;
+            _passwordHash = PasswordHasher.Hash(next);
+            if (!SaveAuthState())
+            {
+                _passwordHash = previous;
+                return null;
+            }
+            SignEveryoneOut();
+            if (!Save())
+                _logger.LogWarning(
+                    "The password was changed, but {File} could not be rewritten: the browsers signed in with the " +
+                    "old one come back after a restart. Delete that file to sign every browser out.", _stateFile);
+            _logger.LogInformation("The password was changed from the page; it is stored in {AuthFile}", _authFile);
+            return NewToken();
+        }
+    }
+
+    // Makes SetFirstPassword's "is there none yet?" and its set one step, so two at once can't both win;
+    // the same for ChangePassword's check and change, and for a login's mint against either.
     private readonly object _setLock = new();
+
+    /// <summary>
+    /// Cancelled when every browser token is dropped (<see cref="SetFirstPassword"/>, <see cref="ChangePassword"/>):
+    /// <see cref="TokenAuthMiddleware"/> ties each socket a browser token opened to it, as it ties a peer's to
+    /// its token. A token is checked only as a socket opens, and a terminal stays open for hours, so without
+    /// this "signed out" would only mean "at the next reconnect".
+    /// </summary>
+    public CancellationToken SignedOut => _signedOut.Token;
+    private CancellationTokenSource _signedOut = new();
+
+    /// <summary>Drop every browser token and cut what was opened with one. Under <see cref="_setLock"/>.</summary>
+    private void SignEveryoneOut()
+    {
+        _tokens.Clear();
+        var cut = _signedOut;
+        _signedOut = new CancellationTokenSource();
+        cut.Cancel();
+    }
 
     public void Revoke(string? token)
     {

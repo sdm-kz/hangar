@@ -514,21 +514,67 @@ internal static class Program
         // Set the first password from the page instead of Auth:Password and a restart. Only with none set,
         // and only from this machine: an instance with no password answers nobody else anyway (see
         // TokenAuthMiddleware), and that is checked again here rather than leaned on. Changing a password
-        // that is set is Auth:Password's. The reply's token is the caller's new login; other browsers sign in
-        // when they next connect.
+        // that is set is the endpoint below's. The reply's token is the caller's new login; other browsers
+        // sign in when they next connect.
         app.MapPost("/api/auth/password", (LoginRequest body, HttpContext ctx, TokenStore tokens) =>
         {
             if (!LocalRequest.Is(ctx))
                 return Results.Json(new { error = "Only a browser on this machine can set the first password." },
                     statusCode: StatusCodes.Status403Forbidden);
             if (!tokens.AuthDisabled)
-                return Results.Conflict(new { error = "A password is already set. Change it with Auth:Password (see docs/install.md)." });
+                return Results.Conflict(new { error = "A password is already set. Change it in Settings → Security." });
             var password = body.Password ?? "";
             if (password.Length < MinPasswordLength)
                 return Results.BadRequest(new { error = $"Use at least {MinPasswordLength} characters." });
             if (password.Length > 1024)
                 return Results.BadRequest(new { error = "That is longer than a password needs to be." });
             return tokens.SetFirstPassword(password) is { } token
+                ? Results.Ok(new { token })
+                : Results.Json(new { error = "The password could not be saved; see the server log." },
+                    statusCode: StatusCodes.Status500InternalServerError);
+        });
+
+        // Change a password that is set, given the current one. From any signed-in browser, here or not: the
+        // current password is the check, not where the asker sits. Throttled with the login, since a wrong
+        // `current` is a guess at the same password. Refused while Auth:Password holds a plaintext, which
+        // would put the old one back on the next start (TokenStore's constructor).
+        app.MapPost("/api/auth/password/change", (ChangePasswordRequest body, HttpContext ctx, TokenStore tokens,
+            LoginThrottle throttle, ILoggerFactory lf) =>
+        {
+            if (tokens.AuthUnusable)
+                return Results.Json(new { error = "The auth file could not be read, so no password can be checked; see the server log." },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            if (tokens.AuthDisabled)
+                return Results.Conflict(new { error = "No password is set yet." });
+            if (tokens.PasswordFromConfig)
+                return Results.Conflict(new
+                {
+                    error = "Auth:Password is set in appsettings, and it is applied again on every start. " +
+                        "Remove it there first (see docs/install.md).",
+                });
+            var password = body.Password ?? "";
+            if (password.Length < MinPasswordLength)
+                return Results.BadRequest(new { error = $"Use at least {MinPasswordLength} characters." });
+            if (password.Length > 1024)
+                return Results.BadRequest(new { error = "That is longer than a password needs to be." });
+
+            var client = LoginThrottle.ClientKey(ctx);
+            if (!throttle.TryBegin(client, out var wait))
+            {
+                var seconds = (int)Math.Ceiling(wait.TotalSeconds);
+                ctx.Response.Headers.RetryAfter = seconds.ToString();
+                return Results.Json(new { error = $"Too many wrong passwords. Try again in {seconds} s." },
+                    statusCode: StatusCodes.Status429TooManyRequests);
+            }
+            var token = tokens.ChangePassword(body.Current, password, out var wrong);
+            if (wrong)
+            {
+                lf.CreateLogger("Auth").LogWarning("A password change from {Client} gave the wrong current password", client);
+                // Not 401: the page takes that for "signed out" and drops to the login screen.
+                return Results.BadRequest(new { error = "The current password is wrong." });
+            }
+            throttle.Succeeded(client);
+            return token is not null
                 ? Results.Ok(new { token })
                 : Results.Json(new { error = "The password could not be saved; see the server log." },
                     statusCode: StatusCodes.Status500InternalServerError);
@@ -2535,6 +2581,7 @@ internal static class Program
 }
 
 internal record LoginRequest(string? Password);
+internal record ChangePasswordRequest(string? Current, string? Password);
 
 /// <summary>Body for <c>POST /api/pty/orphans/stop</c>; a null id means "all of them".</summary>
 internal record StopOrphansRequest(string? SessionId);
