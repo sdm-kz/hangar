@@ -98,7 +98,8 @@ scripts/  build.ps1, deploy.ps1, register-autostart.ps1, uninstall.ps1, install-
           _paths.ps1 (install/staging/data folder resolution, dot-sourced by the others), hgr-new-session.ps1;
           build.sh, install-unix.sh, stage-update.sh + apply-update.sh (the same, for Linux and macOS);
           stage-update-remote.sh (stage a Linux/macOS build on another machine over ssh);
-          install.sh, install.ps1 (the one-line installers, attached to each release)
+          install.sh, install.ps1 (the one-line installers, attached to each release);
+          make-icons.py (every icon from the logo), frame-screenshot.py (a docs screenshot in a macOS window or an iPhone)
 ```
 
 ## Checks

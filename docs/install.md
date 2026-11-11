@@ -184,6 +184,64 @@ firewall prompt: prefer a reverse proxy, or limit the port with `ufw`/`nftables`
 push notifications and the phone PWA), keep the `127.0.0.1` bind and put a TLS proxy or
 `tailscale serve` in front, and set `Server:PublicUrl` to the address people should be sent to.
 
+## Your own domain over Tailscale
+
+`tailscale serve` is the quickest way to HTTPS. With a domain of your own you can have
+`https://hangar.example.com` instead, still reachable only from your own devices, at no cost:
+
+- **Tailscale** carries the traffic. Nothing is opened to the internet.
+- **A DNS record** points the name at the machine's Tailscale address.
+- **Caddy** terminates HTTPS on the machine and passes requests to Hangar.
+- **Cloudflare** hosts the domain's DNS (the free plan). Caddy proves to Let's Encrypt that the name
+  is yours by writing a DNS record through Cloudflare's API (the ACME DNS-01 challenge), so it gets a
+  real certificate for a server nobody else can reach. Cloudflare's proxy is not involved: it could
+  not reach a Tailscale address anyway.
+
+1. **Tailscale.** Install it on the Hangar machine and on each device you'll use, signed in to the same
+   tailnet. On the Hangar machine, `tailscale ip -4` prints its address, `100.x.y.z`.
+2. **The DNS record.** In Cloudflare's dashboard, under your domain's **DNS > Records**, add an `A`
+   record: name `hangar`, IPv4 address `100.x.y.z`, proxy status **DNS only** (the grey cloud).
+3. **An API token for Caddy.** **My Profile > API Tokens > Create Token**, the **Edit zone DNS**
+   template, limited to that one zone. Keep the token for the next step.
+4. **Caddy with the Cloudflare module.** The stock build can't talk to Cloudflare. Download one from
+   [caddyserver.com/download](https://caddyserver.com/download) with `caddy-dns/cloudflare` ticked, or
+   build it with `xcaddy build --with github.com/caddy-dns/cloudflare`. Its Caddyfile:
+
+   ```caddyfile
+   hangar.example.com {
+       tls {
+           dns cloudflare {env.CF_API_TOKEN}
+       }
+       reverse_proxy 127.0.0.1:5099
+   }
+   ```
+
+   Run Caddy with the token in `CF_API_TOKEN`, as a service so it comes back after a restart. It fetches
+   the certificate on first start and renews it on its own. WebSockets, which the terminal and the
+   live session list use, pass through `reverse_proxy` as they are.
+5. **Hangar.** Leave it on `127.0.0.1:5099` and set `"Server": { "PublicUrl": "https://hangar.example.com" }`
+   in `appsettings.Local.json`, so the tray and push notifications link to that address. Caddy marks
+   the requests as forwarded, so Hangar asks for the password: set one first (see
+   [First run](#first-run-set-a-password)).
+
+Open `https://hangar.example.com` on your phone with Tailscale on, add it to the home screen, and
+turn on notifications with the bell.
+
+Worth knowing:
+
+- **The address is public, the server isn't.** Anyone can look the name up and see `100.x.y.z`, but that
+  address only leads anywhere from inside your tailnet.
+- **Each device needs Tailscale switched on** to reach it, the phone included.
+- **More services, one proxy.** Add a site block per name, or a wildcard: a `*` record to the same
+  address and a `*.example.com` block, so every new service gets its name and certificate without
+  touching DNS again.
+- **Caddy listens on every interface** by default, so the name also works for anyone on your LAN who
+  points it at the machine's LAN address. To answer on Tailscale only, add `bind 100.x.y.z` inside the
+  site block (Caddy then needs Tailscale up before it starts).
+- **Some home routers filter DNS answers** that point at private addresses (DNS rebinding protection).
+  If the name doesn't resolve at home but does over mobile data, allow your domain in the router's
+  rebinding settings.
+
 ## Running as a Windows service
 
 For a server that has to keep running while nobody is signed in. Install it with `deploy.ps1` first,

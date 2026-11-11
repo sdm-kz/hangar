@@ -379,7 +379,9 @@ screenshot is this session as a chat):
   tab closed — carrying the same line. A folder or project heading shows the most urgent mark under
   it, so a collapsed group can't hide a question.
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile, installable
-  as a PWA over HTTPS.
+  as a PWA over HTTPS: *Install app* in Chrome or Edge, *Add to Home Screen* on an iPhone, *Add to
+  Dock* in Safari on a Mac. It then opens in its own window, and push notifications reach it with the
+  app closed; on an iPhone, push works only in the home-screen app (iOS 16.4 or later).
 - **Colour themes** — a light/dark switch, plus a Themes dialog with sixteen built-in themes (GitHub,
   Solarized, One, Catppuccin, Gruvbox, Rosé Pine, Dracula, Nord, Tokyo Night and Hangar's own), one
   picked for light mode and one for dark, optionally following the system's setting. A theme colours

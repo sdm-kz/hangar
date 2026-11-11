@@ -29,6 +29,11 @@ them.
 - **Know what every session is doing.** Working, compacting, finished, failed on an API error, or
   waiting on you, with the command it wants permission to run. The ones that need you raise a
   notification in the page and a push notification on your phone.
+- **An app on your phone and desktop.** Install it from the browser (*Install app* in Chrome or Edge,
+  *Add to Home Screen* on an iPhone, *Add to Dock* in Safari on a Mac) and Hangar opens in a window of
+  its own, from its own icon. Turn on notifications with the bell, and a session that needs you
+  reaches your phone even with the app closed. On an iPhone that takes the home-screen app (iOS 16.4
+  or later).
 - **Everything around the conversation.** A file browser and editor, shell tabs in the session's
   folder, another machine's files over SSH, the pages a session works from, and GitHub pull requests
   to review, each as a tab beside the terminal.
@@ -52,15 +57,25 @@ computer, keep it there and put HTTPS in front:
 
 - **Tailscale**: `tailscale serve --bg 5099` publishes it at `https://<machine>.<tailnet>.ts.net`,
   with a real certificate, reachable only from your own devices.
-- **Your own domain**: any TLS reverse proxy (Caddy, nginx) in front of `127.0.0.1:5099`.
+- **Tailscale with your own domain**, free: `hangar.example.com` pointing at the machine's Tailscale
+  address, and Caddy fetching its certificate through Cloudflare's DNS. Still private to your devices,
+  under a name you pick, and one proxy serves any number of such names.
+  See [Your own domain over Tailscale](docs/install.md#your-own-domain-over-tailscale).
+- **Your own domain, in public**: any TLS reverse proxy (Caddy, nginx) in front of `127.0.0.1:5099`.
 
 HTTPS is what the phone app and push notifications need. **Set a password first**: anyone who can log
 in to Hangar has a shell on that machine as you (see [Security model](#security-model)).
 
 <p align="center">
-  <img src="docs/images/phone-sessions.png" alt="Hangar on a phone: the session list, grouped by machine and project" width="260">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/phone-sessions-dark.png">
+    <img src="docs/images/phone-sessions-light.png" alt="Hangar on an iPhone: the session list, grouped by machine and project" width="280">
+  </picture>
   &nbsp;&nbsp;
-  <img src="docs/images/phone-chat.png" alt="Hangar on a phone: a session's chat, with a drafted Markdown section shown rendered" width="260">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/phone-chat-dark.png">
+    <img src="docs/images/phone-chat-light.png" alt="Hangar on an iPhone: a session's chat, with a drafted Markdown section shown rendered" width="280">
+  </picture>
 </p>
 
 **Runs on** Windows, Linux and macOS. **Needs** the Claude Code CLI (v2.1.51 or later), logged in with a
