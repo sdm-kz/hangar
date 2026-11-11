@@ -54,7 +54,8 @@ screenshot is this session as a chat):
   typing it there would, so the terminal stays the session and switching loses nothing. A turn can be
   stopped from the chat, a tool permission answered with **Allow** / **Deny**, and a question Claude asks
   (AskUserQuestion) answered in a form — pick options or type your own, and the choices are typed into
-  its dialog in the terminal. A message sent while Claude is working waits in Claude's queue, as one
+  its dialog in the terminal. A question whose options carry previews shows the picked one's preview,
+  and only its options can be picked, as in the terminal. A message sent while Claude is working waits in Claude's queue, as one
   typed in the terminal does: the chat shows it as a dashed "Queued" bubble until Claude takes it —
   after the turn, or between two of its steps, when it is marked "Sent while Claude was working".
   Anything else that only

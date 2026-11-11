@@ -10,8 +10,14 @@ interface Question {
   question: string;
   header?: string;
   multiSelect?: boolean;
-  options: { label: string; description?: string }[];
+  options: { label: string; description?: string; preview?: string }[];
 }
+
+/**
+ * A question whose options carry a preview: the terminal draws it as a list beside the picked option's
+ * preview, where a number only moves to an option and Enter picks it, with no answer of your own to type.
+ */
+const previewed = (q: Question) => !q.multiSelect && q.options.some((o) => o.preview !== undefined);
 
 /** What was chosen for one question: the options (by index), and anything typed as its own answer. */
 interface Answer {
@@ -40,6 +46,7 @@ export function parseQuestions(input: string | null): Question[] | null {
  * tab of its own, the cursor on its first option:
  * - one answer: its number picks it and moves on; the number after the last option is "Type something.",
  *   which takes the text and an Enter;
+ * - one answer with previews: its number moves to it, and Enter picks it and moves on;
  * - several: each number ticks one; then down past the options to "Type something" (typing there ticks it
  *   too), one more to the question's Submit, and Enter moves on.
  * More than one question, or any with several answers, ends on a review tab whose first choice submits.
@@ -50,6 +57,10 @@ export function questionKeys(questions: Question[], answers: Answer[]): string[]
     const a = answers[i];
     const n = q.options.length;
     const other = typedAnswer(a.other);
+    if (previewed(q)) {
+      keys.push(String(a.picked[0] + 1), ENTER);
+      return;
+    }
     if (!q.multiSelect) {
       if (other) keys.push(String(n + 1), other, ENTER);
       else keys.push(String(a.picked[0] + 1));
@@ -114,7 +125,9 @@ export function ChatQuestion({
     if (!q.multiSelect) set(i, { picked: [k], other: "" });
     else set(i, { picked: a.picked.includes(k) ? a.picked.filter((p) => p !== k) : [...a.picked, k].sort() });
   };
-  const complete = answers.every((a) => a.picked.length > 0 || typedAnswer(a.other).length > 0);
+  const complete = answers.every(
+    (a, i) => a.picked.length > 0 || (!previewed(questions[i]) && typedAnswer(a.other).length > 0)
+  );
 
   const submit = async () => {
     if (!complete || sending) return;
@@ -137,6 +150,8 @@ export function ChatQuestion({
         {questions.map((q, i) => {
           const a = answers[i];
           const reply = answered?.get(q.question);
+          // What the terminal shows beside the options: the picked one's preview, or the first's.
+          const preview = q.options[a.picked[0] ?? 0]?.preview;
           return (
             <fieldset key={i} disabled={!live || sending} className="flex flex-col gap-1.5">
               <legend className="mb-1">
@@ -180,21 +195,29 @@ export function ChatQuestion({
                       </button>
                     );
                   })}
-                  <Input
-                    value={a.other}
-                    placeholder="Or type your own answer"
-                    className="h-8"
-                    onChange={(e) =>
-                      // One answer: typing one replaces a picked option, as the terminal's dialog does.
-                      set(i, q.multiSelect ? { other: e.target.value } : { other: e.target.value, picked: [] })
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-                        e.preventDefault();
-                        void submit();
+                  {previewed(q) ? (
+                    preview && (
+                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 px-2.5 py-2 font-mono text-xs">
+                        {preview}
+                      </pre>
+                    )
+                  ) : (
+                    <Input
+                      value={a.other}
+                      placeholder="Or type your own answer"
+                      className="h-8"
+                      onChange={(e) =>
+                        // One answer: typing one replaces a picked option, as the terminal's dialog does.
+                        set(i, q.multiSelect ? { other: e.target.value } : { other: e.target.value, picked: [] })
                       }
-                    }}
-                  />
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                          e.preventDefault();
+                          void submit();
+                        }
+                      }}
+                    />
+                  )}
                 </>
               ) : (
                 <p className={cn("text-sm", reply ? "" : "text-muted-foreground")}>
