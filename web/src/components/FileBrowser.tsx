@@ -2,7 +2,8 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { ApiError } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_MODEL_PREVIEW, MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
-import { highlightCode } from "@/lib/highlight";
+import { highlightCode, highlightLines } from "@/lib/highlight";
+import { CodeLines, gutterStyle } from "./CodeLines";
 import { useCodeNav } from "@/lib/codeNav";
 import { useHtml } from "@/lib/useHtml";
 import { useContentRev } from "@/lib/useContentRev";
@@ -96,6 +97,7 @@ import { OverflowToolbar, type OverflowItem } from "./OverflowToolbar";
 import {
   ScrollJumpButtons,
   ZoomControls,
+  usePersistentLineNumbers,
   usePersistentReadingWidth,
   usePersistentWordWrap,
   usePersistentZoom,
@@ -2363,6 +2365,7 @@ function FilePreview({
   // preview tab's viewer.
   const [readingWidth, setReadingWidth] = usePersistentReadingWidth("text");
   const [wordWrap, setWordWrap] = usePersistentWordWrap("text");
+  const [lineNumbers, setLineNumbers] = usePersistentLineNumbers("text");
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -2431,9 +2434,14 @@ function FilePreview({
   // the markup is only injected when it actually changed — see useHtml.
   const highlighted = useHtml(
     useMemo(
-      () => (file && text !== null ? highlightCode(file.name, text) : null),
-      [file, text]
+      () => (file && text !== null && !lineNumbers ? highlightCode(file.name, text) : null),
+      [file, text, lineNumbers]
     )
+  );
+  // The same, a line at a time, for the view that numbers its lines (see CodeLines).
+  const numberedLines = useMemo(
+    () => (file && text !== null && lineNumbers ? highlightLines(file.name, text) : null),
+    [file, text, lineNumbers]
   );
   // A click on a name in the code marks it throughout; Ctrl/⌘+click goes to its declaration — in
   // this file, or, through git grep, in another one of the same root, which opens at that line.
@@ -3066,6 +3074,9 @@ function FilePreview({
               wrap={wordWrap}
               // Rendered markdown flows as paragraphs already; a wrap switch there would do nothing.
               onWrapChange={editing || (isMarkdown && mdView === "rendered") ? undefined : setWordWrap}
+              lineNumbers={lineNumbers}
+              onLineNumbersChange={!editing && isMarkdown && mdView === "rendered" ? undefined : setLineNumbers}
+              onGoToLine={!editing && isMarkdown && mdView === "rendered" ? undefined : nav.goToLine}
               className="bottom-3 right-3"
             />
           )}
@@ -3087,7 +3098,7 @@ function FilePreview({
           }}
         >
         {editing ? (
-          <CodeEditor name={file.name} value={draft} onChange={setDraft} zoom={zoom} nav={nav} />
+          <CodeEditor name={file.name} value={draft} onChange={setDraft} zoom={zoom} nav={nav} lineNumbers={lineNumbers} />
         ) : view === "diff" ? (
           diffLoading ? (
             <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
@@ -3156,6 +3167,21 @@ function FilePreview({
                     className="h-full w-full border-0 bg-white"
                   />
                 )
+              ) : lineNumbers ? (
+                <pre
+                  ref={nav.ref}
+                  style={{ zoom, maxWidth: readingWidth ?? undefined, ...gutterStyle(text) }}
+                  className={`code-lines code-lines-sticky mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}
+                >
+                  {nav.overlay}
+                  {numberedLines ? (
+                    <code className="hljs bg-transparent p-0">
+                      <CodeLines text={text} lines={numberedLines} />
+                    </code>
+                  ) : (
+                    <CodeLines text={text} lines={null} />
+                  )}
+                </pre>
               ) : highlighted ? (
                 <pre ref={nav.ref} style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
                   {nav.overlay}

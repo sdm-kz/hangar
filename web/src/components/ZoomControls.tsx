@@ -1,5 +1,16 @@
-import { useCallback, useEffect, useState, type ReactNode, type RefObject } from "react";
-import { ArrowDown, ArrowUp, FoldHorizontal, UnfoldHorizontal, WrapText, ZoomIn, ZoomOut } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  CornerDownLeft,
+  FoldHorizontal,
+  Hash,
+  ListOrdered,
+  UnfoldHorizontal,
+  WrapText,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -109,6 +120,35 @@ export function usePersistentWordWrap(key: string): [boolean, (wrap: boolean) =>
   return [wrap, set];
 }
 
+/**
+ * Line numbers for text previews and the editor, persisted under `hangar.lineNumbers:<key>` beside
+ * the word wrap. Off by default, as there: most of the time a file is read rather than referred to by
+ * line, and the gutter is width the code could have.
+ */
+export function usePersistentLineNumbers(key: string): [boolean, (on: boolean) => void] {
+  const storageKey = `hangar.lineNumbers:${key}`;
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem(storageKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const set = useCallback(
+    (v: boolean) => {
+      setOn(v);
+      try {
+        if (v) localStorage.setItem(storageKey, "1");
+        else localStorage.removeItem(storageKey);
+      } catch {
+        /* storage unavailable — persistence is best-effort */
+      }
+    },
+    [storageKey]
+  );
+  return [on, set];
+}
+
 // Hide the jump buttons this close to the respective end — a jump that saves less than half a
 // screen isn't worth the visual noise.
 const JUMP_SLACK = 200;
@@ -202,6 +242,10 @@ export function ScrollJumpButtons({
  * Pass `wrap`/`onWrapChange` to lead with the word-wrap toggle. Unlike the width toggle it stays on
  * phones: a narrow screen is exactly where a long line runs off the edge.
  *
+ * Pass `lineNumbers`/`onLineNumbersChange` for the line-number toggle, and `onGoToLine` for "go to
+ * line": a button that opens a number field in the box, which Ctrl+G (⌘G) opens too while the viewer
+ * is on screen and the keys are not someone else's.
+ *
  * `leading` goes first of all, set off by a divider: a button of the viewer's own that belongs with these.
  */
 export function ZoomControls({
@@ -211,6 +255,9 @@ export function ZoomControls({
   onWidthChange,
   wrap,
   onWrapChange,
+  lineNumbers,
+  onLineNumbersChange,
+  onGoToLine,
   leading,
   className = "right-3 top-3",
 }: {
@@ -222,6 +269,11 @@ export function ZoomControls({
   /** Whether long lines wrap; pass together with onWrapChange to show the toggle. */
   wrap?: boolean;
   onWrapChange?: (wrap: boolean) => void;
+  /** Whether the lines are numbered; pass together with onLineNumbersChange to show the toggle. */
+  lineNumbers?: boolean;
+  onLineNumbersChange?: (on: boolean) => void;
+  /** Go to a line by its number (1-based); given, the box offers "go to line". */
+  onGoToLine?: (line: number) => void;
   leading?: ReactNode;
   /** Position within the nearest relative ancestor, e.g. "bottom-3 right-3". */
   className?: string;
@@ -232,12 +284,44 @@ export function ZoomControls({
   };
   const widthIndex = Math.max(0, READING_WIDTHS.indexOf(width ?? null));
   const nextWidthIndex = (widthIndex + 1) % READING_WIDTHS.length;
+
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [goingTo, setGoingTo] = useState(false);
+  const [lineText, setLineText] = useState("");
+  const openGoTo = useCallback(() => {
+    setLineText("");
+    setGoingTo(true);
+  }, []);
+  // Ctrl+G, as editors have it. Only for the viewer on screen (a tab kept mounted out of sight has
+  // its box too) and for keys pressed in it, or with nothing in particular focused: the chat's box or
+  // a terminal beside it keep theirs.
+  useEffect(() => {
+    if (!onGoToLine) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "g") return;
+      const box = boxRef.current;
+      if (!box?.getClientRects().length) return;
+      const target = e.target as Node | null;
+      if (target !== document.body && !box.parentElement?.contains(target)) return;
+      e.preventDefault();
+      openGoTo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onGoToLine, openGoTo]);
+  const submitGoTo = () => {
+    const line = Number.parseInt(lineText, 10);
+    setGoingTo(false);
+    if (line > 0) onGoToLine?.(line);
+  };
+
   return (
     // The margin is the scrollbar's, not spacing: `right-3` measures from the pane's padding edge,
     // which runs under the scrollbar track, so without it the box sits a couple of pixels on top of
     // the track it is parked beside. --scrollbar-w is 0 where scrollbars overlay the content, and
     // margin-right does nothing at all where the caller pins the box by its left edge instead.
     <div
+      ref={boxRef}
       className={cn(
         "absolute z-10 mr-[var(--scrollbar-w,0px)] flex items-center rounded-md border bg-background/90 p-0.5 shadow-sm backdrop-blur",
         className
@@ -249,6 +333,70 @@ export function ZoomControls({
           <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />
         </>
       )}
+      {onGoToLine &&
+        (goingTo ? (
+          <form
+            className="flex items-center"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitGoTo();
+            }}
+          >
+            <input
+              autoFocus
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={lineText}
+              onChange={(e) => setLineText(e.target.value.replace(/\D/g, ""))}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  setGoingTo(false);
+                }
+              }}
+              onBlur={() => setGoingTo(false)}
+              placeholder="Line"
+              aria-label="Go to line"
+              className="h-7 w-16 rounded border bg-background px-1.5 text-xs tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+            {/* A phone's number pad has no Enter. Pressed without taking the focus, or the field's
+                blur would close the form before the click lands. */}
+            <Button
+              type="submit"
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              title="Go to line"
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              <CornerDownLeft className="size-4" />
+            </Button>
+          </form>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-muted-foreground"
+            title="Go to line (Ctrl+G)"
+            onClick={openGoTo}
+          >
+            <Hash className="size-4" />
+          </Button>
+        ))}
+      {onLineNumbersChange && (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-pressed={!!lineNumbers}
+          className={cn("size-7 text-muted-foreground", lineNumbers && "bg-accent text-foreground")}
+          title={lineNumbers ? "Line numbers: on — click to hide" : "Line numbers: off — click to show"}
+          onClick={() => onLineNumbersChange(!lineNumbers)}
+        >
+          <ListOrdered className="size-4" />
+        </Button>
+      )}
+      {(onGoToLine || onLineNumbersChange) && <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />}
       {onWrapChange && (
         <>
           <Button

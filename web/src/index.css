@@ -336,6 +336,45 @@
 .dark ::highlight(code-nav-current) {
   background-color: rgb(249 115 22 / 0.45);
 }
+/* The line a "go to line" landed on, for a moment. */
+::highlight(code-nav-line) {
+  background-color: rgb(59 130 246 / 0.25);
+}
+
+/* Line numbers (CodeLines): each line is a block that counts itself, and draws its number in a
+   ::before rather than as text, so the code's text — what code navigation scans and a copy takes —
+   is exactly the file's. The number hangs in a gutter (--code-gutter wide) carved out of the line's
+   own padding, so a line that wraps carries on under the code rather than under the number. */
+.code-lines {
+  counter-reset: code-line;
+}
+.code-lines .code-line {
+  display: block;
+  counter-increment: code-line;
+  padding-left: calc(var(--code-gutter) + 2ch);
+  text-indent: calc(-1 * (var(--code-gutter) + 2ch));
+}
+.code-lines .code-line::before {
+  content: counter(code-line);
+  display: inline-block;
+  box-sizing: border-box;
+  /* The gap is padding, not margin, so a sticky number's background covers it too. */
+  width: calc(var(--code-gutter) + 2ch);
+  padding-right: 2ch;
+  text-align: right;
+  text-indent: 0;
+  /* Dimmed by its color, not by opacity, which would let the code show through a sticky number. */
+  color: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+}
+/* In the read-only view the numbers stay put while a long line is scrolled sideways. Not in the
+   editor: its own text is drawn by a textarea laid over these lines, which would pass over them. */
+.code-lines-sticky .code-line::before {
+  position: sticky;
+  left: 0;
+  background-color: var(--background);
+  /* It sticks at the content edge, so the view's 1rem of padding to its left is covered too. */
+  box-shadow: -1rem 0 0 var(--background);
+}
 
 /* Find in the chat (ChatFind): every match, and the one gone to. The same colors as the code's marks. */
 ::highlight(chat-find) {

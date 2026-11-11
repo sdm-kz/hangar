@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fileExt, fileKind } from "@/lib/fileKind";
-import { highlightCode } from "@/lib/highlight";
+import { highlightCode, highlightLines } from "@/lib/highlight";
+import { CodeLines, gutterStyle } from "./CodeLines";
 import { useCodeNav } from "@/lib/codeNav";
 import { useHtml } from "@/lib/useHtml";
 import { useContentRev } from "@/lib/useContentRev";
@@ -14,6 +15,7 @@ import { ModelViewer } from "./ModelViewer";
 import {
   ScrollJumpButtons,
   ZoomControls,
+  usePersistentLineNumbers,
   usePersistentReadingWidth,
   usePersistentWordWrap,
   usePersistentZoom,
@@ -162,6 +164,7 @@ export function ServerFileViewer({
   // zoom, so the choice sticks across files, reloads and preview tabs.
   const [readingWidth, setReadingWidth] = usePersistentReadingWidth("text");
   const [wordWrap, setWordWrap] = usePersistentWordWrap("text");
+  const [lineNumbers, setLineNumbers] = usePersistentLineNumbers("text");
   // Bumped by the header refresh button: re-runs the text fetch and cache-busts media URLs.
   const [reloadKey, setReloadKey] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -302,7 +305,12 @@ export function ServerFileViewer({
   // useHtml keeps the injected markup identical across renders, so re-renders don't rebuild the
   // <code> (and drop whatever the user had selected in it).
   const highlighted = useHtml(
-    useMemo(() => (text !== null ? highlightCode(name, text) : null), [name, text])
+    useMemo(() => (text !== null && !lineNumbers ? highlightCode(name, text) : null), [name, text, lineNumbers])
+  );
+  // The same, a line at a time, for the view that numbers its lines (see CodeLines).
+  const numberedLines = useMemo(
+    () => (text !== null && lineNumbers ? highlightLines(name, text) : null),
+    [name, text, lineNumbers]
   );
   // A click on a name in the code marks it throughout; Ctrl/⌘+click goes to its declaration.
   const nav = useCodeNav();
@@ -588,6 +596,9 @@ export function ServerFileViewer({
             wrap={wordWrap}
             // Rendered markdown flows as paragraphs already; a wrap switch there would do nothing.
             onWrapChange={editing || (isMarkdown && rendered) ? undefined : setWordWrap}
+            lineNumbers={lineNumbers}
+            onLineNumbersChange={!editing && isMarkdown && rendered ? undefined : setLineNumbers}
+            onGoToLine={!editing && isMarkdown && rendered ? undefined : nav.goToLine}
             className="bottom-3 right-3"
           />
         )}
@@ -640,7 +651,7 @@ export function ServerFileViewer({
             instead.
           </div>
         ) : editing ? (
-          <CodeEditor name={name} value={draft} onChange={setDraft} zoom={zoom} nav={nav} />
+          <CodeEditor name={name} value={draft} onChange={setDraft} zoom={zoom} nav={nav} lineNumbers={lineNumbers} />
         ) : isMarkdown && rendered ? (
           // maxWidth sits on the zoomed box on purpose: `zoom` scales it along with the text, so a
           // line keeps the same character count as you zoom (see READING_WIDTHS).
@@ -666,6 +677,21 @@ export function ServerFileViewer({
               className="h-full w-full border-0 bg-white"
             />
           )
+        ) : lineNumbers && text !== null ? (
+          <pre
+            ref={nav.ref}
+            style={{ zoom, maxWidth: readingWidth ?? undefined, ...gutterStyle(text) }}
+            className={`code-lines code-lines-sticky mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}
+          >
+            {nav.overlay}
+            {numberedLines ? (
+              <code className="hljs">
+                <CodeLines text={text} lines={numberedLines} />
+              </code>
+            ) : (
+              <CodeLines text={text} lines={null} />
+            )}
+          </pre>
         ) : highlighted ? (
           <pre ref={nav.ref} style={{ zoom, maxWidth: readingWidth ?? undefined }} className={`mx-auto overflow-auto p-4 font-mono text-xs leading-relaxed ${wordWrap ? "whitespace-pre-wrap [overflow-wrap:anywhere]" : "whitespace-pre"}`}>
             {nav.overlay}

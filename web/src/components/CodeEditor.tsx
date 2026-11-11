@@ -1,4 +1,5 @@
 import { Fragment, useMemo, type ReactNode } from "react";
+import { CodeLines, gutterStyle } from "@/components/CodeLines";
 import type { CodeNav } from "@/lib/codeNav";
 import { highlightLines } from "@/lib/highlight";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,9 @@ const TEXT = "m-0 border-0 p-4 font-mono text-xs leading-relaxed whitespace-pre 
  *
  * The copy is drawn from tokens through React rather than from highlight.js' HTML, for the reason
  * highlightLines gives: the text is whatever is in the file, and React escapes it.
+ *
+ * With `lineNumbers` the copy numbers its lines (see CodeLines), and the textarea is padded by the
+ * same gutter, so its text still starts where the copy's does.
  */
 export function CodeEditor({
   name,
@@ -33,6 +37,7 @@ export function CodeEditor({
   onChange,
   zoom = 1,
   nav,
+  lineNumbers = false,
   className,
 }: {
   /** The file's name, which picks the language. */
@@ -44,6 +49,8 @@ export function CodeEditor({
   zoom?: number;
   /** The view's code navigation, to work in the editor too. */
   nav?: Pick<CodeNav, "ref" | "input" | "overlay">;
+  /** Number the lines in a gutter on the left. */
+  lineNumbers?: boolean;
   className?: string;
 }) {
   const lines = useMemo(
@@ -53,12 +60,22 @@ export function CodeEditor({
 
   return (
     <div className={cn("h-full w-full overflow-auto", className)}>
-      <div style={{ zoom }} className="grid min-h-full w-max min-w-full">
-        {/* The trailing newline gives a final empty line its height, so the caret on it has a row.
-            Plain text is transparent rather than invisible: code navigation paints its marks on it. */}
-        <pre ref={nav?.ref} aria-hidden className={cn(TEXT, "pointer-events-none", !lines && "code-plain text-transparent")}>
+      <div
+        style={{ zoom, ...(lineNumbers && gutterStyle(value)) }}
+        className="grid min-h-full w-max min-w-full"
+      >
+        {/* The trailing newline gives a final empty line its height, so the caret on it has a row —
+            a numbered one has its number for that. Plain text is transparent rather than invisible:
+            code navigation paints its marks on it. */}
+        <pre
+          ref={nav?.ref}
+          aria-hidden
+          className={cn(TEXT, "pointer-events-none", !lines && "code-plain text-transparent", lineNumbers && "code-lines")}
+        >
           <code className="hljs">
-            {lines
+            {lineNumbers ? (
+              <CodeLines text={value} lines={lines} />
+            ) : lines
               ? lines.map((tokens, n) => (
                   <Fragment key={n}>
                     {n > 0 && "\n"}
@@ -70,7 +87,7 @@ export function CodeEditor({
                   </Fragment>
                 ))
               : value}
-            {"\n"}
+            {!lineNumbers && "\n"}
           </code>
         </pre>
         <textarea
@@ -79,6 +96,7 @@ export function CodeEditor({
           onChange={(e) => onChange(e.target.value)}
           spellCheck={false}
           wrap="off"
+          style={lineNumbers ? { paddingLeft: "calc(1rem + var(--code-gutter) + 2ch)" } : undefined}
           className={cn(
             TEXT,
             "resize-none overflow-hidden bg-transparent outline-none",

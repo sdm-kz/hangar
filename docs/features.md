@@ -176,7 +176,10 @@ screenshot is this session as a chat):
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:
-  - **Text/code** files rendered inline and **editable** (Edit → Save writes the file);
+  - **Text/code** files rendered inline and **editable** (Edit → Save writes the file). The box in
+    the corner, in both modes, turns **line numbers** on (off by default, remembered) and goes **to a
+    line** by its number (**#**, or Ctrl/⌘G), which is centred and lit up, with the editor's caret
+    put on it;
     **images** with a full-page **zoom/pan** lightbox that opens with the whole image fitted to the page and copies it to the clipboard (button or Ctrl/⌘C); **Markdown** rendered (Rendered/Raw toggle);
     anything else is downloadable.
   - **Git**: if the folder is a repo, the current **branch** is shown, changed files are

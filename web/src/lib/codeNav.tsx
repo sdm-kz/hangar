@@ -53,13 +53,17 @@ export interface CodeNav {
   /** Bring a line into view with `word` marked on it — where a search result points. False while
    *  there is no code to do it in (the caller tries again once there is). */
   revealAt: (line: number, word?: string) => boolean;
+  /** Go to a line by its number, as "go to line" does: centred, lit up for a moment, and in an
+   *  editor with the caret at its start. Out of range goes to the first or last. False while there is
+   *  no code to do it in. */
+  goToLine: (line: number) => boolean;
 }
 
 const WORD_CHAR = /[\p{L}\p{N}_$]/u;
 // Where a name means nothing: a doc comment naming the method it sits on is not its declaration.
 const NOT_CODE = ".hljs-comment, .hljs-quote, .hljs-string, .hljs-regexp";
 const MAX_HITS = 5000;
-const NAMES = { all: "code-nav", current: "code-nav-current", link: "code-nav-link" };
+const NAMES = { all: "code-nav", current: "code-nav-current", link: "code-nav-link", line: "code-nav-line" };
 
 /** The view whose marks are in the registry now, so the next one to mark something can take over. */
 let owner: { clear: () => void } | null = null;
@@ -621,6 +625,53 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
     [mark, jump, show, findElsewhere]
   );
 
+  const lineFlash = useRef(0);
+  const goToLine = useCallback((line: number): boolean => {
+    const el = rootRef.current;
+    if (!el || !el.getClientRects().length) return false;
+    const lineSelector = opts.current.lineSelector;
+    const s = scan(el, lineSelector);
+    const breaks = newlines(s.text);
+    const target = Math.max(1, Math.min(line, breaks.length + 1));
+    const start = target <= 1 ? 0 : breaks[target - 2] + 1;
+    const end = breaks[target - 1] ?? s.text.length;
+    const range = document.createRange();
+    if (lineSelector) {
+      const cell = el.querySelectorAll(lineSelector)[target - 1];
+      if (!cell) return false;
+      range.selectNodeContents(cell);
+    } else {
+      const from = locate(s, start, false);
+      if (!from) return false;
+      range.setStart(from[0], from[1]);
+      const to = end > start ? locate(s, end, true) : null;
+      if (to) range.setEnd(to[0], to[1]);
+    }
+    // Centred whether or not the line was already on screen: asked for by number, it is the line you
+    // are about to read, and the middle is where the eye goes to look for it.
+    for (let p: HTMLElement | null = el; p; p = p.parentElement) {
+      if (!/(auto|scroll)/.test(getComputedStyle(p).overflowY) || p.scrollHeight <= p.clientHeight) continue;
+      const box = p.getBoundingClientRect();
+      p.scrollTop += range.getBoundingClientRect().top - (box.top + p.clientHeight / 2);
+      break;
+    }
+    reveal(range); // the horizontal half, for a line that starts out of sight to the side
+    // The line lit up for a moment, so it can be found in the middle of the screen it was brought to.
+    const reg = registry();
+    if (reg && end > start) {
+      reg.set(NAMES.line, new Highlight(range));
+      window.clearTimeout(lineFlash.current);
+      lineFlash.current = window.setTimeout(() => reg.delete(NAMES.line), 1500);
+    }
+    // In an editor the caret goes to the start of the line, so typing picks up there.
+    const input = inputRef.current;
+    if (input) {
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(start, start);
+    }
+    return true;
+  }, []);
+
   const revealAt = useCallback(
     (line: number, w?: string): boolean => {
       const el = rootRef.current;
@@ -896,7 +947,7 @@ export function useCodeNav(options: CodeNavOptions = {}): CodeNav {
         )
       : null;
 
-  return { ref, input: inputCb, overlay, goToDefinition, revealAt };
+  return { ref, input: inputCb, overlay, goToDefinition, revealAt, goToLine };
 }
 
 /** Make `view` the one whose marks are in the registry, clearing whichever was. */
