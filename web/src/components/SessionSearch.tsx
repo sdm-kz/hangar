@@ -32,8 +32,8 @@ function matches(tokens: string[], hay: string): boolean {
 }
 
 /**
- * Session rows rendered at a time; more are added as the list is scrolled to its end. With hundreds of
- * sessions, rendering every hit made each keystroke (and each hover, which moves the highlight) slow.
+ * Rows rendered at a time; more are added as the list is scrolled to its end. With hundreds of sessions
+ * and recents, rendering every hit made each keystroke (and each hover, which moves the highlight) slow.
  */
 const PAGE = 50;
 
@@ -49,8 +49,26 @@ type Hit =
 const sessionHitKey = (s: SessionInfo) => `s:${s.id}`;
 const recentHitKey = (i: number) => `r:${i}`;
 
+/** The most of a field a row renders: each is one truncated line, so the rest would never show. */
+const SHOWN_CHARS = 200;
+
+/**
+ * Cuts a long field down to what a row can show. A recent's prompt can run to thousands of characters,
+ * and marking every hit of a one-letter query across all of them meant tens of thousands of elements per
+ * keystroke. When the first hit lies past what would show, the cut starts just before it instead, so the
+ * row still shows why it matched.
+ */
+function clip(text: string, tokens: string[]): string {
+  if (text.length <= SHOWN_CHARS) return text;
+  const lower = text.toLowerCase();
+  const first = Math.min(...tokens.map((t) => lower.indexOf(t)).filter((i) => i >= 0));
+  if (!Number.isFinite(first) || first < SHOWN_CHARS / 2) return text.slice(0, SHOWN_CHARS);
+  return "…" + text.slice(first - 20, first - 20 + SHOWN_CHARS);
+}
+
 /** Renders `text` with every occurrence of any search term marked. */
-function Highlight({ text, tokens }: { text: string; tokens: string[] }) {
+function Highlight({ text: full, tokens }: { text: string; tokens: string[] }) {
+  const text = full && clip(full, tokens);
   if (tokens.length === 0 || !text) return <>{text}</>;
   const lower = text.toLowerCase();
   // Mark the characters covered by any term, then emit alternating plain/marked runs — this keeps
@@ -287,31 +305,34 @@ export function SessionSearchDialog({
     () => recentIndex.filter((x) => matches(tokens, x.hay)).map((x) => x.r),
     [recentIndex, tokens]
   );
-  // Only the first `limit` session hits are rendered (and reachable by the arrows); the rest come in as
-  // the list is scrolled to its end.
+  // Only the first `limit` hits — sessions, then recents — are rendered (and reachable by the arrows);
+  // the rest come in as the list is scrolled to its end.
   const shownSessions = useMemo(() => sessionHits.slice(0, limit), [sessionHits, limit]);
-  const hiddenSessions = sessionHits.length - shownSessions.length;
+  const shownRecents = useMemo(
+    () => recentHits.slice(0, Math.max(0, limit - sessionHits.length)),
+    [recentHits, limit, sessionHits.length]
+  );
   const total = sessionHits.length + recentHits.length;
+  const hidden = total - shownSessions.length - shownRecents.length;
   const hits: (Hit & { key: string })[] = useMemo(
     () => [
       ...shownSessions.map((session) => ({ kind: "session" as const, session, key: sessionHitKey(session) })),
-      ...recentHits.map((recent, i) => ({ kind: "recent" as const, recent, key: recentHitKey(i) })),
+      ...shownRecents.map((recent, i) => ({ kind: "recent" as const, recent, key: recentHitKey(i) })),
     ],
-    [shownSessions, recentHits]
+    [shownSessions, shownRecents]
   );
 
   // The highlighted row: the first when nothing is, or when the one that was has left the list.
   const cursor = hits.length === 0 ? -1 : Math.max(0, hits.findIndex((h) => h.key === activeKey));
   const cursorKey = cursor >= 0 ? hits[cursor].key : null;
 
-  // Keep the highlighted row visible while arrowing through a long list. Keyed on the row rather than its
-  // index, so a page of sessions rendered above a highlighted recent doesn't scroll the list after it.
+  // Keep the highlighted row visible while arrowing through a long list.
   useEffect(() => {
     if (cursorKey === null) return;
     listRef.current?.querySelector(`[data-hit="${CSS.escape(cursorKey)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [cursorKey]);
 
-  // Render the next page once scrolling brings the end of the session rows near (the arrows extend it
+  // Render the next page once scrolling brings the end of the list near (the arrows extend it
   // themselves, in onKeyDown). Re-observed after each page, so a page that still leaves the end in view
   // is followed straight away by the next.
   useEffect(() => {
@@ -346,10 +367,15 @@ export function SessionSearchDialog({
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
       e.preventDefault();
-      // Off the last shown session, on to the next one rather than past the rest to the recents.
-      if (cursor === shownSessions.length - 1 && hiddenSessions > 0) {
+      // Off the last shown row, on to the next one rather than back round to the first.
+      if (cursor === hits.length - 1 && hidden > 0) {
+        const next = cursor + 1;
         setLimit((l) => l + PAGE);
-        setActiveKey(sessionHitKey(sessionHits[cursor + 1]));
+        setActiveKey(
+          next < sessionHits.length
+            ? sessionHitKey(sessionHits[next])
+            : recentHitKey(next - sessionHits.length)
+        );
       } else if (hits.length) setActiveKey(hits[(cursor + 1) % hits.length].key);
     } else if (e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey)) {
       e.preventDefault();
@@ -408,18 +434,13 @@ export function SessionSearchDialog({
                   onActivate={activate}
                 />
               ))}
-              {hiddenSessions > 0 && (
-                <div ref={setMoreEl} className="px-3 py-2 text-center text-[10px] text-muted-foreground">
-                  {hiddenSessions} more — scroll, or type to narrow
-                </div>
-              )}
             </>
           )}
 
-          {recentHits.length > 0 && (
+          {shownRecents.length > 0 && (
             <>
               <SectionLabel count={recentHits.length}>Recent</SectionLabel>
-              {recentHits.map((r, i) => {
+              {shownRecents.map((r, i) => {
                 return (
                   <RecentRow
                     key={i}
@@ -433,6 +454,12 @@ export function SessionSearchDialog({
                 );
               })}
             </>
+          )}
+
+          {hidden > 0 && (
+            <div ref={setMoreEl} className="px-3 py-2 text-center text-[10px] text-muted-foreground">
+              {hidden} more — scroll, or type to narrow
+            </div>
           )}
         </div>
 
