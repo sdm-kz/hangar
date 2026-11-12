@@ -12,6 +12,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { Element, ElementContent, Root, RootContent } from "hast";
+import type { Nodes as MdNodes, PhrasingContent } from "mdast";
 import type { PluggableList } from "unified";
 import { Code, Eye, Loader2 } from "lucide-react";
 import { getTheme, subscribeTheme } from "@/lib/theme";
@@ -38,6 +39,9 @@ import { CopyButton } from "./CopyPathButton";
  * in a chat that is a draft written for somewhere else (a ticket, a PR description), which reads
  * better as it will look there. A file preview keeps it as code: a document that fences Markdown is
  * showing its source on purpose.
+ *
+ * Pass `breaks` to keep each line break in the text as one, rather than joining the lines into a
+ * paragraph: for text written to be read as laid out, such as the preview beside a question's options.
  */
 // GitHub's sanitize schema minus the `user-content-` id clamp: documents place explicit
 // `<a id="…"></a>` anchors and link to them as `[§2.4](#s-2-4)`, so ids must survive verbatim
@@ -57,12 +61,14 @@ export function Markdown({
   docPath,
   assetUrl,
   copyCode,
+  breaks,
 }: {
   text: string;
   docPath?: string;
   /** Where a file the document references is fetched from; the file API of the view's node by default. */
   assetUrl?: (path: string) => string;
   copyCode?: boolean;
+  breaks?: boolean;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const api = useApi();
@@ -150,7 +156,7 @@ export function Markdown({
   return (
     <div ref={ref}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={breaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
         rehypePlugins={rehypePlugins}
         components={copyCode ? copyComponents : components}
       >
@@ -243,6 +249,28 @@ function rehypeAssetUrls({ docPath, assetUrl }: { docPath?: string; assetUrl: (p
           if (url) node.properties = { ...node.properties, src: url };
         }
       }
+      node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+// remark plugin: a line break inside a paragraph's (or heading's) text becomes a hard break. Code keeps
+// its lines in its own value, which isn't text, so it is left as it is.
+function remarkBreaks() {
+  return (tree: MdNodes) => {
+    const visit = (node: MdNodes) => {
+      if (!("children" in node)) return;
+      node.children = node.children.flatMap((child): MdNodes[] =>
+        child.type === "text" && child.value.includes("\n")
+          ? child.value
+              .split(/\r?\n/)
+              .flatMap((line, i): PhrasingContent[] => [
+                ...(i ? [{ type: "break" } as const] : []),
+                ...(line ? [{ type: "text", value: line } as const] : []),
+              ])
+          : [child]
+      ) as typeof node.children;
       node.children.forEach(visit);
     };
     visit(tree);

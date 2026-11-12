@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ToolResult } from "@/lib/chat";
 import { cn } from "@/lib/utils";
+import { Markdown } from "./Markdown";
 
 /** One question of an AskUserQuestion call, as Claude writes it into the transcript. */
 interface Question {
@@ -197,9 +198,10 @@ export function ChatQuestion({
                   })}
                   {previewed(q) ? (
                     preview && (
-                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 px-2.5 py-2 font-mono text-xs">
-                        {preview}
-                      </pre>
+                      // Markdown, as Claude writes it, with its lines kept as written.
+                      <div className="prose prose-sm max-h-60 max-w-none overflow-auto break-words rounded-md border bg-muted/40 px-3 py-2 dark:prose-invert prose-headings:mb-1.5 prose-headings:mt-3 prose-h1:text-base prose-h2:text-sm prose-h3:text-sm prose-p:my-1.5 prose-pre:bg-muted prose-pre:text-foreground [&>div>*:first-child]:mt-0">
+                        <Markdown text={preview} breaks />
+                      </div>
                     )
                   ) : (
                     <Input
