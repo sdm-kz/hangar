@@ -67,6 +67,12 @@ read of a very long transcript takes its last 6 MB and says `truncated: true`. E
 `status` — the session's `model`, `contextPercent` and `contextWindow` as its status line last reported
 them — once there is one; assistant entries carry their `model` and `context` (tokens in context).
 
+**The latest message of several sessions.** `GET /api/sessions/last-said?ids=<id>,<id>,…` (bearer token)
+is what the session switcher's rows show: for each session with anything said yet, `who` (`you` or
+`claude`), `text` (the message as one plain line, Markdown marks dropped, cut to 300 characters) and
+`time`. Tool calls, their output and Claude Code's own wrapped lines don't count as said. Sessions with
+nothing said, or a transcript that can't be read, are left out of the answer; at most 50 ids a request.
+
 **A session's status line.** `POST /api/self/statusline` (`X-Session-Id` / `X-Hook-Token`, like the
 other self endpoints) is what the status-line command Hangar launches each session with calls: it posts
 the JSON Claude pipes to a status line and gets back the line to show, as plain text.

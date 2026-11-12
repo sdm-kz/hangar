@@ -1256,6 +1256,25 @@ internal static class Program
             }
         });
 
+        // The latest message of each of these sessions' conversations, cut to a line, for the session switcher's
+        // rows (Alt+`). Only the sessions with something said are in the answer; one whose transcript can't be read
+        // just isn't. A handful at a time — the switcher shows a dozen.
+        app.MapGet("/api/sessions/last-said", (string? ids, SessionManager mgr) =>
+        {
+            var said = new Dictionary<string, LastSaid>();
+            foreach (var id in (ids ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct().Take(50))
+            {
+                if (mgr.GetAny(id) is not { ClaudeSessionId: { } conv } info
+                    || ChatTranscriptPath(info.WorkingDirectory, conv) is not { } path) continue;
+                try
+                {
+                    if (ChatTranscript.LastSaidCached(path) is { } s) said[id] = s;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            return Results.Ok(said);
+        });
+
         // One image of the conversation, for the chat's thumbnails: the chat read passes on where each one is
         // (the line's offset and uuid, and its place among the line's images) rather than the image — pasted
         // ones are stored inline as base64, megabytes on every read. Only the session's current conversation:

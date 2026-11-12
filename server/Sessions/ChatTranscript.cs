@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -69,6 +70,9 @@ public sealed record ChatChunk(
     IReadOnlyList<ChatEntry> Entries,
     /// <summary>The session's model and context use, from its status line, when it has reported them.</summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] SessionStatus? Status = null);
+
+/// <summary>The latest message of a conversation, cut to a preview: who said it (<c>you</c> or <c>claude</c>), and when.</summary>
+public sealed record LastSaid(string Who, string Text, string? Time);
 
 /// <summary>
 /// Reads Claude Code's transcript (<c>~/.claude/projects/&lt;folder&gt;/&lt;id&gt;.jsonl</c>) for the chat view of
@@ -541,6 +545,75 @@ public static class ChatTranscript
             if (sb.Length > MaxToolText) break;
         }
         return sb.ToString();
+    }
+
+    /// <summary>Longest preview <see cref="LastSaid"/> passes on: a line or two of a switcher row, never the whole reply.</summary>
+    private const int MaxLastSaid = 300;
+
+    /// <summary>How far back from the end <see cref="LastSaid"/> looks. A turn's tail is mostly tool output, but rarely this much.</summary>
+    private const int LastSaidWindow = 512 * 1024;
+
+    // What LastSaid last found in each transcript, with the length and write time it was found at: the switcher
+    // asks again on every open, and a session that hasn't moved since shouldn't cost a read.
+    private static readonly ConcurrentDictionary<string, (long Length, DateTime Written, LastSaid? Said)> LastSaidCache = new();
+
+    /// <summary><see cref="LastSaid"/>, read again only when the transcript has changed since the last ask.</summary>
+    public static LastSaid? LastSaidCached(string path)
+    {
+        var info = new FileInfo(path);
+        if (LastSaidCache.TryGetValue(path, out var c) && c.Length == info.Length && c.Written == info.LastWriteTimeUtc)
+            return c.Said;
+        var said = LastSaid(path);
+        LastSaidCache[path] = (info.Length, info.LastWriteTimeUtc, said);
+        return said;
+    }
+
+    /// <summary>
+    /// The latest thing said in the conversation — your prompt, or Claude's reply — as one line, for the session
+    /// switcher's rows. Reads only the end of the file, newest line first, and skips what nobody said: tool calls
+    /// and their results, thinking, Claude Code's own bookkeeping (a slash command's echo, a reminder). Null when
+    /// nothing in the window qualifies.
+    /// </summary>
+    public static LastSaid? LastSaid(string path)
+    {
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var from = Math.Max(0, file.Length - LastSaidWindow);
+        var buffer = new byte[(int)(file.Length - from)];
+        file.Seek(from, SeekOrigin.Begin);
+        var read = 0;
+        while (read < buffer.Length && file.Read(buffer, read, buffer.Length - read) is var n and > 0) read += n;
+        if (read == 0) return null;
+
+        // Whole lines only, newest first: a window that starts mid-file starts mid-line, and the last line may
+        // still be being written.
+        var end = Array.LastIndexOf(buffer, (byte)'\n', read - 1);
+        while (end > 0)
+        {
+            var start = Array.LastIndexOf(buffer, (byte)'\n', end - 1) + 1;
+            if (start == 0 && from > 0) break;
+            if (end > start && Parse(buffer.AsSpan(start, end - start), from + start) is { } e && Said(e) is { } said)
+                return said;
+            end = start - 1;
+        }
+        return null;
+    }
+
+    private static LastSaid? Said(ChatEntry e)
+    {
+        if (e.Kind is not ("user" or "assistant") || e.Meta || e.CompactSummary || e.Blocks is null) return null;
+        var text = string.Join(" ", e.Blocks.Where(b => b.Type == "text" && b.Text is not null).Select(b => b.Text));
+        // Claude Code wraps what it adds to a user turn in tags: a slash command's echo, its output, a reminder.
+        if (e.Kind == "user" && text.TrimStart().StartsWith('<')) return null;
+        // Claude answers in Markdown, and a preview is one run of plain text: the marks would show as typed.
+        // Headings, quotes and bullets at a line's start, bold and code anywhere; a lone _ or * is left alone,
+        // as it is as likely a snake_case name or a multiplication.
+        text = Regex.Replace(text, @"(?m)^[ \t]{0,3}(#{1,6}[ \t]+|>[ \t]?|[-*+][ \t]+)", "");
+        text = text.Replace("**", "").Replace("__", "").Replace("`", "");
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+        if (text.Length == 0) return null;
+        // Not between the two halves of an emoji, which would come out as a replacement mark.
+        var cut = char.IsHighSurrogate(text[Math.Min(MaxLastSaid, text.Length) - 1]) ? MaxLastSaid - 1 : MaxLastSaid;
+        return new LastSaid(e.Kind == "user" ? "you" : "claude", text.Length <= MaxLastSaid ? text : text[..cut] + "…", e.Time);
     }
 
     private static string? Cut(string? text, int max) =>

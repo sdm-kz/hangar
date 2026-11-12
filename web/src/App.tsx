@@ -52,6 +52,8 @@ import { SettingsContext, type SettingsOpener, type SettingsTab } from "@/lib/se
 import { type LaunchNode } from "@/components/NodePicker";
 import { isOverdue } from "@/lib/schedules";
 import { SessionSearchDialog } from "@/components/SessionSearch";
+import { SessionSwitcher } from "@/components/SessionSwitcher";
+import { useRecentlyViewed } from "@/lib/recentlyViewed";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { cn } from "@/lib/utils";
@@ -466,6 +468,9 @@ export function App() {
 
   // Every shell there is, for the Shells tab and the count on it.
   const allShells = useAllShells(shellsRev, auth === "authed");
+
+  // The sessions this browser looked at last, newest first — the Alt+` switcher's order.
+  const viewedKeys = useRecentlyViewed(activeKey);
 
   // The same bag over every machine, keyed as `everywhere` is.
   const everywhereIds = useMemo(
@@ -2022,6 +2027,23 @@ export function App() {
               onNodeChange={(node) => setScheduling({ target: null, node })}
             />
           </NodeProvider>
+        )}
+
+        {auth === "authed" && (
+          <SessionSwitcher
+            sessions={everywhere.sessions}
+            viewed={viewedKeys}
+            activeKey={activeKey}
+            activityIds={everywhereIds}
+            nodeNames={nodeNames}
+            // Like a pick from search: the list back on its Sessions tab, the phone's drawer put away.
+            onSelect={(key) => {
+              const { node, id } = splitSessionKey(key);
+              setListTab("sessions");
+              selectSession(id, node);
+              setSidebarOpen(false);
+            }}
+          />
         )}
 
         {searching && (

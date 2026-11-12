@@ -63,6 +63,13 @@ export interface SessionStatus {
   contextWindow?: number | null;
 }
 
+/** The latest message of a session's conversation, cut to a line — the session switcher's preview. */
+export interface LastSaid {
+  who: "you" | "claude";
+  text: string;
+  time: string | null;
+}
+
 /** A read of the transcript from an offset on; `reset` drops what the reader had before. */
 export interface ChatChunk {
   conversation: string | null;

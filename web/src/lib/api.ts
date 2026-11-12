@@ -1,5 +1,6 @@
 import type {
   ChatChunk,
+  LastSaid,
   SlashCommand,
   AllowedNode,
   BrowseResult,
@@ -696,6 +697,10 @@ function createApi(base: string) {
       const q = new URLSearchParams({ offset: String(offset) });
       if (conversation) q.set("conversation", conversation);
       return request(`/api/sessions/${id}/chat?${q}`);
+    },
+    /** The latest message of each of these sessions, for the switcher; only the ones with something said. */
+    getLastSaid(ids: string[]): Promise<Record<string, LastSaid>> {
+      return request(`/api/sessions/last-said?${new URLSearchParams({ ids: ids.join(",") })}`);
     },
 
     /**
