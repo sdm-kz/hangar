@@ -66,6 +66,9 @@
     <!-- Its Linux and macOS counterpart. Kept LF by .gitattributes: a CRLF checkout on Windows would
          otherwise embed a script /bin/sh can't run. -->
     <EmbeddedResource Include="..\scripts\apply-update.sh" LogicalName="Hangar.Server.apply-update.sh" />
+    <!-- The /hgr-* slash commands, which every start installs into ~/.claude/commands
+         (Sessions/ClaudeCommandStore.cs). -->
+    <EmbeddedResource Include="..\claude-commands\*.md" LogicalName="Hangar.Server.claude-commands.%(Filename)%(Extension)" />
     <!-- The public half of the key the release workflow signs SHA256SUMS with: what a release install
          checks a newer release against before staging it (Update/GitHubReleaseSource.cs). A build without
          it doesn't look for releases. -->

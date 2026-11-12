@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useApi } from "@/lib/node";
+import { chord } from "@/lib/shortcuts";
 
 /** Where a floating thing goes on screen: just under the end of the selection it is about. */
 export interface Spot {
@@ -213,8 +214,8 @@ export function CommentCard({
         onKeyDown={onKeyDown}
         placeholder={
           closed
-            ? "What should change here? Ctrl+Shift+Enter adds it to the review"
-            : "What should change here? Ctrl+Enter sends it now, Ctrl+Shift+Enter adds it to the review"
+            ? `What should change here? ${chord("mod", "shift", "Enter")} adds it to the review`
+            : `What should change here? ${chord("mod", "Enter")} sends it now, ${chord("mod", "shift", "Enter")} adds it to the review`
         }
         className="min-h-24 resize-y text-sm"
       />
@@ -228,7 +229,7 @@ export function CommentCard({
           size="sm"
           onClick={() => void run("add")}
           disabled={!body.trim() || busy !== null}
-          title="Keep it in this pull request's review file, to send with the rest (Ctrl+Shift+Enter)"
+          title={`Keep it in this pull request's review file, to send with the rest (${chord("mod", "shift", "Enter")})`}
         >
           {busy === "add" ? <Loader2 className="size-3.5 animate-spin" /> : <Inbox className="size-3.5" />}
           Add to review
@@ -237,7 +238,7 @@ export function CommentCard({
           size="sm"
           onClick={() => void run("send")}
           disabled={closed || !body.trim() || busy !== null}
-          title={closed ? undefined : "Send it to the session's Claude now (Ctrl+Enter)"}
+          title={closed ? undefined : `Send it to the session's Claude now (${chord("mod", "Enter")})`}
         >
           {busy === "send" ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
           Send now
@@ -395,7 +396,8 @@ export function ReviewDialog({
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
       void send();
-    } else if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key.toLowerCase() === "s" || e.code === "KeyS")) {
+      // The letter, or the key where the layout's letter isn't Latin (Ы on a Russian one), as App's chords.
       e.preventDefault();
       void save();
     }
@@ -411,7 +413,7 @@ export function ReviewDialog({
             session is sent.{" "}
             {closed
               ? "The session is closed, so the review waits here until it is running again."
-              : "Ctrl+Enter sends it, Ctrl+S saves."}
+              : `${chord("mod", "Enter")} sends it, ${chord("mod", "S")} saves.`}
           </DialogDescription>
         </DialogHeader>
         <Textarea
@@ -429,14 +431,14 @@ export function ReviewDialog({
               Discard
             </Button>
             <div className="flex-1" />
-            <Button variant="outline" onClick={() => void save()} disabled={!dirty || busy !== null} title="Save (Ctrl+S)">
+            <Button variant="outline" onClick={() => void save()} disabled={!dirty || busy !== null} title={`Save (${chord("mod", "S")})`}>
               {busy === "save" && <Loader2 className="size-4 animate-spin" />}
               Save
             </Button>
             <Button
               onClick={() => void send()}
               disabled={closed || !draft.trim() || busy !== null}
-              title={closed ? undefined : "Send the whole review to the session (Ctrl+Enter)"}
+              title={closed ? undefined : `Send the whole review to the session (${chord("mod", "Enter")})`}
             >
               {busy === "send" ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
               Send review

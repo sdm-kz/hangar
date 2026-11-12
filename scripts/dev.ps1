@@ -17,6 +17,8 @@
       Claude Code session on the machine posts its tool-use events to the port registered there, so a
       dev instance that registered itself would claim them all -- and, once stopped, leave every
       session failing every tool call with "hook error connect ECONNREFUSED".
+    * Hangar's /hgr-* commands are not installed (ClaudeCommands:Enabled=false): ~/.claude/commands is
+      global too, and the installed app keeps them at the version it serves.
     * Sessions are not resumed on start (Sessions:ResumeOnStart=false).
     * Its data folder is its own. The app keeps its data (sessions, settings, node identity, pty host
       state) in %LocalAppData%\Hangar, shared by every instance of it on the machine unless
@@ -68,7 +70,7 @@ if ($SharedData) {
 
 # Each argument quoted: an unquoted "--" or "--Name:value" can be taken apart by PowerShell's own parsing
 # before dotnet sees it.
-$serverArgs = "'--' '--Server:Urls=http://127.0.0.1:$Port' '--Hooks:Enabled=false' '--Sessions:ResumeOnStart=false'"
+$serverArgs = "'--' '--Server:Urls=http://127.0.0.1:$Port' '--Hooks:Enabled=false' '--ClaudeCommands:Enabled=false' '--Sessions:ResumeOnStart=false'"
 $command = $dataSetup + "Set-Location -LiteralPath $(ConvertTo-PsLiteral (Join-Path $root 'server')); " +
   "dotnet run --no-launch-profile $serverArgs"
 Write-Host "Starting backend on http://127.0.0.1:$Port (separate window; Claude hooks off)..." -ForegroundColor Cyan

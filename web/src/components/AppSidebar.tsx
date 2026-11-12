@@ -10,6 +10,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { HooksWarning } from "./HooksWarning";
 import { PasswordNotice } from "./PasswordNotice";
 import logo from "@/assets/hangar-logo.png";
+import { chord } from "@/lib/shortcuts";
 
 export type SidebarTab = "sessions" | "files" | "shells";
 
@@ -140,7 +141,7 @@ export function AppSidebar({
           variant="ghost"
           size="icon"
           className="size-8 text-muted-foreground"
-          title={/Mac|iPhone|iPad/.test(navigator.userAgent) ? "Settings (⌘⇧S)" : "Settings (Ctrl+Shift+S)"}
+          title={`Settings (${chord("mod", "shift", "S")})`}
           onClick={() => settings.open()}
         >
           <Settings className="size-4" />

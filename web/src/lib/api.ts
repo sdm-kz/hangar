@@ -46,6 +46,7 @@ import type {
   ShellOption,
   UpdateStatus,
   ClaudeHooksStatus,
+  ClaudeCommandsStatus,
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
 import type { ChatImageRef } from "@/lib/chat";
@@ -737,6 +738,10 @@ function createApi(base: string) {
     // ---- Claude's hooks: whether they report to this instance (see HooksWarning) ----
     getClaudeHooks(): Promise<ClaudeHooksStatus> {
       return request("/api/claude-hooks");
+    },
+    /** Hangar's /hgr-* slash commands and whether each is installed, for Settings → Commands. */
+    getClaudeCommands(): Promise<ClaudeCommandsStatus> {
+      return request("/api/claude-commands");
     },
     /** Point them here, away from the instance live on their port; its sessions stop reporting to it. */
     takeOverClaudeHooks(): Promise<ClaudeHooksStatus> {

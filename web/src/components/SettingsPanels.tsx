@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import type { ClaudeHooksStatus, Project, UpdateStatus } from "@/types";
+import type { ClaudeCommandsStatus, ClaudeHooksStatus, Project, UpdateStatus } from "@/types";
 import { NodeProvider, useApi } from "@/lib/node";
 import { sessionColor } from "@/lib/sessionColors";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ui/confirm";
 import { Input } from "@/components/ui/input";
@@ -236,11 +237,88 @@ function ChangePassword() {
 }
 
 const HOOKS_DOCS = "https://github.com/sdm-kz/hangar/blob/main/docs/troubleshooting.md";
+const COMMANDS_DOCS = "https://github.com/sdm-kz/hangar/blob/main/docs/commands.md";
 
 /**
  * Settings → Hooks: whether Claude's hooks report to the picked node, whatever the answer — the strip
  * under the sidebar's header shows only the bad ones, and only this node's.
  */
+/**
+ * Settings → Commands: the /hgr-* slash commands Hangar installs in the picked node's ~/.claude/commands,
+ * what each does, and whether the one there is Hangar's (docs/commands.md).
+ */
+export function CommandsPanel() {
+  const api = useApi();
+  const [status, setStatus] = useState<ClaudeCommandsStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStatus(null);
+    setError(null);
+    api.getClaudeCommands().then(setStatus, (e) => setError(message(e)));
+  }, [api]);
+
+  return (
+    <section className="flex flex-col gap-3" data-setting="commands.list">
+      <p className="text-xs text-muted-foreground">
+        Slash commands a session uses to work with Hangar: type them in its terminal or chat, or just ask
+        for what they do. Hangar writes them into <code>~/.claude/commands</code> on every start, and leaves
+        a file of the same name that you wrote alone.{" "}
+        <a href={COMMANDS_DOCS} target="_blank" rel="noreferrer" className="underline underline-offset-2">
+          More
+        </a>
+      </p>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      {!status ? (
+        !error && <Loader2 className="size-4 animate-spin text-muted-foreground" />
+      ) : status.commands.length === 0 ? (
+        <p className="text-xs text-muted-foreground">This node's Hangar is older than its commands.</p>
+      ) : (
+        <>
+          {!status.enabled && (
+            <p className="flex items-center gap-1.5 text-sm">
+              <MinusCircle className="size-4 shrink-0 text-muted-foreground" />
+              Not installed here (ClaudeCommands:Enabled is false).
+            </p>
+          )}
+          <ul className="flex flex-col divide-y rounded-md border">
+            {status.commands.map((c) => (
+              <li key={c.name} className="flex flex-col gap-0.5 px-3 py-2" data-setting={`command:${c.name}`}>
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <code className="text-sm font-medium">/{c.name}</code>
+                  <CommandState state={c.state} />
+                </div>
+                {c.description && <p className="text-xs text-muted-foreground">{c.description}</p>}
+                {c.hint && <p className="break-words font-mono text-[11px] text-muted-foreground/80">{c.hint}</p>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+function CommandState({ state }: { state: ClaudeCommandsStatus["commands"][number]["state"] }) {
+  const [text, title] =
+    state === "installed"
+      ? ["", ""]
+      : state === "own"
+        ? ["your own version", "A file of this name without Hangar's marker line: Hangar leaves it as it is. Delete it to get Hangar's."]
+        : state === "stale"
+          ? ["from another build", "Hangar's, but not this build's: the next start rewrites it."]
+          : ["not installed", "Not in ~/.claude/commands. Hangar writes it on its next start unless ClaudeCommands:Enabled is false."];
+  if (!text) return null;
+  return (
+    <span
+      className={cn("text-xs", state === "own" ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400")}
+      title={title}
+    >
+      {text}
+    </span>
+  );
+}
+
 export function HooksPanel() {
   const api = useApi();
   const confirm = useConfirm();

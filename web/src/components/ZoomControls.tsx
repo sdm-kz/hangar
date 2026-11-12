@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { chord } from "@/lib/shortcuts";
 
 // Discrete zoom stops shared by every zoomable preview; 1 is the always-present default.
 export const ZOOM_LEVELS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -378,7 +379,7 @@ export function ZoomControls({
             variant="ghost"
             size="icon"
             className="size-7 text-muted-foreground"
-            title="Go to line (Ctrl+G)"
+            title={`Go to line (${chord("mod", "G")})`}
             onClick={openGoTo}
           >
             <Hash className="size-4" />

@@ -37,7 +37,7 @@ Vite from `web/` if you want hot reload:
 ```bash
 cd server
 HANGAR_TEST_ROOT="$HOME/.hangar-dev" dotnet run --no-launch-profile -- \
-  --Server:Urls=http://127.0.0.1:5199 --Hooks:Enabled=false --Sessions:ResumeOnStart=false
+  --Server:Urls=http://127.0.0.1:5199 --Hooks:Enabled=false --ClaudeCommands:Enabled=false --Sessions:ResumeOnStart=false
 
 cd web && BACKEND_URL=http://127.0.0.1:5199 npm run dev
 ```
@@ -64,7 +64,9 @@ installation in two ways. Both are prevented by default; keep it that way.
    registered itself would take those events from the installed one and, once stopped, leave every
    session failing hook calls with `ECONNREFUSED`. Dev instances run with `Hooks:Enabled=false`;
    `dev.ps1`, `run.ps1` and the `Hangar (debug 5199, no hooks)` launch profile all set it. If you start
-   the server any other way, pass `--Hooks:Enabled=false` yourself.
+   the server any other way, pass `--Hooks:Enabled=false` yourself. The same goes for
+   `ClaudeCommands:Enabled=false`: `~/.claude/commands` is global too, and a dev instance would write
+   its branch's `/hgr-*` commands over the installed app's.
 
 Also:
 
@@ -89,6 +91,7 @@ server/   .NET 10 daemon, the Minimal API host (Program.cs, Sessions/, Auth/, No
 ptyhost/  the per-session pty host that owns each pseudoconsole
 shared/   source shared between projects: Pty/ (daemon <-> pty host), Common/, Contract/ (the wire records the tray reads)
 web/      React + Vite + TS + Tailwind + shadcn/ui web UI
+claude-commands/  the /hgr-* slash commands, embedded in the server and installed into ~/.claude/commands on start
 tray/     the tray app: tray menu and screenshots, a client of the daemon's API (Tauri: Rust + React)
 docs/     the documentation (install, features, configuration, updating, API, how it works, troubleshooting,
           releasing), screenshots (images/) and design notes (design/)

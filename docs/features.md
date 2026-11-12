@@ -413,8 +413,11 @@ screenshot is this session as a chat):
   order is kept per browser, so the phone and the desk each have their own.
 - **Settings** — the gear at the bottom of the sidebar, or **Ctrl+Shift+S** (⌘⇧S on a Mac) from
   anywhere, terminal included: one dialog for Appearance, Notifications, Nodes, Projects, Schedules,
-  Security (set or change the password, sign out), Claude's hooks, and every node's Updates. Its
-  search box finds a setting by name, and also any project, node, theme or schedule; picking a result
+  Security (set or change the password, sign out), Claude's hooks, Hangar's
+  [slash commands](commands.md) (installed or not, or your own version), and every node's Updates,
+  and a **Shortcuts** tab listing every keyboard shortcut, which **?** opens from anywhere outside a
+  text box. Its search box finds a setting by name, and also any project, node, theme, schedule or
+  shortcut (by what it does or by its keys: *zoom*, *ctrl g*); picking a result
   opens its tab, on the right node, and points at it. The controls used in passing stay where they
   were: the project gear, Schedules, the light/dark switch, the bell and Update. Tabs about one node
   (Projects, Schedules, Hooks) pick which at the top; Nodes and Security are always this node's.

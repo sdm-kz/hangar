@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Check, ChevronLeft, ChevronRight, Copy, Maximize, Minus, Plus, X } from "lucide-react";
+import { chord } from "@/lib/shortcuts";
 
 const MIN = 0.2;
 const MAX = 8;
@@ -171,7 +172,7 @@ export function ImageLightbox({
                 ? "Copied"
                 : copied === "failed"
                   ? "The browser didn't let the image be copied"
-                  : `Copy image (${/Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘C" : "Ctrl+C"})`
+                  : `Copy image (${chord("mod", "C")})`
             }
             onClick={copy}
           >

@@ -9,7 +9,8 @@
   Runs as a dev instance, the same way scripts\dev.ps1 does (see its help for the why of each):
   on -Port as Server:Urls with the launch profile skipped, with Claude hooks off
   (Hooks:Enabled=false -- ~/.claude/settings.json is global, and a dev instance registering itself
-  there would break every Claude session on the machine once it stopped), without resuming sessions
+  there would break every Claude session on the machine once it stopped), without installing the
+  /hgr-* commands in the global ~/.claude/commands (ClaudeCommands:Enabled=false), without resuming sessions
   on start, and with a data folder of its own: HANGAR_TEST_ROOT is set to -DataRoot (default:
   HANGAR_TEST_ROOT when already set, else %LocalAppData%\Hangar-dev) unless -SharedData asks for the
   installed app's %LocalAppData%\Hangar.
@@ -63,7 +64,7 @@ Push-Location (Join-Path $root "server")
 try {
   Write-Host "Starting Hangar on http://127.0.0.1:$Port (Claude hooks off)..." -ForegroundColor Cyan
   # Each argument quoted: an unquoted "--" or "--Name:value" can be taken apart by PowerShell's own parsing.
-  dotnet run --no-launch-profile "--" "--Server:Urls=http://127.0.0.1:$Port" "--Hooks:Enabled=false" "--Sessions:ResumeOnStart=false"
+  dotnet run --no-launch-profile "--" "--Server:Urls=http://127.0.0.1:$Port" "--Hooks:Enabled=false" "--ClaudeCommands:Enabled=false" "--Sessions:ResumeOnStart=false"
 } finally {
   Pop-Location
   if ($hadTestRoot) { $env:HANGAR_TEST_ROOT = $oldTestRoot } else { Remove-Item Env:HANGAR_TEST_ROOT -ErrorAction SilentlyContinue }

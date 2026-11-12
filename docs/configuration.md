@@ -31,6 +31,7 @@ The tray's first run takes the server's port from `Server:Urls` in the `appsetti
 | `Sessions:SelfUrl`          | URL a session calls back on (`HANGAR_URL`); empty = derived from the bound port | `""` |
 | `Hooks:Enabled`             | Register this instance's hooks in `~/.claude/settings.json` (drives busy/waiting/failed status). Off = terminal heuristics only | `true` |
 | `Hooks:Force`               | Claim that registration even when another instance is live on the port it currently names | `false` |
+| `ClaudeCommands:Enabled`    | Install Hangar's `/hgr-*` slash commands in `~/.claude/commands` on every start ([Slash commands](commands.md)) | `true` |
 | `Pty:InstanceKey`           | Namespaces this instance's pty pipes and state dir; empty = the bound port. Keeps a second instance from adopting another's sessions | `""` |
 | `Pty:HostExecutable`        | Path to the pty host; empty = beside the app        | `""`                 |
 | `Pty:AttachTimeoutMs`       | How long a host has to answer its pipe before its state file is called stale | `3000` |

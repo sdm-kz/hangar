@@ -20,6 +20,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, ty
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronUp, Loader2, LocateFixed, Search, X } from "lucide-react";
 import type { GrepMatch, GrepResult } from "@/types";
+import { chord } from "@/lib/shortcuts";
 
 export interface CodeNavOptions {
   /** Elements that each hold one line of code. Set where the view draws a line per element (a
@@ -989,13 +990,13 @@ function NavBar({
       <span className="shrink-0 tabular-nums text-muted-foreground">
         {shown.note ?? (shown.count ? `${shown.index + 1} of ${shown.count}` : "not in this file")}
       </span>
-      <button type="button" className={btn} onClick={onPrev} title="Previous occurrence (Shift+F3)">
+      <button type="button" className={btn} onClick={onPrev} title={`Previous occurrence (${chord("shift", "F3")})`}>
         <ChevronUp className="size-3.5" />
       </button>
       <button type="button" className={btn} onClick={onNext} title="Next occurrence (F3)">
         <ChevronDown className="size-3.5" />
       </button>
-      <button type="button" className={btn} onClick={onDefinition} title="Go to declaration (Ctrl+click)">
+      <button type="button" className={btn} onClick={onDefinition} title={`Go to declaration (${chord("mod", "click")})`}>
         <LocateFixed className="size-3.5" />
       </button>
       {onFind && (

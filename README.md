@@ -48,7 +48,9 @@ them.
   freezes the screen: pick a region, a window or a part of one, mark it up, and send it with a message
   to a session on any machine.
 - **Sessions that use Hangar themselves.** From inside, a session can rename itself, notify you, open
-  files and pull requests as tabs, and start and close child sessions of its own.
+  files and pull requests as tabs, and start and close child sessions of its own. Hangar installs
+  [slash commands](docs/commands.md) for each (`/hgr-notify`, `/hgr-open-file`, `/hgr-run-session`, …),
+  so asking for it is enough.
 - **One-click updates.** A new build is staged beside the running app, and the app offers it under its
   Update button, on this machine or a paired one, without ending a session.
 
@@ -183,6 +185,9 @@ each file up before its first change:
   (`Sessions:AutoTrustFolders=false` turns that off).
 - The one-time warning for `--dangerously-skip-permissions`, pre-accepted the first time a session uses
   that mode.
+- **Its slash commands** in `~/.claude/commands` (`hgr-*.md`), refreshed on every start
+  (`ClaudeCommands:Enabled=false` turns that off). A command of the same name that you wrote is left
+  alone.
 
 The full list, and how to undo each: [What Hangar changes outside its own folders](docs/install.md#what-hangar-changes-outside-its-own-folders).
 
@@ -197,9 +202,12 @@ The full list, and how to undo each: [What Hangar changes outside its own folder
 - [Updating](docs/updating.md): re-running the installer, redeploys, one-click in-app updates, and
   updating another machine.
 - [API](docs/api.md): starting sessions from scripts, and the API a session uses on itself.
+- [Slash commands](docs/commands.md): the `/hgr-*` commands Hangar installs for its sessions, and how to
+  keep your own versions.
 - [How it works](docs/architecture.md): how a session is launched, the architecture, and the design notes.
 - [Troubleshooting](docs/troubleshooting.md).
 - [The tray app](tray/README.md): hotkeys, the screenshot editor, platform notes.
+- Keyboard shortcuts: press **?** in Hangar (or Settings → Shortcuts) for the full list.
 - [Contributing](CONTRIBUTING.md): the dev setup, the checks, and the repository layout.
 
 ## License

@@ -18,18 +18,21 @@ import { NodesPanel } from "./NodesPanel";
 import { NotificationsPanel } from "./NotificationToggle";
 import { ProjectDialog } from "./ProjectDialog";
 import { SchedulesPanel } from "./ScheduleDialog";
-import { HooksPanel, ProjectsPanel, SecurityPanel, UpdatesPanel, type NodeUpdate } from "./SettingsPanels";
+import { CommandsPanel, HooksPanel, ProjectsPanel, SecurityPanel, UpdatesPanel, type NodeUpdate } from "./SettingsPanels";
+import { ShortcutsPanel } from "./ShortcutsPanel";
 import { ThemePanel } from "./ThemePanel";
 import {
   ArrowUpCircle,
   Bell,
   Boxes,
   CalendarClock,
+  Keyboard,
   KeyRound,
   Network,
   Palette,
   Search,
   Settings,
+  SquareSlash,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -64,6 +67,7 @@ const TABS: TabInfo[] = [
   { id: "schedules", label: "Schedules", Icon: CalendarClock, scope: "node" },
   { id: "security", label: "Security", Icon: KeyRound, scope: "self", description: "Who can sign in to this node." },
   { id: "hooks", label: "Hooks", Icon: Webhook, scope: "node" },
+  { id: "commands", label: "Commands", Icon: SquareSlash, scope: "node" },
   {
     id: "updates",
     label: "Updates",
@@ -71,6 +75,7 @@ const TABS: TabInfo[] = [
     scope: "all",
     description: "What each node runs, and what is waiting to be installed.",
   },
+  { id: "shortcuts", label: "Shortcuts", Icon: Keyboard, scope: "none" },
 ];
 
 const tabInfo = (id: SettingsTab) => TABS.find((t) => t.id === id)!;
@@ -85,7 +90,8 @@ const FLASH = ["ring-2", "ring-primary", "ring-offset-2", "ring-offset-backgroun
 
 /**
  * Settings: one place for everything global — how it looks, notifications, the nodes, projects, schedules,
- * the password, Claude's hooks and updates — with a search box over all of it (docs/design/settings.md).
+ * the password, Claude's hooks, Hangar's slash commands and updates, and the keyboard shortcuts for
+ * reference — with a search box over all of it (docs/design/settings.md).
  * The controls used in passing stay where they were (the project gear, Schedules, the light/dark switch,
  * the bell, Update, the strips under the header); this is the place to administer the lot in one sitting.
  *
@@ -286,7 +292,9 @@ export function SettingsDialog({
         ? `This node · ${selfName}`
         : info.scope === "node"
           ? `${node === null ? "This node" : "Node"} · ${nodeName(node)}`
-          : "Every node";
+          : info.scope === "all"
+            ? "Every node"
+            : "";
 
   const editingList = editing ? projectsOf(editing.node) : [];
   const editingProject = editing?.id ? (editingList.find((p) => p.id === editing.id) ?? null) : null;
@@ -487,8 +495,16 @@ function Panel({
           <HooksPanel key={node ?? ""} />
         </NodeProvider>
       );
+    case "commands":
+      return (
+        <NodeProvider node={node}>
+          <CommandsPanel key={node ?? ""} />
+        </NodeProvider>
+      );
     case "updates":
       return <UpdatesPanel nodes={updates} onApplying={onApplying} />;
+    case "shortcuts":
+      return <ShortcutsPanel />;
   }
 }
 

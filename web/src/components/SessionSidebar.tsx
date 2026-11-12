@@ -108,6 +108,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
 } from "lucide-react";
+import { chord } from "@/lib/shortcuts";
 
 // The two lists the session sidebar can show: live sessions, or recent launch presets.
 export type SessionListTab = "sessions" | "recent";
@@ -2544,7 +2545,7 @@ export function SessionSidebar({
           detail,
           showPath ? null : s.workingDirectory,
           restorable ? "Closed — opens on its files; reopen to get the terminal back" : null,
-          "Middle-click or Ctrl/⌘-click to open in a new tab",
+          `Middle-click or ${chord("mod", "click")} to open in a new tab`,
         ]
           .filter(Boolean)
           .join("\n")}
@@ -3038,7 +3039,7 @@ export function SessionSidebar({
     tools.push({
       id: "search",
       label: "Search sessions and recents",
-      title: "Search sessions and recents (Ctrl+Shift+F)",
+      title: `Search sessions and recents (${chord("mod", "shift", "F")})`,
       icon: <Search className="size-3.5" />,
       onClick: onSearch,
     });

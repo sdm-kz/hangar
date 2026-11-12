@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { prettyInput, toolSummary, type ChatItem } from "@/lib/chat";
 import { escapeRegExp, reveal } from "@/lib/codeNav";
+import { chord } from "@/lib/shortcuts";
 
 // Past this many matches the rest aren't marked or counted, the earliest first to go: a letter or two
 // would otherwise put a range on most of the page, each one kept up to date as the chat changes.
@@ -456,7 +457,7 @@ export function useChatFind({
         variant="ghost"
         size="icon"
         className="size-7"
-        title="Previous match (Shift+Enter)"
+        title={`Previous match (${chord("shift", "Enter")})`}
         disabled={!pos.count}
         onMouseDown={keep}
         onClick={() => step(-1)}

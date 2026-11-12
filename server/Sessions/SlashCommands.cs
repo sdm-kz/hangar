@@ -246,7 +246,7 @@ public static class SlashCommands
         }
     }
 
-    private sealed record Meta(string? Name, string? Description, string? Hint, bool? UserInvocable);
+    internal sealed record Meta(string? Name, string? Description, string? Hint, bool? UserInvocable);
 
     /// <summary>
     /// The YAML front matter's name, description, argument-hint and user-invocable — read line by line, as
@@ -266,7 +266,12 @@ public static class SlashCommands
         {
             return new Meta(null, null, null, null);
         }
+        return ParseHead(text);
+    }
 
+    /// <summary><see cref="Head"/> of a command's text already in hand (Hangar's own, embedded ones).</summary>
+    internal static Meta ParseHead(string text)
+    {
         var lines = text.Replace("\r\n", "\n").Split('\n');
         if (lines.Length == 0 || lines[0].Trim() != "---")
         {

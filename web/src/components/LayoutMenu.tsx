@@ -3,6 +3,7 @@ import { useDismissable } from "@/lib/useDismissable";
 import type { LayoutPreset } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { Columns2, LayoutGrid, LayoutPanelLeft, Rows2, Square } from "lucide-react";
+import { chord } from "@/lib/shortcuts";
 
 const PRESETS: { id: LayoutPreset; label: string; icon: typeof Square }[] = [
   { id: "single", label: "Single group", icon: Square },
@@ -56,8 +57,9 @@ export function LayoutMenu({ groups, onPick }: { groups: number; onPick: (preset
           ))}
           <div className="mt-1 border-t px-2 pb-1 pt-2 text-[11px] leading-relaxed text-muted-foreground">
             {groups > 1 ? `${groups} groups open. ` : ""}Drag a tab onto a group's edge to split it, or
-            use the tab's right-click menu. Alt+\ and Alt+- split, Alt+1–4 focus a group, Alt+Z
-            maximizes, Alt+Shift+arrow moves a tab.
+            use the tab's right-click menu. {chord("alt", "\\")} and {chord("alt", "-")} split,{" "}
+            {chord("alt", "1–4")} focus a group, {chord("alt", "Z")} maximizes, {chord("alt", "shift", "arrow")} moves a
+            tab.
           </div>
         </div>
       )}

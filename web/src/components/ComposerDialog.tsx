@@ -16,6 +16,7 @@ import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands"
 import { storedZoom } from "./ZoomControls";
 import type { PostponedImage } from "@/lib/postponed";
 import { useApi } from "@/lib/node";
+import { chord } from "@/lib/shortcuts";
 
 export interface ComposerDraft {
   text: string;
@@ -182,13 +183,13 @@ export function ComposerDialog({
               {closed ? (
                 <>
                   This session is closed, so there is nowhere to send this — postpone it and it stays
-                  with this session&rsquo;s stash, to read back from its row. Ctrl+Shift+Enter{" "}
+                  with this session&rsquo;s stash, to read back from its row. {chord("mod", "shift", "Enter")}{" "}
                   {isEditing ? "saves" : "postpones"}.
                 </>
               ) : (
                 <>
-                  Send it into the terminal now, or postpone it for later. Ctrl+Enter sends,
-                  Ctrl+Shift+Enter {isEditing ? "saves" : "postpones"}.
+                  Send it into the terminal now, or postpone it for later. {chord("mod", "Enter")} sends,{" "}
+                  {chord("mod", "shift", "Enter")} {isEditing ? "saves" : "postpones"}.
                 </>
               )}
             </DialogDescription>
@@ -287,8 +288,8 @@ export function ComposerDialog({
               // a shortcut that returns silently is worse than not mentioning it.
               placeholder={
                 closed
-                  ? "Write your message — Enter for a newline, Ctrl+Shift+Enter to postpone, paste or drop images and files to attach"
-                  : "Write your message — Enter for a newline, Ctrl+Enter to send, Ctrl+Shift+Enter to postpone, paste or drop images and files to attach"
+                  ? `Write your message — Enter for a newline, ${chord("mod", "shift", "Enter")} to postpone, paste or drop images and files to attach`
+                  : `Write your message — Enter for a newline, ${chord("mod", "Enter")} to send, ${chord("mod", "shift", "Enter")} to postpone, paste or drop images and files to attach`
               }
               className="min-h-[35vh] flex-1 resize-none"
               // text-sm and leading-6 at the chat's zoom.
@@ -307,7 +308,7 @@ export function ComposerDialog({
                 variant="outline"
                 onClick={postpone}
                 disabled={!canSubmit || sending}
-                title={`${isEditing ? "Save" : "Postpone"} (Ctrl+Shift+Enter)`}
+                title={`${isEditing ? "Save" : "Postpone"} (${chord("mod", "shift", "Enter")})`}
               >
                 <Inbox className="size-4" />
                 {isEditing ? "Save" : "Postpone"}
@@ -317,7 +318,7 @@ export function ComposerDialog({
               <Button
                 onClick={send}
                 disabled={closed || !canSubmit || sending}
-                title={closed ? undefined : "Send (Ctrl+Enter)"}
+                title={closed ? undefined : `Send (${chord("mod", "Enter")})`}
               >
                 {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                 Send

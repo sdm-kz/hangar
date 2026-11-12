@@ -5,7 +5,8 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "Server__Urls": "http://127.0.0.1:5199",
-        "Hooks__Enabled": "false"
+        "Hooks__Enabled": "false",
+        "ClaudeCommands__Enabled": "false"
       }
     }
   }

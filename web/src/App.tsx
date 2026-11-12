@@ -823,14 +823,22 @@ export function App() {
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
   }, []);
 
-  // Ctrl+Shift+F (⌘⇧F on Mac) opens the session search popup from anywhere, and Ctrl+Shift+S (⌘⇧S)
-  // Settings. Capture phase with stopPropagation so they win even while the terminal has focus (the
+  // Ctrl+Shift+F (⌘⇧F on Mac) opens the session search popup from anywhere, Ctrl+Shift+S (⌘⇧S)
+  // Settings, and ? Settings on its list of shortcuts (web/src/lib/shortcuts.ts — add a new one there). Capture phase with stopPropagation so they win even while the terminal has focus (the
   // keystroke would otherwise go to the pty); shifted combos because plain Ctrl+letter chords belong to
   // the shell and the TUI — and a terminal can't encode Ctrl+Shift+F or S distinctly anyway, so
   // intercepting them costs nothing.
   useEffect(() => {
     if (auth !== "authed") return;
     const onKey = (e: KeyboardEvent) => {
+      // ? opens Settings on the shortcuts — only where it can't be text being typed: not in a text box
+      // (the terminal's input is a textarea too) and not over a dialog.
+      if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target) && !document.querySelector('[role="dialog"]')) {
+        e.preventDefault();
+        setSettings({ tab: "shortcuts" });
+        setSidebarOpen(false);
+        return;
+      }
       if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
       // The key's letter, or the key itself where the layout's letter isn't Latin (Ы on a Russian one).
       const key = e.key.toLowerCase();
@@ -2293,4 +2301,10 @@ function EmptyState({
       </div>
     </div>
   );
+}
+
+/** Whether a key goes into text being typed: a text box, an editable element, or the terminal's input. */
+function typing(target: EventTarget | null): boolean {
+  const t = target as HTMLElement | null;
+  return !!t && (t.isContentEditable || t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
 }

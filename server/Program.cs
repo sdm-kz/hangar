@@ -70,6 +70,11 @@ internal static class Program
         app.Services.GetRequiredService<Sessions.ClaudeHookStatus>().Start(
             port, app.Configuration.GetValue("Hooks:Enabled", true), app.Configuration.GetValue("Hooks:Force", false));
 
+        // Install Hangar's /hgr-* slash commands in ~/.claude/commands, refreshed on every start so they
+        // match this build's self-service API. Opt out with ClaudeCommands:Enabled=false.
+        if (app.Configuration.GetValue("ClaudeCommands:Enabled", true))
+            Sessions.ClaudeCommandStore.EnsureInstalled(app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ClaudeCommands"));
+
         // Freeze the session state file the moment anything says we're going down, so the entries stay
         // marked as running and are there to be matched against the live pty hosts on the next start.
         // ApplicationStopping covers a service stop, the tray's Stop server, the updater and Ctrl+C.
@@ -1323,6 +1328,13 @@ internal static class Program
             Results.Ok(SlashCommands.List(folder is not null && Path.IsPathFullyQualified(folder) && Directory.Exists(folder)
                 ? folder
                 : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile))));
+
+        // Hangar's own /hgr-* commands, each with what is on disk for it, for Settings → Commands.
+        app.MapGet("/api/claude-commands", (IConfiguration config) => Results.Ok(new
+        {
+            enabled = config.GetValue("ClaudeCommands:Enabled", true),
+            commands = ClaudeCommandStore.Status(),
+        }));
 
         // ---- Recent launch presets & folders (shared across devices, persisted server-side) ---
         app.MapGet("/api/recents", (RecentsStore store) => Results.Ok(store.Get()));

@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import { SHORTCUT_GROUPS, chordText } from "@/lib/shortcuts";
 
 /**
  * Settings: the tabs, the index its search box looks through, and the way anything opens it on a tab
@@ -13,14 +14,16 @@ export type SettingsTab =
   | "schedules"
   | "security"
   | "hooks"
-  | "updates";
+  | "commands"
+  | "updates"
+  | "shortcuts";
 
 /**
  * Where a tab's settings live, said on its heading: this browser's storage, this node's (the one the page
  * came from — pairing and the password are never another node's, see NodeProxy.LocalOnly), the node picked
- * at the top of the tab, or every node at once.
+ * at the top of the tab, or every node at once. `none` is a tab that is reference, not settings (Shortcuts).
  */
-export type SettingsScope = "browser" | "self" | "node" | "all";
+export type SettingsScope = "browser" | "self" | "node" | "all" | "none";
 
 /**
  * One thing the search box can find. `id` is what the panel marks the element with (`data-setting`), so
@@ -74,8 +77,36 @@ export const SETTINGS_INDEX: SettingsEntry[] = [
   { id: "security.password", tab: "security", title: "Password", keywords: ["change", "set", "login", "sign in"] },
   { id: "security.signout", tab: "security", title: "Sign out", keywords: ["log out", "logout"] },
   { id: "hooks.status", tab: "hooks", title: "Claude's hooks", keywords: ["take over", "port", "settings.json", "status"] },
+  {
+    id: "commands.list",
+    tab: "commands",
+    title: "Slash commands for sessions",
+    keywords: ["hgr", "notify", "rename", "open file", "pull request", "run session", "review", "close", "~/.claude/commands"],
+  },
   { id: "updates.list", tab: "updates", title: "Updates", keywords: ["version", "build", "release", "upgrade", "restart"] },
+  { id: "shortcuts.list", tab: "shortcuts", title: "Keyboard shortcuts", keywords: ["hotkeys", "keys", "help", "keyboard"] },
+  // Each shortcut, by what it does and by its keys ("ctrl+g", "⌘G"), with its group as the second line.
+  ...SHORTCUT_GROUPS.flatMap((g) =>
+    g.shortcuts.map((s) => {
+      const chords = s.keys.map(chordText);
+      return {
+        id: `shortcut:${g.id}.${s.id}`,
+        tab: "shortcuts" as const,
+        title: s.does,
+        detail: `${g.title} · ${chords.join(", ")}`,
+        // The modifiers by name too, so "cmd" finds a ⌘ shortcut on a PC and "ctrl" one on a Mac.
+        keywords: [...chords, ...s.keys.flat().flatMap(modifierWords), ...(s.keywords ?? []), "shortcut", "key"],
+      };
+    })
+  ),
 ];
+
+function modifierWords(k: string): string[] {
+  if (k === "mod") return ["ctrl", "cmd", "command"];
+  if (k === "ctrl") return ["ctrl", "control"];
+  if (k === "alt") return ["alt", "option"];
+  return k === "shift" ? ["shift"] : [];
+}
 
 export interface SettingsHit {
   entry: SettingsEntry;

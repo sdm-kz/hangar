@@ -30,6 +30,7 @@ import {
 import type { TerminalPaneHandle } from "./TerminalPane";
 import { sessionKey, useApi, useNodeId } from "@/lib/node";
 import { loadChatDraft, saveChatDraft, withQuote } from "@/lib/chatDraft";
+import { chord } from "@/lib/shortcuts";
 
 // Small delay between items in a "Send all" flush so Claude Code's TUI registers each as a distinct
 // queued message rather than merging back-to-back submits.
@@ -657,7 +658,7 @@ export function PostponedPool({
               onKeyDown={onKeyDown}
               rows={1}
               placeholder="Postpone a message — Enter to stash"
-              title="Enter to stash, Shift+Enter or Ctrl+J for a newline; paste an image to attach it"
+              title={`Enter to stash, ${chord("shift", "Enter")} or ${chord("mod", "J")} for a newline; paste an image to attach it`}
               className="max-h-20 min-h-10 resize-none py-2.5 leading-5"
             />
             {/* Desktop-only: on a phone it would eat the width the message needs, and Compose sits

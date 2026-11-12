@@ -65,6 +65,7 @@ import {
 } from "@/lib/chatMarks";
 import { reveal } from "@/lib/codeNav";
 import { cn } from "@/lib/utils";
+import { IS_MAC, chord } from "@/lib/shortcuts";
 
 // How often the transcript is read: often while Claude is writing to it, rarely while it sits idle, and
 // hardly at all from a tab nobody is looking at.
@@ -80,7 +81,6 @@ const STICK_PX = 80;
 const QUESTION_KEY_GAP_MS = 150;
 
 // The find key: ⌘F on a Mac, where Ctrl+F moves the caret in the message box; Ctrl+F elsewhere.
-const MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
 
 // Ctrl-wheel travel per zoom step, as in the terminal: a mouse notch steps at once, a pinch ramps.
 const WHEEL_ZOOM_STEP = 40;
@@ -309,7 +309,7 @@ export function ChatView({
       return;
     }
     if (e.altKey || !(e.ctrlKey || e.metaKey)) return;
-    if (!e.shiftKey && (MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey) && (e.key.toLowerCase() === "f" || e.code === "KeyF")) {
+    if (!e.shiftKey && (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey) && (e.key.toLowerCase() === "f" || e.code === "KeyF")) {
       e.preventDefault();
       find.start();
       return;
@@ -595,7 +595,7 @@ export function ChatView({
                   variant="ghost"
                   size="icon"
                   className="size-7"
-                  title={`Find in the chat (${MAC ? "⌘F" : "Ctrl+F"})`}
+                  title={`Find in the chat (${chord("mod", "F")})`}
                   aria-pressed={find.open}
                   onClick={find.open ? find.close : find.start}
                 >
@@ -1327,7 +1327,7 @@ function Composer({
             <Button
               size="icon"
               className="size-7 shrink-0"
-              title="Postpone (Ctrl+Shift+Enter)"
+              title={`Postpone (${chord("mod", "shift", "Enter")})`}
               aria-label="Postpone"
               disabled={!canPostpone}
               onClick={postpone}
@@ -1341,7 +1341,7 @@ function Composer({
               title={
                 blocked
                   ? "Answer Claude's question first"
-                  : `${busy ? "Queue for Claude" : "Send"} (Enter). Ctrl+Shift+Enter postpones it`
+                  : `${busy ? "Queue for Claude" : "Send"} (Enter). ${chord("mod", "shift", "Enter")} postpones it`
               }
               disabled={!canSend}
               onClick={() => void send()}

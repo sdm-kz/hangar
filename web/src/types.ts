@@ -327,6 +327,21 @@ export interface ClaudeHooksStatus {
   ownerIsHangar: boolean | null; // whether a Hangar answers there
 }
 
+/**
+ * Hangar's own /hgr-* slash commands on a node, each with what is on disk for it in ~/.claude/commands
+ * (server/Sessions/ClaudeCommandStore.cs).
+ */
+export interface ClaudeCommandsStatus {
+  enabled: boolean; // ClaudeCommands:Enabled — false means the server installs none
+  commands: {
+    name: string;
+    description: string | null;
+    hint: string | null;
+    // Hangar's and current | a file of the user's own by that name | Hangar's, from another build | not there
+    state: "installed" | "own" | "stale" | "missing";
+  }[];
+}
+
 /** The updater's view of itself: what's running, what's staged, and whether one is being installed. */
 export interface UpdateStatus {
   enabled: boolean; // the updater is switched on server-side (Update:Enabled)

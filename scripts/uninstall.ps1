@@ -30,6 +30,8 @@
       entries whose URL ends in /api/hooks. Once the app is gone those calls have nowhere to go, so
       open %USERPROFILE%\.claude\settings.json and delete the hook entries whose URL ends in
       /api/hooks, and the SessionStart command that posts to it, keeping any others.
+    * Hangar's slash commands. When ClaudeCommands:Enabled is on, the app writes hgr-*.md files into
+      ~/.claude/commands; delete the ones that end with a "hangar-managed" line.
     * A staging folder set by Update:StagingPath outside the data folder; delete it by hand if wanted.
 
 .PARAMETER InstallPath
@@ -214,5 +216,6 @@ if ($RemoveData) {
 
 Write-Host "==> Done." -ForegroundColor Green
 Write-Host "    If Claude hooks were on, remove the hook entries that call /api/hooks from $env:USERPROFILE\.claude\settings.json."
+Write-Host "    Hangar's slash commands are in $env:USERPROFILE\.claude\commands: delete the hgr-*.md files that end with a hangar-managed line."
 if (-not $RemoveFiles) { Write-Host "    Files kept: $InstallPath (-RemoveFiles deletes them)." }
 if (-not $RemoveData) { Write-Host "    Data kept: $dataRoot (-RemoveData ends running sessions and deletes it)." }

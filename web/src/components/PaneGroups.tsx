@@ -19,6 +19,7 @@ import { useDismissable } from "@/lib/useDismissable";
 import { cn } from "@/lib/utils";
 import { TabScroll } from "./TabScroll";
 import { Columns2, Maximize2, Minimize2, Rows2, X } from "lucide-react";
+import { chord } from "@/lib/shortcuts";
 
 /** How a tab draws in a group's strip. */
 export interface PaneTab {
@@ -567,21 +568,21 @@ function GroupView({
             <>
               <div className="my-2 w-px shrink-0 bg-border" />
               <StripButton
-                title={canSplit ? "Split right (Alt+\\)" : `At most ${MAX_GROUPS} groups`}
+                title={canSplit ? `Split right (${chord("alt", "\\")})` : `At most ${MAX_GROUPS} groups`}
                 disabled={!canSplit || !group.active}
                 onClick={() => onSplit("right")}
               >
                 <Columns2 className="size-4" />
               </StripButton>
               <StripButton
-                title={canSplit ? "Split down (Alt+-)" : `At most ${MAX_GROUPS} groups`}
+                title={canSplit ? `Split down (${chord("alt", "-")})` : `At most ${MAX_GROUPS} groups`}
                 disabled={!canSplit || !group.active}
                 onClick={() => onSplit("bottom")}
               >
                 <Rows2 className="size-4" />
               </StripButton>
               {(many || maximized) && (
-                <StripButton title={maximized ? "Restore the other groups (Alt+Z)" : "Maximize this group (Alt+Z)"} onClick={onToggleMax}>
+                <StripButton title={`${maximized ? "Restore the other groups" : "Maximize this group"} (${chord("alt", "Z")})`} onClick={onToggleMax}>
                   {maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
                 </StripButton>
               )}

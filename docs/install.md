@@ -339,7 +339,9 @@ rm -rf ~/.local/share/Hangar             # the data (Linux); ~/Library/Applicati
 
 **On every platform**, then remove the hooks Hangar registered in Claude Code's global settings, or
 every Claude Code session on the machine keeps calling a port nobody answers: see
-[What Hangar changes outside its own folders](#what-hangar-changes-outside-its-own-folders).
+[What Hangar changes outside its own folders](#what-hangar-changes-outside-its-own-folders). Its
+slash commands stay in `~/.claude/commands` too; delete the `hgr-*.md` files there that end with a
+`hangar-managed` line.
 
 ## What Hangar changes outside its own folders
 
@@ -353,6 +355,7 @@ added or refreshed.
 | HTTP **hooks** for `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `Notification`, `PermissionRequest`, `Stop`, `StopFailure`, each pointing at `http://127.0.0.1:<port>/api/hooks`, and a **command** hook for `SessionStart` that posts to the same URL with `curl` | `~/.claude/settings.json`, under `hooks` | Every server start | `Hooks:Enabled=false` (session status then falls back to terminal heuristics) |
 | `skipDangerousModePermissionPrompt: true` (pre-accepts the one-time warning for `--dangerously-skip-permissions`) | `~/.claude/settings.json` | The first time a session is started with `bypassPermissions` | Don't use that mode |
 | `projects["<folder>"].hasTrustDialogAccepted: true` (pre-accepts workspace trust) | `~/.claude.json` | Before launching a session in a folder not already listed | `Sessions:AutoTrustFolders=false` (then accept the prompt yourself in the Claude Code app) |
+| Hangar's **slash commands** (`hgr-*.md`, each ending with a `hangar-managed` line; see [Slash commands](commands.md)). A file without that line is left alone | `~/.claude/commands` | Every server start | `ClaudeCommands:Enabled=false` |
 
 About the hooks:
 

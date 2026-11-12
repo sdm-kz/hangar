@@ -109,6 +109,10 @@ kept in `auth.json`, not regenerated per app run, because a session's environmen
 
 All of them answer `401` when the headers are missing or wrong.
 
+Hangar installs a [slash command](commands.md) for each of these (`/hgr-rename-session`, `/hgr-notify`,
+`/hgr-open-file`, `/hgr-open-pr`, `/hgr-close-session`), so a session can use them without being told
+the calls.
+
 ### Rename: `POST /api/self/name`
 
 A `claude` command (or a hook, or any script the session runs) can name the session after the work it

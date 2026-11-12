@@ -49,7 +49,9 @@ you make them, so there is no Apply. The search box sits above the tab list.
 | Schedules | node | The schedule list and editor | `ScheduleDialog` body |
 | Security | this node | Set the first password, or change the one that is set; Sign out | `SetPasswordDialog` form |
 | Hooks | node | Who owns the hooks, always (ours, elsewhere, off, failed); Take them over | `HooksWarning` logic |
+| Commands | node | Hangar's `/hgr-*` slash commands, each installed, missing, stale or the user's own | new (`GET /api/claude-commands`) |
 | Updates | every node | Running and staged build per node, what's new, Update and restart | `UpdateButton` parts |
+| Shortcuts | — | Every keyboard shortcut, grouped by where it works; each one a search hit; `?` opens it | new (`lib/shortcuts.ts`) |
 
 Projects is a list, not the editor. The editor already has six tabs, and tabs inside tabs is the
 mess that keeping `ProjectDialog` separate avoids. Clicking a project (or New project) opens the
