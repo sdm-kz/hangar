@@ -411,3 +411,28 @@
 .dark ::highlight(chat-mark-current) {
   background-color: rgb(245 158 11 / 0.35);
 }
+
+/* Markdown (the typography plugin's .prose) the way GitHub draws it, not the plugin's magazine look.
+   Its quote is semibold, italic and in the heading color, so a quoted paragraph reads as all bold
+   and the **bold** in it disappears; and it wraps the quote in quote marks. Here a quote is plain
+   text in the muted color, its bold standing out again. Inline code loses the backticks the plugin
+   draws around it, which read as Markdown left unrendered, and is set off by a tint instead. */
+.prose blockquote {
+  font-weight: inherit;
+  font-style: normal;
+  color: var(--muted-foreground);
+}
+.prose blockquote p:first-of-type::before,
+.prose blockquote p:last-of-type::after {
+  content: none;
+}
+.prose code::before,
+.prose code::after {
+  content: none;
+}
+.prose :not(pre) > code {
+  font-weight: 500;
+  padding: 0.125em 0.375em;
+  border-radius: 0.25rem;
+  background-color: var(--muted);
+}
