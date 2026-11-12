@@ -20,6 +20,7 @@ import { forkDescendants } from "@/lib/sessionTree";
 import { countsInTotals, failureLine, useDoneSessions, type ActivityDetail, type ActivityIds } from "@/lib/sessionActivity";
 import { osNotify } from "@/lib/osNotify";
 import { setFaviconStatus } from "@/lib/favicon";
+import { setAppBadge } from "@/lib/appBadge";
 import { projectForDir } from "@/lib/projects";
 import type { Project, RemoteConnection, SessionInfo, SessionNotice, SessionRemote, ShellInfo, UpdateStatus } from "@/types";
 import { Login } from "@/components/Login";
@@ -521,6 +522,16 @@ export function App() {
     const { waiting, busy, compacting } = everywhere;
     setFaviconStatus(any(waiting) ? "waiting" : any(busy) || any(compacting) ? "busy" : "idle");
   }, [everywhere]);
+
+  // The installed app's icon badge (lib/appBadge), over the same sessions: how many are blocked on
+  // you, or a dot when all there is is finished work you haven't seen. It follows the sidebar's marks,
+  // so it clears the way they do — a question answered, a failed turn retried, a tick seen.
+  useEffect(() => {
+    const counted = new Set(everywhere.sessions.filter(countsInTotals).map((s) => s.id));
+    const needYou = new Set([...everywhereIds.waiting, ...everywhereIds.failed].filter((id) => counted.has(id)));
+    const unseen = [...everywhereIds.done].some((id) => counted.has(id));
+    setAppBadge(needYou.size > 0 ? { count: needYou.size } : unseen ? "dot" : "none");
+  }, [everywhere, everywhereIds]);
 
   // Live session stream: the server pushes the full { sessions, busy } snapshot whenever it changes
   // (new/renamed/exited sessions, Claude going active/idle), so the UI stays current

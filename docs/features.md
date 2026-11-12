@@ -398,7 +398,11 @@ screenshot is this session as a chat):
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile, installable
   as a PWA over HTTPS: *Install app* in Chrome or Edge, *Add to Home Screen* on an iPhone, *Add to
   Dock* in Safari on a Mac. It then opens in its own window, and push notifications reach it with the
-  app closed; on an iPhone, push works only in the home-screen app (iOS 16.4 or later).
+  app closed; on an iPhone, push works only in the home-screen app (iOS 16.4 or later). The installed
+  app's icon (the taskbar, the Dock, the home screen) carries a badge: a number for the sessions
+  blocked on you — waiting on an answer or a permission, or a turn that failed — and a plain dot when
+  all there is is finished work you haven't looked at yet. It clears as the sidebar's marks do. With
+  the app closed, a push alert sets the number until the app is opened again.
 - **Settings** — the gear at the bottom of the sidebar, or **Ctrl+Shift+S** (⌘⇧S on a Mac) from
   anywhere, terminal included: one dialog for Appearance, Notifications, Nodes, Projects, Schedules,
   Security (set or change the password, sign out), Claude's hooks, and every node's Updates. Its
