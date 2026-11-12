@@ -119,8 +119,10 @@ export function SecurityPanel({ onLogout }: { onLogout: () => void }) {
   );
 }
 
+/** Behind a button: three empty boxes are a lot of page for something done once a year. */
 function ChangePassword() {
   const api = useApi();
+  const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [repeat, setRepeat] = useState("");
@@ -142,12 +144,40 @@ function ChangePassword() {
       setPassword("");
       setRepeat("");
       setDone(true);
+      setOpen(false);
     } catch (err) {
       setError(message(err));
     } finally {
       setBusy(false);
     }
   };
+
+  const cancel = () => {
+    setCurrent("");
+    setPassword("");
+    setRepeat("");
+    setError(null);
+    setOpen(false);
+  };
+
+  if (!open)
+    return (
+      <>
+        {done && <p className="text-xs text-muted-foreground">Changed. Other browsers sign in with the new one.</p>}
+        <div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setDone(false);
+              setOpen(true);
+            }}
+          >
+            Change password…
+          </Button>
+        </div>
+      </>
+    );
 
   return (
     <form onSubmit={submit} className="flex max-w-sm flex-col gap-3">
@@ -163,11 +193,9 @@ function ChangePassword() {
           id="current-password"
           type="password"
           autoComplete="current-password"
+          autoFocus
           value={current}
-          onChange={(e) => {
-            setCurrent(e.target.value);
-            setDone(false);
-          }}
+          onChange={(e) => setCurrent(e.target.value)}
         />
       </div>
       <div className="flex flex-col gap-1.5">
@@ -194,11 +222,13 @@ function ChangePassword() {
         {mismatch && <p className="text-xs text-destructive">The two don't match.</p>}
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
-      {done && <p className="text-xs text-muted-foreground">Changed. Other browsers sign in with the new one.</p>}
-      <div>
+      <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={busy || !current || tooShort || repeat !== password}>
           {busy && <Loader2 className="size-3.5 animate-spin" />}
           Change password
+        </Button>
+        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={cancel}>
+          Cancel
         </Button>
       </div>
     </form>
