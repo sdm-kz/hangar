@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
 import { recentLabel, type RecentSession } from "@/lib/recentSessions";
 import { sessionColor } from "@/lib/sessionColors";
@@ -19,19 +19,35 @@ function tokenize(query: string): string[] {
 }
 
 /**
- * Whether all terms appear in the row's searchable fields. Fields are joined with a newline so a term
- * can't match across two of them (e.g. the end of a name plus the start of a path).
+ * A row's searchable fields as one lowercase string. Fields are joined with a newline so a term can't
+ * match across two of them (e.g. the end of a name plus the start of a path).
  */
-function matches(tokens: string[], fields: (string | null | undefined)[]): boolean {
-  if (tokens.length === 0) return true;
-  const hay = fields.filter(Boolean).join("\n").toLowerCase();
+function haystack(fields: (string | null | undefined)[]): string {
+  return fields.filter(Boolean).join("\n").toLowerCase();
+}
+
+/** Whether all terms appear in a row's haystack. */
+function matches(tokens: string[], hay: string): boolean {
   return tokens.every((t) => hay.includes(t));
 }
+
+/**
+ * Session rows rendered at a time; more are added as the list is scrolled to its end. With hundreds of
+ * sessions, rendering every hit made each keystroke (and each hover, which moves the highlight) slow.
+ */
+const PAGE = 50;
 
 /** A search hit: either a live session or a recent launch preset. */
 type Hit =
   | { kind: "session"; session: SessionInfo }
   | { kind: "recent"; recent: RecentSession };
+
+/**
+ * What the highlight follows: a session by its id, a recent by its place among the recents. Not an index
+ * into the rows, which shift under it whenever another page of sessions is rendered above the recents.
+ */
+const sessionHitKey = (s: SessionInfo) => `s:${s.id}`;
+const recentHitKey = (i: number) => `r:${i}`;
 
 /** Renders `text` with every occurrence of any search term marked. */
 function Highlight({ text, tokens }: { text: string; tokens: string[] }) {
@@ -75,6 +91,138 @@ function SectionLabel({ children, count }: { children: ReactNode; count: number 
   );
 }
 
+const rowClass = (active: boolean) =>
+  cn(
+    "flex w-full cursor-pointer flex-col gap-1 rounded-md px-2.5 py-2 text-left text-sm",
+    active && "bg-accent"
+  );
+
+/**
+ * One live session's row. Memoized, with stable callbacks from the dialog, so moving the highlight
+ * re-renders only the two rows it moves between rather than the whole list.
+ */
+const SessionRow = memo(function SessionRow({
+  session: s,
+  hitKey,
+  tokens,
+  active,
+  current,
+  nodeName,
+  onHover,
+  onActivate,
+}: {
+  session: SessionInfo;
+  hitKey: string;
+  tokens: string[];
+  active: boolean;
+  current: boolean;
+  /** The machine's name for a peer's session; null for this machine's. */
+  nodeName: string | null;
+  onHover: (hitKey: string) => void;
+  onActivate: (h: Hit) => void;
+}) {
+  const color = sessionColor(s.color);
+  const restorable = s.state === "Restorable";
+  return (
+    <div
+      data-hit={hitKey}
+      role="button"
+      tabIndex={-1}
+      onMouseEnter={() => onHover(hitKey)}
+      onClick={() => onActivate({ kind: "session", session: s })}
+      className={rowClass(active)}
+      title={restorable ? "Open this closed session — files, diff, and Reopen" : "Open this session"}
+    >
+      <div className="flex items-center gap-1.5">
+        <span
+          aria-hidden
+          className={cn(
+            "size-2 shrink-0 rounded-full",
+            s.state === "Running" ? "bg-emerald-500" : "bg-muted-foreground/40"
+          )}
+          style={color ? { backgroundColor: color } : undefined}
+        />
+        <span className={cn("truncate font-medium", s.state !== "Running" && "text-muted-foreground")}>
+          <Highlight text={s.name} tokens={tokens} />
+        </span>
+        {s.remoteControl && (
+          <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
+        )}
+        {current && (
+          <Badge variant="secondary" className="shrink-0">
+            current
+          </Badge>
+        )}
+        {/* What the row is, not what activating it does — that is "open", the same as
+            every other row here. The word matches the badge the session header shows
+            and the sidebar's own tooltip, so one state has one name. */}
+        {restorable && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">closed</span>}
+      </div>
+      <span className="truncate pl-3.5 font-mono text-[10px] text-muted-foreground">
+        {nodeName !== null && (
+          <>
+            <Highlight text={nodeName} tokens={tokens} />
+            {" · "}
+          </>
+        )}
+        <Highlight text={s.workingDirectory} tokens={tokens} />
+      </span>
+    </div>
+  );
+});
+
+/** One recent launch preset's row; memoized for the same reason as SessionRow. */
+const RecentRow = memo(function RecentRow({
+  recent: r,
+  hitKey,
+  tokens,
+  active,
+  onHover,
+  onActivate,
+}: {
+  recent: RecentSession;
+  hitKey: string;
+  tokens: string[];
+  active: boolean;
+  onHover: (hitKey: string) => void;
+  onActivate: (h: Hit) => void;
+}) {
+  return (
+    <div
+      data-hit={hitKey}
+      role="button"
+      tabIndex={-1}
+      onMouseEnter={() => onHover(hitKey)}
+      onClick={() => onActivate({ kind: "recent", recent: r })}
+      className={rowClass(active)}
+      title="Adjust and create a session from this preset"
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="truncate font-medium">
+          <Highlight text={recentLabel(r)} tokens={tokens} />
+        </span>
+        <Badge variant="secondary" className="shrink-0 capitalize">
+          {r.model || "default"}
+        </Badge>
+        {r.remoteControl && (
+          <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
+        )}
+      </div>
+      {r.command && (
+        <span className="flex items-start gap-1 truncate text-[10px] text-muted-foreground">
+          <Terminal className="mt-0.5 size-2.5 shrink-0" />
+          <span className="truncate">
+            <Highlight text={r.command} tokens={tokens} />
+          </span>
+        </span>
+      )}
+      <span className="truncate font-mono text-[10px] text-muted-foreground">
+        <Highlight text={r.workingDirectory} tokens={tokens} />
+      </span>
+    </div>
+  );
+});
+
 /**
  * Search popup over the sidebar's two lists: live sessions and recent launch presets. Matching is a
  * plain all-terms substring search over exactly the fields each row shows, so every hit is visibly
@@ -104,66 +252,113 @@ export function SessionSearchDialog({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
+  // The highlighted row's hit key; null for the first row.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [limit, setLimit] = useState(PAGE);
   const listRef = useRef<HTMLDivElement>(null);
+  // A state ref rather than useRef: the dialog's portal mounts its content a render after this one,
+  // so the observer below has to run again once the row exists.
+  const [moreEl, setMoreEl] = useState<HTMLDivElement | null>(null);
+
+  // The haystacks are built once per list rather than on every keystroke.
+  const sessionIndex = useMemo(
+    () =>
+      sessions.map((s) => ({
+        s,
+        hay: haystack([s.name, s.workingDirectory, s.nodeId ? nodeNames?.[s.nodeId] : null]),
+      })),
+    [sessions, nodeNames]
+  );
+  const recentIndex = useMemo(
+    () =>
+      recents.map((r) => ({
+        r,
+        hay: haystack([recentLabel(r), r.name, r.workingDirectory, r.command, r.model]),
+      })),
+    [recents]
+  );
 
   const tokens = useMemo(() => tokenize(query), [query]);
   const sessionHits = useMemo(
-    () =>
-      sessions.filter((s) =>
-        matches(tokens, [s.name, s.workingDirectory, s.nodeId ? nodeNames?.[s.nodeId] : null])
-      ),
-    [sessions, nodeNames, tokens]
+    () => sessionIndex.filter((x) => matches(tokens, x.hay)).map((x) => x.s),
+    [sessionIndex, tokens]
   );
   const recentHits = useMemo(
-    () =>
-      recents.filter((r) =>
-        matches(tokens, [recentLabel(r), r.name, r.workingDirectory, r.command, r.model])
-      ),
-    [recents, tokens]
+    () => recentIndex.filter((x) => matches(tokens, x.hay)).map((x) => x.r),
+    [recentIndex, tokens]
   );
-  const hits: Hit[] = useMemo(
+  // Only the first `limit` session hits are rendered (and reachable by the arrows); the rest come in as
+  // the list is scrolled to its end.
+  const shownSessions = useMemo(() => sessionHits.slice(0, limit), [sessionHits, limit]);
+  const hiddenSessions = sessionHits.length - shownSessions.length;
+  const total = sessionHits.length + recentHits.length;
+  const hits: (Hit & { key: string })[] = useMemo(
     () => [
-      ...sessionHits.map((session) => ({ kind: "session" as const, session })),
-      ...recentHits.map((recent) => ({ kind: "recent" as const, recent })),
+      ...shownSessions.map((session) => ({ kind: "session" as const, session, key: sessionHitKey(session) })),
+      ...recentHits.map((recent, i) => ({ kind: "recent" as const, recent, key: recentHitKey(i) })),
     ],
-    [sessionHits, recentHits]
+    [shownSessions, recentHits]
   );
 
-  // The highlighted row, clamped so a shrinking result list can't leave it past the end.
-  const cursor = hits.length === 0 ? -1 : Math.min(active, hits.length - 1);
+  // The highlighted row: the first when nothing is, or when the one that was has left the list.
+  const cursor = hits.length === 0 ? -1 : Math.max(0, hits.findIndex((h) => h.key === activeKey));
+  const cursorKey = cursor >= 0 ? hits[cursor].key : null;
 
-  useEffect(() => setActive(0), [query]);
-
-  // Keep the highlighted row visible while arrowing through a long list.
+  // Keep the highlighted row visible while arrowing through a long list. Keyed on the row rather than its
+  // index, so a page of sessions rendered above a highlighted recent doesn't scroll the list after it.
   useEffect(() => {
-    listRef.current?.querySelector(`[data-idx="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
-  }, [cursor]);
+    if (cursorKey === null) return;
+    listRef.current?.querySelector(`[data-hit="${CSS.escape(cursorKey)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [cursorKey]);
 
-  function activate(h: Hit) {
+  // Render the next page once scrolling brings the end of the session rows near (the arrows extend it
+  // themselves, in onKeyDown). Re-observed after each page, so a page that still leaves the end in view
+  // is followed straight away by the next.
+  useEffect(() => {
+    if (!moreEl) return;
+    const io = new IntersectionObserver(
+      ([e]) => e.isIntersecting && setLimit((l) => l + PAGE),
+      { root: listRef.current, rootMargin: "200px" }
+    );
+    io.observe(moreEl);
+    return () => io.disconnect();
+  }, [moreEl, limit]);
+
+  // The rows take these as stable callbacks, so they stay memoized while the parent's props change.
+  const propsRef = useRef({ onClose, onSelect, onReuse });
+  propsRef.current = { onClose, onSelect, onReuse };
+  const activate = useCallback((h: Hit) => {
+    const { onClose, onSelect, onReuse } = propsRef.current;
     onClose();
     if (h.kind === "recent") onReuse(h.recent);
     else onSelect(h.session.id);
+  }, []);
+
+  function onQueryChange(q: string) {
+    setQuery(q);
+    setActiveKey(null);
+    setLimit(PAGE);
+    // Back to the top, where the cursor is — a list scrolled down a later page would otherwise leave it
+    // off-screen, as scrolling into view only follows a cursor that moves.
+    listRef.current?.scrollTo({ top: 0 });
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
       e.preventDefault();
-      if (hits.length) setActive((i) => (Math.min(i, hits.length - 1) + 1) % hits.length);
+      // Off the last shown session, on to the next one rather than past the rest to the recents.
+      if (cursor === shownSessions.length - 1 && hiddenSessions > 0) {
+        setLimit((l) => l + PAGE);
+        setActiveKey(sessionHitKey(sessionHits[cursor + 1]));
+      } else if (hits.length) setActiveKey(hits[(cursor + 1) % hits.length].key);
     } else if (e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey)) {
       e.preventDefault();
-      if (hits.length) setActive((i) => (Math.min(i, hits.length - 1) + hits.length - 1) % hits.length);
+      if (hits.length) setActiveKey(hits[(cursor + hits.length - 1) % hits.length].key);
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (cursor >= 0) activate(hits[cursor]);
     }
   }
-
-  const rowClass = (idx: number) =>
-    cn(
-      "flex w-full cursor-pointer flex-col gap-1 rounded-md px-2.5 py-2 text-left text-sm",
-      idx === cursor && "bg-accent"
-    );
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -181,7 +376,7 @@ export function SessionSearchDialog({
           <Input
             autoFocus
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => onQueryChange(e.target.value)}
             placeholder="Search sessions and recents…"
             className="border-0 pl-8 shadow-none focus-visible:ring-0"
             spellCheck={false}
@@ -189,7 +384,7 @@ export function SessionSearchDialog({
         </div>
 
         <div ref={listRef} className="max-h-[55vh] overflow-auto px-1 pb-2">
-          {hits.length === 0 && (
+          {total === 0 && (
             <p className="px-2 py-8 text-center text-xs text-muted-foreground">
               {sessions.length === 0 && recents.length === 0
                 ? "Nothing to search yet"
@@ -200,66 +395,24 @@ export function SessionSearchDialog({
           {sessionHits.length > 0 && (
             <>
               <SectionLabel count={sessionHits.length}>Sessions</SectionLabel>
-              {sessionHits.map((s, i) => {
-                const color = sessionColor(s.color);
-                const restorable = s.state === "Restorable";
-                return (
-                  <div
-                    key={s.id}
-                    data-idx={i}
-                    role="button"
-                    tabIndex={-1}
-                    onMouseEnter={() => setActive(i)}
-                    onClick={() => activate({ kind: "session", session: s })}
-                    className={rowClass(i)}
-                    title={restorable ? "Open this closed session — files, diff, and Reopen" : "Open this session"}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        aria-hidden
-                        className={cn(
-                          "size-2 shrink-0 rounded-full",
-                          s.state === "Running" ? "bg-emerald-500" : "bg-muted-foreground/40"
-                        )}
-                        style={color ? { backgroundColor: color } : undefined}
-                      />
-                      <span
-                        className={cn(
-                          "truncate font-medium",
-                          s.state !== "Running" && "text-muted-foreground"
-                        )}
-                      >
-                        <Highlight text={s.name} tokens={tokens} />
-                      </span>
-                      {s.remoteControl && (
-                        <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
-                      )}
-                      {s.id === activeId && (
-                        <Badge variant="secondary" className="shrink-0">
-                          current
-                        </Badge>
-                      )}
-                      {/* What the row is, not what activating it does — that is "open", the same as
-                          every other row here. The word matches the badge the session header shows
-                          and the sidebar's own tooltip, so one state has one name. */}
-                      {restorable && (
-                        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                          closed
-                        </span>
-                      )}
-                    </div>
-                    <span className="truncate pl-3.5 font-mono text-[10px] text-muted-foreground">
-                      {s.nodeId && (
-                        <>
-                          <Highlight text={nodeNames?.[s.nodeId] ?? "another machine"} tokens={tokens} />
-                          {" · "}
-                        </>
-                      )}
-                      <Highlight text={s.workingDirectory} tokens={tokens} />
-                    </span>
-                  </div>
-                );
-              })}
+              {shownSessions.map((s, i) => (
+                <SessionRow
+                  key={s.id}
+                  session={s}
+                  hitKey={sessionHitKey(s)}
+                  tokens={tokens}
+                  active={i === cursor}
+                  current={s.id === activeId}
+                  nodeName={s.nodeId ? (nodeNames?.[s.nodeId] ?? "another machine") : null}
+                  onHover={setActiveKey}
+                  onActivate={activate}
+                />
+              ))}
+              {hiddenSessions > 0 && (
+                <div ref={setMoreEl} className="px-3 py-2 text-center text-[10px] text-muted-foreground">
+                  {hiddenSessions} more — scroll, or type to narrow
+                </div>
+              )}
             </>
           )}
 
@@ -267,41 +420,16 @@ export function SessionSearchDialog({
             <>
               <SectionLabel count={recentHits.length}>Recent</SectionLabel>
               {recentHits.map((r, i) => {
-                const idx = sessionHits.length + i;
                 return (
-                  <div
-                    key={idx}
-                    data-idx={idx}
-                    role="button"
-                    tabIndex={-1}
-                    onMouseEnter={() => setActive(idx)}
-                    onClick={() => activate({ kind: "recent", recent: r })}
-                    className={rowClass(idx)}
-                    title="Adjust and create a session from this preset"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate font-medium">
-                        <Highlight text={recentLabel(r)} tokens={tokens} />
-                      </span>
-                      <Badge variant="secondary" className="shrink-0 capitalize">
-                        {r.model || "default"}
-                      </Badge>
-                      {r.remoteControl && (
-                        <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
-                      )}
-                    </div>
-                    {r.command && (
-                      <span className="flex items-start gap-1 truncate text-[10px] text-muted-foreground">
-                        <Terminal className="mt-0.5 size-2.5 shrink-0" />
-                        <span className="truncate">
-                          <Highlight text={r.command} tokens={tokens} />
-                        </span>
-                      </span>
-                    )}
-                    <span className="truncate font-mono text-[10px] text-muted-foreground">
-                      <Highlight text={r.workingDirectory} tokens={tokens} />
-                    </span>
-                  </div>
+                  <RecentRow
+                    key={i}
+                    recent={r}
+                    hitKey={recentHitKey(i)}
+                    tokens={tokens}
+                    active={shownSessions.length + i === cursor}
+                    onHover={setActiveKey}
+                    onActivate={activate}
+                  />
                 );
               })}
             </>
@@ -311,7 +439,7 @@ export function SessionSearchDialog({
         <div className="flex items-center justify-between gap-2 border-t px-3 py-1.5 text-[10px] text-muted-foreground">
           <span>↑↓ navigate · ↵ open · esc close</span>
           <span>
-            {hits.length} result{hits.length === 1 ? "" : "s"}
+            {total} result{total === 1 ? "" : "s"}
           </span>
         </div>
       </DialogContent>
