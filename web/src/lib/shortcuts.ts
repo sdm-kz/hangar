@@ -53,6 +53,22 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "Anywhere",
     shortcuts: [
       { id: "search", keys: [["mod", "shift", "F"]], does: "Search sessions", keywords: ["find", "jump"] },
+      {
+        id: "switch",
+        keys: [["alt", "`"]],
+        does: "Switch to a session you looked at recently",
+        note: "Keep holding and tap ` again to step further back, then let go; one tap is the last one",
+        keywords: ["recent", "previous", "back", "alt tab", "switcher"],
+      },
+      { id: "switch-move", keys: [["↑"], ["↓"], ["alt", "shift", "`"]], does: "Move up or down the switcher's list", note: "While it is open; with Shift, ` steps back up" },
+      { id: "switch-cancel", keys: [["Esc"]], does: "Close the switcher without switching" },
+      {
+        id: "needs-you",
+        keys: [["alt", "Q"]],
+        does: "Go to the next session that needs you",
+        note: "Waiting on you first, then failed, then finished and unread",
+        keywords: ["waiting", "blocked", "next", "attention"],
+      },
       { id: "settings", keys: [["mod", "shift", "S"]], does: "Open Settings", keywords: ["preferences", "options"] },
       {
         id: "help",

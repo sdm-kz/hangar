@@ -13,12 +13,10 @@ import type { ActivityIds } from "@/lib/sessionActivity";
 import { sessionColor } from "@/lib/sessionColors";
 import { apiForKey, splitSessionKey } from "@/lib/node";
 import { cn } from "@/lib/utils";
+import { chord, keyName } from "@/lib/shortcuts";
 
 /** The most the list shows. Past this you are looking for a session, not switching back — Ctrl+Shift+F. */
 const SHOWN = 12;
-
-/** The Alt key as the hint line names it: Option, drawn as on its keycap, on a Mac. */
-const ALT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌥" : "Alt";
 
 /** What Alt+Q goes to, most pressing first: blocked on you, then broken, then finished and unread. */
 const NEEDS_YOU: Activity[] = ["waiting", "failed", "done"];
@@ -329,8 +327,8 @@ export function SessionSwitcher({
           );
         })}
         <div className="mt-1 flex justify-between gap-2 border-t px-2.5 pb-0.5 pt-1.5 text-[10px] text-muted-foreground">
-          <span>` / ⇧` step · let go of {ALT} to open · esc cancel</span>
-          <span>{ALT === "Alt" ? "Alt+Q" : "⌥Q"}: next that needs you</span>
+          <span>` / ⇧` step · let go of {keyName("alt")} to open · esc cancel</span>
+          <span>{chord("alt", "Q")}: next that needs you</span>
         </div>
       </div>
     </div>

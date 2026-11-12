@@ -255,7 +255,10 @@ export function CommandsPanel() {
   useEffect(() => {
     setStatus(null);
     setError(null);
-    api.getClaudeCommands().then(setStatus, (e) => setError(message(e)));
+    api.getClaudeCommands().then(setStatus, (e) =>
+      // A node whose Hangar predates the endpoint: the empty list below says so.
+      (e as { status?: number }).status === 404 ? setStatus({ enabled: true, commands: [] }) : setError(message(e))
+    );
   }, [api]);
 
   return (
