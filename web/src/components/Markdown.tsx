@@ -16,7 +16,7 @@ import type { Nodes as MdNodes, PhrasingContent } from "mdast";
 import type { PluggableList } from "unified";
 import { Code, Eye, Loader2 } from "lucide-react";
 import { getTheme, subscribeTheme } from "@/lib/theme";
-import { mdAssetUrl } from "@/lib/mdAssets";
+import { dirOf, mdAssetUrl } from "@/lib/mdAssets";
 import { useApi } from "@/lib/node";
 import { useHtml } from "@/lib/useHtml";
 import { TocPanel, type TocItem } from "./TocPanel";
@@ -32,7 +32,10 @@ import { CopyButton } from "./CopyPathButton";
  * the current hash.
  *
  * Pass `docPath` (the document's absolute path on the server) to make its own images render —
- * without it, a relative `![](img/x.png)` resolves against the app's URL and 404s.
+ * without it, a relative `![](img/x.png)` resolves against the app's URL and 404s. Text that is no
+ * file of its own passes `dir` instead, the folder its paths start in (the chat: the session's).
+ * An image at a Windows path keeps its backslashes, though Markdown reads `\.` in `C:\x\.y` as an
+ * escaped dot: whoever writes a path there means the path.
  *
  * Pass `copyCode` to give each code block a copy button in its top right corner (the chat does). With
  * it, a ```markdown (or ```md) block is also shown rendered, in a frame, with a switch to its source:
@@ -59,12 +62,14 @@ const sanitizeSchema = {
 export function Markdown({
   text,
   docPath,
+  dir,
   assetUrl,
   copyCode,
   breaks,
 }: {
   text: string;
   docPath?: string;
+  dir?: string;
   /** Where a file the document references is fetched from; the file API of the view's node by default. */
   assetUrl?: (path: string) => string;
   copyCode?: boolean;
@@ -146,17 +151,17 @@ export function Markdown({
     () =>
       [
         rehypeRaw,
-        [rehypeAssetUrls, { docPath, assetUrl: toUrl }],
+        [rehypeAssetUrls, { dir: docPath ? dirOf(docPath) : dir, assetUrl: toUrl }],
         [rehypeSanitize, sanitizeSchema],
         rehypeHeadingIds,
       ] as PluggableList,
-    [docPath, toUrl]
+    [docPath, dir, toUrl]
   );
 
   return (
     <div ref={ref}>
       <ReactMarkdown
-        remarkPlugins={breaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
+        remarkPlugins={breaks ? [remarkGfm, remarkWindowsPaths, remarkBreaks] : [remarkGfm, remarkWindowsPaths]}
         rehypePlugins={rehypePlugins}
         components={copyCode ? copyComponents : components}
       >
@@ -237,19 +242,41 @@ function slugify(text: string): string {
  * unknown URL protocol to the sanitizer, which would strip it before we ever got to see it. What
  * this produces is a same-origin relative URL, which sanitize is happy with.
  */
-function rehypeAssetUrls({ docPath, assetUrl }: { docPath?: string; assetUrl: (path: string) => string }) {
+function rehypeAssetUrls({ dir, assetUrl }: { dir?: string; assetUrl: (path: string) => string }) {
   return (tree: Root) => {
-    if (!docPath) return;
+    if (!dir) return;
     const visit = (node: Root | RootContent) => {
       if (node.type !== "root" && node.type !== "element") return;
       if (node.type === "element" && node.tagName === "img") {
         const src = node.properties?.src;
         if (typeof src === "string") {
-          const url = mdAssetUrl(src, docPath, assetUrl);
+          const url = mdAssetUrl(src, dir, assetUrl);
           if (url) node.properties = { ...node.properties, src: url };
         }
       }
       node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+// The destination of an image as written: `![alt](dest)`, `![alt](<dest>)`, either with a title.
+const IMAGE_DEST = /\]\(\s*(?:<([^>\n]*)>|(\S+?))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)$/;
+
+// remark plugin: an image at a Windows path ("C:\Git\.x\shot.png") takes its path as written. Markdown
+// reads a backslash before punctuation as an escape, and would load "C:\Git.x\shot.png" instead.
+function remarkWindowsPaths() {
+  return (tree: MdNodes, file: { value: unknown }) => {
+    if (typeof file.value !== "string") return;
+    const source = file.value;
+    const visit = (node: MdNodes) => {
+      if (node.type === "image" && /^[a-zA-Z]:\\/.test(node.url)) {
+        const { start, end } = node.position ?? {};
+        const m = start?.offset != null && end?.offset != null ? source.slice(start.offset, end.offset).match(IMAGE_DEST) : null;
+        const written = m?.[1] ?? m?.[2];
+        if (written && /^[a-zA-Z]:\\/.test(written)) node.url = written;
+      }
+      if ("children" in node) node.children.forEach(visit);
     };
     visit(tree);
   };

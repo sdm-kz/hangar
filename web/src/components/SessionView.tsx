@@ -1123,6 +1123,7 @@ export function SessionView({
                   <ChatView
                     key={session.id}
                     sessionId={session.id}
+                    workingDirectory={session.workingDirectory}
                     conversation={session.claudeSessionId}
                     closed={closed}
                     busy={!!busy}

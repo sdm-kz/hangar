@@ -14,7 +14,7 @@ function isFetchable(src: string): boolean {
 }
 
 /** The folder part of a file path, with either separator. */
-function dirOf(path: string): string {
+export function dirOf(path: string): string {
   const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return cut >= 0 ? path.slice(0, cut) : "";
 }
@@ -35,13 +35,13 @@ function joinPath(dir: string, rel: string): string {
 }
 
 /**
- * The file-API URL for an image referenced from the markdown document at `docPath` (an absolute
- * path on the server), or null when the src already points somewhere the browser can fetch and
- * should be left alone.
+ * The file-API URL for an image referenced from markdown whose relative paths start in `dir` (an
+ * absolute path on the server: the document's folder), or null when the src already points somewhere
+ * the browser can fetch and should be left alone.
  */
 export function mdAssetUrl(
   src: string,
-  docPath: string,
+  dir: string,
   // The file API of the node the document is on (Markdown passes its view's, or the caller's own).
   toUrl: (path: string) => string
 ): string | null {
@@ -53,5 +53,5 @@ export function mdAssetUrl(
     /* malformed escape — take the src as written */
   }
   const isAbsolute = /^[a-zA-Z]:[\\/]/.test(path) || /^[/\\]/.test(path);
-  return toUrl(isAbsolute ? path : joinPath(dirOf(docPath), path));
+  return toUrl(isAbsolute ? path : joinPath(dir, path));
 }

@@ -102,6 +102,7 @@ const COPY_BUTTON =
  */
 export function ChatView({
   sessionId,
+  workingDirectory,
   conversation: reported,
   closed,
   busy,
@@ -114,6 +115,8 @@ export function ChatView({
   onReopenWithOptions,
 }: {
   sessionId: string;
+  /** The session's folder, where a path in a reply (an image in its Markdown) starts. */
+  workingDirectory?: string;
   /** The conversation the session last reported running: a new one (a /clear) is read at once. */
   conversation?: string | null;
   /** No live terminal: the conversation can be read, not added to. */
@@ -230,8 +233,9 @@ export function ChatView({
           ? api.chatImageUrl(sessionId, conversation, { uuid: image.uuid, at: image.at, n: image.n })
           : null,
       open: (src, name, gallery) => setPreview({ src, name, gallery }),
+      dir: workingDirectory,
     }),
-    [api, sessionId, conversation]
+    [api, sessionId, conversation, workingDirectory]
   );
 
   // ---- Scrolling: follow new items while reading the latest, stay put while reading back ----
@@ -757,6 +761,8 @@ interface ChatImageSource {
   url: (image: ChatImageRef) => string | null;
   /** Open one full size; `gallery` is the set it is one of, to go through with the arrow keys. */
   open: (src: string, name: string, gallery?: LightboxImage[]) => void;
+  /** The session's folder: an image a reply's Markdown shows is read from the disk, its path from here. */
+  dir?: string;
 }
 
 function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: boolean; images: ChatImageSource }) {
@@ -817,7 +823,7 @@ function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: b
         // The button in the space under the reply's last paragraph, which ends in a margin of its own.
         <div className="group/msg relative">
           <div className="prose prose-sm max-w-none break-words dark:prose-invert prose-pre:bg-muted prose-pre:text-foreground">
-            <Markdown text={item.text} copyCode />
+            <Markdown text={item.text} dir={images.dir} copyCode />
           </div>
           <CopyButton
             text={item.text}
