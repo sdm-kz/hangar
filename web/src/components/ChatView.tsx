@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
@@ -37,6 +37,7 @@ import {
   applyChunk,
   chatItems,
   EMPTY_TRANSCRIPT,
+  keepSameItems,
   prettyInput,
   queuedMessages,
   toolSummary,
@@ -218,7 +219,11 @@ export function ChatView({
     pokeRef.current();
   }, [busy, activity, reported]);
 
-  const items = useMemo(() => chatItems(transcript.entries), [transcript.entries]);
+  const itemsRef = useRef<ChatItem[]>([]);
+  const items = useMemo(
+    () => (itemsRef.current = keepSameItems(itemsRef.current, chatItems(transcript.entries))),
+    [transcript.entries]
+  );
   // A closed session's queue went with it: nothing in it is coming.
   const queued = useMemo(() => (closed ? [] : queuedMessages(transcript.entries)), [closed, transcript.entries]);
   const queuedKeys = useMemo(() => queued.map((q) => q.key), [queued]);
@@ -560,7 +565,12 @@ export function ChatView({
                         onShowTerminal={onShowTerminal}
                       />
                     ) : (
-                      <ChatRow item={item} sessionBusy={busy} images={images} />
+                      // Busy only matters to a tool still waiting on its result: the rest stay as drawn.
+                      <ChatRow
+                        item={item}
+                        sessionBusy={busy && item.kind === "tool" && !item.result}
+                        images={images}
+                      />
                     )}
                   </div>
                 ))
@@ -765,7 +775,17 @@ interface ChatImageSource {
   dir?: string;
 }
 
-function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: boolean; images: ChatImageSource }) {
+// Memoized: the chat redraws on every key typed in find and on every read of the transcript, and a row
+// redrawn parses its Markdown again — for a long chat, a pause each time.
+const ChatRow = memo(function ChatRow({
+  item,
+  sessionBusy,
+  images,
+}: {
+  item: ChatItem;
+  sessionBusy: boolean;
+  images: ChatImageSource;
+}) {
   switch (item.kind) {
     case "user":
       return (
@@ -841,7 +861,7 @@ function ChatRow({ item, sessionBusy, images }: { item: ChatItem; sessionBusy: b
     case "tool":
       return <ToolCard item={item} sessionBusy={sessionBusy} images={images} />;
   }
-}
+});
 
 /** What the user wrote, a reply's quote (see {@link withQuote}) set off above it as a messenger shows one. */
 function UserText({ text }: { text: string }) {

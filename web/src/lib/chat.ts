@@ -233,6 +233,34 @@ const tag = (text: string, name: string) => {
   return m ? m[1] : null;
 };
 
+/** Two items' plain data — strings, numbers, arrays and objects of them — is the same. */
+function same(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+}
+
+/**
+ * The items of a new read, with each one that didn't change kept as the object it was before — and the
+ * whole list kept when none did. {@link chatItems} builds every item anew on each read, and a row that is
+ * handed a new object draws its Markdown again: a long chat did that for every message, every second
+ * Claude worked.
+ */
+export function keepSameItems(prev: ChatItem[], next: ChatItem[]): ChatItem[] {
+  const old = new Map(prev.map((item) => [item.key, item]));
+  let changed = prev.length !== next.length;
+  const kept = next.map((item, i) => {
+    const before = old.get(item.key);
+    const keep = before && same(before, item) ? before : item;
+    if (keep !== prev[i]) changed = true;
+    return keep;
+  });
+  return changed ? kept : prev;
+}
+
 /**
  * The items to draw for a transcript. Claude writes a slash command, its output, a shell escape and a
  * background task's report as user messages wrapped in tags of its own; those become their own kinds of
