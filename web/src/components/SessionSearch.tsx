@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { SessionInfo } from "@/types";
+import type { Project, SessionInfo } from "@/types";
 import { recentLabel, recentWhen, type RecentSession } from "@/lib/recentSessions";
 import { sessionColor } from "@/lib/sessionColors";
 import { apiForKey, splitSessionKey } from "@/lib/node";
+import { projectForDir } from "@/lib/projects";
 import {
   Dialog,
   DialogContent,
@@ -12,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Radio, Search, Terminal } from "lucide-react";
+import { FolderKanban, Radio, Search, Terminal } from "lucide-react";
 
 /** Split a query into lowercase terms; every term must match somewhere for a row to be a hit. */
 function tokenize(query: string): string[] {
@@ -121,7 +122,7 @@ function dateTime(iso: string): string {
 }
 
 /**
- * The end of a row's folder line: when the row was last used and, for a session, when it was started.
+ * The line under a row's folder: when the row was last used and, for a session, when it was started.
  * The full times are in its tooltip.
  */
 function Times({ used, created }: { used: string | null | undefined; created?: string }) {
@@ -134,7 +135,7 @@ function Times({ used, created }: { used: string | null | undefined; created?: s
     .filter(Boolean)
     .join("\n");
   return (
-    <span title={title} className="ml-auto shrink-0 pl-3 text-[10px] tabular-nums text-muted-foreground">
+    <span title={title} className="self-start text-[10px] tabular-nums text-muted-foreground">
       {parts.join(" · ")}
     </span>
   );
@@ -181,6 +182,18 @@ function useLastUsed(shown: SessionInfo[]): Map<string, string | null> {
   return used;
 }
 
+/** The project a row's folder belongs to, beside its name. */
+function ProjectLabel({ name, tokens }: { name: string; tokens: string[] }) {
+  return (
+    <span title={`Project: ${name}`} className="flex min-w-0 shrink items-center gap-1 text-xs text-muted-foreground">
+      <FolderKanban className="size-3 shrink-0" />
+      <span className="truncate">
+        <Highlight text={name} tokens={tokens} />
+      </span>
+    </span>
+  );
+}
+
 /** Small uppercase divider above each result section. */
 function SectionLabel({ children, count }: { children: ReactNode; count: number }) {
   return (
@@ -208,6 +221,7 @@ const SessionRow = memo(function SessionRow({
   active,
   current,
   nodeName,
+  projectName,
   lastUsed,
   onHover,
   onActivate,
@@ -221,6 +235,8 @@ const SessionRow = memo(function SessionRow({
   lastUsed: string | null;
   /** The machine's name for a peer's session; null for this machine's. */
   nodeName: string | null;
+  /** The project its folder belongs to; null for none. */
+  projectName: string | null;
   onHover: (hitKey: string) => void;
   onActivate: (h: Hit) => void;
 }) {
@@ -248,6 +264,7 @@ const SessionRow = memo(function SessionRow({
         <span className={cn("truncate font-medium", s.state !== "Running" && "text-muted-foreground")}>
           <Highlight text={s.name} tokens={tokens} />
         </span>
+        {projectName && <ProjectLabel name={projectName} tokens={tokens} />}
         {s.remoteControl && (
           <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
         )}
@@ -261,7 +278,7 @@ const SessionRow = memo(function SessionRow({
             and the sidebar's own tooltip, so one state has one name. */}
         {restorable && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">closed</span>}
       </div>
-      <div className="flex items-baseline pl-3.5">
+      <div className="flex flex-col gap-0.5 pl-3.5">
         <span className="truncate font-mono text-[10px] text-muted-foreground">
           {nodeName !== null && (
             <>
@@ -283,6 +300,7 @@ const RecentRow = memo(function RecentRow({
   hitKey,
   tokens,
   active,
+  projectName,
   onHover,
   onActivate,
 }: {
@@ -290,6 +308,8 @@ const RecentRow = memo(function RecentRow({
   hitKey: string;
   tokens: string[];
   active: boolean;
+  /** The project its folder belongs to; null for none. */
+  projectName: string | null;
   onHover: (hitKey: string) => void;
   onActivate: (h: Hit) => void;
 }) {
@@ -307,6 +327,7 @@ const RecentRow = memo(function RecentRow({
         <span className="truncate font-medium">
           <Highlight text={recentLabel(r)} tokens={tokens} />
         </span>
+        {projectName && <ProjectLabel name={projectName} tokens={tokens} />}
         <Badge variant="secondary" className="shrink-0 capitalize">
           {r.model || "default"}
         </Badge>
@@ -322,7 +343,7 @@ const RecentRow = memo(function RecentRow({
           </span>
         </span>
       )}
-      <div className="flex items-baseline">
+      <div className="flex flex-col gap-0.5">
         <span className="truncate font-mono text-[10px] text-muted-foreground">
           <Highlight text={r.workingDirectory} tokens={tokens} />
         </span>
@@ -345,6 +366,8 @@ const RecentRow = memo(function RecentRow({
 export function SessionSearchDialog({
   sessions,
   nodeNames,
+  projectNames,
+  projects,
   recents,
   activeId,
   onSelect,
@@ -354,6 +377,10 @@ export function SessionSearchDialog({
   sessions: SessionInfo[];
   /** The peers' names, by node id. */
   nodeNames?: Record<string, string>;
+  /** Each session's project name, by session key; a session in no project is absent. */
+  projectNames?: Record<string, string>;
+  /** This machine's projects, which its recents' folders are filed under. */
+  projects?: Project[];
   recents: RecentSession[];
   activeId: string | null;
   onSelect: (id: string) => void;
@@ -374,18 +401,19 @@ export function SessionSearchDialog({
     () =>
       sessions.map((s) => ({
         s,
-        hay: haystack([s.name, s.workingDirectory, s.nodeId ? nodeNames?.[s.nodeId] : null]),
+        hay: haystack([s.name, s.workingDirectory, s.nodeId ? nodeNames?.[s.nodeId] : null, projectNames?.[s.id]]),
       })),
-    [sessions, nodeNames]
+    [sessions, nodeNames, projectNames]
   );
   const recentIndex = useMemo(
     () =>
-      recents.map((r) => ({
-        r,
-        hay: haystack([recentLabel(r), r.name, r.workingDirectory, r.command, r.model]),
-      })),
-    [recents]
+      recents.map((r) => {
+        const project = projectForDir(r.workingDirectory, projects ?? [])?.name ?? null;
+        return { r, project, hay: haystack([recentLabel(r), r.name, r.workingDirectory, r.command, r.model, project]) };
+      }),
+    [recents, projects]
   );
+  const recentProject = useMemo(() => new Map(recentIndex.map((x) => [x.r, x.project])), [recentIndex]);
 
   const tokens = useMemo(() => tokenize(query), [query]);
   const sessionHits = useMemo(
@@ -486,7 +514,7 @@ export function SessionSearchDialog({
       >
         <DialogTitle className="sr-only">Search sessions</DialogTitle>
         <DialogDescription className="sr-only">
-          Search live sessions and recent session presets by name, folder or prompt.
+          Search live sessions and recent session presets by name, project, folder or prompt.
         </DialogDescription>
 
         <div className="relative border-b p-2 pr-10">
@@ -522,6 +550,7 @@ export function SessionSearchDialog({
                   active={i === cursor}
                   current={s.id === activeId}
                   nodeName={s.nodeId ? (nodeNames?.[s.nodeId] ?? "another machine") : null}
+                  projectName={projectNames?.[s.id] ?? null}
                   lastUsed={lastUsed.get(s.id) ?? null}
                   onHover={setActiveKey}
                   onActivate={activate}
@@ -541,6 +570,7 @@ export function SessionSearchDialog({
                     hitKey={recentHitKey(i)}
                     tokens={tokens}
                     active={shownSessions.length + i === cursor}
+                    projectName={recentProject.get(r) ?? null}
                     onHover={setActiveKey}
                     onActivate={activate}
                   />

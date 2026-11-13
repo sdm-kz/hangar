@@ -514,6 +514,17 @@ export function App() {
     [everywhere, everywhereIds]
   );
   const nodeNames = useMemo(() => Object.fromEntries(mesh.peers.map((p) => [p.id, p.name])), [mesh.peers]);
+  // Each session's project, by session key, as the machine it runs on files it: for the search popup.
+  const projectNames = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const s of everywhere.sessions) {
+      const node = splitSessionKey(s.id).node;
+      const own = node ? (mesh.peers.find((p) => p.id === node)?.snap?.projects ?? []) : projects;
+      const p = projectForDir(s.workingDirectory, own);
+      if (p) out[s.id] = p.name;
+    }
+    return out;
+  }, [everywhere.sessions, mesh.peers, projects]);
 
   // Badge the favicon with the busiest state across *all* sessions, so a backgrounded tab shows at a
   // glance that something is happening. Waiting-on-you (amber) outranks working (green) here — unlike
@@ -2059,6 +2070,8 @@ export function App() {
           <SessionSearchDialog
             sessions={everywhere.sessions}
             nodeNames={nodeNames}
+            projectNames={projectNames}
+            projects={projects}
             recents={recents}
             activeId={activeKey}
             // Opening a session from search also pulls the list back to the Sessions tab (so the row
