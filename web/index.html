@@ -27,6 +27,16 @@
     <title>Hangar</title>
     <!-- PWA: required so iOS Safari (16.4+) allows Web Push once the app is added to the Home Screen. -->
     <link rel="manifest" href="/manifest.webmanifest" />
+    <script>
+      // Chrome on a Mac sets the installed app in the Dock with the manifest's maskable icon, the white
+      // tile, cut to a rounded square. Given only the plain logo it shows the logo alone, as Windows
+      // does. Phones keep the tile: a launcher crops a maskable icon to its own shape. iPadOS reports
+      // itself as a Mac, so a Mac with a touch screen is an iPad and keeps it too.
+      (function () {
+        var mac = /Macintosh/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1);
+        if (mac) document.querySelector('link[rel="manifest"]').setAttribute("href", "/manifest-mac.webmanifest");
+      })();
+    </script>
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="theme-color" content="#0B1020" />
     <meta name="apple-mobile-web-app-capable" content="yes" />

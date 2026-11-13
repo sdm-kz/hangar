@@ -405,7 +405,8 @@ screenshot is this session as a chat):
   it, so a collapsed group can't hide a question.
 - **Responsive** — collapsible session sidebar on desktop; a slide-over drawer on mobile, installable
   as a PWA over HTTPS: *Install app* in Chrome or Edge, *Add to Home Screen* on an iPhone, *Add to
-  Dock* in Safari on a Mac. It then opens in its own window, and push notifications reach it with the
+  Dock* in Safari on a Mac. Chrome on a Mac puts the logo alone in the Dock, as Windows shows it, while
+  a phone gets it on a white tile. It then opens in its own window, and push notifications reach it with the
   app closed; on an iPhone, push works only in the home-screen app (iOS 16.4 or later). The installed
   app's icon (the taskbar, the Dock, the home screen) carries a badge: a number for the sessions
   blocked on you — waiting on an answer or a permission, or a turn that failed — and a plain dot when
