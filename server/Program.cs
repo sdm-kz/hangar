@@ -1568,11 +1568,13 @@ internal static class Program
 
         // ---- General server-filesystem browsing for the sidebar Files panel (absolute paths, not
         //      confined to a session). Same token auth as everything under /api. -------------------
-        app.MapGet("/api/fs/list", (string? path) => Results.Ok(ServerFileBrowser.Browse(path, defaultFolder)));
+        // `hidden=true` lists hidden and system entries too (the panel's Show hidden files switch).
+        app.MapGet("/api/fs/list", (string? path, bool? hidden) =>
+            Results.Ok(ServerFileBrowser.Browse(path, defaultFolder, hidden == true)));
         // A path typed into the Files panel's address field, resolved to the folder the tree should open
         // (a file resolves to its folder). Relative paths are taken against the folder selected there.
-        app.MapGet("/api/fs/resolve", (string? path, string? @base) =>
-            Results.Ok(ServerFileBrowser.Resolve(path, @base, defaultFolder)));
+        app.MapGet("/api/fs/resolve", (string? path, string? @base, bool? hidden) =>
+            Results.Ok(ServerFileBrowser.Resolve(path, @base, defaultFolder, hidden == true)));
 
         app.MapGet("/api/fs/file", (string path, bool? download, HttpContext http) =>
         {

@@ -19,6 +19,8 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   CornerDownLeft,
+  Eye,
+  EyeOff,
   File as FileIcon,
   FileText,
   FilePlus,
@@ -81,6 +83,10 @@ function writeStored(key: string, value: string | null) {
     /* storage disabled — preference is best-effort */
   }
 }
+
+// Whether the tree lists hidden and system entries (dotfiles, .git, AppData): on unless turned off. One
+// switch per browser, for every machine's tree.
+const HIDDEN_KEY = "hangar.filesShowHidden";
 
 // Trailing path segment, used as a node's display name when the API gives an absolute path.
 function baseName(p: string): string {
@@ -186,11 +192,20 @@ export function FilesSidebar({
   // Rows marked for a batch action. The tree is the range gesture's frame of reference, so it is the
   // scroll container -- the element the rows live in -- that the hook reads their order from.
   const mark = useMarkedPaths(scrollRef);
+  const [showHidden, setShowHidden] = useState(() => readStored(HIDDEN_KEY) !== "0");
+  // Read by the listings rather than closed over, so turning it over doesn't remake listDir -- which
+  // would run the initial load again.
+  const showHiddenRef = useRef(showHidden);
+  showHiddenRef.current = showHidden;
 
   const listDir = useCallback(async (path: string) => {
     setLoading((s) => new Set(s).add(path));
+    const hidden = showHiddenRef.current;
     try {
-      const res = await api.fsList(path);
+      const res = await api.fsList(path, hidden);
+      // Hidden files were turned over while this was out: it lists the folder the old way, so it is
+      // dropped, and the folder is listed again once it no longer counts as loading.
+      if (hidden !== showHiddenRef.current) return;
       setChildren((m) => new Map(m).set(path, res.entries));
     } catch {
       setChildren((m) => new Map(m).set(path, []));
@@ -287,7 +302,7 @@ export function FilesSidebar({
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.fsList();
+        const res = await api.fsList(undefined, showHiddenRef.current);
         setDrives(res.drives);
         // Restore the remembered tree: load every persisted-expanded folder so its rows render.
         const persisted = loadExpanded(keys.expanded);
@@ -377,7 +392,7 @@ export function FilesSidebar({
     setGoingTo(true);
     setAddressError(null);
     try {
-      const res = await api.fsResolve(typed, selectedDir);
+      const res = await api.fsResolve(typed, selectedDir, showHiddenRef.current);
       if (!res.found || !res.dir) {
         setAddressError(res.error ?? "Nothing at that path.");
         return;
@@ -388,6 +403,8 @@ export function FilesSidebar({
       setGoTo(target);
       setAddressOpen(false);
       await expandTo(res.dir);
+      // A file is opened as well, as a click on its row would: that is what selects a file here.
+      if (res.file) onOpenFile(res.file);
       // Every listing on the way down has landed, so the row is there by the next paint or not at
       // all (a listing that failed). Either way the jump is over: a target left standing would yank
       // the tree to it the next time that folder happened to list, long after anyone asked.
@@ -397,7 +414,7 @@ export function FilesSidebar({
     } finally {
       setGoingTo(false);
     }
-  }, [address, goingTo, selectedDir, expandTo]);
+  }, [address, goingTo, selectedDir, expandTo, onOpenFile]);
 
   // Select the whole path when the field opens, so typing replaces it and a paste lands clean.
   useEffect(() => {
@@ -668,6 +685,16 @@ export function FilesSidebar({
     writeStored(keys.scroll, "0");
   }, [keys.scroll]);
 
+  // Show or leave out hidden entries. Every listing is dropped and the open folders on screen list
+  // again (the effect above does it), so the tree changes in place rather than collapsing.
+  const toggleHidden = useCallback(() => {
+    const next = !showHiddenRef.current;
+    showHiddenRef.current = next;
+    setShowHidden(next);
+    writeStored(HIDDEN_KEY, next ? "1" : "0");
+    setChildren(new Map());
+  }, []);
+
   // Everything the toolbar offers, most-used first: when the panel is too narrow for all of them,
   // the ones at the end move into the "more" menu, so what stays out is what is reached for most.
   const actions: ToolAction[] = [
@@ -723,6 +750,13 @@ export function FilesSidebar({
       icon: <ListChecks className="size-4" />,
       onClick: () => (mark.selecting ? mark.clear() : mark.start()),
       pressed: mark.selecting,
+    },
+    {
+      id: "hidden",
+      label: showHidden ? "Hide hidden files" : "Show hidden files",
+      icon: showHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />,
+      onClick: toggleHidden,
+      pressed: showHidden,
     },
     { id: "refresh", label: "Refresh", icon: <RefreshCw className="size-4" />, onClick: () => reload(selectedDir) },
   ];
@@ -920,6 +954,7 @@ function TreeNode({
   name,
   isDir,
   isDrive = false,
+  hidden = false,
   depth,
   openPath,
   selectedDir,
@@ -942,6 +977,8 @@ function TreeNode({
   name: string;
   isDir: boolean;
   isDrive?: boolean;
+  /** Hidden or system: drawn dimmer, as a file manager draws one. */
+  hidden?: boolean;
   depth: number;
   openPath: string | null;
   selectedDir: string | null;
@@ -1016,7 +1053,7 @@ function TreeNode({
         {renaming === path ? (
           <RenameField value={name} onSubmit={(n) => onRename(path, n)} onCancel={onCancelRename} />
         ) : (
-          <span className="min-w-0 flex-1 truncate">{name}</span>
+          <span className={cn("min-w-0 flex-1 truncate", hidden && "text-muted-foreground")}>{name}</span>
         )}
 
         {isBusy && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
@@ -1108,6 +1145,7 @@ function TreeNode({
                 path={c.path}
                 name={c.name}
                 isDir={c.isDir}
+                hidden={c.hidden}
                 depth={depth + 1}
                 openPath={openPath}
                 selectedDir={selectedDir}

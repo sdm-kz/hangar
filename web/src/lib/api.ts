@@ -383,14 +383,20 @@ function createApi(base: string) {
     },
 
     // ---- General server-filesystem browsing (absolute paths) for the sidebar Files panel ----
-    fsList(path?: string): Promise<FsListing> {
-      const q = path ? `?path=${encodeURIComponent(path)}` : "";
-      return request(`/api/fs/list${q}`);
+    // `hidden`: list hidden and system entries too.
+    fsList(path?: string, hidden = false): Promise<FsListing> {
+      const q = new URLSearchParams();
+      if (path) q.set("path", path);
+      if (hidden) q.set("hidden", "true");
+      const qs = q.toString();
+      return request(`/api/fs/list${qs ? `?${qs}` : ""}`);
     },
-    // Resolve a typed path (either slash, quotes, ~, relative to `base`) to the folder to open.
-    fsResolve(path: string, base?: string | null): Promise<FsResolved> {
+    // Resolve a typed path (either slash, quotes, ~, relative to `base`) to the folder to open. `hidden`:
+    // the tree lists hidden entries, so a path through or to one is somewhere it can go.
+    fsResolve(path: string, base?: string | null, hidden = false): Promise<FsResolved> {
       const q = new URLSearchParams({ path });
       if (base) q.set("base", base);
+      if (hidden) q.set("hidden", "true");
       return request(`/api/fs/resolve?${q}`);
     },
     async fetchServerFileText(path: string): Promise<string> {

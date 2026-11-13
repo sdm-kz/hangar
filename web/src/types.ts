@@ -196,6 +196,8 @@ export interface FsNode {
   path: string; // absolute path on the server machine
   isDir: boolean;
   size: number;
+  /** Hidden or system (a dotfile, on Linux and macOS); only listed when asked for. Absent from older servers. */
+  hidden?: boolean;
 }
 
 export interface FsListing {

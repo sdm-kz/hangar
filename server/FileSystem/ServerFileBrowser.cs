@@ -1,7 +1,10 @@
 namespace Hangar.Server.FileSystem;
 
-/// <summary>A file or directory entry with its absolute path (for the general server-fs browser).</summary>
-public sealed record FsNode(string Name, string Path, bool IsDir, long Size);
+/// <summary>
+/// A file or directory entry with its absolute path (for the general server-fs browser).
+/// <paramref name="Hidden"/>: hidden or system (a dotfile, on Linux and macOS), listed only when asked for.
+/// </summary>
+public sealed record FsNode(string Name, string Path, bool IsDir, long Size, bool Hidden = false);
 
 /// <summary>
 /// A directory listing for the sidebar Files tree: the folder being listed (<paramref name="Current"/>),
@@ -32,8 +35,10 @@ public sealed record FsResolved(bool Found, string? Dir, string? File, string? P
 public static class ServerFileBrowser
 {
     /// <summary>List a directory's children (dirs first, then files), or the drive roots when no path
-    /// is given. Hidden/system entries are skipped to match the folder picker.</summary>
-    public static FsListing Browse(string? path, string? defaultFolder = null)
+    /// is given. Hidden/system entries are skipped, as the folder picker skips them, unless
+    /// <paramref name="includeHidden"/> asks for them -- and even then the ones that are both, as
+    /// Explorer's "show hidden items" leaves out the protected system files.</summary>
+    public static FsListing Browse(string? path, string? defaultFolder = null, bool includeHidden = false)
     {
         var drives = DriveRoots();
 
@@ -45,7 +50,7 @@ public static class ServerFileBrowser
                 ? defaultFolder!
                 : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             return Directory.Exists(start)
-                ? Browse(start, defaultFolder)
+                ? Browse(start, defaultFolder, includeHidden)
                 : new FsListing(null, null, drives, Array.Empty<FsNode>());
         }
 
@@ -58,15 +63,17 @@ public static class ServerFileBrowser
         {
             foreach (var d in Directory.EnumerateDirectories(full))
             {
-                if (IsHidden(d)) continue;
-                entries.Add(new FsNode(Path.GetFileName(d), d, true, 0));
+                var a = Attributes(d);
+                if (Skipped(a, includeHidden)) continue;
+                entries.Add(new FsNode(Path.GetFileName(d), d, true, 0, IsHidden(a)));
             }
             foreach (var f in Directory.EnumerateFiles(full))
             {
-                if (IsHidden(f)) continue;
+                var a = Attributes(f);
+                if (Skipped(a, includeHidden)) continue;
                 long size = 0;
                 try { size = new FileInfo(f).Length; } catch { }
-                entries.Add(new FsNode(Path.GetFileName(f), f, false, size));
+                entries.Add(new FsNode(Path.GetFileName(f), f, false, size, IsHidden(a)));
             }
         }
         catch (UnauthorizedAccessException) { }
@@ -87,8 +94,10 @@ public static class ServerFileBrowser
     /// strict about what comes back: the real on-disk spelling of every segment, because the tree
     /// keys its rows by exact path and <c>c:/git</c> would otherwise open beside <c>C:\Git</c> rather
     /// than onto it. A file resolves to the folder holding it, with the file named alongside.
+    /// <paramref name="includeHidden"/>: the tree is listing hidden entries, so a path through or to one
+    /// can be shown too.
     /// </summary>
-    public static FsResolved Resolve(string? input, string? baseDir, string? defaultFolder)
+    public static FsResolved Resolve(string? input, string? baseDir, string? defaultFolder, bool includeHidden = false)
     {
         var raw = (input ?? "").Trim();
         // A path copied from Explorer ("Copy as path") or a shell arrives quoted.
@@ -129,28 +138,32 @@ public static class ServerFileBrowser
         if (!isDir && !File.Exists(full)) return FsResolved.NotFound(full, "Nothing at that path.");
         var real = TrueCase(full);
 
-        // The tree starts at its drive roots and lists neither hidden nor system entries, so a path
-        // outside those can exist and still never be shown -- refused here, rather than sending the
-        // tree after rows that will not appear (a network share, a CD drive, ~/.config, a .git folder).
+        // The tree starts at its drive roots and, unless asked to, lists neither hidden nor system
+        // entries, so a path outside those can exist and still never be shown -- refused here, rather
+        // than sending the tree after rows that will not appear (a network share, a CD drive, and,
+        // with hidden entries left out, ~/.config or a .git folder).
         var drive = DriveRoots().FirstOrDefault(d => real.StartsWith(d.Path, StringComparison.OrdinalIgnoreCase));
         if (drive is null) return FsResolved.NotFound(real, "That drive isn't in the Files tree.");
         var dir = isDir ? real : Path.GetDirectoryName(real);
         if (dir is null) return FsResolved.NotFound(real, "No folder holds that file.");
-        if (HiddenBelow(drive.Path, dir))
-            return FsResolved.NotFound(real, "That's inside a hidden folder, which the Files tree doesn't list.");
+        if (HiddenBelow(drive.Path, dir, includeHidden))
+            return FsResolved.NotFound(real, includeHidden
+                ? "That's inside a protected system folder, which the Files tree doesn't list."
+                : "That's inside a hidden folder, and the Files tree is leaving hidden files out.");
         // A hidden file still has a visible folder to land in; there is just no row of its to point at.
-        var file = isDir || IsHidden(real) ? null : real;
+        var file = isDir || Skipped(Attributes(real), includeHidden) ? null : real;
         return new FsResolved(true, dir, file);
     }
 
-    /// <summary>Whether any folder between <paramref name="root"/> (exclusive) and <paramref name="dir"/> is hidden.</summary>
-    private static bool HiddenBelow(string root, string dir)
+    /// <summary>Whether any folder between <paramref name="root"/> (exclusive) and <paramref name="dir"/> is one
+    /// the tree leaves out.</summary>
+    private static bool HiddenBelow(string root, string dir, bool includeHidden)
     {
         // The root itself is skipped: a Windows drive root reports Hidden|System, and is listed anyway.
         var cur = dir;
         while (cur.Length > root.Length)
         {
-            if (IsHidden(cur)) return true;
+            if (Skipped(Attributes(cur), includeHidden)) return true;
             cur = Path.GetDirectoryName(cur) ?? root;
         }
         return false;
@@ -326,13 +339,24 @@ public static class ServerFileBrowser
         return list;
     }
 
-    private static bool IsHidden(string p)
+    /// <summary>A path's attributes, or none when they can't be read.</summary>
+    private static FileAttributes Attributes(string p)
     {
-        try
-        {
-            var a = File.GetAttributes(p);
-            return a.HasFlag(FileAttributes.Hidden) || a.HasFlag(FileAttributes.System);
-        }
-        catch { return false; }
+        try { return File.GetAttributes(p); }
+        catch { return 0; }
     }
+
+    /// <summary>Hidden or system. On Linux and macOS, .NET reports a dotfile as hidden.</summary>
+    private static bool IsHidden(FileAttributes a) =>
+        a.HasFlag(FileAttributes.Hidden) || a.HasFlag(FileAttributes.System);
+
+    /// <summary>
+    /// Whether the tree leaves an entry out: anything hidden or system, or -- with hidden entries shown --
+    /// still the ones that are both, Windows' protected system files ($Recycle.Bin, pagefile.sys, and the
+    /// old "Application Data"-style junctions that refuse to be listed).
+    /// </summary>
+    private static bool Skipped(FileAttributes a, bool includeHidden) =>
+        includeHidden
+            ? a.HasFlag(FileAttributes.Hidden) && a.HasFlag(FileAttributes.System)
+            : IsHidden(a);
 }

@@ -196,6 +196,11 @@ screenshot is this session as a chat):
   waiting on a prompt", so a 03:00 run that blocks wakes your phone.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
   navigation (↑/↓/Enter) and recently-used folders.
+- **Files tree** — the sidebar's **Files** tab: the whole disk of the machine picked above it, from
+  its drives down. **Hidden files** (dotfiles, `AppData`, `.git`) are listed, dimmed, and the eye
+  button in its toolbar leaves them out; Windows' protected system files stay out either way. The
+  folder button there goes **to a path** typed or pasted in (either slash, quotes, `~`, or relative
+  to the selected folder): a folder is opened, and a file has its folder opened and is opened itself.
 - **File browser** per session — a lazy directory tree on the left, preview on the right:
   - **Text/code** files rendered inline and **editable** (Edit → Save writes the file). The box in
     the corner, in both modes, turns **line numbers** on (off by default, remembered) and goes **to a
