@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionInfo } from "@/types";
-import { recentLabel, type RecentSession } from "@/lib/recentSessions";
+import { recentLabel, recentWhen, type RecentSession } from "@/lib/recentSessions";
 import { sessionColor } from "@/lib/sessionColors";
+import { apiForKey, splitSessionKey } from "@/lib/node";
 import {
   Dialog,
   DialogContent,
@@ -99,6 +100,87 @@ function Highlight({ text: full, tokens }: { text: string; tokens: string[] }) {
   return <>{parts}</>;
 }
 
+/** When something was last used, as the end of a row says it: "3h ago" this week, the date before that. */
+function usedWhen(iso: string): string {
+  const when = recentWhen(iso);
+  return when === "now" ? "just now" : /^\d+[mhd]$/.test(when) ? `${when} ago` : when;
+}
+
+/** A date and time to the minute, with the year only once it isn't this one: "10 Nov, 14:02". */
+function dateTime(iso: string): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "";
+  const sameYear = t.getFullYear() === new Date().getFullYear();
+  return t.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * The end of a row's folder line: when the row was last used and, for a session, when it was started.
+ * The full times are in its tooltip.
+ */
+function Times({ used, created }: { used: string | null | undefined; created?: string }) {
+  const parts = [used && `used ${usedWhen(used)}`, created && `created ${dateTime(created)}`].filter(Boolean);
+  if (parts.length === 0) return null;
+  const title = [
+    used && `Last used: ${new Date(used).toLocaleString()}`,
+    created && `Created: ${new Date(created).toLocaleString()}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <span title={title} className="ml-auto shrink-0 pl-3 text-[10px] tabular-nums text-muted-foreground">
+      {parts.join(" · ")}
+    </span>
+  );
+}
+
+/**
+ * When each session was last used: the time of the latest message in its conversation, yours or
+ * Claude's — what the session switcher shows beside it (`/api/sessions/last-said`). Fetched for the
+ * rows on screen, a request per machine as each page of them is rendered, and once per opening of the
+ * dialog. Keyed by session key; null for a session with nothing said, or a machine too old to say.
+ */
+function useLastUsed(shown: SessionInfo[]): Map<string, string | null> {
+  const [used] = useState(() => new Map<string, string | null>());
+  const [, bump] = useState(0);
+  // For the dialog's lifetime, not each run below: an answer to an earlier page lands while the query is
+  // being typed, and still has to draw.
+  const open = useRef(true);
+  useEffect(() => {
+    open.current = true; // again after a StrictMode remount
+    return () => {
+      open.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    const byNode = new Map<string, string[]>();
+    for (const s of shown) {
+      if (used.has(s.id)) continue;
+      // Marked before the answer, so the next page doesn't ask for it again while this one is out.
+      used.set(s.id, null);
+      if (!s.claudeSessionId) continue;
+      const node = splitSessionKey(s.id).node ?? "";
+      byNode.set(node, [...(byNode.get(node) ?? []), s.id]);
+    }
+    for (const keys of byNode.values()) {
+      apiForKey(keys[0])
+        .getLastSaid(keys.map((k) => splitSessionKey(k).id))
+        .then((said) => {
+          for (const k of keys) used.set(k, said[splitSessionKey(k).id]?.time ?? null);
+          if (open.current) bump((n) => n + 1);
+        })
+        .catch(() => {}); // an older machine: its rows say when they were created, and no more
+    }
+  }, [shown, used]);
+  return used;
+}
+
 /** Small uppercase divider above each result section. */
 function SectionLabel({ children, count }: { children: ReactNode; count: number }) {
   return (
@@ -126,6 +208,7 @@ const SessionRow = memo(function SessionRow({
   active,
   current,
   nodeName,
+  lastUsed,
   onHover,
   onActivate,
 }: {
@@ -134,6 +217,8 @@ const SessionRow = memo(function SessionRow({
   tokens: string[];
   active: boolean;
   current: boolean;
+  /** When its conversation last had a message; null when unknown (yet). */
+  lastUsed: string | null;
   /** The machine's name for a peer's session; null for this machine's. */
   nodeName: string | null;
   onHover: (hitKey: string) => void;
@@ -176,15 +261,18 @@ const SessionRow = memo(function SessionRow({
             and the sidebar's own tooltip, so one state has one name. */}
         {restorable && <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">closed</span>}
       </div>
-      <span className="truncate pl-3.5 font-mono text-[10px] text-muted-foreground">
-        {nodeName !== null && (
-          <>
-            <Highlight text={nodeName} tokens={tokens} />
-            {" · "}
-          </>
-        )}
-        <Highlight text={s.workingDirectory} tokens={tokens} />
-      </span>
+      <div className="flex items-baseline pl-3.5">
+        <span className="truncate font-mono text-[10px] text-muted-foreground">
+          {nodeName !== null && (
+            <>
+              <Highlight text={nodeName} tokens={tokens} />
+              {" · "}
+            </>
+          )}
+          <Highlight text={s.workingDirectory} tokens={tokens} />
+        </span>
+        <Times used={lastUsed} created={s.createdAt} />
+      </div>
     </div>
   );
 });
@@ -234,9 +322,12 @@ const RecentRow = memo(function RecentRow({
           </span>
         </span>
       )}
-      <span className="truncate font-mono text-[10px] text-muted-foreground">
-        <Highlight text={r.workingDirectory} tokens={tokens} />
-      </span>
+      <div className="flex items-baseline">
+        <span className="truncate font-mono text-[10px] text-muted-foreground">
+          <Highlight text={r.workingDirectory} tokens={tokens} />
+        </span>
+        <Times used={r.lastUsedAt} />
+      </div>
     </div>
   );
 });
@@ -312,6 +403,7 @@ export function SessionSearchDialog({
     () => recentHits.slice(0, Math.max(0, limit - sessionHits.length)),
     [recentHits, limit, sessionHits.length]
   );
+  const lastUsed = useLastUsed(shownSessions);
   const total = sessionHits.length + recentHits.length;
   const hidden = total - shownSessions.length - shownRecents.length;
   const hits: (Hit & { key: string })[] = useMemo(
@@ -430,6 +522,7 @@ export function SessionSearchDialog({
                   active={i === cursor}
                   current={s.id === activeId}
                   nodeName={s.nodeId ? (nodeNames?.[s.nodeId] ?? "another machine") : null}
+                  lastUsed={lastUsed.get(s.id) ?? null}
                   onHover={setActiveKey}
                   onActivate={activate}
                 />
