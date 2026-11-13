@@ -122,22 +122,20 @@ function dateTime(iso: string): string {
 }
 
 /**
- * The line under a row's folder: when the row was last used and, for a session, when it was started.
- * The full times are in its tooltip.
+ * The line under a row's folder: when the row was last used on the left and, for a session, when it was
+ * started on the right. Each one's full time is in its tooltip.
  */
 function Times({ used, created }: { used: string | null | undefined; created?: string }) {
-  const parts = [used && `used ${usedWhen(used)}`, created && `created ${dateTime(created)}`].filter(Boolean);
-  if (parts.length === 0) return null;
-  const title = [
-    used && `Last used: ${new Date(used).toLocaleString()}`,
-    created && `Created: ${new Date(created).toLocaleString()}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  if (!used && !created) return null;
   return (
-    <span title={title} className="self-start text-[10px] tabular-nums text-muted-foreground">
-      {parts.join(" · ")}
-    </span>
+    <div className="flex gap-3 text-[10px] tabular-nums text-muted-foreground">
+      {used && <span title={`Last used: ${new Date(used).toLocaleString()}`}>used {usedWhen(used)}</span>}
+      {created && (
+        <span title={`Created: ${new Date(created).toLocaleString()}`} className="ml-auto">
+          created {dateTime(created)}
+        </span>
+      )}
+    </div>
   );
 }
 
