@@ -12,8 +12,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { ProjectGlyph } from "@/components/ProjectGlyph";
 import { cn } from "@/lib/utils";
-import { FolderKanban, Radio, Search, Terminal } from "lucide-react";
+import { Radio, Search, Terminal } from "lucide-react";
 
 /** Split a query into lowercase terms; every term must match somewhere for a row to be a hit. */
 function tokenize(query: string): string[] {
@@ -181,12 +182,15 @@ function useLastUsed(shown: SessionInfo[]): Map<string, string | null> {
 }
 
 /** The project a row's folder belongs to, beside its name. */
-function ProjectLabel({ name, tokens }: { name: string; tokens: string[] }) {
+function ProjectLabel({ project, tokens }: { project: Project; tokens: string[] }) {
   return (
-    <span title={`Project: ${name}`} className="flex min-w-0 shrink items-center gap-1 text-xs text-muted-foreground">
-      <FolderKanban className="size-3 shrink-0" />
+    <span
+      title={`Project: ${project.name}`}
+      className="flex min-w-0 shrink items-center gap-1 text-xs text-muted-foreground"
+    >
+      <ProjectGlyph project={project} className="size-3 shrink-0" />
       <span className="truncate">
-        <Highlight text={name} tokens={tokens} />
+        <Highlight text={project.name} tokens={tokens} />
       </span>
     </span>
   );
@@ -219,7 +223,7 @@ const SessionRow = memo(function SessionRow({
   active,
   current,
   nodeName,
-  projectName,
+  project,
   lastUsed,
   onHover,
   onActivate,
@@ -234,7 +238,7 @@ const SessionRow = memo(function SessionRow({
   /** The machine's name for a peer's session; null for this machine's. */
   nodeName: string | null;
   /** The project its folder belongs to; null for none. */
-  projectName: string | null;
+  project: Project | null;
   onHover: (hitKey: string) => void;
   onActivate: (h: Hit) => void;
 }) {
@@ -262,7 +266,7 @@ const SessionRow = memo(function SessionRow({
         <span className={cn("truncate font-medium", s.state !== "Running" && "text-muted-foreground")}>
           <Highlight text={s.name} tokens={tokens} />
         </span>
-        {projectName && <ProjectLabel name={projectName} tokens={tokens} />}
+        {project && <ProjectLabel project={project} tokens={tokens} />}
         {s.remoteControl && (
           <Radio className="size-3 shrink-0 text-muted-foreground" aria-label="remote control" />
         )}
@@ -298,7 +302,7 @@ const RecentRow = memo(function RecentRow({
   hitKey,
   tokens,
   active,
-  projectName,
+  project,
   onHover,
   onActivate,
 }: {
@@ -307,7 +311,7 @@ const RecentRow = memo(function RecentRow({
   tokens: string[];
   active: boolean;
   /** The project its folder belongs to; null for none. */
-  projectName: string | null;
+  project: Project | null;
   onHover: (hitKey: string) => void;
   onActivate: (h: Hit) => void;
 }) {
@@ -325,7 +329,7 @@ const RecentRow = memo(function RecentRow({
         <span className="truncate font-medium">
           <Highlight text={recentLabel(r)} tokens={tokens} />
         </span>
-        {projectName && <ProjectLabel name={projectName} tokens={tokens} />}
+        {project && <ProjectLabel project={project} tokens={tokens} />}
         <Badge variant="secondary" className="shrink-0 capitalize">
           {r.model || "default"}
         </Badge>
@@ -364,7 +368,7 @@ const RecentRow = memo(function RecentRow({
 export function SessionSearchDialog({
   sessions,
   nodeNames,
-  projectNames,
+  sessionProjects,
   projects,
   recents,
   activeId,
@@ -375,8 +379,8 @@ export function SessionSearchDialog({
   sessions: SessionInfo[];
   /** The peers' names, by node id. */
   nodeNames?: Record<string, string>;
-  /** Each session's project name, by session key; a session in no project is absent. */
-  projectNames?: Record<string, string>;
+  /** Each session's project, by session key; a session in no project is absent. */
+  sessionProjects?: Record<string, Project>;
   /** This machine's projects, which its recents' folders are filed under. */
   projects?: Project[];
   recents: RecentSession[];
@@ -399,15 +403,19 @@ export function SessionSearchDialog({
     () =>
       sessions.map((s) => ({
         s,
-        hay: haystack([s.name, s.workingDirectory, s.nodeId ? nodeNames?.[s.nodeId] : null, projectNames?.[s.id]]),
+        hay: haystack([s.name, s.workingDirectory, s.nodeId ? nodeNames?.[s.nodeId] : null, sessionProjects?.[s.id]?.name]),
       })),
-    [sessions, nodeNames, projectNames]
+    [sessions, nodeNames, sessionProjects]
   );
   const recentIndex = useMemo(
     () =>
       recents.map((r) => {
-        const project = projectForDir(r.workingDirectory, projects ?? [])?.name ?? null;
-        return { r, project, hay: haystack([recentLabel(r), r.name, r.workingDirectory, r.command, r.model, project]) };
+        const project = projectForDir(r.workingDirectory, projects ?? []);
+        return {
+          r,
+          project,
+          hay: haystack([recentLabel(r), r.name, r.workingDirectory, r.command, r.model, project?.name]),
+        };
       }),
     [recents, projects]
   );
@@ -548,7 +556,7 @@ export function SessionSearchDialog({
                   active={i === cursor}
                   current={s.id === activeId}
                   nodeName={s.nodeId ? (nodeNames?.[s.nodeId] ?? "another machine") : null}
-                  projectName={projectNames?.[s.id] ?? null}
+                  project={sessionProjects?.[s.id] ?? null}
                   lastUsed={lastUsed.get(s.id) ?? null}
                   onHover={setActiveKey}
                   onActivate={activate}
@@ -568,7 +576,7 @@ export function SessionSearchDialog({
                     hitKey={recentHitKey(i)}
                     tokens={tokens}
                     active={shownSessions.length + i === cursor}
-                    projectName={recentProject.get(r) ?? null}
+                    project={recentProject.get(r) ?? null}
                     onHover={setActiveKey}
                     onActivate={activate}
                   />

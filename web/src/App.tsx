@@ -515,13 +515,13 @@ export function App() {
   );
   const nodeNames = useMemo(() => Object.fromEntries(mesh.peers.map((p) => [p.id, p.name])), [mesh.peers]);
   // Each session's project, by session key, as the machine it runs on files it: for the search popup.
-  const projectNames = useMemo(() => {
-    const out: Record<string, string> = {};
+  const sessionProjects = useMemo(() => {
+    const out: Record<string, Project> = {};
     for (const s of everywhere.sessions) {
       const node = splitSessionKey(s.id).node;
       const own = node ? (mesh.peers.find((p) => p.id === node)?.snap?.projects ?? []) : projects;
       const p = projectForDir(s.workingDirectory, own);
-      if (p) out[s.id] = p.name;
+      if (p) out[s.id] = p;
     }
     return out;
   }, [everywhere.sessions, mesh.peers, projects]);
@@ -2070,7 +2070,7 @@ export function App() {
           <SessionSearchDialog
             sessions={everywhere.sessions}
             nodeNames={nodeNames}
-            projectNames={projectNames}
+            sessionProjects={sessionProjects}
             projects={projects}
             recents={recents}
             activeId={activeKey}
