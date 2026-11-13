@@ -409,8 +409,8 @@ screenshot is this session as a chat):
 - **Session switcher** — **Alt+`** (⌥` on a Mac) works like Alt+Tab, from anywhere, terminal included:
   hold Alt, tap ` to step through the sessions this browser looked at last (Shift+` steps back), and let
   go to open the one highlighted; Esc cancels. A single tap goes back to the session you were just in.
-  Each row shows the session's latest message — Claude's reply, or your prompt while it works — and its
-  mark. **Alt+Q** skips the list and goes to the next session that needs you: waiting on you first, then
+  Each row shows the session's project (its icon and name; the folder too when it isn't the project's
+  only one), its latest message — Claude's reply, or your prompt while it works — and its mark. **Alt+Q** skips the list and goes to the next session that needs you: waiting on you first, then
   a failed turn, then finished work you haven't looked at, the one you looked at longest ago first. The
   order is kept per browser, so the phone and the desk each have their own.
 - **Settings** — the gear at the bottom of the sidebar, or **Ctrl+Shift+S** (⌘⇧S on a Mac) from

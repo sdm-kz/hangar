@@ -2044,6 +2044,7 @@ export function App() {
             activeKey={activeKey}
             activityIds={everywhereIds}
             nodeNames={nodeNames}
+            projectsOf={projectsOf}
             // Like a pick from search: the list back on its Sessions tab, the phone's drawer put away.
             onSelect={(key) => {
               const { node, id } = splitSessionKey(key);

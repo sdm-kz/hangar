@@ -7,10 +7,12 @@
 // same physical key on every layout — Ё on a Russian one, ^ on a German one.
 
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { LastSaid, SessionInfo } from "@/types";
+import type { LastSaid, Project, SessionInfo } from "@/types";
 import { ACTIVITY_MARK, ActivityMark, activityDetail, sessionActivity, type Activity } from "@/components/ActivityMark";
 import type { ActivityIds } from "@/lib/sessionActivity";
 import { sessionColor } from "@/lib/sessionColors";
+import { projectForDir, sameFolder } from "@/lib/projects";
+import { ProjectGlyph } from "@/components/ProjectGlyph";
 import { apiForKey, splitSessionKey } from "@/lib/node";
 import { cn } from "@/lib/utils";
 import { chord, keyName } from "@/lib/shortcuts";
@@ -120,6 +122,7 @@ export function SessionSwitcher({
   activeKey,
   activityIds,
   nodeNames,
+  projectsOf,
   onSelect,
 }: {
   /** Every machine's sessions, each under its session key. */
@@ -130,6 +133,8 @@ export function SessionSwitcher({
   /** Keyed as `sessions` is. */
   activityIds: ActivityIds;
   nodeNames?: Record<string, string>;
+  /** A machine's projects (null for this one), to say which one each row is in. */
+  projectsOf: (node: string | null) => Project[];
   onSelect: (key: string) => void;
 }) {
   // The list as it was when the switcher opened, and the row highlighted. Frozen, so a session going busy
@@ -266,9 +271,16 @@ export function SessionSwitcher({
           const detail = activity ? activityDetail(activity, s.id, activityIds) : null;
           const color = sessionColor(s.color);
           const said = lastSaid.get(s.id);
-          const where = s.nodeId
-            ? `${nodeNames?.[s.nodeId] ?? "another machine"} · ${baseName(s.workingDirectory)}`
-            : baseName(s.workingDirectory);
+          const project = projectForDir(s.workingDirectory, projectsOf(s.nodeId ?? null));
+          // The folder only when it says more than the project does: a worktree or a subfolder, not the
+          // project's one folder under the name it's already been given.
+          const folder =
+            s.id === activeKey
+              ? "this session"
+              : project?.folders.length === 1 && sameFolder(s.workingDirectory, project.folders[0])
+                ? null
+                : baseName(s.workingDirectory);
+          const machine = s.nodeId ? (nodeNames?.[s.nodeId] ?? "another machine") : null;
           return (
             <div
               key={s.id}
@@ -297,8 +309,16 @@ export function SessionSwitcher({
                   <span className={cn("min-w-0 flex-1 truncate font-medium", s.state !== "Running" && "text-muted-foreground")}>
                     {s.name}
                   </span>
-                  <span className="max-w-[45%] shrink-0 truncate font-mono text-[11px] text-muted-foreground">
-                    {s.id === activeKey ? "this session" : where}
+                  <span className="flex min-w-0 max-w-[55%] shrink-0 items-baseline gap-1 overflow-hidden font-mono text-[11px] text-muted-foreground">
+                    {machine && <span className="max-w-[40%] shrink-0 truncate">{machine} ·</span>}
+                    {project && (
+                      <span className="flex min-w-0 shrink items-center gap-1 self-center">
+                        <ProjectGlyph project={project} className="size-3 shrink-0" />
+                        <span className="truncate font-sans font-medium text-foreground/70">{project.name}</span>
+                      </span>
+                    )}
+                    {project && folder && <span className="shrink-0">·</span>}
+                    {folder && <span className="min-w-0 shrink-[2] truncate">{folder}</span>}
                   </span>
                 </span>
                 {said ? (
