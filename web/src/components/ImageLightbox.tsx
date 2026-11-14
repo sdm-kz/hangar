@@ -13,9 +13,11 @@ export interface LightboxImage {
 }
 
 /**
- * Full-page image viewer with wheel/button zoom and drag-to-pan. Esc / +/- / 0 / Ctrl+C shortcuts. Opens with the
+ * Full-page image viewer with wheel/pinch/button zoom and drag-to-pan. Esc / +/- / 0 / Ctrl+C shortcuts. Opens with the
  * whole image in view: a picture bigger than the page is scaled down to fit it, a smaller one is shown at
- * its own size. Reset (and 0, and a double-click) goes back to that.
+ * its own size. Reset (and 0, and a double-click) goes back to that. The wheel and a trackpad pinch zoom
+ * about the pointer, keeping the spot under it in place; the buttons and keys zoom about the middle of the
+ * view.
  *
  * `gallery` is the set the image was opened from (a message's images, the ones attached to a draft): with
  * more than one, ← and → and the buttons at the sides go through them, round from the last to the first.
@@ -34,8 +36,11 @@ export function ImageLightbox({
   const [at, setAt] = useState(() => gallery?.findIndex((g) => g.src === src) ?? -1);
   const many = !!gallery && gallery.length > 1 && at >= 0;
   const shown = (at >= 0 && gallery?.[at]) || { src, name };
-  const [scale, setScale] = useState(1);
-  const [pos, setPos] = useState({ x: 0, y: 0 });
+  // The zoom and the picture's offset from the middle of the area, together: zooming about a point moves
+  // both, and two wheel events in one frame must each start from where the last one left them.
+  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+  const scale = view.scale;
+  const pos = { x: view.x, y: view.y };
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const areaRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -61,25 +66,31 @@ export function ImageLightbox({
   const refit = () => {
     const f = fitScale();
     setFit(f);
-    if (fitted.current) setScale(f);
+    if (fitted.current) setView((v) => ({ ...v, scale: f }));
     setReady(true);
   };
   const reset = () => {
     fitted.current = true;
-    setScale(fitScale());
-    setPos({ x: 0, y: 0 });
+    setView({ scale: fitScale(), x: 0, y: 0 });
   };
-  const zoom = (by: number) => {
+  // `to` gives the new scale from the one before. `at` is the point to hold still, from the middle of the
+  // area: the spot of the picture under it is under it again after. The middle itself by default.
+  const zoomTo = (to: (scale: number) => number, at = { x: 0, y: 0 }) => {
     fitted.current = false;
-    setScale((s) => clamp(s * by));
+    setView((v) => {
+      const s = clamp(to(v.scale));
+      const r = s / v.scale;
+      return { scale: s, x: at.x - (at.x - v.x) * r, y: at.y - (at.y - v.y) * r };
+    });
   };
+  const zoom = (by: number, at?: { x: number; y: number }) => zoomTo((s) => s * by, at);
   // Another of the set, fitted afresh: its own size decides the fit, so it shows once it has loaded.
   const step = (by: number) => {
     if (!many) return;
     setAt((i) => (i + by + gallery!.length) % gallery!.length);
     fitted.current = true;
     setReady(false);
-    setPos({ x: 0, y: 0 });
+    setView((v) => ({ ...v, x: 0, y: 0 }));
   };
 
   // The picture on show, onto the clipboard as a PNG — the one image type every browser writes there.
@@ -128,9 +139,47 @@ export function ImageLightbox({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  function onWheel(e: React.WheelEvent) {
-    zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1);
-  }
+  // The wheel and pinch, on the element itself rather than through React: React's wheel listener is
+  // passive, so it can't stop a Ctrl+wheel (which a trackpad pinch is) from zooming the page as well.
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+  // The scale a Safari pinch began at. Kept outside the effect, which runs again on every render — so
+  // after every step of the pinch.
+  const pinchFrom = useRef(1);
+  useEffect(() => {
+    const area = areaRef.current;
+    if (!area) return;
+    const from = (e: { clientX: number; clientY: number }) => {
+      const r = area.getBoundingClientRect();
+      return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 };
+    };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      // A mouse wheel's notch (about 100px) is one step; a trackpad sends a pinch or a swipe as many
+      // small deltas, zoomed in proportion so it follows the fingers.
+      zoom(Math.abs(d) >= 50 ? (d < 0 ? 1.1 : 1 / 1.1) : Math.exp(-d * 0.01), from(e));
+    };
+    // Safari sends a trackpad pinch as gesture events instead, with the scale since the pinch began.
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      pinchFrom.current = scaleRef.current;
+    };
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      const g = e as Event & { scale: number; clientX: number; clientY: number };
+      zoomTo(() => pinchFrom.current * g.scale, from(g));
+    };
+    area.addEventListener("wheel", onWheel, { passive: false });
+    area.addEventListener("gesturestart", onGestureStart);
+    area.addEventListener("gesturechange", onGestureChange);
+    return () => {
+      area.removeEventListener("wheel", onWheel);
+      area.removeEventListener("gesturestart", onGestureStart);
+      area.removeEventListener("gesturechange", onGestureChange);
+    };
+  });
+
   function onPointerDown(e: React.PointerEvent) {
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     drag.current = { x: e.clientX, y: e.clientY, px: pos.x, py: pos.y };
@@ -138,7 +187,8 @@ export function ImageLightbox({
   function onPointerMove(e: React.PointerEvent) {
     if (!drag.current) return;
     fitted.current = false; // moved off the fitted view: a resize leaves it where it was put
-    setPos({ x: drag.current.px + (e.clientX - drag.current.x), y: drag.current.py + (e.clientY - drag.current.y) });
+    const d = drag.current;
+    setView((v) => ({ ...v, x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) }));
   }
   function onPointerUp() {
     drag.current = null;
@@ -194,7 +244,6 @@ export function ImageLightbox({
       <div
         ref={areaRef}
         className="relative flex-1 overflow-hidden"
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

@@ -6,10 +6,14 @@ import { PreviewApp } from "./components/PreviewApp";
 import { ConfirmProvider } from "./components/ui/confirm";
 import { readPreviewPath } from "./lib/urlState";
 import { registerServiceWorker } from "./lib/push";
+import { blockPageZoomInApp } from "./lib/pageZoom";
 
 // Register the push service worker (no-op where unsupported). Must happen before the user can
 // subscribe; safe to run on every load — the browser reuses the existing registration.
 registerServiceWorker();
+
+// The installed app doesn't zoom as a whole on a pinch or Ctrl+wheel (see pageZoom.ts).
+blockPageZoomInApp();
 
 // `?preview=<path>` marks a standalone file-preview tab: mount just the viewer instead of the full
 // app so the tab doesn't drag in the sidebar, session stream, and polling. Decided once at load —

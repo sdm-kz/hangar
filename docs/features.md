@@ -209,7 +209,7 @@ screenshot is this session as a chat):
     the corner, in both modes, turns **line numbers** on (off by default, remembered) and goes **to a
     line** by its number (**#**, or Ctrl/⌘G), which is centred and lit up, with the editor's caret
     put on it;
-    **images** with a full-page **zoom/pan** lightbox that opens with the whole image fitted to the page and copies it to the clipboard (button or Ctrl/⌘C); **Markdown** rendered (Rendered/Raw toggle); **HTML** shown as the page (Preview/Source), with its own
+    **images** with a full-page **zoom/pan** lightbox that opens with the whole image fitted to the page, zooms with the wheel or a pinch about the spot under the pointer, and copies it to the clipboard (button or Ctrl/⌘C); **Markdown** rendered (Rendered/Raw toggle); **HTML** shown as the page (Preview/Source), with its own
     zoom in the corner that reflows the page the way the browser's zoom would;
     anything else is downloadable.
   - **Git**: if the folder is a repo, the current **branch** is shown, changed files are
@@ -415,7 +415,9 @@ screenshot is this session as a chat):
   app's icon (the taskbar, the Dock, the home screen) carries a badge: a number for the sessions
   blocked on you — waiting on an answer or a permission, or a turn that failed — and a plain dot when
   all there is is finished work you haven't looked at yet. It clears as the sidebar's marks do. With
-  the app closed, a push alert sets the number until the app is opened again.
+  the app closed, a push alert sets the number until the app is opened again. A trackpad pinch or
+  Ctrl-wheel doesn't zoom the installed app's window as a whole (a browser tab still does); over the
+  chat, a terminal or an image it zooms that alone, and Ctrl/⌘ with + − 0 still zooms the window.
 - **Session switcher** — **Alt+`** (⌥` on a Mac) works like Alt+Tab, from anywhere, terminal included:
   hold Alt, tap ` to step through the sessions this browser looked at last (Shift+` steps back), and let
   go to open the one highlighted; Esc cancels. A single tap goes back to the session you were just in.
