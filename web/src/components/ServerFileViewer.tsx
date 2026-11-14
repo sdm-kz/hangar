@@ -19,6 +19,7 @@ import {
   usePersistentReadingWidth,
   usePersistentWordWrap,
   usePersistentZoom,
+  frameZoomStyle,
 } from "./ZoomControls";
 import { CopyPathButton } from "./CopyPathButton";
 import { previewUrl } from "@/lib/urlState";
@@ -159,6 +160,8 @@ export function ServerFileViewer({
   const [fullscreen, setFullscreen] = useState(false);
   // Text/markdown preview zoom; kept while switching files and across reloads so a chosen size sticks.
   const [zoom, setZoom] = usePersistentZoom("text");
+  // A page has its own natural size, so its zoom is kept apart from the text previews'.
+  const [htmlZoom, setHtmlZoom] = usePersistentZoom("html");
   // Optional left/right margins for the text previews: caps the line length and centers the
   // content, which is what makes a full-page preview readable on a wide monitor. Persisted like
   // zoom, so the choice sticks across files, reloads and preview tabs.
@@ -583,8 +586,8 @@ export function ServerFileViewer({
       </header>
 
       <div className="relative min-h-0 flex-1">
-        {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. The
-            sandboxed HTML iframe is excluded — CSS zoom would scale the frame, not its document. */}
+        {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. A
+            rendered HTML page gets zoom alone, below: it lays itself out, so the rest means nothing. */}
         {kind === "text" && !tooLarge && text !== null && (editing || !(isHtml && rendered)) && (
           <ZoomControls
             zoom={zoom}
@@ -601,6 +604,9 @@ export function ServerFileViewer({
             onGoToLine={!editing && isMarkdown && rendered ? undefined : nav.goToLine}
             className="bottom-3 right-3"
           />
+        )}
+        {kind === "text" && isHtml && rendered && !editing && !tooLarge && previewSrc !== null && (
+          <ZoomControls zoom={htmlZoom} onChange={setHtmlZoom} className="bottom-3 right-3" />
         )}
         {isMarkdown && rendered && !editing && !tooLarge && text !== null && (
           <MarkdownToc containerRef={scrollRef} text={text} />
@@ -669,13 +675,16 @@ export function ServerFileViewer({
           previewSrc === null ? (
             <div className="h-full w-full bg-white" />
           ) : (
-            <iframe
-              ref={frameRef}
-              title={`Preview of ${name}`}
-              {...("failed" in previewSrc ? { srcDoc: text ?? "" } : { src: frameSrc })}
-              sandbox="allow-scripts allow-forms allow-popups allow-modals"
-              className="h-full w-full border-0 bg-white"
-            />
+            <div className="h-full w-full overflow-hidden">
+              <iframe
+                ref={frameRef}
+                title={`Preview of ${name}`}
+                {...("failed" in previewSrc ? { srcDoc: text ?? "" } : { src: frameSrc })}
+                sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                style={frameZoomStyle(htmlZoom)}
+                className="h-full w-full border-0 bg-white"
+              />
+            </div>
           )
         ) : lineNumbers && text !== null ? (
           <pre

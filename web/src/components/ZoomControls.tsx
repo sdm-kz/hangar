@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -26,6 +26,18 @@ export function storedZoom(key: string): number {
   } catch {
     return 1;
   }
+}
+
+/**
+ * What zooms the page in an HTML preview's frame. CSS zoom on the frame would scale its box, not the
+ * document in it, and the document's origin is opaque, so nothing out here can zoom it from inside.
+ * Instead the frame is laid out 1/zoom as large and scaled back up to fill its box: the page reflows to
+ * a narrower (or wider) window and is drawn larger (or smaller), which is what the browser's own zoom
+ * does. The frame's parent has to clip, or the unscaled box overflows it below 100%.
+ */
+export function frameZoomStyle(zoom: number): CSSProperties | undefined {
+  if (zoom === 1) return undefined;
+  return { width: `${100 / zoom}%`, height: `${100 / zoom}%`, transform: `scale(${zoom})`, transformOrigin: "0 0" };
 }
 
 /**

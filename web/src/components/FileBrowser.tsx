@@ -101,6 +101,7 @@ import {
   usePersistentReadingWidth,
   usePersistentWordWrap,
   usePersistentZoom,
+  frameZoomStyle,
 } from "./ZoomControls";
 import { sessionKey, useApi, useSessionKey } from "@/lib/node";
 
@@ -2360,6 +2361,8 @@ function FilePreview({
   const [reload, setReload] = useState(0); // cache-buster bumped by the header's refresh button
   // Text/markdown preview zoom; kept while switching files and across reloads so a chosen size sticks.
   const [zoom, setZoom] = usePersistentZoom("text");
+  // A page has its own natural size, so its zoom is kept apart from the text previews'.
+  const [htmlZoom, setHtmlZoom] = usePersistentZoom("html");
   // Optional left/right margins for the text previews — mainly for the full-screen popup on a wide
   // monitor, where full-width lines get hard to read. Shared (and persisted) with the standalone
   // preview tab's viewer.
@@ -3060,8 +3063,8 @@ function FilePreview({
       </header>
 
       <div className="relative min-h-0 flex-1">
-        {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. The
-            sandboxed HTML iframe is excluded — CSS zoom would scale the frame, not its document. */}
+        {/* Zoom applies to the text-based previews; images/video/PDF/Office bring their own. A
+            rendered HTML page gets zoom alone, below: it lays itself out, so the rest means nothing. */}
         {(editing || (view === "preview" && kind === "text" && status === "idle" && text !== null &&
           !(isHtml && mdView === "rendered"))) && (
             <ZoomControls
@@ -3080,6 +3083,9 @@ function FilePreview({
               className="bottom-3 right-3"
             />
           )}
+        {htmlPreview && kind === "text" && status === "idle" && text !== null && previewSrc !== null && (
+          <ZoomControls zoom={htmlZoom} onChange={setHtmlZoom} className="bottom-3 right-3" />
+        )}
         {!editing && view === "preview" && status === "idle" && text !== null &&
           isMarkdown && mdView === "rendered" && (
             <MarkdownToc containerRef={contentRef} text={text} />
@@ -3159,13 +3165,16 @@ function FilePreview({
                 previewSrc === null ? (
                   <div className="h-full w-full bg-white" />
                 ) : (
-                  <iframe
-                    ref={frameRef}
-                    title={`Preview of ${file.name}`}
-                    {...("failed" in previewSrc ? { srcDoc: text } : { src: frameSrc })}
-                    sandbox="allow-scripts allow-forms allow-popups allow-modals"
-                    className="h-full w-full border-0 bg-white"
-                  />
+                  <div className="h-full w-full overflow-hidden">
+                    <iframe
+                      ref={frameRef}
+                      title={`Preview of ${file.name}`}
+                      {...("failed" in previewSrc ? { srcDoc: text } : { src: frameSrc })}
+                      sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                      style={frameZoomStyle(htmlZoom)}
+                      className="h-full w-full border-0 bg-white"
+                    />
+                  </div>
                 )
               ) : lineNumbers ? (
                 <pre
