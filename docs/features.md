@@ -52,7 +52,8 @@ screenshot is this session as a chat):
   by name in the app's session list (computer icon + green dot), so you can carry on from there.
 - **Chat view** — the chat icon in Claude's tab (next to the terminal one) shows the same
   session as a chat: your messages as bubbles, Claude's replies rendered as Markdown, each tool call as
-  a card that opens to its input and output. A ```` ```markdown ```` block in a reply (a drafted ticket or PR
+  a card that opens to its input and output. While you read the latest it follows what comes in, but a
+  reply too long to fit stops at its start, for you to read down from. A ```` ```markdown ```` block in a reply (a drafted ticket or PR
   description) is shown rendered in a frame, with a switch to its source and a button that copies it.
   An image a reply shows by its path on disk (a screenshot Claude took, say) is shown too, a relative
   path starting in the session's folder. It is read from the transcript Claude writes as it goes

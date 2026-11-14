@@ -77,6 +77,8 @@ const POLL_HIDDEN_MS = 15000;
 const PAGE = 150;
 // Within this many pixels of the bottom counts as reading the latest, which new items keep in view.
 const STICK_PX = 80;
+// Room left above a reply that following stops at the start of, so its first line isn't under the edge.
+const REPLY_GAP_PX = 12;
 
 // Between the keys that answer a question or a plan: each one redraws Claude's dialog before it takes the next.
 const QUESTION_KEY_GAP_MS = 150;
@@ -244,31 +246,64 @@ export function ChatView({
   );
 
   // ---- Scrolling: follow new items while reading the latest, stay put while reading back ----
+  // A reply from Claude that came in while following is read from its start: following goes no further
+  // down than its top, so one longer than the view stops there, the way a reply is read, rather than
+  // landing on its last lines. It holds for the read that brought it, while that settles; the next read
+  // with no reply in it lets go, so the tools Claude goes on to run are followed as before.
+  const replyKey = useRef<string | null>(null);
+  const lastKey = useRef<string | null>(null);
+  // Where following last put the view, to tell its own scrolling from the reader's.
+  const followedTo = useRef(-1);
+  const follow = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let top = el.scrollHeight;
+    const reply = replyKey.current && contentRef.current && itemElement(contentRef.current, replyKey.current);
+    // Its box lays out nothing of its own (display: contents): where it is, is where its row is.
+    const row = reply && reply.firstElementChild;
+    if (row) top = Math.min(top, el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top - REPLY_GAP_PX);
+    el.scrollTop = top;
+    followedTo.current = el.scrollTop;
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+    setShowJump(!atBottom.current);
+  }, []);
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+    // Read down to the end: from here on the latest is followed again.
+    if (atBottom.current && Math.abs(el.scrollTop - followedTo.current) > 1) replyKey.current = null;
     setShowJump(!atBottom.current);
   };
   const toBottom = useCallback(() => {
+    replyKey.current = null;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
     atBottom.current = true;
     setShowJump(false);
   }, []);
   useLayoutEffect(() => {
-    if (atBottom.current) toBottom();
-  }, [items, queued, busy, activity, toBottom]);
+    const before = lastKey.current;
+    lastKey.current = items.length ? items[items.length - 1].key : null;
+    if (before === lastKey.current || !atBottom.current) return;
+    // What this read added; none on opening the chat or a new conversation, which start at the bottom.
+    const from = before === null ? -1 : items.findIndex((i) => i.key === before);
+    const added = from < 0 ? [] : items.slice(from + 1);
+    replyKey.current = added.find((i) => i.kind === "assistant")?.key ?? null;
+  }, [items]);
+  useLayoutEffect(() => {
+    if (atBottom.current) follow();
+  }, [items, queued, busy, activity, follow]);
   // Rendered Markdown and images settle after layout; keep the bottom in view while they do.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      if (atBottom.current) el.scrollTop = el.scrollHeight;
+      if (atBottom.current) follow();
     });
     if (el.firstElementChild) ro.observe(el.firstElementChild);
     return () => ro.disconnect();
-  }, []);
+  }, [follow]);
 
   const showEarlier = () => {
     const el = scrollRef.current;
