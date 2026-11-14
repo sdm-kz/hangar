@@ -123,7 +123,9 @@ screenshot is this session as a chat):
   onto a project to move it (or onto *No project* to take it out), or use the folder's ⋯ menu. The
   **+** on a project heading starts a session in it: the create dialog offers the project's linked
   folders as one-click picks (filling it in when there's only one) and still takes any other folder.
-  Stored server-side, so projects follow you across devices.
+  Stored server-side, so projects follow you across devices. A project (and a virtual folder)
+  wears an icon from about two hundred; the search box over the grid finds one by name or by what it
+  stands for — *money*, *test*, *deploy*, *pet* — matching the start of a word (*pay* finds *payment*).
 - **Virtual folders** — named boxes inside a project, each with its own colour and icon, holding
   sessions you put there by hand. The folder a session runs in is often the wrong unit: three
   sessions in one repo can be three unrelated errands, and two sessions in different repos can be

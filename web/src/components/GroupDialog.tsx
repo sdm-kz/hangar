@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Project } from "@/types";
 import { COLOR_CHOICES, sessionColor } from "@/lib/sessionColors";
-import { DEFAULT_GROUP_ICON_NAME, GROUP_ICONS, groupIcon } from "@/lib/groupIcons";
+import { DEFAULT_GROUP_ICON_NAME, GROUP_ICONS, groupIcon, searchIcons } from "@/lib/groupIcons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { Ban, Loader2, Plus } from "lucide-react";
+import { Ban, Loader2, Plus, Search } from "lucide-react";
 import { useApi } from "@/lib/node";
 
 /**
@@ -22,6 +22,7 @@ import { useApi } from "@/lib/node";
  * default, and follows the default if that ever changes — so it is never a tile of its own: the
  * default's tile stands for it, lit while nothing is picked, and clicking it (or clicking the picked
  * tile again) goes back to no icon. `onIcon` is handed the resolved result, null for "the default".
+ * The search box above narrows the grid by name and synonyms (see `searchIcons`).
  */
 export function IconPicker({
   icon,
@@ -38,27 +39,61 @@ export function IconPicker({
   onIcon: (icon: string | null) => void;
   className?: string;
 }) {
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  // Esc in a search with text in it clears the text and leaves the dialog open. The dialog listens
+  // for Esc on the document in the capture phase, before the box's own onKeyDown could see it, so
+  // this listens on the window, which the capture phase passes through first.
+  useEffect(() => {
+    if (!query) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.activeElement !== searchRef.current) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setQuery("");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [query]);
   // An unknown stored name draws the default too, so it lights the default's tile.
   const shown = icon && GROUP_ICONS.some((i) => i.name === icon) ? icon : defaultName;
+  const found = searchIcons(query);
   return (
-    <div className={cn("flex flex-wrap gap-1", className)}>
-      {GROUP_ICONS.map(({ name, Icon }) => (
-        <button
-          key={name}
-          type="button"
-          title={name === defaultName ? `${name} (default)` : name}
-          aria-label={name}
-          aria-pressed={shown === name}
-          onClick={() => onIcon(name === defaultName || name === icon ? null : name)}
-          className={cn(
-            "flex size-7 items-center justify-center rounded border transition-colors hover:bg-accent",
-            shown === name ? "border-foreground" : "border-transparent"
-          )}
-          style={tint ? { color: tint } : undefined}
-        >
-          <Icon className="size-4" />
-        </button>
-      ))}
+    <div className={cn("flex flex-col gap-1.5", className)}>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          ref={searchRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search icons: money, test, deploy…"
+          aria-label="Search icons"
+          className="h-7 pl-7 text-xs"
+        />
+      </div>
+      {/* The grid scrolls on its own, so the search box above it stays in reach. */}
+      <div className="flex max-h-56 flex-wrap content-start gap-1 overflow-y-auto overscroll-contain">
+        {found.length === 0 && (
+          <p className="w-full py-3 text-center text-xs text-muted-foreground">No icon matches “{query.trim()}”.</p>
+        )}
+        {found.map(({ name, Icon }) => (
+          <button
+            key={name}
+            type="button"
+            title={name === defaultName ? `${name} (default)` : name}
+            aria-label={name}
+            aria-pressed={shown === name}
+            onClick={() => onIcon(name === defaultName || name === icon ? null : name)}
+            className={cn(
+              "flex size-7 shrink-0 items-center justify-center rounded border transition-colors hover:bg-accent",
+              shown === name ? "border-foreground" : "border-transparent"
+            )}
+            style={tint ? { color: tint } : undefined}
+          >
+            <Icon className="size-4" />
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
