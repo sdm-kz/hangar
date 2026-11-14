@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { OverflowToolbar, type OverflowItem } from "./OverflowToolbar";
+import { ImagePane } from "./ImagePane";
 import { useApi } from "@/lib/node";
 import type { Api } from "@/lib/api";
 
@@ -633,9 +634,7 @@ export function ServerFileViewer({
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
         ) : kind === "image" ? (
-          <div className="flex h-full items-center justify-center bg-muted/30 p-4">
-            <img src={rawUrl} alt={name} className="max-h-full max-w-full object-contain" />
-          </div>
+          <ImagePane key={rawUrl} src={rawUrl} alt={name} className="bg-muted/30" />
         ) : kind === "video" ? (
           <div className="flex h-full items-center justify-center bg-black p-2">
             <video src={rawUrl} controls className="max-h-full max-w-full object-contain" />

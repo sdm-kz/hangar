@@ -209,7 +209,7 @@ screenshot is this session as a chat):
     the corner, in both modes, turns **line numbers** on (off by default, remembered) and goes **to a
     line** by its number (**#**, or Ctrl/⌘G), which is centred and lit up, with the editor's caret
     put on it;
-    **images** with a full-page **zoom/pan** lightbox that opens with the whole image fitted to the page, zooms with the wheel or a pinch about the spot under the pointer, and copies it to the clipboard (button or Ctrl/⌘C); **Markdown** rendered (Rendered/Raw toggle); **HTML** shown as the page (Preview/Source), with its own
+    **images** that **zoom and pan in the tab** — the wheel or a pinch zooms about the spot under the pointer, a drag pans, the box in the corner zooms and its percentage (or a double-click) fits the picture back — and, from **Fullscreen**, in a full-page lightbox that does the same and copies it to the clipboard (button or Ctrl/⌘C); **Markdown** rendered (Rendered/Raw toggle); **HTML** shown as the page (Preview/Source), with its own
     zoom in the corner that reflows the page the way the browser's zoom would;
     anything else is downloadable.
   - **Git**: if the folder is a repo, the current **branch** is shown, changed files are

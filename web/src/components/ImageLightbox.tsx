@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Check, ChevronLeft, ChevronRight, Copy, Maximize, Minus, Plus, X } from "lucide-react";
 import { chord } from "@/lib/shortcuts";
-
-const MIN = 0.2;
-const MAX = 8;
+import { panZoomTransform, usePanZoom } from "@/lib/usePanZoom";
 
 /** One picture the viewer can show. */
 export interface LightboxImage {
@@ -36,61 +34,20 @@ export function ImageLightbox({
   const [at, setAt] = useState(() => gallery?.findIndex((g) => g.src === src) ?? -1);
   const many = !!gallery && gallery.length > 1 && at >= 0;
   const shown = (at >= 0 && gallery?.[at]) || { src, name };
-  // The zoom and the picture's offset from the middle of the area, together: zooming about a point moves
-  // both, and two wheel events in one frame must each start from where the last one left them.
-  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
-  const scale = view.scale;
-  const pos = { x: view.x, y: view.y };
-  const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const areaRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  // The scale that fits the image in the area, 1 at most. Zooming out may go below it, for a picture so
-  // big that it fits only under the usual floor.
-  const [fit, setFit] = useState(1);
-  // Hidden until it has loaded and been fitted, so a big one doesn't flash up at full size first.
-  const [ready, setReady] = useState(false);
-  const clamp = (s: number) => Math.min(MAX, Math.max(Math.min(MIN, fit), s));
-  // Still showing the fitted view, untouched: a resize of the window fits it again.
-  const fitted = useRef(true);
+  const { view, fit, ready, setReady, refit, reset, restart, zoom, panHandlers } = usePanZoom(areaRef, imgRef);
+  const scale = view.scale;
   // How the last copy went, shown on its button for a moment.
   const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
 
-  const fitScale = () => {
-    const img = imgRef.current;
-    const area = areaRef.current;
-    if (!img?.naturalWidth || !area?.clientWidth) return 1;
-    return Math.min(1, area.clientWidth / img.naturalWidth, area.clientHeight / img.naturalHeight);
-  };
-  const refit = () => {
-    const f = fitScale();
-    setFit(f);
-    if (fitted.current) setView((v) => ({ ...v, scale: f }));
-    setReady(true);
-  };
-  const reset = () => {
-    fitted.current = true;
-    setView({ scale: fitScale(), x: 0, y: 0 });
-  };
-  // `to` gives the new scale from the one before. `at` is the point to hold still, from the middle of the
-  // area: the spot of the picture under it is under it again after. The middle itself by default.
-  const zoomTo = (to: (scale: number) => number, at = { x: 0, y: 0 }) => {
-    fitted.current = false;
-    setView((v) => {
-      const s = clamp(to(v.scale));
-      const r = s / v.scale;
-      return { scale: s, x: at.x - (at.x - v.x) * r, y: at.y - (at.y - v.y) * r };
-    });
-  };
-  const zoom = (by: number, at?: { x: number; y: number }) => zoomTo((s) => s * by, at);
   // Another of the set, fitted afresh: its own size decides the fit, so it shows once it has loaded.
   const step = (by: number) => {
     if (!many) return;
     setAt((i) => (i + by + gallery!.length) % gallery!.length);
-    fitted.current = true;
-    setReady(false);
-    setView((v) => ({ ...v, x: 0, y: 0 }));
+    restart();
   };
 
   // The picture on show, onto the clipboard as a PNG — the one image type every browser writes there.
@@ -110,11 +67,6 @@ export function ImageLightbox({
         () => done("failed")
       );
   };
-
-  useEffect(() => {
-    window.addEventListener("resize", refit);
-    return () => window.removeEventListener("resize", refit);
-  });
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -139,60 +91,6 @@ export function ImageLightbox({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  // The wheel and pinch, on the element itself rather than through React: React's wheel listener is
-  // passive, so it can't stop a Ctrl+wheel (which a trackpad pinch is) from zooming the page as well.
-  const scaleRef = useRef(scale);
-  scaleRef.current = scale;
-  // The scale a Safari pinch began at. Kept outside the effect, which runs again on every render — so
-  // after every step of the pinch.
-  const pinchFrom = useRef(1);
-  useEffect(() => {
-    const area = areaRef.current;
-    if (!area) return;
-    const from = (e: { clientX: number; clientY: number }) => {
-      const r = area.getBoundingClientRect();
-      return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 };
-    };
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      // A mouse wheel's notch (about 100px) is one step; a trackpad sends a pinch or a swipe as many
-      // small deltas, zoomed in proportion so it follows the fingers.
-      zoom(Math.abs(d) >= 50 ? (d < 0 ? 1.1 : 1 / 1.1) : Math.exp(-d * 0.01), from(e));
-    };
-    // Safari sends a trackpad pinch as gesture events instead, with the scale since the pinch began.
-    const onGestureStart = (e: Event) => {
-      e.preventDefault();
-      pinchFrom.current = scaleRef.current;
-    };
-    const onGestureChange = (e: Event) => {
-      e.preventDefault();
-      const g = e as Event & { scale: number; clientX: number; clientY: number };
-      zoomTo(() => pinchFrom.current * g.scale, from(g));
-    };
-    area.addEventListener("wheel", onWheel, { passive: false });
-    area.addEventListener("gesturestart", onGestureStart);
-    area.addEventListener("gesturechange", onGestureChange);
-    return () => {
-      area.removeEventListener("wheel", onWheel);
-      area.removeEventListener("gesturestart", onGestureStart);
-      area.removeEventListener("gesturechange", onGestureChange);
-    };
-  });
-
-  function onPointerDown(e: React.PointerEvent) {
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    drag.current = { x: e.clientX, y: e.clientY, px: pos.x, py: pos.y };
-  }
-  function onPointerMove(e: React.PointerEvent) {
-    if (!drag.current) return;
-    fitted.current = false; // moved off the fitted view: a resize leaves it where it was put
-    const d = drag.current;
-    setView((v) => ({ ...v, x: d.px + (e.clientX - d.x), y: d.py + (e.clientY - d.y) }));
-  }
-  function onPointerUp() {
-    drag.current = null;
-  }
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-black/90 safe-area-pad backdrop-blur-sm">
@@ -244,10 +142,7 @@ export function ImageLightbox({
       <div
         ref={areaRef}
         className="relative flex-1 overflow-hidden"
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
+        {...panHandlers}
         onDoubleClick={reset}
         style={{ cursor: scale > fit ? "grab" : "default", touchAction: "none" }}
       >
@@ -263,7 +158,7 @@ export function ImageLightbox({
           draggable={false}
           className="pointer-events-none absolute left-1/2 top-1/2 max-h-none max-w-none select-none"
           style={{
-            transform: `translate(-50%, -50%) translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
+            transform: panZoomTransform(view),
             visibility: ready ? "visible" : "hidden",
           }}
         />

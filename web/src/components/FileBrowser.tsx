@@ -41,6 +41,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ImageLightbox } from "./ImageLightbox";
+import { ImagePane } from "./ImagePane";
 import { RootPicker, rootOptions } from "./RootPicker";
 import { FolderPicker } from "./FolderPicker";
 import { Markdown, MarkdownToc } from "./Markdown";
@@ -3115,16 +3116,14 @@ function FilePreview({
           )
         ) : (
           <>
+            {/* Zoomed and panned in the tab itself; the header's Fullscreen opens the full-page viewer. */}
             {kind === "image" && (
-              <div className="flex min-h-full items-center justify-center bg-[repeating-conic-gradient(theme(colors.muted)_0%_25%,transparent_0%_50%)] bg-[length:20px_20px] p-4">
-                <button onClick={() => setLightbox(true)} title="Click to zoom" className="cursor-zoom-in">
-                  <img
-                    src={rawUrl()}
-                    alt={file.name}
-                    className="max-h-full max-w-full object-contain shadow-sm"
-                  />
-                </button>
-              </div>
+              <ImagePane
+                key={rawUrl()}
+                src={rawUrl()}
+                alt={file.name}
+                className="bg-[repeating-conic-gradient(theme(colors.muted)_0%_25%,transparent_0%_50%)] bg-[length:20px_20px]"
+              />
             )}
 
             {kind === "video" && (
