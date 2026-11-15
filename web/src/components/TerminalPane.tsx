@@ -65,13 +65,21 @@ function bufferText(term: Terminal): string {
 const WHEEL_ZOOM_STEP = 40;
 
 // Reading the clipboard (OSC 52 "?" report) is a paste-injection risk, so we never expose it —
-// only writes are honored.
-const clipboardProvider: IClipboardProvider = {
-  readText: () => "",
-  writeText: async (_selection, text) => {
-    await writeToClipboard(text);
-  },
-};
+// only writes are honored. A write the pane asked for itself (see captureCopy) is handed to it instead.
+function clipboardProvider(capture: { current: ((text: string) => void) | null }): IClipboardProvider {
+  return {
+    readText: () => "",
+    writeText: async (_selection, text) => {
+      const take = capture.current;
+      if (take) {
+        capture.current = null;
+        take(text);
+        return;
+      }
+      await writeToClipboard(text);
+    },
+  };
+}
 
 // Minimal ANSI strip (CSI/OSC/other escapes), with CR collapsed to LF — mirrors the server's Vt.Strip
 // (line-aware flavour) so we can pull a clean session name out of the terminal stream. Two CSI kinds
@@ -213,6 +221,9 @@ export interface TerminalPaneHandle {
   // The lines on screen now, top to bottom, as plain text — to read a dialog Claude has up. Empty
   // before the terminal has started.
   screenLines: () => string[];
+  // Send keys that make Claude copy something (the "c" of its /btw overlay), and resolve with what it
+  // copies rather than putting it on the clipboard. Null if nothing is copied within `timeoutMs`.
+  captureCopy: (keys: string, timeoutMs: number) => Promise<string | null>;
   // Put the keyboard in the terminal — for a group of the split pane taking focus.
   focus: () => void;
 }
@@ -282,6 +293,8 @@ export const TerminalPane = forwardRef<
   const wsRef = useRef<WebSocket | null>(null);
   // The live xterm instance, so a failed image paste can write its own notice.
   const termRef = useRef<Terminal | null>(null);
+  // Set while captureCopy waits for what Claude copies: the next clipboard write goes to it.
+  const captureRef = useRef<((text: string) => void) | null>(null);
   // Terminal zoom, shared by every session (one preferred reading size) and remembered across
   // reloads. Held in a ref too so a fresh terminal — a session switch, a reattach — is built at the
   // current size instead of flashing 100% first.
@@ -380,6 +393,22 @@ export const TerminalPane = forwardRef<
         ws.send(new TextEncoder().encode(data));
         return true;
       },
+      captureCopy: (keys, timeoutMs) =>
+        new Promise<string | null>((resolve) => {
+          const ws = wsRef.current;
+          if (!ws || ws.readyState !== WebSocket.OPEN) return resolve(null);
+          const timer = window.setTimeout(() => {
+            if (captureRef.current === take) captureRef.current = null;
+            resolve(null);
+          }, timeoutMs);
+          const take = (text: string) => {
+            window.clearTimeout(timer);
+            resolve(text);
+          };
+          captureRef.current = take;
+          claimRef.current();
+          ws.send(new TextEncoder().encode(keys));
+        }),
       screenLines: () => {
         const term = termRef.current;
         if (!term) return [];
@@ -454,7 +483,7 @@ export const TerminalPane = forwardRef<
     const fit = new FitAddon();
     term.loadAddon(fit);
     // Honor OSC 52 clipboard writes (how Claude Code copies), routing them to the browser clipboard.
-    term.loadAddon(new ClipboardAddon(undefined, clipboardProvider));
+    term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(captureRef)));
     // Detect URLs and open them in a new tab. On desktop require Ctrl/Cmd-click so plain clicks stay
     // free for selection and the TUI; on touch (no modifier keys) a plain tap opens.
     const isTouch = window.matchMedia?.("(pointer: coarse)").matches ?? false;

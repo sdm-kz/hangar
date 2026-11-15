@@ -483,6 +483,23 @@ function createApi(base: string) {
       });
     },
 
+    // ---- The chat's side questions (/btw), which Claude keeps out of the transcript ----
+    // Kept per conversation in .hangar/btw/<conversation>.json. Raw parsed JSON (an array); the caller
+    // validates the shape. Adding one answers with the list as now kept.
+    getSideQuestions(sessionId: string, conversation: string): Promise<unknown> {
+      return request(`/api/sessions/${sessionId}/btw?conversation=${encodeURIComponent(conversation)}`);
+    },
+    addSideQuestion(
+      sessionId: string,
+      conversation: string,
+      body: { question: string | null; answer: string; after: string | null }
+    ): Promise<unknown> {
+      return request(`/api/sessions/${sessionId}/btw?conversation=${encodeURIComponent(conversation)}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+
     // ---- Recent launch presets & folders (server-backed, shared across devices) ----
     // Each mutation returns the full updated set so the caller can setState from the response.
     getRecents(): Promise<Recents> {

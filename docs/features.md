@@ -110,6 +110,14 @@ screenshot is this session as a chat):
   `.hangar/marks/<conversation>.json`, so every device sees the same ones and a reopened session (which
   resumes the same conversation) still has them. A fork starts without any. They are yours alone: nothing
   of them is sent to Claude.
+- **Side questions (`/btw`) in the chat** — Claude answers a `/btw` in an overlay on its screen and keeps
+  both the question and the answer out of the transcript, so the chat would never show them. While the
+  chat is open it watches the terminal underneath for that overlay: a card in the conversation, where the
+  question was asked, shows it as "Answering…", then the answer, rendered as Markdown. The answer is taken
+  with the overlay's own **c to copy**, which hands over the Markdown as Claude wrote it, and kept out of
+  your clipboard. **Close** on the card takes the overlay down (Esc) while it is still up. The exchanges are
+  kept per conversation on the node, in `.hangar/btw/<conversation>.json`, so they are there after a reload
+  and on every device. Only a `/btw` answered while some browser has the session's chat open is kept.
 - **Fork a session** — branch a conversation in two from the sessions list or the session header:
   name the fork, and it launches beside the original with the same folder and settings, picking up
   its history (`claude --resume <id> --fork-session`). The original keeps running, untouched. Forks

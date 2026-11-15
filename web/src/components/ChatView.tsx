@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertTriangle,
@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Markdown } from "./Markdown";
 import { ChatQuestion, parseQuestions } from "./ChatQuestion";
 import { ChatPlan, parsePlan } from "./ChatPlan";
+import { ChatSideQuestion } from "./ChatSideQuestion";
 import { usePersistentZoom, ZoomControls, ZOOM_LEVELS } from "./ZoomControls";
 import { SlashSuggestions, SlashTextarea, useSlashInput } from "./SlashCommands";
 import { ImageLightbox, type LightboxImage } from "./ImageLightbox";
@@ -65,6 +66,7 @@ import {
   type ChatMark,
 } from "@/lib/chatMarks";
 import { reveal } from "@/lib/codeNav";
+import { readSideOverlay, useSideQuestions, type SideOverlay, type SideQuestion } from "@/lib/sideQuestions";
 import { cn } from "@/lib/utils";
 import { IS_MAC, chord } from "@/lib/shortcuts";
 
@@ -458,6 +460,83 @@ export function ChatView({
       if (key === draftKey) take();
     });
   }, [draftKey]);
+
+  // ---- Side questions (/btw): answered in an overlay the transcript never sees, read off the terminal ----
+  const side = useSideQuestions(api, sessionId, conversation);
+  const refreshSide = side.refresh;
+  const addSide = side.add;
+  // Another device may have kept one since: read again when the session's state changes, as the chat is.
+  useEffect(() => refreshSide(), [refreshSide, busy, activity]);
+  // The overlay while it is up, and the kept exchange it showed, once it has been kept.
+  const [overlay, setOverlay] = useState<SideOverlay | null>(null);
+  const [overlayKept, setOverlayKept] = useState<string | null>(null);
+  const lastItemRef = useRef<string | null>(null);
+  lastItemRef.current = items.length ? items[items.length - 1].key : null;
+  const loadedRef = useRef(loaded);
+  loadedRef.current = loaded;
+  useEffect(() => {
+    setOverlay(null);
+    setOverlayKept(null);
+    if (closed) return;
+    let stopped = false;
+    // The overlay being watched: the question, where in the chat it was asked, and how its copy went.
+    let seen: { question: string | null; after: string | null; settled: number; tries: number; busy: boolean } | null = null;
+    const tick = async () => {
+      // Not before the conversation is read: where in it the question was asked is part of what is kept.
+      if (document.hidden || !loadedRef.current) return;
+      const o = readSideOverlay(terminalRef.current?.screenLines() ?? []);
+      setOverlay((cur) => (cur?.question === o?.question && cur?.answered === o?.answered ? cur : o));
+      if (!o) {
+        if (seen) setOverlayKept(null);
+        seen = null;
+        return;
+      }
+      if (!seen || seen.question !== o.question) {
+        seen = { question: o.question, after: lastItemRef.current, settled: 0, tries: 0, busy: false };
+        setOverlayKept(null);
+      }
+      // Answered on two reads running, so what is copied is the whole of it; a copy that didn't come is
+      // asked for once more.
+      if (!o.answered || seen.busy || seen.tries >= 2 || ++seen.settled < 2) return;
+      const s = seen;
+      s.busy = true;
+      s.tries++;
+      const answer = await terminalRef.current?.captureCopy("c", 3000);
+      if (stopped || seen !== s) return;
+      if (!answer?.trim()) {
+        s.busy = false;
+        return;
+      }
+      s.tries = 2;
+      const kept = await addSide({ question: s.question, answer, after: s.after });
+      if (!stopped && seen === s && kept) setOverlayKept(kept.id);
+    };
+    const timer = window.setInterval(() => void tick(), 700);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [closed, terminalRef, addSide]);
+  const closeOverlay = useCallback(() => terminalRef.current?.sendKeys("\x1b"), [terminalRef]);
+  // Each after the item it was asked after; one whose item isn't in the chat (cut from a long one) first.
+  const sideAfter = useMemo(() => {
+    const by = new Map<string | null, SideQuestion[]>();
+    for (const q of side.list) {
+      const at = q.after !== null && order.has(q.after) ? q.after : null;
+      by.set(at, [...(by.get(at) ?? []), q]);
+    }
+    return by;
+  }, [side.list, order]);
+  const sideCard = (q: SideQuestion) => (
+    <ChatSideQuestion
+      key={q.id}
+      question={q.question}
+      answer={q.answer}
+      dir={workingDirectory}
+      onClose={overlay && q.id === overlayKept ? closeOverlay : undefined}
+    />
+  );
+
   // On an item of the conversation only: what is queued isn't one yet, and has no place to keep a mark.
   const markSelection = (action: SelectionAction, range: Range) => {
     const content = contentRef.current;
@@ -564,6 +643,7 @@ export function ChatView({
                   </p>
                 )
               )}
+              {loaded && sideAfter.get(null)?.map(sideCard)}
               {!loaded ? (
                 <p className="flex items-center gap-2 self-center py-8 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
@@ -580,35 +660,46 @@ export function ChatView({
               ) : (
                 // Each in a box of its own, with nothing of its own to lay out, for find to know it by.
                 shown.map((item) => (
-                  <div key={item.key} data-find-key={item.key} className="contents">
-                    {item.kind === "tool" && item.name === "AskUserQuestion" && parseQuestions(item.input) ? (
-                      <ChatQuestion
-                        input={item.input}
-                        result={item.result}
-                        pending={item.key === questionKey}
-                        onAnswer={answerQuestion}
-                        onShowTerminal={onShowTerminal}
-                      />
-                    ) : item.kind === "tool" && item.name === "ExitPlanMode" && parsePlan(item.input) ? (
-                      <ChatPlan
-                        callId={item.id}
-                        input={item.input}
-                        result={item.result}
-                        pending={item.key === planKey}
-                        readScreen={readScreen}
-                        onAnswer={answerQuestion}
-                        onShowTerminal={onShowTerminal}
-                      />
-                    ) : (
-                      // Busy only matters to a tool still waiting on its result: the rest stay as drawn.
-                      <ChatRow
-                        item={item}
-                        sessionBusy={busy && item.kind === "tool" && !item.result}
-                        images={images}
-                      />
-                    )}
-                  </div>
+                  <Fragment key={item.key}>
+                    <div data-find-key={item.key} className="contents">
+                      {item.kind === "tool" && item.name === "AskUserQuestion" && parseQuestions(item.input) ? (
+                        <ChatQuestion
+                          input={item.input}
+                          result={item.result}
+                          pending={item.key === questionKey}
+                          onAnswer={answerQuestion}
+                          onShowTerminal={onShowTerminal}
+                        />
+                      ) : item.kind === "tool" && item.name === "ExitPlanMode" && parsePlan(item.input) ? (
+                        <ChatPlan
+                          callId={item.id}
+                          input={item.input}
+                          result={item.result}
+                          pending={item.key === planKey}
+                          readScreen={readScreen}
+                          onAnswer={answerQuestion}
+                          onShowTerminal={onShowTerminal}
+                        />
+                      ) : (
+                        // Busy only matters to a tool still waiting on its result: the rest stay as drawn.
+                        <ChatRow
+                          item={item}
+                          sessionBusy={busy && item.kind === "tool" && !item.result}
+                          images={images}
+                        />
+                      )}
+                    </div>
+                    {sideAfter.get(item.key)?.map(sideCard)}
+                  </Fragment>
                 ))
+              )}
+              {loaded && overlay && !overlayKept && (
+                <ChatSideQuestion
+                  question={overlay.question}
+                  answer={null}
+                  pending={overlay.answered ? "Reading the answer…" : "Answering…"}
+                  onClose={closeOverlay}
+                />
               )}
               {loaded &&
                 queued.map((q) => (

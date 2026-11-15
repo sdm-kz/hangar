@@ -67,6 +67,13 @@ read of a very long transcript takes its last 6 MB and says `truncated: true`. E
 `status` — the session's `model`, `contextPercent` and `contextWindow` as its status line last reported
 them — once there is one; assistant entries carry their `model` and `context` (tokens in context).
 
+**Side questions.** A `/btw` and its answer never reach the transcript, so the chat keeps them itself:
+`GET /api/sessions/{id}/btw?conversation=<id>` (bearer token) lists them, oldest first, each with `id`,
+`question` (null if it couldn't be read off the screen), `answer` (Markdown), `after` (the key of the chat
+item it was asked after) and `createdAt`. `POST` to the same URL with `{question, answer, after}` adds one
+and answers with the list; an exchange already kept word for word isn't added again. Both answer `404`
+for a conversation the session isn't on.
+
 **The latest message of several sessions.** `GET /api/sessions/last-said?ids=<id>,<id>,…` (bearer token)
 is what the session switcher's rows show: for each session with anything said yet, `who` (`you` or
 `claude`), `text` (the message as one plain line, Markdown marks dropped, cut to 300 characters) and

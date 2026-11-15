@@ -2102,6 +2102,32 @@ internal static class Program
                 : Results.BadRequest(new { error = "Could not save the marks." });
         });
 
+        // The conversation's side questions (/btw) and their answers, which Claude keeps out of the
+        // transcript: the chat reads each off the terminal and keeps it here (SideQuestionStore), to show
+        // it in the conversation on every device. Only the conversation the session is on, as the marks.
+        app.MapGet("/api/sessions/{id}/btw", (string id, string conversation, SessionManager mgr) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null || info.ClaudeSessionId is not { } conv || conv != conversation
+                || !ClaudeProjectData.IsConversationId(conv)) return Results.NotFound();
+            return Results.Content(SideQuestionStore.ReadJson(info.WorkingDirectory, conv) ?? "[]", "application/json");
+        });
+
+        app.MapPost("/api/sessions/{id}/btw", (string id, string conversation, SideQuestionRequest body, SessionManager mgr) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null || info.ClaudeSessionId is not { } conv || conv != conversation
+                || !ClaudeProjectData.IsConversationId(conv)) return Results.NotFound();
+            if (string.IsNullOrWhiteSpace(body.Answer) || body.Answer.Length > SideQuestionStore.MaxAnswerChars
+                || body.Question is { Length: > SideQuestionStore.MaxQuestionChars })
+                return Results.BadRequest(new { error = "Nothing to keep, or too much." });
+            var question = string.IsNullOrWhiteSpace(body.Question) ? null : body.Question.Trim();
+            var json = SideQuestionStore.Append(info.WorkingDirectory, conv, question, body.Answer, body.After);
+            return json is null
+                ? Results.BadRequest(new { error = "Could not save the side question." })
+                : Results.Content(json, "application/json");
+        });
+
         // Filesystem change counter — the UI polls this to auto-refresh the tree.
         app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
         {
@@ -2621,6 +2647,9 @@ internal record StopOrphansRequest(string? SessionId);
 internal record PinRequest(bool Pinned);
 internal record ActivityPausedRequest(bool Paused);
 internal record PostponedAutoRequest(bool Enabled);
+/// <summary>Body for <c>POST /api/sessions/{id}/btw</c>: a side question, Claude's answer, and the chat
+/// item it was asked after.</summary>
+internal record SideQuestionRequest(string? Question, string? Answer, string? After);
 /// <summary>Body for <c>POST /api/sessions/{id}/ui</c>: the UI-state fields to merge (a null value
 /// removes that field). The shape of the bag belongs to the client; the server only merges it.
 /// <c>Quiet</c> saves without advancing the revision, for a field the other browsers need not be
