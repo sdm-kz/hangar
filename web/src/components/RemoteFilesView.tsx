@@ -3,6 +3,7 @@ import type { RemoteEntry, SessionRemote, TransferSide } from "@/types";
 import { ApiError } from "@/lib/api";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
+import { FILE_SCOPE } from "@/lib/fullPageKey";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
 import {
@@ -945,7 +946,7 @@ export function RemoteFilesView({
   );
 
   return (
-    <div ref={rootRef} className="flex h-full min-h-0 min-w-0">
+    <div ref={rootRef} {...FILE_SCOPE} className="flex h-full min-h-0 min-w-0">
       {treeOnly ? (
         <div className="min-w-0 flex-1">{tree}</div>
       ) : narrow ? (

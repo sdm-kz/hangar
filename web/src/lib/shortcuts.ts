@@ -168,6 +168,13 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     where: "In an open file, a commit, and a pull request's changes.",
     shortcuts: [
       { id: "goto-line", keys: [["mod", "G"]], does: "Go to a line", keywords: ["jump", "number"] },
+      {
+        id: "viewer-full",
+        keys: [["F"]],
+        does: "Open the file full page, or go back",
+        note: "An image opens full size. Outside a text box and the terminal",
+        keywords: ["fullscreen", "maximize", "expand"],
+      },
       { id: "viewer-exit", keys: [["Esc"]], does: "Leave the full-page view" },
       { id: "mark-name", keys: [["click"]], does: "Mark every place a name is used", note: "On a name in code", keywords: ["highlight", "occurrences"] },
       { id: "declaration", keys: [["mod", "click"]], does: "Go to where a name is declared", keywords: ["definition", "jump"] },

@@ -211,7 +211,9 @@ screenshot is this session as a chat):
     put on it;
     **images** that **zoom and pan in the tab** — the mouse wheel or a pinch zooms about the spot under the pointer, a drag or a two-finger swipe on a trackpad pans, the box in the corner zooms and its percentage (or a double-click) fits the picture back — and, from **Fullscreen**, in a full-page lightbox that does the same and copies it to the clipboard (button or Ctrl/⌘C); **Markdown** rendered (Rendered/Raw toggle); **HTML** shown as the page (Preview/Source), with its own
     zoom in the corner that reflows the page the way the browser's zoom would;
-    anything else is downloadable.
+    anything else is downloadable. **F** opens the file **full page** and brings it back (an image
+    opens full size), here and in a file opened from the files sidebar, from anywhere but a text box
+    or the terminal; it goes to the file the focus is on or beside, or the only one showing.
   - **Git**: if the folder is a repo, the current **branch** is shown, changed files are
     **marked** (M/A/U/D) in the tree, and each changed file has a **Diff** view.
   - **Search** the whole tree, **download** any file, and the tree **auto-refreshes** as files

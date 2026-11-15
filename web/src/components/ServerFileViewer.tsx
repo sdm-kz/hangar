@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fileExt, fileKind } from "@/lib/fileKind";
 import { highlightCode, highlightLines } from "@/lib/highlight";
+import { useFullPageKey } from "@/lib/fullPageKey";
 import { CodeLines, gutterStyle } from "./CodeLines";
 import { useCodeNav } from "@/lib/codeNav";
 import { useHtml } from "@/lib/useHtml";
@@ -357,6 +358,9 @@ export function ServerFileViewer({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [fullscreen, editing]);
+
+  // F goes in and out of full page, where the button is offered: not in a standalone preview tab.
+  useFullPageKey(rootRef, !!onClose && !editing, fullscreen, () => setFullscreen((f) => !f));
 
   // The viewer's controls, in the order they give way: the view switch and the edit and copy
   // actions stay longest; the ways out of this pane (full page, a new tab, download) go first.

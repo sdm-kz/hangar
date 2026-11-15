@@ -5,6 +5,7 @@ import { MAX_MODEL_PREVIEW, MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } 
 import { highlightCode, highlightLines } from "@/lib/highlight";
 import { CodeLines, gutterStyle } from "./CodeLines";
 import { useCodeNav } from "@/lib/codeNav";
+import { FILE_SCOPE, useFullPageKey } from "@/lib/fullPageKey";
 import { useHtml } from "@/lib/useHtml";
 import { useContentRev } from "@/lib/useContentRev";
 import { readUrlState, previewUrl } from "@/lib/urlState";
@@ -1139,7 +1140,7 @@ export const FileBrowser = forwardRef<
   }, [query, sessionId, refreshToken, changesView, commitsView, rootDir]);
 
   return (
-    <div className="flex h-full flex-col md:flex-row">
+    <div {...FILE_SCOPE} className="flex h-full flex-col md:flex-row">
       {/* The tree, hidden when a file tab owns the whole pane — there the file is the view. */}
       <div
         style={
@@ -2644,6 +2645,14 @@ function FilePreview({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [fullscreen, editing]);
+
+  // F goes in and out of full page; for an image, that is its full-size viewer.
+  useFullPageKey(rootRef, !!file && !editing, fullscreen || lightbox, () => {
+    if (lightbox) setLightbox(false);
+    else if (fullscreen) setFullscreen(false);
+    else if (kind === "image") setLightbox(true);
+    else setFullscreen(true);
+  });
 
   async function save(): Promise<boolean> {
     if (!file) return true;

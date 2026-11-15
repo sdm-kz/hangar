@@ -3,6 +3,7 @@ import { useApi, useNodeId } from "@/lib/node";
 import type { DirEntry, FsNode } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
+import { FILE_SCOPE } from "@/lib/fullPageKey";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
 import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
 import { movedPairs, useTreeDrag } from "@/lib/useTreeDrag";
@@ -781,7 +782,7 @@ export function FilesSidebar({
   const overflow = actions.slice(shown);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div {...FILE_SCOPE} className="flex h-full min-h-0 flex-col">
       {/* Toolbar: actions target the selected folder. Too narrow for all of them, and the ones at
           the end of the list move into a "more" menu rather than squeezing the folder name out. */}
       <div ref={toolbarRef} className="flex items-center gap-0.5 border-b px-2 py-1.5">
