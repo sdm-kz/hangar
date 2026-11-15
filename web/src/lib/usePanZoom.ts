@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { IS_MAC } from "@/lib/shortcuts";
 
 const MIN = 0.2;
 const MAX = 8;
@@ -12,9 +13,9 @@ type Point = { x: number; y: number };
  *
  * It opens with the whole picture in view: one bigger than the box is scaled down to fit it, a smaller
  * one is shown at its own size. `reset` goes back to that, and so does any change in the box's size
- * while the view is still the fitted one. The wheel and a trackpad pinch zoom about the pointer,
+ * while the view is still the fitted one. The mouse wheel and a trackpad pinch zoom about the pointer,
  * keeping the spot under it in place; `zoom` with no point zooms about the middle of the box. A drag
- * pans, and on a touch screen two fingers pinch.
+ * pans, and so do two fingers swiping on a trackpad; on a touch screen two fingers pinch.
  */
 export function usePanZoom(areaRef: RefObject<HTMLElement | null>, imgRef: RefObject<HTMLImageElement | null>) {
   // The zoom and the picture's offset from the middle of the box, together: zooming about a point
@@ -98,8 +99,15 @@ export function usePanZoom(areaRef: RefObject<HTMLElement | null>, imgRef: RefOb
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      // A mouse wheel's notch (about 100px) is one step; a trackpad sends a pinch or a swipe as many
-      // small deltas, zoomed in proportion so it follows the fingers.
+      // Two fingers swiping on a trackpad pan, as they scroll anything else; a pinch (which arrives
+      // with Ctrl held) and a mouse wheel zoom.
+      if (!e.ctrlKey && swipe(e)) {
+        fitted.current = false;
+        setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
+        return;
+      }
+      // A mouse wheel's notch (about 100px) is one step; a pinch comes as many small deltas, zoomed in
+      // proportion so it follows the fingers.
       zoom(Math.abs(d) >= 50 ? (d < 0 ? 1.1 : 1 / 1.1) : Math.exp(-d * 0.01), from(e));
     };
     // Safari sends a trackpad pinch as gesture events instead, with the scale since the pinch began.
@@ -183,6 +191,21 @@ export function usePanZoom(areaRef: RefObject<HTMLElement | null>, imgRef: RefOb
   };
 
   return { view, fit, ready, setReady, refit, reset, restart, zoom, panHandlers };
+}
+
+/**
+ * Whether a wheel event is two fingers swiping on a trackpad rather than a mouse wheel turning. There
+ * is no flag for it, so by the signs: a sideways part, which a plain wheel never has; on a Mac the
+ * legacy `wheelDeltaY`, exactly -3 times `deltaY` from a trackpad and a multiple of 120 from a wheel;
+ * elsewhere a delta smaller than a notch (Windows sends 100px or more for one). A wheel counting in
+ * lines (Firefox) is a wheel.
+ */
+function swipe(e: WheelEvent): boolean {
+  if (e.deltaMode !== 0) return false;
+  if (e.deltaX !== 0) return true;
+  const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
+  if (IS_MAC) return !!legacy && legacy === -3 * e.deltaY;
+  return Math.abs(e.deltaY) < 50;
 }
 
 /** The picture's transform for a view: centred in its box, then moved and scaled. */

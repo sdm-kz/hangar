@@ -36,7 +36,7 @@ export function ImageLightbox({
   const shown = (at >= 0 && gallery?.[at]) || { src, name };
   const areaRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const { view, fit, ready, setReady, refit, reset, restart, zoom, panHandlers } = usePanZoom(areaRef, imgRef);
+  const { view, ready, setReady, refit, reset, restart, zoom, panHandlers } = usePanZoom(areaRef, imgRef);
   const scale = view.scale;
   // How the last copy went, shown on its button for a moment.
   const [copied, setCopied] = useState<"ok" | "failed" | null>(null);
@@ -141,10 +141,10 @@ export function ImageLightbox({
 
       <div
         ref={areaRef}
-        className="relative flex-1 overflow-hidden"
+        className="relative flex-1 select-none overflow-hidden"
         {...panHandlers}
         onDoubleClick={reset}
-        style={{ cursor: scale > fit ? "grab" : "default", touchAction: "none" }}
+        style={{ cursor: "grab", touchAction: "none" }}
       >
         <img
           // A fresh element for each of the set, so its load (and the fit that follows it) is its own — by

@@ -5,10 +5,10 @@ import { cn } from "@/lib/utils";
 import { panZoomTransform, usePanZoom } from "@/lib/usePanZoom";
 
 /**
- * An image in its own tab, zoomable where it is: the wheel or a trackpad pinch zooms about the
- * pointer, a drag pans, a double-click (or the percentage in the corner box) fits it back in the tab.
- * The box's buttons zoom about the middle, as the full-page viewer's do. Opens fitted, the way the
- * plain picture it replaces was shown.
+ * An image in its own tab, zoomable where it is: the mouse wheel or a trackpad pinch zooms about the
+ * pointer, a drag or a two-finger swipe pans, a double-click (or the percentage in the corner box)
+ * fits it back in the tab. The box's buttons zoom about the middle, as the full-page viewer's do.
+ * Opens fitted, the way the plain picture it replaces was shown.
  *
  * Its own box rather than {@link ZoomControls}: those stop at a few text sizes between 50% and 200%,
  * where a picture wants anything from a fraction to many times its size. It looks the same and sits
@@ -20,14 +20,14 @@ import { panZoomTransform, usePanZoom } from "@/lib/usePanZoom";
 export function ImagePane({ src, alt, className }: { src: string; alt: string; className?: string }) {
   const areaRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const { view, fit, ready, setReady, refit, reset, zoom, panHandlers } = usePanZoom(areaRef, imgRef);
+  const { view, ready, setReady, refit, reset, zoom, panHandlers } = usePanZoom(areaRef, imgRef);
   return (
     <div
       ref={areaRef}
-      className={cn("relative h-full w-full overflow-hidden", className)}
+      className={cn("relative h-full w-full select-none overflow-hidden", className)}
       {...panHandlers}
       onDoubleClick={reset}
-      style={{ cursor: view.scale > fit ? "grab" : "default", touchAction: "none" }}
+      style={{ cursor: "grab", touchAction: "none" }}
     >
       <img
         ref={imgRef}
