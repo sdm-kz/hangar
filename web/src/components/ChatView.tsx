@@ -414,6 +414,36 @@ export function ChatView({
     onScrolled: onScroll,
   });
 
+  // The corner's buttons go in the line while it is there, in the middle of its height, with the room they
+  // take (more with find open) kept clear of the message.
+  const cornerRef = useRef<HTMLDivElement>(null);
+  const [corner, setCorner] = useState<{ top: number; width: number } | null>(null);
+  const placeCorner = useCallback(() => {
+    const box = cornerRef.current;
+    const buttons = box?.lastElementChild as HTMLElement | null | undefined;
+    let next: { top: number; width: number } | null = null;
+    if (pinned && box && buttons) {
+      const right = box.getBoundingClientRect().right;
+      // Only what is on the buttons' own row: a find bar that wrapped hangs below the line, not in it.
+      const row = buttons.getBoundingClientRect().top;
+      const left = Math.min(
+        ...[...box.children].map((c) => c.getBoundingClientRect()).filter((r) => Math.abs(r.top - row) < 4).map((r) => r.left)
+      );
+      next = { top: Math.max(0, (pinBarHeight() - buttons.offsetHeight) / 2), width: Math.ceil(right - left) + 24 };
+    }
+    setCorner((cur) => (cur?.top === next?.top && cur?.width === next?.width ? cur : next));
+  }, [pinned]);
+  useLayoutEffect(placeCorner, [placeCorner, zoom, find.open]);
+  // And again as the pane is resized, or the find bar's row wraps.
+  useEffect(() => {
+    const box = cornerRef.current;
+    if (!box || !pinned || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(placeCorner);
+    ro.observe(box);
+    for (const c of box.children) ro.observe(c);
+    return () => ro.disconnect();
+  }, [placeCorner, pinned, find.open]);
+
   // ---- Zoom: the buttons, Ctrl/⌘ with + - 0, and Ctrl/⌘-wheel, the keys the terminal answers to ----
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
@@ -678,6 +708,40 @@ export function ChatView({
     showMark(mark);
   }, [shown, order, hidden, showMark]);
 
+  // Marks, find and zoom: in the corner, or in the line a message of yours is pinned in while there is one.
+  const cornerControls = (
+    <>
+      {find.bar}
+      <ZoomControls
+        zoom={zoom}
+        onChange={setZoom}
+        leading={
+          <>
+            <MarksButton marks={marks.marks} open={marksOpen} onClick={() => (marksOpen ? closeMarks() : openMarks())} />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              title={`Find in the chat (${chord("mod", "F")})`}
+              aria-pressed={find.open}
+              onClick={find.open ? find.close : find.start}
+            >
+              <Search className="size-4" />
+            </Button>
+          </>
+        }
+        className={cn(
+          "relative mr-0 transition-opacity",
+          zoom === 1 &&
+            !find.open &&
+            !marksOpen &&
+            !openTodos &&
+            "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+        )}
+      />
+    </>
+  );
+
   return (
     <div
       ref={rootRef}
@@ -801,56 +865,38 @@ export function ChatView({
           </div>
         </div>
         {pinned && (
-          // Over the top of the conversation, clear of its scrollbar; at the chat's own zoom, as what it pins.
+          // Over the top of the conversation, clear of its scrollbar. The message in the conversation's column,
+          // at the chat's own zoom, as what it pins.
           <div
             ref={pinBarRef}
-            className="absolute left-0 top-0 z-[5] border-b bg-background/95 backdrop-blur-sm"
+            className="absolute left-0 top-0 z-10 flex items-center border-b bg-background/95 backdrop-blur-sm"
             style={{ right: "var(--scrollbar-w)" }}
           >
+            <span className="flex-1 basis-0" />
             <button
               type="button"
               title="Go to your message"
               onClick={goToPinned}
               style={{ zoom }}
-              className="mx-auto flex w-full max-w-3xl items-start gap-2 px-4 py-1.5 text-left text-sm text-muted-foreground hover:text-foreground"
+              className="flex min-w-0 flex-[0_1_48rem] items-start gap-2 px-4 py-1.5 text-left text-sm text-muted-foreground hover:text-foreground"
             >
               <CornerDownRight className="mt-0.5 size-3.5 shrink-0 -scale-x-100" />
               <span className="line-clamp-2 min-w-0 flex-1 whitespace-pre-wrap break-words">{askedText(pinned)}</span>
             </button>
+            {/* Room for the corner's buttons, which sit in the line while it is there. */}
+            <span className="flex-1 basis-0" style={{ minWidth: corner?.width }} />
           </div>
         )}
-        {/* In the corner, like the terminal's. Shown on hover, and pinned open once zoomed, since a size
-            that isn't the default should say so and offer the way back. The find bar opens beside it, and
-            under it where the two don't fit side by side. */}
-        <div className="pointer-events-none absolute left-4 right-4 top-3 z-10 flex flex-wrap-reverse items-start justify-end gap-1.5 [&>*]:pointer-events-auto">
-          {find.bar}
-          <ZoomControls
-            zoom={zoom}
-            onChange={setZoom}
-            leading={
-              <>
-                <MarksButton marks={marks.marks} open={marksOpen} onClick={() => (marksOpen ? closeMarks() : openMarks())} />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  title={`Find in the chat (${chord("mod", "F")})`}
-                  aria-pressed={find.open}
-                  onClick={find.open ? find.close : find.start}
-                >
-                  <Search className="size-4" />
-                </Button>
-              </>
-            }
-            className={cn(
-              "relative mr-0 transition-opacity",
-              zoom === 1 &&
-                !find.open &&
-                !marksOpen &&
-                !openTodos &&
-                "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
-            )}
-          />
+        {/* In the corner, like the terminal's, or in the line above while a message is pinned in it: the same
+            buttons in the same place in the page, so a find being typed into stays as it is when the line comes.
+            Shown on hover, and pinned open once zoomed, since a size that isn't the default should say so and
+            offer the way back. The find bar opens beside it, and under it where the two don't fit side by side. */}
+        <div
+          ref={cornerRef}
+          style={corner ? { top: corner.top } : undefined}
+          className="pointer-events-none absolute left-4 right-4 top-3 z-20 flex flex-wrap-reverse items-start justify-end gap-1.5 [&>*]:pointer-events-auto"
+        >
+          {cornerControls}
         </div>
         {marksOpen && (
           <div className="absolute right-4 top-12 z-20">
