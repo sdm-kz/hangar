@@ -76,6 +76,13 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
         note: "In the installed app; a browser tab keeps these keys for its own tabs",
         keywords: ["switch", "cycle", "chat", "terminal", "files"],
       },
+      {
+        id: "chat-terminal",
+        keys: [["ctrl", "`"]],
+        does: "Switch Claude's tab between the chat and the terminal",
+        note: "From another tab, the first press brings Claude's tab back",
+        keywords: ["toggle", "view", "mode"],
+      },
       { id: "settings", keys: [["mod", "shift", "S"]], does: "Open Settings", keywords: ["preferences", "options"] },
       {
         id: "help",

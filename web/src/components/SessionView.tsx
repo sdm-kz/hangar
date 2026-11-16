@@ -777,6 +777,31 @@ export function SessionView({
     });
   }, []);
 
+  // Ctrl+`: Claude's tab between the chat and the terminal, the way VS Code's shows and hides its
+  // terminal. From another tab it first brings Claude's back, as it was left; a second press flips it.
+  // Ctrl on a Mac too, where ⌘` is the system's next-window key. By the key's place, not its
+  // character, so a layout that types ё there has it as well. From anywhere, the terminal included —
+  // caught before xterm, which would send a NUL for it — and a text box, where it types nothing.
+  const chatKey = useRef({ current, activateTab, focusContent, wide });
+  chatKey.current = { current, activateTab, focusContent, wide };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code !== "Backquote" || !e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { current: layout, activateTab: activate, focusContent: focus, wide: w } = chatKey.current;
+      const l = layout();
+      const g = groupOf(l, CLAUDE);
+      const showing = !!g && g.active === CLAUDE && (w ? !l.max || l.max === g.id : l.active === g.id);
+      void activate(CLAUDE);
+      if (showing) setChatModeRef.current(!chatModeRef.current);
+      focus(CLAUDE);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   // Opening from a group's "+": the new tab is expected there.
   const openShell = useCallback(
     (shell: string, group: string) => {
