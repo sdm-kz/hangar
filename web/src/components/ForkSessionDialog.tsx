@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
-import { useApi } from "@/lib/node";
+import { chatViewOf, setChatView } from "@/lib/chatView";
+import { sessionKey, useApi, useNodeId } from "@/lib/node";
 import type { SessionInfo } from "@/types";
 import {
   Dialog,
@@ -36,8 +37,9 @@ function suggestName(parent: SessionInfo, sessions: SessionInfo[]): string {
 /**
  * Fork a session: launch a new one in the same folder that branches the parent's conversation
  * (`claude --resume <convo> --fork-session`), leaving the original running and untouched. The only
- * choice is what to call it — everything else (folder, model, permissions, remote control) is
- * inherited, since a fork is the same work continued down a different path.
+ * choice is what to call it — everything else (folder, model, permissions, remote control, and whether
+ * Claude's tab shows the chat or the terminal) is inherited, since a fork is the same work continued
+ * down a different path.
  */
 export function ForkSessionDialog({
   parent,
@@ -53,6 +55,7 @@ export function ForkSessionDialog({
   onClose: () => void;
 }) {
   const api = useApi();
+  const nodeId = useNodeId();
   const [name, setName] = useState(() => suggestName(parent, sessions));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +72,11 @@ export function ForkSessionDialog({
     setBusy(true);
     setError(null);
     try {
-      onForked(await api.forkSession(parent.id, name.trim()));
+      const s = await api.forkSession(parent.id, name.trim());
+      // Before the fork is shown, so it opens on the view its parent shows here — in this browser and,
+      // through the session's saved state, in the others.
+      setChatView(sessionKey(nodeId, s.id), chatViewOf(sessionKey(nodeId, parent.id)));
+      onForked(s);
       onClose();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to fork session");
