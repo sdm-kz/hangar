@@ -134,8 +134,9 @@ const RENAME_CONFIRM = /(?:^|[\r\n\x1e])[ \t]*[^\w\r\n\x1e]{0,12}\/rename[ \t]+(
 
 // Same discriminators for `/color <name>`, including the echo/confirmation agreement. Case-insensitive
 // because Claude lowercases the colour it echoes back; a bare "/color" (random colour) is deliberately
-// not matched, having no argument to agree on. Mirrors the server sniffer.
-const COLOR_CONFIRM = /(?:^|[\r\n\x1e])[ \t]*[^\w\r\n\x1e]{0,12}\/color[ \t]+(?<arg>[A-Za-z]{1,20})[ \t]*(?=[\r\n\x1e])(?:(?!\/color)[\s\S]){0,2000}?(?:^|(?<paint>[\r\n\x1e]))[ \t]*[^\w\r\n\x1e]{0,15}[^\x00-\x7f][^\w\r\n\x1e]{0,8}[ \t]*Session[ \t]*color[ \t]*set[ \t]*to:[ \t]*\k<arg>(?![A-Za-z])/gi;
+// not matched, having no argument to agree on. "/color default" (or reset, none, gray, grey) answers
+// "Session color reset to default" instead, reported as the colour "default". Mirrors the server sniffer.
+const COLOR_CONFIRM = /(?:^|[\r\n\x1e])[ \t]*[^\w\r\n\x1e]{0,12}\/color[ \t]+(?<arg>[A-Za-z]{1,20})[ \t]*(?=[\r\n\x1e])(?:(?!\/color)[\s\S]){0,2000}?(?:^|(?<paint>[\r\n\x1e]))[ \t]*[^\w\r\n\x1e]{0,15}[^\x00-\x7f][^\w\r\n\x1e]{0,8}[ \t]*Session[ \t]*color[ \t]*(?:set[ \t]*to:[ \t]*\k<arg>|(?<reset>reset)[ \t]*to[ \t]*default)(?![A-Za-z])/gi;
 
 // Was this confirmation drawn by a repaint (the line began with a cursor jump) rather than streamed
 // after a CR/LF? A repainted block is the transcript being redrawn, so an older one must not re-apply
@@ -150,7 +151,7 @@ function isRepaint(m: RegExpMatchArray): boolean {
 // same places they are (the TUI can draw either phrase's word gaps as cursor moves), so the gate can
 // never be the thing that swallows a confirmation.
 const RENAME_PHRASE = /Session[ \t]*renamed[ \t]*to:/;
-const COLOR_PHRASE = /Session[ \t]*color[ \t]*set[ \t]*to:/;
+const COLOR_PHRASE = /Session[ \t]*color[ \t]*(?:set[ \t]*to:|reset[ \t]*to)/;
 
 // Resolve a path clicked in the terminal to an absolute server path. Absolute paths (POSIX, Windows
 // drive, or UNC-ish leading separator) pass through; relative paths are joined onto the session's
@@ -891,7 +892,7 @@ export const TerminalPane = forwardRef<
         let color: string | null = null;
         let repainted = true;
         for (const m of scanBufRef.current.matchAll(COLOR_CONFIRM)) {
-          color = m.groups!.arg.toLowerCase();
+          color = m.groups!.reset ? "default" : m.groups!.arg.toLowerCase();
           repainted = isRepaint(m);
         }
         if (color && color !== lastColorRef.current && !(repainted && appliedColorsRef.current.has(color))) {

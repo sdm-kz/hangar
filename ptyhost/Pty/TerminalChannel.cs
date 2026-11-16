@@ -248,12 +248,15 @@ public sealed partial class TerminalChannel : IDisposable
     // repaint re-applied it. Case-insensitive because Claude lowercases the colour it echoes back.
     // A bare "/color" (which picks a random colour) is deliberately NOT matched: with no argument to
     // agree on, it is exactly the shape that prose produces by accident.
-    [GeneratedRegex(@"(?:^|[\r\n\x1e])[ \t]*[^A-Za-z0-9_\r\n\x1e]{0,12}/color[ \t]+(?<arg>[A-Za-z]{1,20})[ \t]*(?=[\r\n\x1e])(?:(?!/color)[\s\S]){0,2000}?(?:^|(?<paint>[\r\n\x1e]))[ \t]*[^A-Za-z0-9_\r\n\x1e]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n\x1e]{0,8}[ \t]*Session[ \t]*color[ \t]*set[ \t]*to:[ \t]*\k<arg>(?![A-Za-z])",
+    // Clearing it is a different confirmation: "/color default" (or reset, none, gray, grey) answers
+    // "Session color reset to default", which doesn't echo the argument back, so the agreement there
+    // is just that it follows its own "/color" line. It is reported as the colour "default".
+    [GeneratedRegex(@"(?:^|[\r\n\x1e])[ \t]*[^A-Za-z0-9_\r\n\x1e]{0,12}/color[ \t]+(?<arg>[A-Za-z]{1,20})[ \t]*(?=[\r\n\x1e])(?:(?!/color)[\s\S]){0,2000}?(?:^|(?<paint>[\r\n\x1e]))[ \t]*[^A-Za-z0-9_\r\n\x1e]{0,15}[^\x00-\x7f][^A-Za-z0-9_\r\n\x1e]{0,8}[ \t]*Session[ \t]*color[ \t]*(?:set[ \t]*to:[ \t]*\k<arg>|(?<reset>reset)[ \t]*to[ \t]*default)(?![A-Za-z])",
         RegexOptions.IgnoreCase)]
     private static partial Regex ColorConfirmRegex();
 
     /// <summary>Cheap gate: only run the full pattern when the phrase is somewhere in the buffer.</summary>
-    [GeneratedRegex(@"Session[ \t]*color[ \t]*set[ \t]*to:")]
+    [GeneratedRegex(@"Session[ \t]*color[ \t]*(?:set[ \t]*to:|reset[ \t]*to)")]
     private static partial Regex ColorPhraseRegex();
 
     // Scan freshly-read output for Claude's color confirmation. Returns the new color, or null.
@@ -268,7 +271,7 @@ public sealed partial class TerminalChannel : IDisposable
         if (ColorPhraseRegex().IsMatch(text))
             foreach (Match m in ColorConfirmRegex().Matches(text))
             {
-                color = m.Groups["arg"].Value.ToLowerInvariant();
+                color = m.Groups["reset"].Success ? "default" : m.Groups["arg"].Value.ToLowerInvariant();
                 repainted = IsRepaint(m);
             }
         _colorScanTail = text.Length > 4096 ? text[^4096..] : text;

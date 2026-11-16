@@ -153,12 +153,15 @@ public sealed class ClaudeSession : IDisposable
 
     /// <summary>
     /// Set the session's color (from a <c>/color</c> typed in the terminal). Sanitizes to a short
-    /// color name. Returns false when the color is empty or unchanged.
+    /// color name; "default" (what a <c>/color default</c> reports) clears it. Returns false when the
+    /// color is empty or unchanged.
     /// </summary>
     public bool SetColor(string? newColor)
     {
         var clean = SanitizeColor(newColor);
-        if (clean is null || clean == Color) return false;
+        if (clean is null) return false;
+        if (clean == "default") clean = null;
+        if (clean == Color) return false;
         Color = clean;
         MetadataChanged?.Invoke(this);
         return true;
@@ -349,7 +352,7 @@ public sealed class ClaudeSession : IDisposable
         client.ColorCommandDetected += color =>
         {
             if (SetColor(color))
-                _log.LogInformation("Session {Id} color set to '{Color}' via terminal /color", Id, Color);
+                _log.LogInformation("Session {Id} color set to '{Color}' via terminal /color", Id, Color ?? "default");
         };
         client.Exited += OnChildExited;
         // A pushed busy/waiting change should reach the browser at once rather than waiting
