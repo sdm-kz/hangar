@@ -54,7 +54,8 @@ screenshot is this session as a chat):
   on a Mac too) from anywhere in the session, terminal included, shows the same session as a chat and
   back (from another tab, the first press brings Claude's tab back as it was left): your messages as bubbles, Claude's replies rendered as Markdown, each tool call as
   a card that opens to its input and output. While you read the latest it follows what comes in, but a
-  reply too long to fit stops at its start, for you to read down from. Once a message of yours has gone up
+  reply too long to fit stops at its start, for you to read down from; sending a message follows the latest
+  again, from wherever you had scrolled to. Once a message of yours has gone up
   out of view, a line pinned over the top of the conversation shows it (up to two lines of it), so what
   the replies under it answer is always in sight, coming back to a session included; clicking it goes to
   the message. A ```` ```markdown ```` block in a reply (a drafted ticket or PR

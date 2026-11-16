@@ -969,7 +969,12 @@ export function ChatView({
           terminalRef={terminalRef}
           blocked={waiting || !!questionKey || !!planKey}
           busy={busy}
-          onSent={() => pokeRef.current()}
+          onSent={() => {
+            // What you send is the latest, and what you'll want to see next: follow it, wherever you had scrolled
+            // to (a long reply stops at its start, and the view would otherwise stay up there).
+            toBottom();
+            pokeRef.current();
+          }}
           onShowTerminal={onShowTerminal}
           poolSlot={poolSlot}
           info={info}
