@@ -435,6 +435,11 @@ screenshot is this session as a chat):
   only one), its latest message — Claude's reply, or your prompt while it works — and its mark. **Alt+Q** skips the list and goes to the next session that needs you: waiting on you first, then
   a failed turn, then finished work you haven't looked at, the one you looked at longest ago first. The
   order is kept per browser, so the phone and the desk each have their own.
+- **Tab switching** — **Ctrl+Tab** steps to the session's next tab (Chat or Terminal, Files, a file,
+  a shell…) and **Ctrl+Shift+Tab** to the one before, round from the end to the start; with the pane
+  split it goes through every group's tabs in turn, and within a zoomed group alone. From anywhere,
+  terminal included, in the installed app; a browser tab keeps the keys for switching between its own
+  tabs.
 - **Settings** — the gear at the bottom of the sidebar, or **Ctrl+Shift+S** (⌘⇧S on a Mac) from
   anywhere, terminal included: one dialog for Appearance, Notifications, Nodes, Projects, Schedules,
   Security (set or change the password, sign out), Claude's hooks, Hangar's

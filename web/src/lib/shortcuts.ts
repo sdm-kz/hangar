@@ -69,6 +69,13 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
         note: "Waiting on you first, then failed, then finished and unread",
         keywords: ["waiting", "blocked", "next", "attention"],
       },
+      {
+        id: "next-tab",
+        keys: [["ctrl", "Tab"], ["ctrl", "shift", "Tab"]],
+        does: "Next or previous tab of the session",
+        note: "In the installed app; a browser tab keeps these keys for its own tabs",
+        keywords: ["switch", "cycle", "chat", "terminal", "files"],
+      },
       { id: "settings", keys: [["mod", "shift", "S"]], does: "Open Settings", keywords: ["preferences", "options"] },
       {
         id: "help",

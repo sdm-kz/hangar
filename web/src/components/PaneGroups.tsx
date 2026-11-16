@@ -122,13 +122,33 @@ export function PaneGroups({
   );
 
   // ---- Keyboard ---------------------------------------------------------------------------------
-  // Alt-based, because the terminal owns Ctrl (Ctrl+W, Ctrl+\ and the rest are keys programs read)
-  // and the browser owns Ctrl+Tab. Captured before xterm sees them, and only these exact chords.
-  const latest = useRef({ layout, wide, onDrop, onContentFocus });
-  latest.current = { layout, wide, onDrop, onContentFocus };
+  // Alt-based, because the terminal owns Ctrl (Ctrl+W, Ctrl+\ and the rest are keys programs read).
+  // Captured before xterm sees them, and only these exact chords.
+  const latest = useRef({ layout, wide, onDrop, onContentFocus, onActivate });
+  latest.current = { layout, wide, onDrop, onContentFocus, onActivate };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const { layout: l, wide: w, onDrop: drop, onContentFocus: focus } = latest.current;
+      const { layout: l, wide: w, onDrop: drop, onContentFocus: focus, onActivate: activate } = latest.current;
+      // The one Ctrl chord: Ctrl+Tab and Ctrl+Shift+Tab step to the next and the previous tab, round
+      // from the last to the first. Across every group in turn when the pane is split, so a group of
+      // one tab is not a dead end; within the zoomed group alone while one is zoomed, which stepping
+      // out of would unzoom. From anywhere, a text box and the terminal included: neither has a use
+      // for it. Only where the page is given the chord at all: a browser tab keeps it for its own
+      // tabs, while the installed app's window passes it on.
+      if (e.key === "Tab" && e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (document.querySelector('[role="dialog"]')) return;
+        const gs = groupsOf(l.root);
+        const cur = gs.find((g) => g.id === l.active);
+        const strip = w && l.max ? cur?.tabs ?? [] : gs.flatMap((g) => g.tabs);
+        if (strip.length < 2 || !cur?.active) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const i = strip.indexOf(cur.active);
+        const next = strip[(i + (e.shiftKey ? -1 : 1) + strip.length) % strip.length];
+        activate(next);
+        focus(next);
+        return;
+      }
       if (!w || !e.altKey || e.ctrlKey || e.metaKey) return;
       // Text being typed keeps its keys — Alt/Option chords type characters on some keyboards, and
       // Alt+Shift+arrow selects words. The terminals' own input box is the one field exempted: a
