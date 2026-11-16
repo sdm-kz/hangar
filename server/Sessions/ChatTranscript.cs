@@ -221,6 +221,12 @@ public static class ChatTranscript
                     var blocks = Blocks(msg, ref images);
                     var assistant = type == "assistant";
                     if (assistant) WithPlans(blocks, Str(d, "slug"));
+                    // Thinking shown as "updates" keeps the reasoning redacted and writes, in the thinking, a line
+                    // or two for you on where the work stands: the terminal shows it as one of Claude's messages
+                    // ("· summary"), and so does the chat.
+                    if (assistant && Str(d, "thinkingDisplay") == "updates")
+                        for (var i = 0; i < blocks.Count; i++)
+                            if (blocks[i].Type == "thinking") blocks[i] = blocks[i] with { Type = "text", Text = blocks[i].Text?.Trim() };
                     return new ChatEntry(uuid, parent, type, time,
                         MessageId: assistant ? Str(msg, "id") : null,
                         Meta: Bool(d, "isMeta"),
