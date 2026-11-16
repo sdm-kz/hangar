@@ -429,7 +429,8 @@ export function ChatView({
       const left = Math.min(
         ...[...box.children].map((c) => c.getBoundingClientRect()).filter((r) => Math.abs(r.top - row) < 4).map((r) => r.left)
       );
-      next = { top: Math.max(0, (pinBarHeight() - buttons.offsetHeight) / 2), width: Math.ceil(right - left) + 24 };
+      // In the middle of the line above its bottom border.
+      next = { top: Math.max(0, (pinBarHeight() - 1 - buttons.offsetHeight) / 2), width: Math.ceil(right - left) + 24 };
     }
     setCorner((cur) => (cur?.top === next?.top && cur?.width === next?.width ? cur : next));
   }, [pinned]);
@@ -869,7 +870,8 @@ export function ChatView({
           // at the chat's own zoom, as what it pins.
           <div
             ref={pinBarRef}
-            className="absolute left-0 top-0 z-10 flex items-center border-b bg-background/95 backdrop-blur-sm"
+            // Tall enough for the corner's buttons (34px) with as much room below them as above.
+            className="absolute left-0 top-0 z-10 flex min-h-[47px] items-center border-b bg-background/95 backdrop-blur-sm"
             style={{ right: "var(--scrollbar-w)" }}
           >
             <span className="flex-1 basis-0" />
