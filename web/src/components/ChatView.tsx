@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Circle,
   Clock,
+  CornerDownRight,
   ImageIcon,
   Inbox,
   Loader2,
@@ -81,6 +82,22 @@ const PAGE = 150;
 const STICK_PX = 80;
 // Room left above a reply that following stops at the start of, so its first line isn't under the edge.
 const REPLY_GAP_PX = 12;
+// How far down into the view a message of yours can still reach and count as gone up out of it.
+const PIN_PX = 4;
+
+// What you asked: a message, or a command given something to do (a skill and its arguments). A bare
+// command (a /model, a /compact) or a shell line isn't a question the replies after it answer.
+const isAsk = (i: ChatItem) =>
+  i.kind === "user" || (i.kind === "command" && !i.text.startsWith("!") && /\s/.test(i.text.trim()));
+
+/** The words of what was asked, for the line it is pinned as: a reply's own text, without the quote. */
+function askedText(i: ChatItem): string {
+  if (i.kind === "user") {
+    const text = splitQuote(i.text)?.rest || i.text;
+    return text || (i.images.length ? (i.images.length > 1 ? `${i.images.length} images` : "An image") : "");
+  }
+  return "text" in i ? i.text : "";
+}
 
 // Between the keys that answer a question or a plan: each one redraws Claude's dialog before it takes the next.
 const QUESTION_KEY_GAP_MS = 150;
@@ -256,6 +273,10 @@ export function ChatView({
   const lastKey = useRef<string | null>(null);
   // Where following last put the view, to tell its own scrolling from the reader's.
   const followedTo = useRef(-1);
+  // The bar a message of yours is pinned in (below) covers the top of the view: what is scrolled to the top
+  // goes under it, not under the edge.
+  const pinBarRef = useRef<HTMLDivElement>(null);
+  const pinBarHeight = () => pinBarRef.current?.offsetHeight ?? 0;
   const follow = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -263,12 +284,69 @@ export function ChatView({
     const reply = replyKey.current && contentRef.current && itemElement(contentRef.current, replyKey.current);
     // Its box lays out nothing of its own (display: contents): where it is, is where its row is.
     const row = reply && reply.firstElementChild;
-    if (row) top = Math.min(top, el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top - REPLY_GAP_PX);
+    if (row)
+      top = Math.min(
+        top,
+        el.scrollTop + row.getBoundingClientRect().top - el.getBoundingClientRect().top - REPLY_GAP_PX - pinBarHeight()
+      );
     el.scrollTop = top;
     followedTo.current = el.scrollTop;
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
     setShowJump(!atBottom.current);
   }, []);
+  // ---- The message of yours that what is in view answers, pinned above it ----
+  // The last you sent that has gone up out of view: coming back to a session, or reading down a long run of
+  // replies, it says what they are about without scrolling back for it.
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const [pinned, setPinned] = useState<ChatItem | null>(null);
+  const pinFrame = useRef(0);
+  const placePin = useCallback(() => {
+    cancelAnimationFrame(pinFrame.current);
+    pinFrame.current = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      const content = contentRef.current;
+      if (!el || !content) return;
+      const top = el.getBoundingClientRect().top;
+      const asked = shownRef.current.filter(isAsk);
+      let found: ChatItem | null = null;
+      for (let i = asked.length - 1; i >= 0; i--) {
+        // Its box lays out nothing of its own (display: contents): its row is where it is.
+        const row = itemElement(content, asked[i].key)?.firstElementChild;
+        // Gone up out of view, or under the bar, which hides it as well (to the pixel its height is rounded to).
+        if (row && row.getBoundingClientRect().bottom <= top + Math.max(PIN_PX, pinBarHeight() + 1)) {
+          found = asked[i];
+          break;
+        }
+      }
+      setPinned((cur) => (cur?.key === found?.key ? cur : found));
+    });
+  }, []);
+  useEffect(() => () => cancelAnimationFrame(pinFrame.current), []);
+  useLayoutEffect(placePin, [items, limit, placePin]);
+  // To the message itself, clear of the bar: the one before it is pinned there once it's in view.
+  const goingToAsked = useRef<string | null>(null);
+  const scrollToAsked = (key: string) => {
+    const el = scrollRef.current;
+    const row = contentRef.current && itemElement(contentRef.current, key)?.firstElementChild;
+    if (!el || !row) return;
+    el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - REPLY_GAP_PX - pinBarHeight();
+  };
+  const goToPinned = () => {
+    if (!pinned) return;
+    goingToAsked.current = pinned.key;
+    scrollToAsked(pinned.key);
+  };
+  // The bar came, went or changed height under what was just scrolled to the top: put that clear of it again.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const going = goingToAsked.current;
+    goingToAsked.current = null;
+    if (going) scrollToAsked(going);
+    else if (el && replyKey.current && Math.abs(el.scrollTop - followedTo.current) <= 1) follow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinned, follow]);
+
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -276,6 +354,7 @@ export function ChatView({
     // Read down to the end: from here on the latest is followed again.
     if (atBottom.current && Math.abs(el.scrollTop - followedTo.current) > 1) replyKey.current = null;
     setShowJump(!atBottom.current);
+    placePin();
   };
   const toBottom = useCallback(() => {
     replyKey.current = null;
@@ -302,10 +381,11 @@ export function ChatView({
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       if (atBottom.current) follow();
+      placePin();
     });
     if (el.firstElementChild) ro.observe(el.firstElementChild);
     return () => ro.disconnect();
-  }, [follow]);
+  }, [follow, placePin]);
 
   const showEarlier = () => {
     const el = scrollRef.current;
@@ -720,6 +800,25 @@ export function ChatView({
             />
           </div>
         </div>
+        {pinned && (
+          // Over the top of the conversation, clear of its scrollbar; at the chat's own zoom, as what it pins.
+          <div
+            ref={pinBarRef}
+            className="absolute left-0 top-0 z-[5] border-b bg-background/95 backdrop-blur-sm"
+            style={{ right: "var(--scrollbar-w)" }}
+          >
+            <button
+              type="button"
+              title="Go to your message"
+              onClick={goToPinned}
+              style={{ zoom }}
+              className="mx-auto flex w-full max-w-3xl items-start gap-2 px-4 py-1.5 text-left text-sm text-muted-foreground hover:text-foreground"
+            >
+              <CornerDownRight className="mt-0.5 size-3.5 shrink-0 -scale-x-100" />
+              <span className="line-clamp-2 min-w-0 flex-1 whitespace-pre-wrap break-words">{askedText(pinned)}</span>
+            </button>
+          </div>
+        )}
         {/* In the corner, like the terminal's. Shown on hover, and pinned open once zoomed, since a size
             that isn't the default should say so and offer the way back. The find bar opens beside it, and
             under it where the two don't fit side by side. */}
