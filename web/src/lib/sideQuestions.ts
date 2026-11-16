@@ -16,6 +16,8 @@ export interface SideQuestion {
   /** The chat item it was asked after, by its key; null when it came before anything. */
   after: string | null;
   createdAt: number;
+  /** Folded down to its question in the chat. */
+  collapsed: boolean;
 }
 
 /** The /btw overlay as the screen shows it. */
@@ -77,6 +79,7 @@ function parse(raw: unknown): SideQuestion[] {
         question: str(o.question),
         after: str(o.after),
         createdAt: typeof o.createdAt === "number" ? o.createdAt : 0,
+        collapsed: o.collapsed === true,
       },
     ];
   });
@@ -87,7 +90,9 @@ export interface SideQuestions {
   /** Read the kept list again: another device may have added to it. */
   refresh: () => void;
   /** Keep one; resolves with it as kept (an exchange already there is not added twice), or null. */
-  add: (q: Omit<SideQuestion, "id" | "createdAt">) => Promise<SideQuestion | null>;
+  add: (q: Pick<SideQuestion, "question" | "answer" | "after">) => Promise<SideQuestion | null>;
+  /** Fold one down to its question, or open it again, on every device. */
+  setCollapsed: (id: string, collapsed: boolean) => void;
 }
 
 /** The conversation's side questions, kept on the node. */
@@ -130,7 +135,7 @@ export function useSideQuestions(api: Api, sessionId: string, conversation: stri
   }, [refresh]);
 
   const add = useCallback(
-    async (q: Omit<SideQuestion, "id" | "createdAt">) => {
+    async (q: Pick<SideQuestion, "question" | "answer" | "after">) => {
       if (!conversation) return null;
       const at = { sessionId, conversation };
       try {
@@ -143,5 +148,19 @@ export function useSideQuestions(api: Api, sessionId: string, conversation: stri
     [api, sessionId, conversation, show]
   );
 
-  return { list, refresh, add };
+  const setCollapsed = useCallback(
+    (id: string, collapsed: boolean) => {
+      if (!conversation) return;
+      const at = { sessionId, conversation };
+      // Shown at once; the list the node answers with puts it right if the change didn't take.
+      setList((cur) => cur.map((q) => (q.id === id ? { ...q, collapsed } : q)));
+      api.setSideQuestionCollapsed(sessionId, conversation, id, collapsed).then(
+        (raw) => show(at, raw),
+        () => refresh()
+      );
+    },
+    [api, sessionId, conversation, show, refresh]
+  );
+
+  return { list, refresh, add, setCollapsed };
 }

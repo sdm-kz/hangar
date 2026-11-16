@@ -576,6 +576,7 @@ export function ChatView({
   const side = useSideQuestions(api, sessionId, conversation);
   const refreshSide = side.refresh;
   const addSide = side.add;
+  const setSideCollapsed = side.setCollapsed;
   // Another device may have kept one since: read again when the session's state changes, as the chat is.
   useEffect(() => refreshSide(), [refreshSide, busy, activity]);
   // The overlay while it is up, and the kept exchange it showed, once it has been kept.
@@ -644,7 +645,16 @@ export function ChatView({
       question={q.question}
       answer={q.answer}
       dir={workingDirectory}
-      onClose={overlay && q.id === overlayKept ? closeOverlay : undefined}
+      collapsed={q.collapsed}
+      onToggle={() => setSideCollapsed(q.id, !q.collapsed)}
+      onClose={
+        overlay && q.id === overlayKept
+          ? () => {
+              closeOverlay();
+              setSideCollapsed(q.id, true);
+            }
+          : undefined
+      }
     />
   );
 

@@ -37,10 +37,51 @@ public static class SideQuestionStore
     /// </summary>
     public static string? Append(string workingDirectory, string conversationId, string? question, string answer, string? after)
     {
-        var rel = RelPathFor(conversationId);
-        var full = SessionFileBrowser.ResolveSafe(workingDirectory, rel);
-        if (full is null) return null;
         if (after is { Length: > MaxAfterChars }) after = null;
+        return Change(workingDirectory, conversationId, items =>
+        {
+            if (items.Any(e => Text(e, "question") == question && Text(e, "answer") == answer)) return false;
+            items.Add(JsonSerializer.SerializeToElement(new
+            {
+                id = Guid.NewGuid().ToString(),
+                question,
+                answer,
+                after,
+                createdAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            }));
+            if (items.Count > MaxItems) items.RemoveRange(0, items.Count - MaxItems);
+            return true;
+        });
+    }
+
+    /// <summary>
+    /// Fold one down to its question, or open it again: the chat shows it so, on every device. Returns the
+    /// list as now stored, or null if it couldn't be read or written, or holds no such one.
+    /// </summary>
+    public static string? SetCollapsed(string workingDirectory, string conversationId, string itemId, bool collapsed)
+    {
+        var found = false;
+        var json = Change(workingDirectory, conversationId, items =>
+        {
+            var at = items.FindIndex(e => Text(e, "id") == itemId);
+            if (at < 0) return false;
+            found = true;
+            var item = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(items[at].GetRawText())!;
+            if (item.TryGetValue("collapsed", out var was) && was.ValueKind == (collapsed ? JsonValueKind.True : JsonValueKind.False))
+                return false;
+            item["collapsed"] = JsonSerializer.SerializeToElement(collapsed);
+            items[at] = JsonSerializer.SerializeToElement(item);
+            return true;
+        });
+        return found ? json : null;
+    }
+
+    // Read the list, let `change` work on it, and write it back if it says it changed anything. Returns the
+    // list as now stored, or null if it couldn't be read or written.
+    private static string? Change(string workingDirectory, string conversationId, Func<List<JsonElement>, bool> change)
+    {
+        var full = SessionFileBrowser.ResolveSafe(workingDirectory, RelPathFor(conversationId));
+        if (full is null) return null;
         lock (_gate)
         {
             // There but unreadable for a moment (another process has it open) is not empty: writing over it
@@ -61,17 +102,7 @@ public static class SideQuestionStore
             }
             catch { return null; }
 
-            if (items.Any(e => Text(e, "question") == question && Text(e, "answer") == answer)) return json;
-
-            items.Add(JsonSerializer.SerializeToElement(new
-            {
-                id = Guid.NewGuid().ToString(),
-                question,
-                answer,
-                after,
-                createdAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            }));
-            if (items.Count > MaxItems) items.RemoveRange(0, items.Count - MaxItems);
+            if (!change(items)) return json ?? "[]";
 
             var bytes = JsonSerializer.SerializeToUtf8Bytes(items);
             var tmp = full + ".tmp";

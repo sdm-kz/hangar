@@ -120,7 +120,8 @@ screenshot is this session as a chat):
   chat is open it watches the terminal underneath for that overlay: a card in the conversation, where the
   question was asked, shows it as "Answering…", then the answer, rendered as Markdown. The answer is taken
   with the overlay's own **c to copy**, which hands over the Markdown as Claude wrote it, and kept out of
-  your clipboard. **Close** on the card takes the overlay down (Esc) while it is still up. The exchanges are
+  your clipboard. Clicking a card's question folds it down to that one line, or opens it again; **Close** on
+  the card, while the overlay is still up, takes the overlay down (Esc) and folds the card. The exchanges, folded or not, are
   kept per conversation on the node, in `.hangar/btw/<conversation>.json`, so they are there after a reload
   and on every device. Only a `/btw` answered while some browser has the session's chat open is kept.
 - **Fork a session** — branch a conversation in two from the sessions list or the session header:

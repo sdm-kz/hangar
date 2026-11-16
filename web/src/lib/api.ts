@@ -499,6 +499,12 @@ function createApi(base: string) {
         body: JSON.stringify(body),
       });
     },
+    setSideQuestionCollapsed(sessionId: string, conversation: string, id: string, collapsed: boolean): Promise<unknown> {
+      return request(
+        `/api/sessions/${sessionId}/btw/${encodeURIComponent(id)}?conversation=${encodeURIComponent(conversation)}`,
+        { method: "PUT", body: JSON.stringify({ collapsed }) }
+      );
+    },
 
     // ---- Recent launch presets & folders (server-backed, shared across devices) ----
     // Each mutation returns the full updated set so the caller can setState from the response.

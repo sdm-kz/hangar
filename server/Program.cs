@@ -2128,6 +2128,16 @@ internal static class Program
                 : Results.Content(json, "application/json");
         });
 
+        // Fold one down to its question in the chat, or open it again, on every device.
+        app.MapPut("/api/sessions/{id}/btw/{itemId}", (string id, string itemId, string conversation, SideQuestionState body, SessionManager mgr) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null || info.ClaudeSessionId is not { } conv || conv != conversation
+                || !ClaudeProjectData.IsConversationId(conv)) return Results.NotFound();
+            var json = SideQuestionStore.SetCollapsed(info.WorkingDirectory, conv, itemId, body.Collapsed);
+            return json is null ? Results.NotFound() : Results.Content(json, "application/json");
+        });
+
         // Filesystem change counter — the UI polls this to auto-refresh the tree.
         app.MapGet("/api/sessions/{id}/fs/version", (string id, SessionManager mgr) =>
         {
@@ -2650,6 +2660,7 @@ internal record PostponedAutoRequest(bool Enabled);
 /// <summary>Body for <c>POST /api/sessions/{id}/btw</c>: a side question, Claude's answer, and the chat
 /// item it was asked after.</summary>
 internal record SideQuestionRequest(string? Question, string? Answer, string? After);
+internal record SideQuestionState(bool Collapsed);
 /// <summary>Body for <c>POST /api/sessions/{id}/ui</c>: the UI-state fields to merge (a null value
 /// removes that field). The shape of the bag belongs to the client; the server only merges it.
 /// <c>Quiet</c> saves without advancing the revision, for a field the other browsers need not be
