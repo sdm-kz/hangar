@@ -526,7 +526,10 @@ export function SessionView({
           if (p && p.kind === paneKind(ref) && Date.now() - p.at < 15_000 && findGroup(cur, p.group)) {
             pending.current = null;
             if (p.beside) beside = { ref, group: p.group };
-            return { group: p.group, activate: true };
+            // One on its way to a group of its own passes through this one unshown: shown here first,
+            // it would leave this group on its neighbour (often Files) when it moved on, not on what
+            // was showing before.
+            return { group: p.group, activate: !p.beside };
           }
           if (paneKind(ref) === "file") {
             const group = fileTarget(cur);
