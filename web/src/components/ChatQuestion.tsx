@@ -153,16 +153,25 @@ export function ChatQuestion({
           const reply = answered?.get(q.question);
           // What the terminal shows beside the options: the picked one's preview, or the first's.
           const preview = q.options[a.picked[0] ?? 0]?.preview;
+          // The first line is the question; what Claude writes under it (a draft, a list, the details) is
+          // Markdown with its lines as written, as the terminal shows it.
+          const [title, ...rest] = q.question.trim().split(/\r?\n/);
+          const details = rest.join("\n").trim();
           return (
             <fieldset key={i} disabled={!live || sending} className="flex flex-col gap-1.5">
-              <legend className="mb-1">
+              <legend className="mb-1 w-full">
                 {q.header && (
                   <span className="mr-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                     {q.header}
                   </span>
                 )}
-                <span className="font-medium">{q.question}</span>
+                <span className="font-medium">{title}</span>
                 {q.multiSelect && live && <span className="ml-1.5 text-xs text-muted-foreground">(any number)</span>}
+                {details && (
+                  <div className="prose prose-sm mt-1.5 max-w-none break-words dark:prose-invert prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-pre:bg-muted prose-pre:text-foreground [&>div>*:first-child]:mt-0 [&>div>*:last-child]:mb-0">
+                    <Markdown text={details} breaks />
+                  </div>
+                )}
               </legend>
               {live ? (
                 <>
