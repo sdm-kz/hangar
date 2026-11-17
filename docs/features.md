@@ -250,6 +250,20 @@ screenshot is this session as a chat):
   where a previewed file would go. It starts one straight away and takes the same **+** for more.
   A folder's shells are its own — a session running in the same folder keeps its tabs in its own tab
   bar — and closing the last one hands the main area back.
+
+  **Run a chat code block in a shell** — a command block in the chat (one fenced as `bash`,
+  `powershell`, `cmd` and the like, or with no language at all) shows **Run** beside its copy button
+  on hover. With shells open it is a solid split button: **Run** pastes the block into the shell last
+  run in (else the one last picked) and presses Enter; the arrow lists the session's shells, with a
+  **busy** mark on one where a command is still running (a plain Run aimed at a busy shell opens the
+  list instead of typing into that command). **Shift+click**, or **Paste only** in the list, pastes a
+  one-line block without pressing Enter, to read or edit the command first. A block of several lines is
+  typed in line by line, each running as it lands, so it can only be run: under ConPTY a shell may ask
+  for a bracketed paste (which would hold the lines for one Enter) and still not read one. With no
+  shell open the button is a dashed outline, and its list offers to open one and run there: the new
+  shell opens beside the chat, and the block goes in once its prompt is up. The shell's tab is brought
+  forward when that leaves the chat on screen; otherwise a **Ran in PowerShell · Show** note by the
+  block says where it went.
 - **Web links** — the page a session is working *from* — the issue, the PR, the spec — pinned
   to its tab bar by the **+** at the end of the row. Paste an address (the `https://` is optional);
   the page is named and given its favicon automatically, and clicking its tab shows it in the pane

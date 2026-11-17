@@ -227,6 +227,12 @@ export interface TerminalPaneHandle {
   captureCopy: (keys: string, timeoutMs: number) => Promise<string | null>;
   // Put the keyboard in the terminal — for a group of the split pane taking focus.
   focus: () => void;
+  // Type text in at a shell's prompt, and with `enter` press Enter after it. Several lines go in as
+  // typed, each run as it lands. Not as a bracketed paste, which would hold them for one Enter: under
+  // ConPTY a shell can ask for one (Git Bash does) and still read its markers as keys, running the
+  // first line with "[200~" stuck to it. So several lines can only be run, never just pasted: false
+  // for that, and when the socket is closed.
+  paste: (text: string, enter: boolean) => boolean;
 }
 
 /**
@@ -387,6 +393,22 @@ export const TerminalPane = forwardRef<
     (): TerminalPaneHandle => ({
       isReady: () => wsRef.current?.readyState === WebSocket.OPEN,
       focus: () => termRef.current?.focus(),
+      paste: (text, enter) => {
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        // Typed, not pasted, so every character is a key: a line break goes as the CR a terminal
+        // sends for Enter, a tab as spaces (as a key it would complete a file name into the command),
+        // and any other control character is dropped — an ESC, a Ctrl+C in text from a chat is not
+        // meant to reach the shell as a key.
+        const body = text
+          .replace(/\r?\n/g, "\r")
+          .replace(/\t/g, "    ")
+          .replace(/[\x00-\x0c\x0e-\x1f\x7f]/g, "");
+        if (!enter && body.includes("\r")) return false;
+        claimRef.current();
+        ws.send(new TextEncoder().encode(enter ? `${body}\r` : body));
+        return true;
+      },
       sendKeys: (data) => {
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) return false;

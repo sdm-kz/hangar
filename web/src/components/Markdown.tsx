@@ -21,6 +21,7 @@ import { useApi } from "@/lib/node";
 import { useHtml } from "@/lib/useHtml";
 import { TocPanel, type TocItem } from "./TocPanel";
 import { CopyButton } from "./CopyPathButton";
+import { isShellLanguage, RunInShellButton } from "./RunInShell";
 
 /**
  * Shared markdown renderer for file previews (FileBrowser + ServerFileViewer): GFM plus inline
@@ -398,15 +399,16 @@ const copyComponents: Components = {
     if (code !== null) return <MermaidDiagram code={code} />;
     const markdown = fenceSource(node, ["markdown", "md"]);
     if (markdown !== null) return <MarkdownFence source={markdown.replace(/\n$/, "")} />;
+    const text = () => (node ? hastText(node).replace(/\n$/, "") : "");
     return (
       <div className="group/code relative my-5 [&>pre]:my-0">
         <pre {...props}>{children}</pre>
         {node && (
-          <CopyButton
-            text={() => hastText(node).replace(/\n$/, "")}
-            title="Copy code"
-            className={`absolute right-1.5 top-1.5 ${CORNER_BUTTON}`}
-          />
+          <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
+            {/* Only where a session hands over its shells (see RunInShell), and only for a command. */}
+            {isShellLanguage(fenceLanguage(node)) && <RunInShellButton text={text} />}
+            <CopyButton text={text} title="Copy code" className={CORNER_BUTTON} />
+          </div>
         )}
       </div>
     );
@@ -439,6 +441,16 @@ function MarkdownFence({ source }: { source: string }) {
       </div>
     </div>
   );
+}
+
+/** The language a <pre>'s fence was tagged with ("bash" for ```bash), or null for a bare one. */
+function fenceLanguage(node: Element): string | null {
+  const child = node.children?.[0];
+  if (!child || child.type !== "element" || child.tagName !== "code") return null;
+  const cls = child.properties?.className;
+  const classes = Array.isArray(cls) ? cls : [cls];
+  for (const c of classes) if (typeof c === "string" && c.startsWith("language-")) return c.slice("language-".length);
+  return null;
 }
 
 /** If this <pre> wraps a ```mermaid fence, return the fence's source text; otherwise null. */

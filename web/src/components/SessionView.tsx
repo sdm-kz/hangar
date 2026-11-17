@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { FileEntry, GitStatus, Project, SessionInfo, SessionLink, SessionPull } from "@/types";
+import type { FileEntry, GitStatus, Project, SessionInfo, SessionLink, SessionPull, ShellInfo } from "@/types";
 import { useConfirm } from "@/components/ui/confirm";
 import { patchUrlState, readUrlState, type TabName } from "@/lib/urlState";
 import {
@@ -61,6 +61,7 @@ import { RemoteFilesView } from "./RemoteFilesView";
 import { RemoteConnectDialog } from "./RemoteConnect";
 import { TerminalPane, type TerminalPaneHandle } from "./TerminalPane";
 import { ChatView } from "./ChatView";
+import { ShellRunContext, type RunResult, type RunShell, type ShellRunApi } from "./RunInShell";
 import { PostponedPool } from "./PostponedPool";
 import { HeadingActivityMark, type Activity } from "./ActivityMark";
 import { shellMark, shellMarkLabel, useShownShellsSeen, type ShellActivity } from "@/lib/shellActivity";
@@ -115,6 +116,11 @@ import { sessionKey, useApi, useSessionKey } from "@/lib/node";
 // Wide enough for groups side by side — the width the app has always switched to its desktop
 // layout at. Narrower, the groups fold into a single strip and one of them is drawn.
 const WIDE_QUERY = "(min-width: 48rem)";
+
+// A shell opened to run a chat code block in: how long it has to reach its prompt, and how long its
+// screen has to hold still for that to count as reached (a prompt like oh-my-posh draws in steps).
+const PROMPT_WAIT_MS = 20_000;
+const PROMPT_SETTLE_MS = 600;
 
 function useWide(): boolean {
   const [wide, setWide] = useState(() => window.matchMedia(WIDE_QUERY).matches);
@@ -820,6 +826,107 @@ export function SessionView({
     [expect, shells.open]
   );
 
+  // ---- Running a chat code block in a shell (see RunInShell) ------------------------------------
+  // The shell a plain Run goes to: the one last run in, until it closes; else the one last picked.
+  const [lastRun, setLastRun] = useState<string | null>(null);
+  // Read by the callbacks below, which outlive the render that made them while a new shell starts.
+  const runState = useRef({ shellActivity, wide });
+  runState.current = { shellActivity, wide };
+
+  const runShellOf = useCallback((sh: ShellInfo): RunShell => {
+    const a = runState.current.shellActivity?.[sh.id];
+    return {
+      id: sh.id,
+      label: shellTabLabel(sh),
+      kind: sh.kind,
+      busy: !!a?.running && !a.waiting,
+    };
+  }, []);
+
+  /** Type the text into the shell, then bring its tab forward if that keeps the chat on screen too. */
+  const pasteInShell = useCallback(
+    (sh: ShellInfo, text: string, enter: boolean): RunResult => {
+      const shell = runShellOf(sh);
+      const handle = shellHandles.current.get(sh.id);
+      if (!handle?.isReady()) return { ok: false, message: `${shell.label} is not connected` };
+      if (!handle.paste(text, enter)) return { ok: false, message: "Several lines can only be run, not pasted" };
+      setLastRun(sh.id);
+      const ref = shellRef(sh.id);
+      const l = current();
+      const w = runState.current.wide;
+      if (visibleRefs(l, w).includes(ref)) return { ok: true, shell, shown: true };
+      // Shown in its group, unless that would cover the chat the Run was clicked in: then the notice
+      // by the block says where it went, with a Show.
+      const next = activateRef(l, ref);
+      const seen = visibleRefs(next, w);
+      if (!seen.includes(ref) || !seen.includes(CLAUDE)) return { ok: true, shell, shown: false };
+      update(() => next);
+      shells.activate(sh.id);
+      return { ok: true, shell, shown: true };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runShellOf, current, update, shells.activate]
+  );
+
+  /**
+   * Wait for a shell just opened to be at its prompt: its terminal mounted and connected, and its
+   * screen showing something and then holding still for a moment. Typed any sooner, the text lands
+   * while the shell is still starting, and a prompt like PSReadLine's can drop or garble it.
+   */
+  const shellPrompt = useCallback(async (id: string): Promise<boolean> => {
+    const deadline = Date.now() + PROMPT_WAIT_MS;
+    let last = "";
+    let since = Date.now();
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+      const h = shellHandles.current.get(id);
+      if (!h?.isReady()) continue;
+      const screen = h.screenLines().join("\n").trimEnd();
+      if (screen !== last) {
+        last = screen;
+        since = Date.now();
+      } else if (screen && Date.now() - since >= PROMPT_SETTLE_MS) return true;
+    }
+    return false;
+  }, []);
+
+  const shellList = useRef(shells.shells);
+  shellList.current = shells.shells;
+  const runShells = useMemo(
+    () => shells.shells.filter((s) => s.running).map(runShellOf),
+    // shellActivity: whether each is busy is read from it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shells.shells, shellActivity, runShellOf]
+  );
+  const shellRun = useMemo<ShellRunApi>(
+    () => ({
+      shells: runShells,
+      defaultId: [lastRun, shells.activeId].find((id) => id && runShells.some((s) => s.id === id)) ?? null,
+      run: async (id, text, enter) => {
+        const sh = shellList.current.find((s) => s.id === id);
+        return sh ? pasteInShell(sh, text, enter) : { ok: false, message: "That shell has closed" };
+      },
+      openAndRun: async (option, text, enter) => {
+        // Wide, the new shell opens beside the chat, where its output can be watched; narrow, only one
+        // group shows, so it opens behind the chat and the notice offers to show it.
+        if (runState.current.wide) {
+          const l = current();
+          expect("shell", groupOf(l, CLAUDE)?.id ?? l.active, true);
+        }
+        const sh = await shells.open(option);
+        if (!sh) return { ok: false, message: "Could not open the shell" };
+        if (!(await shellPrompt(sh.id))) return { ok: false, message: `${shellTabLabel(sh)} did not start in time` };
+        return pasteInShell(sh, text, enter);
+      },
+      show: (id) => {
+        void activateTab(shellRef(id));
+        focusContent(shellRef(id));
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runShells, lastRun, shells.activeId, pasteInShell, shellPrompt, current, expect, shells.open, activateTab, focusContent]
+  );
+
   const linkTarget = useRef<string | null>(null);
   // The "+" menu's "Pull request…" opens the picker of the same group: which group, and a count that
   // moves on every ask so asking twice opens it twice.
@@ -1153,21 +1260,24 @@ export function SessionView({
                   it is what the chat types into. */}
               {chatMode && (
                 <div className="absolute inset-0 z-10">
-                  <ChatView
-                    key={session.id}
-                    sessionId={session.id}
-                    workingDirectory={session.workingDirectory}
-                    conversation={session.claudeSessionId}
-                    closed={closed}
-                    busy={!!busy}
-                    activity={activity}
-                    activityLabel={activityLabel}
-                    terminalRef={terminalRef}
-                    onShowTerminal={() => setChatMode(false)}
-                    poolSlot={setPoolSlot}
-                    onReopen={closed ? onReopen : undefined}
-                    onReopenWithOptions={closed ? onReopenWithOptions : undefined}
-                  />
+                  {/* The chat's code blocks get a Run button that types them into a shell here. */}
+                  <ShellRunContext.Provider value={shellRun}>
+                    <ChatView
+                      key={session.id}
+                      sessionId={session.id}
+                      workingDirectory={session.workingDirectory}
+                      conversation={session.claudeSessionId}
+                      closed={closed}
+                      busy={!!busy}
+                      activity={activity}
+                      activityLabel={activityLabel}
+                      terminalRef={terminalRef}
+                      onShowTerminal={() => setChatMode(false)}
+                      poolSlot={setPoolSlot}
+                      onReopen={closed ? onReopen : undefined}
+                      onReopenWithOptions={closed ? onReopenWithOptions : undefined}
+                    />
+                  </ShellRunContext.Provider>
                 </div>
               )}
             </div>
