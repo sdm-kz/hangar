@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useDismissable } from "@/lib/useDismissable";
 import { FolderTree, GitPullRequest, Globe, Loader2, Plus, Server, TerminalSquare } from "lucide-react";
+import { chord } from "@/lib/shortcuts";
 import { shellIcon, useShellOptions } from "./ShellTabStrip";
 
 /**
@@ -14,6 +15,7 @@ export function GroupAddMenu({
   hasFiles,
   onBring,
   onOpenShell,
+  onOpenShellBeside,
   onAddLink,
   onOpenPull,
   onAddRemote,
@@ -25,6 +27,8 @@ export function GroupAddMenu({
   hasFiles: boolean;
   onBring: (what: "claude" | "files") => void;
   onOpenShell: (shell: string) => void;
+  /** A shell Ctrl+clicked (⌘ on a Mac): open it in a new group on the right; absent when that isn't on offer. */
+  onOpenShellBeside?: (shell: string) => void;
   onAddLink: () => void;
   /** Open the pull-request picker beside this menu; absent when the folder is not on GitHub. */
   onOpenPull?: () => void;
@@ -89,11 +93,16 @@ export function GroupAddMenu({
                 <button
                   key={o.id}
                   role="menuitem"
-                  title={o.detail}
+                  title={
+                    onOpenShellBeside
+                      ? [o.detail, `${chord("mod", "click")} to open it in a new pane on the right`].filter(Boolean).join("\n")
+                      : o.detail
+                  }
                   className={item}
-                  onClick={() => {
+                  onClick={(e) => {
                     shells.remember(o.id);
-                    onOpenShell(o.id);
+                    if (onOpenShellBeside && (e.ctrlKey || e.metaKey)) onOpenShellBeside(o.id);
+                    else onOpenShell(o.id);
                     close();
                   }}
                 >

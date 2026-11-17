@@ -104,6 +104,13 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { id: "focus-group", keys: [["alt", "1…4"]], does: "Go to pane group 1 to 4", keywords: ["layout", "switch"] },
       { id: "maximize", keys: [["alt", "Z"]], does: "Maximize or restore the pane group", keywords: ["zoom", "layout", "fullscreen"] },
       { id: "move-tab", keys: [["alt", "shift", "←↑→↓"]], does: "Move the tab to the next group that way", keywords: ["layout"] },
+      {
+        id: "shell-beside",
+        keys: [["mod", "click"]],
+        does: "Open a new shell in a pane on the right",
+        note: "On a shell in a tab bar's + menu, while the pane is not split yet",
+        keywords: ["layout", "group", "terminal", "split"],
+      },
     ],
   },
   {

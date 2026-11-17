@@ -493,11 +493,12 @@ export function SessionView({
   }, []);
 
   // A tab about to be created from a group's "+" (a shell, a page, a review) lands in that group and
-  // is shown there. Anything that appears without one (another device opened it) goes to the
-  // focused group, behind whatever it is showing.
-  const pending = useRef<{ kind: PaneKind; group: string; at: number } | null>(null);
-  const expect = useCallback((kind: PaneKind, group: string) => {
-    pending.current = { kind, group, at: Date.now() };
+  // is shown there — or, asked for `beside`, in a new group split off that group's right edge. Anything
+  // that appears without one (another device opened it) goes to the focused group, behind whatever it
+  // is showing.
+  const pending = useRef<{ kind: PaneKind; group: string; beside?: boolean; at: number } | null>(null);
+  const expect = useCallback((kind: PaneKind, group: string, beside?: boolean) => {
+    pending.current = { kind, group, beside, at: Date.now() };
   }, []);
   // A file just opened from the tree or the terminal, to be shown once its tab exists.
   // Stamped, so one whose open was cancelled at a save prompt cannot fire on a later, unrelated open.
@@ -514,6 +515,8 @@ export function SessionView({
   const presentKey = present.join("\n");
   useEffect(() => {
     update((l) => {
+      // Split off only once the tab exists: a launch that fails leaves no empty group behind.
+      let beside = null as { ref: PaneRef; group: string } | null;
       let next = reconcile(
         l,
         present,
@@ -522,6 +525,7 @@ export function SessionView({
           const p = pending.current;
           if (p && p.kind === paneKind(ref) && Date.now() - p.at < 15_000 && findGroup(cur, p.group)) {
             pending.current = null;
+            if (p.beside) beside = { ref, group: p.group };
             return { group: p.group, activate: true };
           }
           if (paneKind(ref) === "file") {
@@ -541,6 +545,7 @@ export function SessionView({
           return { group: cur.active, activate: false };
         }
       );
+      if (beside && groupOf(next, beside.ref)) next = splitGroup(next, beside.group, "right", beside.ref);
       const r = pendingReveal.current;
       if (r && Date.now() - r.at > 10_000) pendingReveal.current = null;
       else if (r && groupOf(next, r.ref)) {
@@ -802,10 +807,10 @@ export function SessionView({
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  // Opening from a group's "+": the new tab is expected there.
+  // Opening from a group's "+": the new tab is expected there, or in a new group on its right.
   const openShell = useCallback(
-    (shell: string, group: string) => {
-      expect("shell", group);
+    (shell: string, group: string, beside?: boolean) => {
+      expect("shell", group, beside);
       void shells.open(shell);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1497,6 +1502,11 @@ export function SessionView({
                 hasFiles={!!g?.tabs.includes(FILES)}
                 onBring={(what) => update((l) => moveRef(l, what, groupId))}
                 onOpenShell={(sh) => openShell(sh, groupId)}
+                // Ctrl+click opens it beside, while the pane is one group: once it is split, there
+                // is already a group on the right to open it in from that group's own "+".
+                onOpenShellBeside={
+                  wide && groupsOf(layout.root).length === 1 ? (sh) => openShell(sh, groupId, true) : undefined
+                }
                 onOpenPull={() => setPullAsk((a) => ({ group: groupId, n: a.n + 1 }))}
                 onAddLink={() => {
                   linkTarget.current = groupId;
