@@ -88,6 +88,7 @@ import {
   Square,
   SquareCheck,
   Trash2,
+  Undo2,
   Upload,
   Video,
   X,
@@ -115,6 +116,9 @@ interface RowActions {
   onRename: (path: string, newName: string) => void;
   onCancelRename: () => void;
   onDelete: (entry: FileEntry) => void;
+  // A changed file back to the last commit; offered only where `canDiscard` says there is one to go to.
+  canDiscard: (entry: FileEntry) => boolean;
+  onDiscard: (entry: FileEntry) => void;
   onNewFolderIn: (dir: string) => void;
   mark: MarkedPaths; // rows marked for a batch action (see useMarkedPaths)
   // Rows can be dragged onto a folder to move them (the tree only); `over` is the folder a drop
@@ -771,6 +775,46 @@ export const FileBrowser = forwardRef<
     [sessionId, writeDir, closeTabsUnder, confirm, onRefresh, effectiveGitFiles]
   );
 
+  // Discarding a file's changes puts it back the way the last commit has it, staged edits included. Only
+  // for a file that commit has — an edit or a deletion: a new file has no earlier version to go back to,
+  // and getting rid of it is Delete's job. The session's own folder only, where the server does it.
+  const canDiscard = useCallback(
+    (entry: FileEntry) => {
+      const code = rootDir ? undefined : effectiveGitFiles?.[entry.path];
+      return !entry.isDir && (code === "M" || code === "D");
+    },
+    [rootDir, effectiveGitFiles]
+  );
+  const doDiscard = useCallback(
+    async (entry: FileEntry) => {
+      const deleted = effectiveGitFiles?.[entry.path] === "D";
+      const ok = await confirm({
+        title: "Discard changes?",
+        description: deleted ? (
+          <>
+            Bring <span className="font-medium text-foreground">{entry.name}</span> back as the last commit has it.
+          </>
+        ) : (
+          <>
+            Put <span className="font-medium text-foreground">{entry.name}</span> back the way the last commit has it.
+            Its uncommitted changes, staged ones too, are lost.
+          </>
+        ),
+        confirmLabel: "Discard",
+      });
+      if (!ok) return;
+      setDeleteError(null);
+      try {
+        await api.gitDiscard(sessionId, entry.path);
+      } catch (e) {
+        setDeleteError(`Discard failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        onRefresh?.();
+      }
+    },
+    [api, sessionId, confirm, onRefresh, effectiveGitFiles]
+  );
+
   /**
    * Delete everything marked, behind one confirmation that names what is going.
    *
@@ -935,6 +979,8 @@ export const FileBrowser = forwardRef<
     onRename: doRename,
     onCancelRename: () => setRenamingPath(null),
     onDelete: doDelete,
+    canDiscard,
+    onDiscard: doDiscard,
     onNewFolderIn: newFolderIn,
     mark,
   };
@@ -2265,6 +2311,18 @@ const Row = forwardRef<
             )}
             {!actions.readOnly && (
               <>
+                {actions.canDiscard(entry) && (
+                  <button
+                    className="rounded p-0.5 hover:bg-background hover:text-destructive"
+                    title="Discard changes — back to the last commit"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      actions.onDiscard(entry);
+                    }}
+                  >
+                    <Undo2 className="size-3.5" />
+                  </button>
+                )}
                 <button
                   className="rounded p-0.5 hover:bg-background hover:text-foreground"
                   title="Rename"

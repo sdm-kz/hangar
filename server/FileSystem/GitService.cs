@@ -126,6 +126,27 @@ public static class GitService
         }
     }
 
+    /// <summary>
+    /// Discard a file's uncommitted changes: put it back the way the last commit has it, in the
+    /// working tree and the index both, so a staged edit goes the same way as an unstaged one and a
+    /// deleted file comes back. Only for a file HEAD has — one that is new since has no "before" to
+    /// go back to, and discarding it would mean deleting it, which is the Delete action's to do.
+    /// Returns null on success, else why not.
+    /// </summary>
+    public static string? Discard(string workingDir, string relPath)
+    {
+        var rel = relPath.Replace('\\', '/');
+        if (rel.Length == 0) return "no file given";
+        if (!IsRepo(workingDir)) return "not a git repository";
+        // "HEAD:./x" is x relative to this folder, which may sit below the repo root.
+        Run(workingDir, out var inHead, "cat-file", "-e", $"HEAD:./{rel}");
+        if (inHead != 0) return "the last commit has no such file";
+        // --literal-pathspecs: the path is a name, not a pattern — "a*.txt" must not reach its neighbours.
+        Run(workingDir, out var exit,
+            "--literal-pathspecs", "restore", "--source=HEAD", "--staged", "--worktree", "--", rel);
+        return exit == 0 ? null : "git could not restore it";
+    }
+
     public static GitDiff Diff(string workingDir, string relPath, string status)
     {
         string diff;

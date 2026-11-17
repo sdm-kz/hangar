@@ -2177,6 +2177,18 @@ internal static class Program
             return Results.Ok(GitService.Diff(root, path, code));
         });
 
+        // Discard a changed file's uncommitted edits, back to the last commit. In the session's own
+        // folder only, like the other writes the changes view offers.
+        app.MapPost("/api/sessions/{id}/git/discard", (string id, FolderRequest body, SessionManager mgr) =>
+        {
+            var info = mgr.GetAny(id);
+            if (info is null) return Results.NotFound();
+            if (string.IsNullOrEmpty(body.Path) || SessionFileBrowser.ResolveSafe(info.WorkingDirectory, body.Path) is null)
+                return Results.BadRequest(new { error = "invalid path" });
+            var error = GitService.Discard(info.WorkingDirectory, body.Path);
+            return error is null ? Results.Ok() : Results.BadRequest(new { error });
+        });
+
         // Commit history (newest first, paged via skip/count).
         app.MapGet("/api/sessions/{id}/git/log", (string id, SessionManager mgr, int? skip, int? count, string? @ref, bool? all) =>
         {

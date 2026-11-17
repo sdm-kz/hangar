@@ -877,6 +877,10 @@ function createApi(base: string) {
       const q = dir ? `&dir=${encodeURIComponent(dir)}` : "";
       return request(`/api/sessions/${id}/git/diff?path=${encodeURIComponent(path)}${q}`);
     },
+    // Put a changed file back the way the last commit has it, dropping its uncommitted edits.
+    gitDiscard(id: string, path: string): Promise<void> {
+      return request(`/api/sessions/${id}/git/discard`, { method: "POST", body: JSON.stringify({ path }) });
+    },
     gitWorktrees(id: string): Promise<GitWorktree[]> {
       return request(`/api/sessions/${id}/git/worktrees`);
     },
