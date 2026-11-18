@@ -6,6 +6,7 @@ import { NodePicker, type LaunchNode } from "./NodePicker";
 import { folderName } from "@/lib/recentFolders";
 import { cn } from "@/lib/utils";
 import { ProjectGlyph } from "./ProjectGlyph";
+import { projectForDir, sortedByName } from "@/lib/projects";
 import { sameRecent, type RecentSession } from "@/lib/recentSessions";
 import { buildPrompt, templateFolderChoices, templateSections } from "@/lib/templates";
 import type { Project, SessionInfo, SessionTemplate } from "@/types";
@@ -26,6 +27,7 @@ import {
   LaunchFields,
   ToggleCard,
   launchFromTemplate,
+  selectClass,
   type LaunchOptions,
 } from "./LaunchOptions";
 import { TemplateDialog } from "./TemplateDialog";
@@ -75,9 +77,9 @@ export function NewSessionDialog({
   /** When opened from the Recent tab, prefill the form with this preset. */
   preset?: RecentSession | null;
   /**
-   * When opened from a project's "+", the project to start in: its linked folders are offered as
-   * one-click picks. The folder picker still takes anything else — starting somewhere new is a
-   * perfectly ordinary thing to do from here, and the project just saves the typing.
+   * When opened from a project's "+", the project the picker starts on: its linked folders are offered
+   * as one-click picks. The folder picker still takes anything else — a folder no project has is linked
+   * into it on launch (the dialog says so), and "No project" in the picker starts it unlinked.
    */
   project?: Project | null;
   /** Every project, for the Templates tab's headings and its editor's project dropdown. */
@@ -102,6 +104,10 @@ export function NewSessionDialog({
   const [command, setCommand] = useState("");
   const [launch, setLaunch] = useState<LaunchOptions>(DEFAULT_LAUNCH);
   const [continueSession, setContinueSession] = useState(false); // resume the folder's last conversation
+  // The project picked to start in, "" for none. Which project a session is in follows its folder, so a
+  // folder that already has one overrides this (see `chosen`); for a folder no project has, launching
+  // links the folder into it.
+  const [projectId, setProjectId] = useState("");
 
   // ---- the template launch (the "Templates" tab) ----------------------------------------------
   // Its own copy of the folder, name and settings rather than the fields above: the two tabs are two
@@ -139,6 +145,22 @@ export function NewSessionDialog({
   // The project a template belongs to, for its folder chips — its own, not the one this dialog was
   // opened from.
   const templateProject = allProjects.find((p) => p.id === template?.projectId) ?? null;
+  // The project the folder is already in. That is the one the session starts in whatever was picked, so
+  // the picker shows it; derived rather than copied into the pick, since a path being typed passes
+  // through its parents and would leave the pick on whichever of them a project links.
+  const owner = dir.trim() ? projectForDir(dir.trim(), allProjects) : null;
+  const chosen = owner ?? allProjects.find((p) => p.id === projectId) ?? null;
+
+  /**
+   * Another project, or none: a folder that belongs to some other project goes, since it can't start
+   * anywhere but there, and the new project's one folder fills in when there is nothing left to keep.
+   */
+  const pickProject = (id: string) => {
+    setProjectId(id);
+    const p = allProjects.find((x) => x.id === id);
+    const keep = dir.trim() && (!owner || owner.id === id);
+    if (!keep) setDir(p?.folders.length === 1 ? p.folders[0] : "");
+  };
 
   // Refresh the recent-folders list each time the dialog opens — and each time another machine is picked:
   // the folders, like the templates below, are that machine's.
@@ -173,6 +195,7 @@ export function NewSessionDialog({
   nodeNow.current = node;
   const clearMachine = () => {
     setDir("");
+    setProjectId(""); // projects are the machine's too
     setTDir("");
     setRecents([]);
     setTemplates([]);
@@ -224,6 +247,9 @@ export function NewSessionDialog({
       setName(preset.name);
       setCommand(preset.command);
     }
+    // The project it was opened from, else none (a preset's folder brings its own, see `owner`). A plain
+    // "New session" doesn't keep the last one's: it would quietly link whatever folder is picked next.
+    setProjectId(project?.id ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, preset, defaultContinue, defaultChat]);
 
@@ -295,6 +321,9 @@ export function NewSessionDialog({
         // the prompt *is* the point of the launch.
         continue: !fromTemplate && continueSession,
         resumeSessionId: !fromTemplate && continueSession ? resumeId : null,
+        // Only to link a folder no project has; one that has a project is already there. A template's
+        // folder says for itself where it belongs.
+        projectId: fromTemplate || owner ? null : chosen?.id ?? null,
       });
       // Remember the folder server-side for quick reuse next time. Fire-and-forget: a failure here
       // shouldn't block the (already created) session.
@@ -346,10 +375,10 @@ export function NewSessionDialog({
             <DialogDescription>
               {tab === "templates" ? (
                 "Start a session from a template — pick one, then paste in what this run is about."
-              ) : project ? (
+              ) : chosen ? (
                 <>
                   Start a Claude Code session in{" "}
-                  <span className="font-medium text-foreground">{project.name}</span> — pick one of its
+                  <span className="font-medium text-foreground">{chosen.name}</span> — pick one of its
                   folders, or any other.
                 </>
               ) : (
@@ -386,22 +415,50 @@ export function NewSessionDialog({
             <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
               {tab === "new" ? (
                 <>
+                  {allProjects.length > 0 && (
+                    <div className="space-y-2">
+                      <Label htmlFor="new-project">Project (optional)</Label>
+                      <select
+                        id="new-project"
+                        value={chosen?.id ?? ""}
+                        onChange={(e) => pickProject(e.target.value)}
+                        className={selectClass}
+                      >
+                        <option value="" className="bg-popover text-popover-foreground">
+                          No project
+                        </option>
+                        {sortedByName(allProjects).map((p) => (
+                          <option key={p.id} value={p.id} className="bg-popover text-popover-foreground">
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                      {/* Linking is a statement about every session that runs there, so say it happens. */}
+                      {chosen && !owner && dir.trim() && (
+                        <p className="text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">{folderName(dir.trim())}</span> isn&apos;t
+                          in a project yet — starting here links it to {chosen.name}.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <div className="space-y-2">
                     <Label>Working folder</Label>
                     <FolderPicker value={dir} onChange={setDir} />
 
-                    {project && (
+                    {chosen && (
                       <FolderChips
-                        folders={project.folders}
+                        folders={chosen.folders}
                         value={dir}
                         onPick={setDir}
                         label={
                           <>
-                            <ProjectGlyph project={project} className="size-3" />
-                            {project.name}
+                            <ProjectGlyph project={chosen} className="size-3" />
+                            {chosen.name}
                           </>
                         }
-                        empty="No folders linked yet — choose one above and link it in the project’s settings."
+                        empty="No folders linked yet — choose one above, and starting there links it."
                       />
                     )}
 
@@ -529,8 +586,8 @@ export function NewSessionDialog({
         <TemplateDialog
           template={editing.template}
           projects={allProjects}
-          defaultProjectId={editing.template ? undefined : project?.id ?? null}
-          defaultFolder={editing.template ? undefined : dir || project?.folders[0] || ""}
+          defaultProjectId={editing.template ? undefined : chosen?.id ?? null}
+          defaultFolder={editing.template ? undefined : dir || chosen?.folders[0] || ""}
           onSaved={(list) => {
             setTemplates(list);
             const edited = editing.template

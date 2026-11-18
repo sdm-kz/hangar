@@ -171,6 +171,9 @@ export interface CreateSessionRequest {
   resumeSessionId?: string | null; // resume this exact Claude conversation (claude --resume <id>); wins over `continue`
   forkSession?: boolean; // with resumeSessionId: branch it into a new conversation (--fork-session) rather than continue it
   color?: string | null;
+  // The project to start in: links a folder no project has into it; a folder another project has is
+  // refused. Null = wherever the folder already is.
+  projectId?: string | null;
 }
 
 export interface DirEntry {
