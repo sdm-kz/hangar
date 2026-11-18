@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
 import { sessionKey, useApi, useNodeId } from "@/lib/node";
 import { newSessionChat, setChatView, setNewSessionChat } from "@/lib/chatView";
@@ -591,12 +591,11 @@ export function NewSessionDialog({
                   >
                     <div className="space-y-2">
                       <Label htmlFor="command">Start command (optional)</Label>
-                      <Textarea
+                      <GrowingTextarea
                         id="command"
                         value={command}
                         placeholder="Initial prompt sent to Claude on startup, e.g. “run the tests and fix any failures”"
                         onChange={(e) => setCommand(e.target.value)}
-                        className="min-h-20"
                       />
                     </div>
                   </LaunchFields>
@@ -669,6 +668,24 @@ export function NewSessionDialog({
       )}
     </>
   );
+}
+
+/**
+ * A text box that is as tall as what is in it: three rows at least, and up to two fifths of the window,
+ * past which it scrolls. A prompt pasted in shows whole rather than through a slot, and an empty box
+ * doesn't hold a third of the dialog.
+ */
+function GrowingTextarea({ value, ...props }: Omit<ComponentProps<typeof Textarea>, "rows" | "ref"> & { value: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto"; // back to its three rows, so a shorter text shrinks it again
+    // scrollHeight leaves out the border, which a border-box height includes (see PostponedPool).
+    const full = el.scrollHeight + el.offsetHeight - el.clientHeight;
+    el.style.height = `${Math.min(full, Math.round(window.innerHeight * 0.4))}px`;
+  }, [value]);
+  return <Textarea ref={ref} rows={3} value={value} className="min-h-0 resize-none" {...props} />;
 }
 
 /** Open the new session on its chat or on its terminal. Either way the other is a click away in its tab. */
@@ -844,13 +861,12 @@ function TemplatesTab({
         <>
           <div className="space-y-2">
             <Label htmlFor="template-input">Details (optional)</Label>
-            <Textarea
+            <GrowingTextarea
               id="template-input"
               value={input}
               autoFocus
               placeholder={template.inputHint ?? "What this run is about — paste the error, the request, the issue key…"}
               onChange={(e) => onInput(e.target.value)}
-              className="min-h-24"
             />
             {template.prompt && (
               <details className="text-xs text-muted-foreground">
