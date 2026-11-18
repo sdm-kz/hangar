@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Project, SessionTemplate } from "@/types";
 import { hasInputToken, templateFolderChoices } from "@/lib/templates";
-import { sortedByName } from "@/lib/projects";
+import { ProjectPicker } from "./ProjectPicker";
 import { FolderPicker, FolderChips } from "./FolderPicker";
 import { ProjectGlyph } from "./ProjectGlyph";
 import { DEFAULT_LAUNCH, LaunchFields, launchFromTemplate, type LaunchOptions } from "./LaunchOptions";
@@ -155,28 +155,18 @@ export function TemplateDialog({
             </div>
             <div className="space-y-2">
               <Label htmlFor="template-project">Project</Label>
-              <select
+              <ProjectPicker
                 id="template-project"
+                projects={projects}
                 value={projectId}
-                onChange={(e) => {
-                  const next = e.target.value;
+                onChange={(next) => {
                   setProjectId(next);
                   // Moving the template to a project it has no folder from: fill in the obvious one
                   // when that project links exactly one, the way the New Session dialog does.
                   const p = projects.find((x) => x.id === next);
                   if (p && !dir.trim() && p.folders.length === 1) setDir(p.folders[0]);
                 }}
-                className="flex h-9 w-full rounded-md field-edge bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                <option value="" className="bg-popover text-popover-foreground">
-                  No project
-                </option>
-                {sortedByName(projects).map((p) => (
-                  <option key={p.id} value={p.id} className="bg-popover text-popover-foreground">
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           </div>
 

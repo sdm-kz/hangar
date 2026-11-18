@@ -7,7 +7,8 @@ import { NodePicker, type LaunchNode } from "./NodePicker";
 import { folderName } from "@/lib/recentFolders";
 import { cn } from "@/lib/utils";
 import { ProjectGlyph } from "./ProjectGlyph";
-import { projectForDir, sortedByName } from "@/lib/projects";
+import { projectForDir } from "@/lib/projects";
+import { ProjectPicker } from "./ProjectPicker";
 import { chord } from "@/lib/shortcuts";
 import { sameRecent, type RecentSession } from "@/lib/recentSessions";
 import { buildPrompt, templateFolderChoices, templateSections } from "@/lib/templates";
@@ -28,7 +29,6 @@ import {
   LaunchFields,
   ToggleCard,
   launchFromTemplate,
-  selectClass,
   type LaunchOptions,
 } from "./LaunchOptions";
 import { TemplateDialog } from "./TemplateDialog";
@@ -632,16 +632,7 @@ function ProjectField({
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>Project (optional)</Label>
-      <select id={id} value={chosen?.id ?? ""} onChange={(e) => onPick(e.target.value)} className={selectClass}>
-        <option value="" className="bg-popover text-popover-foreground">
-          No project
-        </option>
-        {sortedByName(projects).map((p) => (
-          <option key={p.id} value={p.id} className="bg-popover text-popover-foreground">
-            {p.name}
-          </option>
-        ))}
-      </select>
+      <ProjectPicker id={id} projects={projects} value={chosen?.id ?? ""} onChange={onPick} />
       {/* Linking is a statement about every session that runs there, so say it happens. */}
       {chosen && !owner && dir.trim() && (
         <p className="text-xs text-muted-foreground">
