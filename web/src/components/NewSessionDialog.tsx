@@ -40,6 +40,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Search,
   Sparkles,
   TerminalSquare,
   X,
@@ -127,6 +128,27 @@ export function NewSessionDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
+  // Filters the Recent chips by any part of the path. Only offered once there are more than fit in a
+  // row or two at a glance.
+  const [recentQuery, setRecentQuery] = useState("");
+  const searchable = recents.length > 8;
+  const q = recentQuery.trim().toLowerCase();
+  const shownRecents = searchable && q ? recents.filter((p) => p.toLowerCase().includes(q)) : recents;
+  // Esc in the filter with text in it clears the text and leaves the dialog open. The dialog listens
+  // for Esc on the document in the capture phase, before the box's own onKeyDown could see it, so
+  // this listens on the window, which the capture phase passes through first (as GroupDialog does).
+  const recentFilterRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!recentQuery) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.activeElement !== recentFilterRef.current) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setRecentQuery("");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recentQuery]);
   // The preset as the server currently has it. The one we're handed came from the session list's last
   // load, which may predate the server stamping a conversation id onto it (that happens once Claude's
   // first hook arrives, seconds after launch).
@@ -217,6 +239,7 @@ export function NewSessionDialog({
     }
     const project = projectNow.current;
     setError(null);
+    setRecentQuery("");
     setStored(null); // until the refresh above lands
     // Reusing a preset is a "New" tab errand by definition — it *is* a filled-in form.
     setTab("new");
@@ -464,11 +487,40 @@ export function NewSessionDialog({
 
                     {recents.length > 0 && (
                       <div className="space-y-1.5 pt-1">
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <History className="size-3" /> Recent
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span className="flex shrink-0 items-center gap-1">
+                            <History className="size-3" /> Recent
+                          </span>
+                          {searchable && (
+                            <div className="relative ml-auto w-44 max-w-[55%]">
+                              <Search className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2" />
+                              <input
+                                value={recentQuery}
+                                onChange={(e) => setRecentQuery(e.target.value)}
+                                ref={recentFilterRef}
+                                spellCheck={false}
+                                onKeyDown={(e) => {
+                                  // Enter takes the first match rather than submitting the form. (Escape
+                                  // is handled on the window, see recentFilterRef.)
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    if (shownRecents[0]) setDir(shownRecents[0]);
+                                  }
+                                }}
+                                placeholder={`Filter ${recents.length}…`}
+                                aria-label="Filter recent folders"
+                                className="h-6 w-full rounded-md field-edge bg-transparent pl-6 pr-2 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                              />
+                            </div>
+                          )}
                         </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {recents.map((p) => (
+                        {/* A few rows, then it scrolls: fifty folders would otherwise push the rest of
+                            the form a screen down. The padding is the focus rings' gutter, as above. */}
+                        <div className="-m-0.5 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto overscroll-contain p-0.5">
+                          {shownRecents.length === 0 && (
+                            <span className="py-1 text-xs text-muted-foreground">No recent folder matches.</span>
+                          )}
+                          {shownRecents.map((p) => (
                             <span
                               key={p}
                               className="group flex max-w-full items-center gap-1 rounded-md border pl-2 pr-1 py-1 text-xs hover:bg-accent"

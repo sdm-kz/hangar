@@ -42,7 +42,7 @@ public sealed class RecentsStore
     // only the newest hundred lost the oldest of them for good. Only the ids held for a preset not yet
     // saved are bounded, since nothing ever claims a stray one.
     private const int MaxPendingIds = 100;
-    private const int MaxFolders = 8;
+    private const int MaxFolders = 50;
 
     private readonly string _file;
     private readonly ILogger<RecentsStore> _log;
