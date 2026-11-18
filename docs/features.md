@@ -94,7 +94,10 @@ screenshot is this session as a chat):
   Enter again to run it. It works anywhere in the text (a word that starts with `/`, at the caret), and
   in the postponed pool's box and the full-size composer too, and every command in the text that Claude
   knows is tinted, so a typo'd one stands out before it is sent. A command that answers in the terminal (`/model`, `/config`, `/context`…)
-  switches to it when sent. Under the box: the model and how full the context window is. That comes
+  switches to it when sent. Typing `@` suggests files, as Claude Code's own box does: the session's
+  folder listed (a folder taken goes on into it), or a name looked for anywhere under it; the file goes
+  in as `@path`, relative to the session's folder (quoted when it has a space), for Claude to read when
+  the message arrives. The same boxes take it. Under the box: the model and how full the context window is. That comes
   from a status line Hangar gives each session it launches (`--settings`, so `~/.claude/settings.json`
   is untouched, and only when neither you nor the project has a status line of your own) — the terminal shows it too, as
   "Opus 5.5 · 24% context". A session started before that shows its tokens in context instead of the

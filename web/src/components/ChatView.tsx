@@ -1600,7 +1600,7 @@ function Composer({
                 ? "Answer Claude's question first"
                 : busy
                   ? "Claude is working. A message sent now waits for it"
-                  : "Message Claude, or / for commands"
+                  : "Message Claude: / for commands, @ for files"
             }
             data-chat-composer
             {...slash.inputProps}
