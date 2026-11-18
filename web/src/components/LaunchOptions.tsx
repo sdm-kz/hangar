@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { Info, Radio, Zap } from "lucide-react";
+import { Check, ChevronDown, Info, Radio, Zap } from "lucide-react";
 
 /**
  * The settings a launch carries besides its folder and its prompt — the model, the permission mode
@@ -23,7 +23,7 @@ export const MODELS = [
 ];
 
 // How much the session runs unattended. Auto is the default: it auto-approves routine work but
-// still stops for genuinely destructive actions. Descriptions surface under the dropdown.
+// still stops for genuinely destructive actions. Each hint is drawn under its mode in the dropdown.
 export const PERMISSION_MODES = [
   {
     value: "auto",
@@ -227,25 +227,162 @@ export function LaunchFields({
         the Claude Code app (claude.ai/code &amp; mobile) and you control it from there.
       </ToggleCard>
 
-      <div className="space-y-2 rounded-lg border p-3">
-        <div className="flex items-center gap-1.5 text-sm font-medium">
+      <div className="space-y-2">
+        <Label id={`${idPrefix}-permission-label`} className="flex items-center gap-1.5">
           <Zap className="size-3.5" /> Permission mode
-        </div>
-        <select
+        </Label>
+        <PermissionModePicker
           value={value.permissionMode}
-          onChange={(e) => onChange({ permissionMode: e.target.value })}
-          className={selectClass}
-        >
-          {PERMISSION_MODES.map((m) => (
-            <option key={m.value} value={m.value} className="bg-popover text-popover-foreground">
-              {m.label}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-muted-foreground">
-          {PERMISSION_MODES.find((m) => m.value === value.permissionMode)?.hint}
-        </p>
+          onChange={(permissionMode) => onChange({ permissionMode })}
+          labelledBy={`${idPrefix}-permission-label`}
+          id={`${idPrefix}-permission`}
+        />
       </div>
     </>
+  );
+}
+
+/**
+ * The permission mode as a dropdown whose rows say what each mode does, in smaller text under its name.
+ * Not a native <select>, whose options are one line of plain text: what "Auto" lets through is the thing
+ * worth reading before picking it, and under the control it took three lines whatever was picked.
+ *
+ * Keyboard as NodePicker's: ↓/↑ (or Enter, Space) on the closed control opens it, ↓/↑ move the
+ * highlight, Enter or Space picks, Esc closes the list and only the list. It opens upwards when the box it
+ * scrolls in has no room for it below — it is the last field in the New session dialog.
+ */
+function PermissionModePicker({
+  value,
+  onChange,
+  labelledBy,
+  id,
+}: {
+  value: string;
+  onChange: (mode: string) => void;
+  labelledBy: string;
+  id: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [up, setUp] = useState(false);
+  const [active, setActive] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const current = PERMISSION_MODES.find((m) => m.value === value);
+
+  const show = () => {
+    const btn = buttonRef.current?.getBoundingClientRect();
+    // The nearest box that scrolls, whose edge would cut the list off; else the window.
+    let scroller = boxRef.current?.parentElement ?? null;
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) scroller = scroller.parentElement;
+    const area = scroller?.getBoundingClientRect() ?? { top: 0, bottom: window.innerHeight };
+    if (btn) setUp(area.bottom - btn.bottom < 280 && btn.top - area.top > area.bottom - btn.bottom);
+    const i = PERMISSION_MODES.findIndex((m) => m.value === value);
+    setActive(i < 0 ? 0 : i); // starts on the current one, so Enter straight away keeps it
+    setOpen(true);
+  };
+
+  // Close on a click outside. Esc is caught on the window, ahead of the dialog's own listener on the
+  // document, so it folds the list away rather than closing the dialog the list sits in.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      setOpen(false);
+      buttonRef.current?.focus();
+    };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onEsc, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onEsc, true);
+    };
+  }, [open]);
+
+  const pick = (mode: string) => {
+    setOpen(false);
+    buttonRef.current?.focus();
+    if (mode !== value) onChange(mode);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!open) return show();
+      const n = PERMISSION_MODES.length;
+      setActive((i) => (i + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+    } else if (e.key === "Enter" || e.key === " ") {
+      // Enter would otherwise submit the form the picker sits in. (Ctrl+Enter is left to the form.)
+      if (e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      if (open) pick(PERMISSION_MODES[active].value);
+      else show();
+    } else if (e.key === "Tab" && open) {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div ref={boxRef} className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        role="combobox"
+        aria-haspopup="listbox"
+        aria-controls={`${id}-list`}
+        aria-expanded={open}
+        aria-labelledby={labelledBy}
+        aria-activedescendant={open ? `${id}-${active}` : undefined}
+        title={current?.hint}
+        onClick={() => (open ? setOpen(false) : show())}
+        onKeyDown={onKeyDown}
+        className={cn(selectClass, "items-center justify-between gap-2 text-left hover:bg-accent/50")}
+      >
+        <span className="truncate">{current?.label ?? value}</span>
+        <ChevronDown className="size-4 shrink-0 opacity-50" />
+      </button>
+
+      {open && (
+        <div
+          id={`${id}-list`}
+          role="listbox"
+          aria-labelledby={labelledBy}
+          className={cn(
+            "absolute left-0 right-0 z-50 max-h-96 overflow-y-auto overscroll-contain rounded-md popover-edge bg-popover p-1 text-popover-foreground shadow-md",
+            up ? "bottom-full mb-1" : "top-full mt-1"
+          )}
+        >
+          {PERMISSION_MODES.map((m, i) => (
+            <div
+              key={m.value}
+              id={`${id}-${i}`}
+              role="option"
+              aria-selected={m.value === value}
+              onMouseEnter={() => setActive(i)}
+              // mousedown, not click: the outside-click listener runs on mousedown too, and focus stays on
+              // the control rather than moving to a row that is about to go.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(m.value);
+              }}
+              className={cn(
+                "flex cursor-pointer items-start gap-2 rounded-sm px-2 py-1.5",
+                i === active && "bg-accent"
+              )}
+            >
+              <Check className={cn("mt-0.5 size-3.5 shrink-0", m.value === value ? "opacity-100" : "opacity-0")} />
+              <div className="min-w-0 space-y-0.5">
+                <div className="text-sm">{m.label}</div>
+                <div className="text-xs leading-snug text-muted-foreground">{m.hint}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
