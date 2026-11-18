@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { GrowingTextarea } from "./GrowingTextarea";
 import { ApiError } from "@/lib/api";
 import { sessionKey, useApi, useNodeId } from "@/lib/node";
 import { newSessionChat, setChatView, setNewSessionChat } from "@/lib/chatView";
@@ -20,7 +21,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { FolderPicker, FolderChips } from "./FolderPicker";
 import {
@@ -121,6 +121,7 @@ export function NewSessionDialog({
   const [tDir, setTDir] = useState("");
   const [tName, setTName] = useState("");
   const [tLaunch, setTLaunch] = useState<LaunchOptions>(DEFAULT_LAUNCH);
+  const [tProjectId, setTProjectId] = useState(""); // as `projectId`, starting on the template's own
   const [showOptions, setShowOptions] = useState(false);
   // The template being edited, or { template: null } while one is being created. A separate popup
   // over this one, the way the confirm dialog stacks over the project settings.
@@ -129,27 +130,10 @@ export function NewSessionDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recents, setRecents] = useState<string[]>([]);
-  // Filters the Recent chips by any part of the path. Only offered once there are more than fit in a
-  // row or two at a glance.
-  const [recentQuery, setRecentQuery] = useState("");
-  const searchable = recents.length > 8;
-  const q = recentQuery.trim().toLowerCase();
-  const shownRecents = searchable && q ? recents.filter((p) => p.toLowerCase().includes(q)) : recents;
-  // Esc in the filter with text in it clears the text and leaves the dialog open. The dialog listens
-  // for Esc on the document in the capture phase, before the box's own onKeyDown could see it, so
-  // this listens on the window, which the capture phase passes through first (as GroupDialog does).
-  const recentFilterRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (!recentQuery) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || document.activeElement !== recentFilterRef.current) return;
-      e.stopPropagation();
-      e.preventDefault();
-      setRecentQuery("");
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [recentQuery]);
+  const removeRecent = async (p: string) => {
+    const r = await api.removeRecentFolder(p).catch(() => null);
+    if (r) setRecents(r.folders);
+  };
   // The preset as the server currently has it. The one we're handed came from the session list's last
   // load, which may predate the server stamping a conversation id onto it (that happens once Claude's
   // first hook arrives, seconds after launch).
@@ -165,24 +149,29 @@ export function NewSessionDialog({
   const allProjects = projects ?? (project ? [project] : []);
   const template = templates.find((t) => t.id === templateId) ?? null;
   const sections = templateSections(templates, allProjects);
-  // The project a template belongs to, for its folder chips — its own, not the one this dialog was
-  // opened from.
-  const templateProject = allProjects.find((p) => p.id === template?.projectId) ?? null;
   // The project the folder is already in. That is the one the session starts in whatever was picked, so
   // the picker shows it; derived rather than copied into the pick, since a path being typed passes
   // through its parents and would leave the pick on whichever of them a project links.
-  const owner = dir.trim() ? projectForDir(dir.trim(), allProjects) : null;
-  const chosen = owner ?? allProjects.find((p) => p.id === projectId) ?? null;
+  const place = (folder: string, pickedId: string) => {
+    const owner = folder.trim() ? projectForDir(folder.trim(), allProjects) : null;
+    return { owner, chosen: owner ?? allProjects.find((p) => p.id === pickedId) ?? null };
+  };
+  const { owner, chosen } = place(dir, projectId);
+  // The same for a template's launch, which starts on the template's own project.
+  const { owner: tOwner, chosen: tChosen } = place(tDir, tProjectId);
 
   /**
    * Another project, or none: a folder that belongs to some other project goes, since it can't start
    * anywhere but there, and the new project's one folder fills in when there is nothing left to keep.
    */
-  const pickProject = (id: string) => {
-    setProjectId(id);
+  const pickProject = (id: string, fromTemplate = false) => {
+    const [folder, setFolder, setPicked, own] = fromTemplate
+      ? [tDir, setTDir, setTProjectId, tOwner]
+      : [dir, setDir, setProjectId, owner];
+    setPicked(id);
     const p = allProjects.find((x) => x.id === id);
-    const keep = dir.trim() && (!owner || owner.id === id);
-    if (!keep) setDir(p?.folders.length === 1 ? p.folders[0] : "");
+    const keep = folder.trim() && (!own || own.id === id);
+    if (!keep) setFolder(p?.folders.length === 1 ? p.folders[0] : "");
   };
 
   // Refresh the recent-folders list each time the dialog opens — and each time another machine is picked:
@@ -219,6 +208,7 @@ export function NewSessionDialog({
   const clearMachine = () => {
     setDir("");
     setProjectId(""); // projects are the machine's too
+    setTProjectId("");
     setTDir("");
     setRecents([]);
     setTemplates([]);
@@ -240,7 +230,6 @@ export function NewSessionDialog({
     }
     const project = projectNow.current;
     setError(null);
-    setRecentQuery("");
     setStored(null); // until the refresh above lands
     // Reusing a preset is a "New" tab errand by definition — it *is* a filled-in form.
     setTab("new");
@@ -285,6 +274,7 @@ export function NewSessionDialog({
     if (t.id !== templateId) setInput("");
     setTemplateId(t.id);
     setTDir(t.workingDirectory);
+    setTProjectId(t.projectId ?? "");
     // The template's name is the obvious name for the session it starts ("MH Log Issue"), and Claude
     // renames itself once it knows what the errand turned out to be.
     setTName(t.name);
@@ -346,9 +336,8 @@ export function NewSessionDialog({
         // the prompt *is* the point of the launch.
         continue: !fromTemplate && continueSession,
         resumeSessionId: !fromTemplate && continueSession ? resumeId : null,
-        // Only to link a folder no project has; one that has a project is already there. A template's
-        // folder says for itself where it belongs.
-        projectId: fromTemplate || owner ? null : chosen?.id ?? null,
+        // Only to link a folder no project has; one that has a project is already there.
+        projectId: fromTemplate ? (tOwner ? null : tChosen?.id ?? null) : owner ? null : chosen?.id ?? null,
       });
       // Remember the folder server-side for quick reuse next time. Fire-and-forget: a failure here
       // shouldn't block the (already created) session.
@@ -447,33 +436,14 @@ export function NewSessionDialog({
             <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
               {tab === "new" ? (
                 <>
-                  {allProjects.length > 0 && (
-                    <div className="space-y-2">
-                      <Label htmlFor="new-project">Project (optional)</Label>
-                      <select
-                        id="new-project"
-                        value={chosen?.id ?? ""}
-                        onChange={(e) => pickProject(e.target.value)}
-                        className={selectClass}
-                      >
-                        <option value="" className="bg-popover text-popover-foreground">
-                          No project
-                        </option>
-                        {sortedByName(allProjects).map((p) => (
-                          <option key={p.id} value={p.id} className="bg-popover text-popover-foreground">
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                      {/* Linking is a statement about every session that runs there, so say it happens. */}
-                      {chosen && !owner && dir.trim() && (
-                        <p className="text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">{folderName(dir.trim())}</span> isn&apos;t
-                          in a project yet — starting here links it to {chosen.name}.
-                        </p>
-                      )}
-                    </div>
-                  )}
+                  <ProjectField
+                    id="new-project"
+                    projects={allProjects}
+                    chosen={chosen}
+                    owner={owner}
+                    dir={dir}
+                    onPick={(id) => pickProject(id)}
+                  />
 
                   <div className="space-y-2">
                     <Label>Working folder</Label>
@@ -494,70 +464,7 @@ export function NewSessionDialog({
                       />
                     )}
 
-                    {recents.length > 0 && (
-                      <div className="space-y-1.5 pt-1">
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <span className="flex shrink-0 items-center gap-1">
-                            <History className="size-3" /> Recent
-                          </span>
-                          {searchable && (
-                            <div className="relative ml-auto w-44 max-w-[55%]">
-                              <Search className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2" />
-                              <input
-                                value={recentQuery}
-                                onChange={(e) => setRecentQuery(e.target.value)}
-                                ref={recentFilterRef}
-                                spellCheck={false}
-                                onKeyDown={(e) => {
-                                  // Enter takes the first match rather than submitting the form. (Escape
-                                  // is handled on the window, see recentFilterRef.)
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    if (shownRecents[0]) setDir(shownRecents[0]);
-                                  }
-                                }}
-                                placeholder={`Filter ${recents.length}…`}
-                                aria-label="Filter recent folders"
-                                className="h-6 w-full rounded-md field-edge bg-transparent pl-6 pr-2 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                              />
-                            </div>
-                          )}
-                        </div>
-                        {/* A few rows, then it scrolls: fifty folders would otherwise push the rest of
-                            the form a screen down. The padding is the focus rings' gutter, as above. */}
-                        <div className="-m-0.5 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto overscroll-contain p-0.5">
-                          {shownRecents.length === 0 && (
-                            <span className="py-1 text-xs text-muted-foreground">No recent folder matches.</span>
-                          )}
-                          {shownRecents.map((p) => (
-                            <span
-                              key={p}
-                              className="group flex max-w-full items-center gap-1 rounded-md border pl-2 pr-1 py-1 text-xs hover:bg-accent"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => setDir(p)}
-                                title={p}
-                                className="truncate"
-                              >
-                                {folderName(p)}
-                              </button>
-                              <button
-                                type="button"
-                                title="Remove from recent"
-                                onClick={async () => {
-                                  const r = await api.removeRecentFolder(p).catch(() => null);
-                                  if (r) setRecents(r.folders);
-                                }}
-                                className="shrink-0 text-muted-foreground opacity-60 hover:text-destructive hover:opacity-100"
-                              >
-                                <X className="size-3" />
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    <RecentFolders recents={recents} onPick={setDir} onRemove={removeRecent} />
                   </div>
 
                   <LaunchFields
@@ -609,11 +516,40 @@ export function NewSessionDialog({
                   onEdit={(t) => setEditing({ template: t })}
                   onNew={() => setEditing({ template: null })}
                   template={template}
-                  templateProject={templateProject}
                   input={input}
                   onInput={setInput}
                   dir={tDir}
-                  onDir={setTDir}
+                  // The same project, folder and recents as the New tab, for this launch's own copies.
+                  placement={
+                    <>
+                      <ProjectField
+                        id="tmpl-run-project"
+                        projects={allProjects}
+                        chosen={tChosen}
+                        owner={tOwner}
+                        dir={tDir}
+                        onPick={(id) => pickProject(id, true)}
+                      />
+                      <div className="space-y-2">
+                        <Label>Working folder</Label>
+                        <FolderPicker value={tDir} onChange={setTDir} />
+                        {tChosen && (
+                          <FolderChips
+                            folders={templateFolderChoices({ workingDirectory: tDir }, tChosen)}
+                            value={tDir}
+                            onPick={setTDir}
+                            label={
+                              <>
+                                <ProjectGlyph project={tChosen} className="size-3" />
+                                {tChosen.name}
+                              </>
+                            }
+                          />
+                        )}
+                        <RecentFolders recents={recents} onPick={setTDir} onRemove={removeRecent} />
+                      </div>
+                    </>
+                  }
                   name={tName}
                   onName={setTName}
                   launch={tLaunch}
@@ -671,21 +607,138 @@ export function NewSessionDialog({
 }
 
 /**
- * A text box that is as tall as what is in it: three rows at least, and up to two fifths of the window,
- * past which it scrolls. A prompt pasted in shows whole rather than through a slot, and an empty box
- * doesn't hold a third of the dialog.
+ * The project a launch starts in, optional: a picker, and a word that starting in a folder no project has
+ * links it to the one picked. Not drawn while there are no projects to pick from.
  */
-function GrowingTextarea({ value, ...props }: Omit<ComponentProps<typeof Textarea>, "rows" | "ref"> & { value: string }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto"; // back to its three rows, so a shorter text shrinks it again
-    // scrollHeight leaves out the border, which a border-box height includes (see PostponedPool).
-    const full = el.scrollHeight + el.offsetHeight - el.clientHeight;
-    el.style.height = `${Math.min(full, Math.round(window.innerHeight * 0.4))}px`;
-  }, [value]);
-  return <Textarea ref={ref} rows={3} value={value} className="min-h-0 resize-none" {...props} />;
+function ProjectField({
+  id,
+  projects,
+  chosen,
+  owner,
+  dir,
+  onPick,
+}: {
+  id: string;
+  projects: Project[];
+  /** What the picker shows: the folder's own project, else the one picked. */
+  chosen: Project | null;
+  /** The project the folder is already in, if any. */
+  owner: Project | null;
+  dir: string;
+  onPick: (projectId: string) => void;
+}) {
+  if (projects.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>Project (optional)</Label>
+      <select id={id} value={chosen?.id ?? ""} onChange={(e) => onPick(e.target.value)} className={selectClass}>
+        <option value="" className="bg-popover text-popover-foreground">
+          No project
+        </option>
+        {sortedByName(projects).map((p) => (
+          <option key={p.id} value={p.id} className="bg-popover text-popover-foreground">
+            {p.name}
+          </option>
+        ))}
+      </select>
+      {/* Linking is a statement about every session that runs there, so say it happens. */}
+      {chosen && !owner && dir.trim() && (
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{folderName(dir.trim())}</span> isn&apos;t in a
+          project yet — starting here links it to {chosen.name}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The folders launched from lately, as chips: a few rows, then it scrolls, since fifty would otherwise
+ * push the rest of the form a screen down. Past eight a filter box appears beside the heading — it
+ * matches any part of the path, and Enter takes the first match rather than submitting the form.
+ */
+function RecentFolders({
+  recents,
+  onPick,
+  onRemove,
+}: {
+  recents: string[];
+  onPick: (folder: string) => void;
+  onRemove: (folder: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const filterRef = useRef<HTMLInputElement>(null);
+  const searchable = recents.length > 8;
+  const q = query.trim().toLowerCase();
+  const shown = searchable && q ? recents.filter((p) => p.toLowerCase().includes(q)) : recents;
+
+  // Esc in the filter with text in it clears the text and leaves the dialog open. The dialog listens
+  // for Esc on the document in the capture phase, before the box's own onKeyDown could see it, so
+  // this listens on the window, which the capture phase passes through first (as GroupDialog does).
+  useEffect(() => {
+    if (!query) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.activeElement !== filterRef.current) return;
+      e.stopPropagation();
+      e.preventDefault();
+      setQuery("");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [query]);
+
+  if (recents.length === 0) return null;
+  return (
+    <div className="space-y-1.5 pt-1">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="flex shrink-0 items-center gap-1">
+          <History className="size-3" /> Recent
+        </span>
+        {searchable && (
+          <div className="relative ml-auto w-44 max-w-[55%]">
+            <Search className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2" />
+            <input
+              ref={filterRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              spellCheck={false}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !(e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  if (shown[0]) onPick(shown[0]);
+                }
+              }}
+              placeholder={`Filter ${recents.length}…`}
+              aria-label="Filter recent folders"
+              className="h-6 w-full rounded-md field-edge bg-transparent pl-6 pr-2 text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+          </div>
+        )}
+      </div>
+      {/* The padding is the focus rings' gutter inside the scroller, given back by the margin. */}
+      <div className="-m-0.5 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto overscroll-contain p-0.5">
+        {shown.length === 0 && <span className="py-1 text-xs text-muted-foreground">No recent folder matches.</span>}
+        {shown.map((p) => (
+          <span
+            key={p}
+            className="group flex max-w-full items-center gap-1 rounded-md border py-1 pl-2 pr-1 text-xs hover:bg-accent"
+          >
+            <button type="button" onClick={() => onPick(p)} title={p} className="truncate">
+              {folderName(p)}
+            </button>
+            <button
+              type="button"
+              title="Remove from recent"
+              onClick={() => onRemove(p)}
+              className="shrink-0 text-muted-foreground opacity-60 hover:text-destructive hover:opacity-100"
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /** Open the new session on its chat or on its terminal. Either way the other is a click away in its tab. */
@@ -762,11 +815,10 @@ function TemplatesTab({
   onEdit,
   onNew,
   template,
-  templateProject,
   input,
   onInput,
   dir,
-  onDir,
+  placement,
   name,
   onName,
   launch,
@@ -781,11 +833,12 @@ function TemplatesTab({
   onEdit: (t: SessionTemplate) => void;
   onNew: () => void;
   template: SessionTemplate | null;
-  templateProject: Project | null;
   input: string;
   onInput: (v: string) => void;
+  /** The folder, for the folded settings' one-line summary. */
   dir: string;
-  onDir: (v: string) => void;
+  /** The project, folder and recent-folder fields, at the top of the settings. */
+  placement: ReactNode;
   name: string;
   onName: (v: string) => void;
   launch: LaunchOptions;
@@ -895,23 +948,7 @@ function TemplatesTab({
             </button>
             {showOptions && (
               <div className="space-y-4 border-t p-3">
-                <div className="space-y-2">
-                  <Label>Working folder</Label>
-                  <FolderPicker value={dir} onChange={onDir} />
-                  {templateProject && (
-                    <FolderChips
-                      folders={templateFolderChoices({ workingDirectory: dir }, templateProject)}
-                      value={dir}
-                      onPick={onDir}
-                      label={
-                        <>
-                          <ProjectGlyph project={templateProject} className="size-3" />
-                          {templateProject.name}
-                        </>
-                      }
-                    />
-                  )}
-                </div>
+                {placement}
                 <LaunchFields
                   value={launch}
                   onChange={onLaunch}

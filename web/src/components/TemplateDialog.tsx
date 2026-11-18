@@ -8,7 +8,8 @@ import { DEFAULT_LAUNCH, LaunchFields, launchFromTemplate, type LaunchOptions } 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { GrowingTextarea } from "./GrowingTextarea";
+import { chord } from "@/lib/shortcuts";
 import {
   Dialog,
   DialogContent,
@@ -132,7 +133,15 @@ export function TemplateDialog({
 
         {/* -mx-1 px-1 buys the focus rings a gutter inside the scroller and gives it back, so nothing
             moves; without it a ring flush with the left edge is clipped clean off. */}
-        <div className="-mx-1 flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-1">
+        {/* Ctrl/⌘+Enter saves from any field, the prompt included, as it creates in the New session dialog. */}
+        <div
+          className="-mx-1 flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-1"
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            if (name.trim() && !busy) void save();
+          }}
+        >
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="template-name">Name</Label>
@@ -211,12 +220,12 @@ export function TemplateDialog({
                 Insert {"{input}"}
               </button>
             </div>
-            <Textarea
+            <GrowingTextarea
               id="template-prompt"
               value={prompt}
               placeholder="e.g. /fix-issue {input} — or “investigate this error from the logs”"
               onChange={(e) => setPrompt(e.target.value)}
-              className="min-h-28 font-mono text-xs"
+              className="font-mono text-xs"
             />
             <p className="text-xs text-muted-foreground">
               {hasInputToken(prompt) ? (
@@ -290,7 +299,12 @@ export function TemplateDialog({
             <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
-            <Button size="sm" disabled={!name.trim() || busy} onClick={() => void save()}>
+            <Button
+              size="sm"
+              disabled={!name.trim() || busy}
+              onClick={() => void save()}
+              title={`${template ? "Save" : "Create template"} (${chord("mod", "Enter")})`}
+            >
               {busy ? (
                 <Loader2 className="mr-1.5 size-3.5 animate-spin" />
               ) : (

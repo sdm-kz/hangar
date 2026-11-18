@@ -91,6 +91,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
         keywords: ["create", "launch", "open"],
       },
       { id: "new-session-create", keys: [["mod", "Enter"]], does: "Create the session, in the New session dialog", note: "From any field, the start command too" },
+      { id: "template-save", keys: [["mod", "Enter"]], does: "Save the template, in the template editor", note: "From any field, the prompt too" },
       { id: "settings", keys: [["mod", "shift", "S"]], does: "Open Settings", keywords: ["preferences", "options"] },
       {
         id: "help",
