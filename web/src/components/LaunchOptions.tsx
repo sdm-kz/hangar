@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Radio, Zap } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Info, Radio, Zap } from "lucide-react";
 
 /**
  * The settings a launch carries besides its folder and its prompt — the model, the permission mode
@@ -77,7 +78,11 @@ export function launchFromTemplate(t: {
 export const selectClass =
   "flex h-9 w-full rounded-md field-edge bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-/** A checkbox with a title, an icon and a paragraph saying what it does — the whole card clicks. */
+/**
+ * A checkbox with an icon and a title, and an (i) beside it whose click shows what it does. The
+ * paragraph used to sit under every checkbox, which made two of them take as much of the dialog as the
+ * folder picker; it is read once, and after that the title says enough.
+ */
 export function ToggleCard({
   checked,
   onCheckedChange,
@@ -91,20 +96,60 @@ export function ToggleCard({
   title: string;
   children: ReactNode;
 }) {
+  const [info, setInfo] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  // Closed by a click anywhere else, or Escape. Escape is caught on the window in the capture phase,
+  // ahead of the dialog this sits in, which would otherwise close itself instead (as in GroupDialog).
+  useEffect(() => {
+    if (!info) return;
+    const onDown = (e: MouseEvent) => {
+      if (!rowRef.current?.contains(e.target as Node)) setInfo(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      setInfo(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [info]);
+
   return (
-    <label className="flex items-start gap-3 rounded-lg border p-3 cursor-pointer">
-      <Checkbox
-        checked={checked}
-        onCheckedChange={(v) => onCheckedChange(v === true)}
-        className="mt-0.5"
-      />
-      <div className="space-y-0.5">
-        <div className="flex items-center gap-1.5 text-sm font-medium">
+    <div ref={rowRef} className="relative flex items-center gap-1">
+      {/* The (i) is outside the label, so asking what a checkbox does never ticks it. */}
+      <label className="flex cursor-pointer items-center gap-3 py-1">
+        <Checkbox checked={checked} onCheckedChange={(v) => onCheckedChange(v === true)} />
+        <span className="flex items-center gap-1.5 text-sm font-medium">
           {icon} {title}
+        </span>
+      </label>
+      <button
+        type="button"
+        onClick={() => setInfo((v) => !v)}
+        aria-expanded={info}
+        aria-label={`What “${title}” does`}
+        title="What this does"
+        className={cn(
+          "rounded-md p-1 hover:text-foreground",
+          info ? "text-foreground" : "text-muted-foreground"
+        )}
+      >
+        <Info className="size-3.5" />
+      </button>
+      {info && (
+        <div
+          role="tooltip"
+          className="absolute left-0 right-0 top-full z-20 mt-1 rounded-md popover-edge bg-popover p-2.5 text-xs text-popover-foreground shadow-md"
+        >
+          {children}
         </div>
-        <p className="text-xs text-muted-foreground">{children}</p>
-      </div>
-    </label>
+      )}
+    </div>
   );
 }
 
