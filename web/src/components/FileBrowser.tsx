@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type UIEvent } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type UIEvent } from "react";
 import { ApiError } from "@/lib/api";
 import type { FileEntry, GitStatus, GitWorktree } from "@/types";
 import { MAX_MODEL_PREVIEW, MAX_OFFICE_PREVIEW, fileExt, fileKind, formatSize } from "@/lib/fileKind";
@@ -108,22 +108,57 @@ import {
 } from "./ZoomControls";
 import { sessionKey, useApi, useSessionKey } from "@/lib/node";
 
-// Row-level actions threaded down to each tree node (rename inline, delete, new folder inside a dir).
+// What a row can do. One object for the panel's lifetime: each entry calls the current handler, so the
+// rows -- memoized -- are not all redrawn because a handler was remade, which most of them are often.
+interface RowHandlers {
+  startRename: (path: string) => void;
+  rename: (path: string, newName: string) => void;
+  cancelRename: () => void;
+  remove: (entry: FileEntry) => void;
+  discard: (entry: FileEntry) => void;
+  newFolderIn: (dir: string) => void;
+  mark: (path: string, isDir: boolean, range?: boolean) => void;
+  // Single click previews, a new tab pins (middle/double/modifier click).
+  select: (entry: FileEntry, newTab?: boolean) => void;
+  toggleDir: (path: string) => void; // a folder of the Files tree
+  pickDir: (path: string) => void; // the folder Upload targets
+}
+
+// The tree around the rows, threaded down to each level (rename inline, delete, new folder inside a dir).
 interface RowActions {
   readOnly: boolean; // browsing another worktree — mutating actions are hidden
   renamingPath: string | null;
-  onStartRename: (path: string) => void;
-  onRename: (path: string, newName: string) => void;
-  onCancelRename: () => void;
-  onDelete: (entry: FileEntry) => void;
   // A changed file back to the last commit; offered only where `canDiscard` says there is one to go to.
   canDiscard: (entry: FileEntry) => boolean;
-  onDiscard: (entry: FileEntry) => void;
-  onNewFolderIn: (dir: string) => void;
   mark: MarkedPaths; // rows marked for a batch action (see useMarkedPaths)
   // Rows can be dragged onto a folder to move them (the tree only); `over` is the folder a drop
   // would land in. See useTreeDrag.
   drag?: { over: string | null };
+  on: RowHandlers;
+}
+
+// What one row takes from RowActions, as plain values: a memoized row compares these, so a rename, a
+// mark or a drag redraws the rows it is about rather than every row in the panel.
+interface RowState {
+  readOnly: boolean;
+  renaming: boolean;
+  marked: boolean;
+  selectMode: boolean; // select mode is on (see useMarkedPaths)
+  discardable: boolean;
+  dragOn: boolean; // rows can be dragged here
+  dropTarget: boolean;
+}
+
+function rowState(actions: RowActions, entry: FileEntry): RowState {
+  return {
+    readOnly: actions.readOnly,
+    renaming: actions.renamingPath === entry.path,
+    marked: actions.mark.has(entry.path),
+    selectMode: actions.mark.selecting,
+    discardable: actions.canDiscard(entry),
+    dragOn: !!actions.drag,
+    dropTarget: entry.isDir && actions.drag?.over === entry.path,
+  };
 }
 
 /**
@@ -972,18 +1007,35 @@ export const FileBrowser = forwardRef<
     setCreatingFolder(true);
   }, []);
 
-  const rowActions: RowActions = {
-    readOnly,
-    renamingPath,
-    onStartRename: setRenamingPath,
-    onRename: doRename,
-    onCancelRename: () => setRenamingPath(null),
-    onDelete: doDelete,
-    canDiscard,
-    onDiscard: doDiscard,
-    onNewFolderIn: newFolderIn,
-    mark,
+  const rowHandlerImpl = useRef<RowHandlers>(null!);
+  rowHandlerImpl.current = {
+    startRename: setRenamingPath,
+    rename: doRename,
+    cancelRename: () => setRenamingPath(null),
+    remove: doDelete,
+    discard: doDiscard,
+    newFolderIn,
+    mark: mark.toggle,
+    select: selectFile,
+    toggleDir: toggleFilesDir,
+    pickDir: setUploadDir,
   };
+  const rowHandlers = useMemo<RowHandlers>(
+    () => ({
+      startRename: (p) => rowHandlerImpl.current.startRename(p),
+      rename: (p, n) => rowHandlerImpl.current.rename(p, n),
+      cancelRename: () => rowHandlerImpl.current.cancelRename(),
+      remove: (e) => rowHandlerImpl.current.remove(e),
+      discard: (e) => rowHandlerImpl.current.discard(e),
+      newFolderIn: (d) => rowHandlerImpl.current.newFolderIn(d),
+      mark: (p, d, r) => rowHandlerImpl.current.mark(p, d, r),
+      select: (e, t) => rowHandlerImpl.current.select(e, t),
+      toggleDir: (p) => rowHandlerImpl.current.toggleDir(p),
+      pickDir: (p) => rowHandlerImpl.current.pickDir(p),
+    }),
+    []
+  );
+  const rowActions: RowActions = { readOnly, renamingPath, canDiscard, mark, on: rowHandlers };
   // Dragging is the tree's alone: a search result or a changed file has no folder around it on
   // screen to be dropped into, and another worktree is browsed read-only.
   const treeDragOn = !readOnly && !changesView && !query.trim();
@@ -1533,7 +1585,6 @@ export const FileBrowser = forwardRef<
                 onToggle={toggleChangesDir}
                 gitFiles={effectiveGitFiles}
                 selectedPath={selected?.path ?? null}
-                onSelect={selectFile}
                 actions={rowActions}
               />
             ) : (
@@ -1542,7 +1593,6 @@ export const FileBrowser = forwardRef<
                 empty={query.trim() ? "No matching changes" : "No changes"}
                 gitFiles={effectiveGitFiles}
                 selectedPath={selected?.path ?? null}
-                onSelect={selectFile}
                 actions={rowActions}
               />
             )
@@ -1553,7 +1603,6 @@ export const FileBrowser = forwardRef<
               empty="No matches"
               gitFiles={effectiveGitFiles}
               selectedPath={selected?.path ?? null}
-              onSelect={selectFile}
               actions={rowActions}
             />
           ) : (
@@ -1565,11 +1614,8 @@ export const FileBrowser = forwardRef<
               refreshToken={refreshToken}
               selectedPath={selected?.path ?? null}
               expanded={filesExpanded}
-              onToggleDir={toggleFilesDir}
               gitFiles={effectiveGitFiles}
-              onSelect={selectFile}
               uploadDir={uploadDir}
-              onSelectDir={setUploadDir}
               actions={treeActions}
             />
           )}
@@ -1692,13 +1738,6 @@ function hasStagedAdd(gitFiles: GitFiles | undefined, path: string, isDir: boole
   return false;
 }
 
-function dirHasChanges(gitFiles: GitFiles | undefined, dirPath: string): boolean {
-  if (!gitFiles) return false;
-  const prefix = dirPath + "/";
-  for (const p in gitFiles) if (p === dirPath || p.startsWith(prefix)) return true;
-  return false;
-}
-
 /** Flat list of files (used for search results and the git-changes view). */
 function FlatFileList({
   entries,
@@ -1706,7 +1745,6 @@ function FlatFileList({
   empty,
   gitFiles,
   selectedPath,
-  onSelect,
   actions,
 }: {
   entries: FileEntry[];
@@ -1714,7 +1752,6 @@ function FlatFileList({
   empty: string;
   gitFiles?: GitFiles;
   selectedPath: string | null;
-  onSelect: (f: FileEntry, newTab?: boolean) => void;
   actions: RowActions;
 }) {
   if (loading)
@@ -1723,35 +1760,53 @@ function FlatFileList({
 
   return (
     <>
-      {entries.map((e) => {
-        const kind = fileKind(e.name);
-        const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : FileText;
-        // Rows here carry the path under the name -- a hit can come from anywhere, so the name alone
-        // does not say where it is. The row is handed the same line so the rename box keeps it.
-        const pathLine = <span className="truncate text-[10px] text-muted-foreground">{e.path}</span>;
-        return (
-          <Row
-            key={e.path}
-            depth={0}
-            selected={selectedPath === e.path}
-            entry={e}
-            actions={actions}
-            onClick={() => onSelect(e)}
-            onOpenNewTab={() => onSelect(e, true)}
-            lead={<Icon className="size-3.5 shrink-0 text-muted-foreground" />}
-            sub={pathLine}
-          >
-            <span className="flex min-w-0 flex-col">
-              <span className={cn("truncate", gitFiles?.[e.path] && STATUS_COLOR[gitFiles[e.path]])}>{e.name}</span>
-              {pathLine}
-            </span>
-            <GitMarker status={gitFiles?.[e.path]} />
-          </Row>
-        );
-      })}
+      {entries.map((e) => (
+        <ListRow
+          key={e.path}
+          entry={e}
+          selected={selectedPath === e.path}
+          gitStatus={gitFiles?.[e.path]}
+          on={actions.on}
+          {...rowState(actions, e)}
+        />
+      ))}
     </>
   );
 }
+
+// A row of the flat list: a search hit or a changed file.
+const ListRow = memo(function ListRow({
+  entry: e,
+  selected,
+  gitStatus,
+  on,
+  ...state
+}: { entry: FileEntry; selected: boolean; gitStatus?: string; on: RowHandlers } & RowState) {
+  const kind = fileKind(e.name);
+  const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : FileText;
+  // Rows here carry the path under the name -- a hit can come from anywhere, so the name alone
+  // does not say where it is. The row is handed the same line so the rename box keeps it.
+  const pathLine = <span className="truncate text-[10px] text-muted-foreground">{e.path}</span>;
+  return (
+    <Row
+      depth={0}
+      selected={selected}
+      entry={e}
+      on={on}
+      {...state}
+      onClick={() => on.select(e)}
+      onOpenNewTab={() => on.select(e, true)}
+      lead={<Icon className="size-3.5 shrink-0 text-muted-foreground" />}
+      sub={pathLine}
+    >
+      <span className="flex min-w-0 flex-col">
+        <span className={cn("truncate", gitStatus && STATUS_COLOR[gitStatus])}>{e.name}</span>
+        {pathLine}
+      </span>
+      <GitMarker status={gitStatus} />
+    </Row>
+  );
+});
 
 // A folder in the changes tree: its own changed files plus nested subfolders. Built entirely from the
 // flat list of changed paths — no directory listing needed, so folders with no changes never appear.
@@ -1826,7 +1881,6 @@ function ChangesTree({
   onToggle,
   gitFiles,
   selectedPath,
-  onSelect,
   actions,
 }: {
   root: ChangeDir;
@@ -1837,7 +1891,6 @@ function ChangesTree({
   onToggle: (path: string) => void;
   gitFiles?: GitFiles;
   selectedPath: string | null;
-  onSelect: (f: FileEntry, newTab?: boolean) => void;
   actions: RowActions;
 }) {
   if (isEmpty) return <IndentedNote depth={0}>{empty}</IndentedNote>;
@@ -1850,7 +1903,6 @@ function ChangesTree({
       onToggle={onToggle}
       gitFiles={gitFiles}
       selectedPath={selectedPath}
-      onSelect={onSelect}
       actions={actions}
     />
   );
@@ -1861,7 +1913,6 @@ interface ChangeTreeProps {
   onToggle: (path: string) => void;
   gitFiles?: GitFiles;
   selectedPath: string | null;
-  onSelect: (f: FileEntry, newTab?: boolean) => void;
   actions: RowActions;
 }
 
@@ -1878,30 +1929,15 @@ function ChangeDirChildren({ dir, depth, ...rest }: { dir: ChangeDir; depth: num
         <ChangeDirNode key={d.path} dir={d} depth={depth} {...rest} />
       ))}
       {files.map((e) => (
-        <Row
+        <FileRow
           key={e.path}
+          entry={e}
           depth={depth}
           selected={rest.selectedPath === e.path}
-          entry={e}
-          actions={rest.actions}
-          onClick={() => rest.onSelect(e)}
-          onOpenNewTab={() => rest.onSelect(e, true)}
-          lead={
-            <>
-              <span className="size-3.5 shrink-0" />
-              {(() => {
-                const kind = fileKind(e.name);
-                const Icon = kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : FileText;
-                return <Icon className="size-3.5 shrink-0 text-muted-foreground" />;
-              })()}
-            </>
-          }
-        >
-          <span className={cn("truncate", rest.gitFiles?.[e.path] && STATUS_COLOR[rest.gitFiles[e.path]])}>
-            {e.name}
-          </span>
-          <GitMarker status={rest.gitFiles?.[e.path]} />
-        </Row>
+          gitStatus={rest.gitFiles?.[e.path]}
+          on={rest.actions.on}
+          {...rowState(rest.actions, e)}
+        />
       ))}
     </>
   );
@@ -1939,6 +1975,44 @@ function ChangeDirNode({ dir, depth, ...rest }: { dir: ChangeDir; depth: number 
   );
 }
 
+/**
+ * A folder listed again, with the entries it had wherever they are unchanged -- and the very same
+ * listing when nothing in it is. Every open folder is listed again whenever anything in the session's
+ * folder changes, and a row is only redrawn when its entry is a different object, so fresh copies of
+ * the same files would redraw the whole tree each time.
+ */
+function keepSame(prev: FileEntry[] | null, next: FileEntry[]): FileEntry[] {
+  if (!prev) return next;
+  const old = new Map(prev.map((e) => [e.path, e]));
+  let changed = prev.length !== next.length;
+  const merged = next.map((e, i) => {
+    const o = old.get(e.path);
+    if (o && o.name === e.name && o.isDir === e.isDir && o.size === e.size) {
+      if (prev[i] !== o) changed = true;
+      return o;
+    }
+    changed = true;
+    return e;
+  });
+  return changed ? merged : prev;
+}
+
+// Every folder with a change somewhere inside it, worked out once per git status rather than once per
+// folder row per redraw.
+const changedDirsCache = new WeakMap<GitFiles, Set<string>>();
+function changedDirs(gitFiles: GitFiles): Set<string> {
+  let dirs = changedDirsCache.get(gitFiles);
+  if (!dirs) {
+    dirs = new Set();
+    for (const p in gitFiles) {
+      dirs.add(p); // a folder can be a change of its own (a new, untracked one)
+      for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) dirs.add(p.slice(0, i));
+    }
+    changedDirsCache.set(gitFiles, dirs);
+  }
+  return dirs;
+}
+
 function TreeLevel({
   sessionId,
   dir,
@@ -1947,11 +2021,8 @@ function TreeLevel({
   refreshToken,
   selectedPath,
   expanded,
-  onToggleDir,
   gitFiles,
-  onSelect,
   uploadDir,
-  onSelectDir,
   actions,
 }: {
   sessionId: string;
@@ -1961,11 +2032,8 @@ function TreeLevel({
   refreshToken: number;
   selectedPath: string | null;
   expanded: Set<string>;
-  onToggleDir: (path: string) => void;
   gitFiles?: GitFiles;
-  onSelect: (f: FileEntry, newTab?: boolean) => void;
   uploadDir: string;
-  onSelectDir: (path: string) => void;
   actions: RowActions;
 }) {
   const api = useApi();
@@ -1977,7 +2045,7 @@ function TreeLevel({
     let cancelled = false;
     api
       .listSessionFiles(sessionId, path || undefined, dir)
-      .then((r) => !cancelled && (setEntries(r.entries), setError(false)))
+      .then((r) => !cancelled && (setEntries((prev) => keepSame(prev, r.entries)), setError(false)))
       .catch(() => !cancelled && setError(true));
     return () => {
       cancelled = true;
@@ -2002,11 +2070,8 @@ function TreeLevel({
             refreshToken={refreshToken}
             selectedPath={selectedPath}
             expanded={expanded}
-            onToggleDir={onToggleDir}
             gitFiles={gitFiles}
-            onSelect={onSelect}
             uploadDir={uploadDir}
-            onSelectDir={onSelectDir}
             actions={actions}
           />
         ) : (
@@ -2016,8 +2081,9 @@ function TreeLevel({
             depth={depth}
             selected={selectedPath === e.path}
             gitStatus={gitFiles?.[e.path]}
-            onSelect={onSelect}
-            actions={actions}
+            on={actions.on}
+            {...rowState(actions, e)}
+            scrollOnMount
           />
         )
       )}
@@ -2033,11 +2099,8 @@ function TreeDir({
   refreshToken,
   selectedPath,
   expanded,
-  onToggleDir,
   gitFiles,
-  onSelect,
   uploadDir,
-  onSelectDir,
   actions,
 }: {
   sessionId: string;
@@ -2047,60 +2110,23 @@ function TreeDir({
   refreshToken: number;
   selectedPath: string | null;
   expanded: Set<string>;
-  onToggleDir: (path: string) => void;
   gitFiles?: GitFiles;
-  onSelect: (f: FileEntry, newTab?: boolean) => void;
   uploadDir: string;
-  onSelectDir: (path: string) => void;
   actions: RowActions;
 }) {
   // Open state is lifted to the parent so it persists per session (collapsed by default).
   const open = expanded.has(entry.path);
   return (
     <>
-      {/* Clicking a folder toggles it open and makes it the upload target. */}
-      <Row
+      <DirRow
+        entry={entry}
         depth={depth}
         selected={uploadDir === entry.path}
         open={open}
-        entry={entry}
-        actions={actions}
-        onClick={() => {
-          onToggleDir(entry.path);
-          onSelectDir(entry.path);
-        }}
-        extraActions={
-          <button
-            className="rounded p-0.5 hover:bg-background hover:text-foreground"
-            title="New folder here"
-            onClick={(e) => {
-              e.stopPropagation();
-              actions.onNewFolderIn(entry.path);
-            }}
-          >
-            <FolderPlus className="size-3.5" />
-          </button>
-        }
-        lead={
-          <>
-            {open ? (
-              <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-            )}
-            {open ? (
-              <FolderOpen className="size-3.5 shrink-0 text-amber-500" />
-            ) : (
-              <Folder className="size-3.5 shrink-0 text-amber-500" />
-            )}
-          </>
-        }
-      >
-        <span className="truncate">{entry.name}</span>
-        {!open && dirHasChanges(gitFiles, entry.path) && (
-          <span className="size-1.5 shrink-0 rounded-full bg-amber-500" />
-        )}
-      </Row>
+        changed={!open && !!gitFiles && changedDirs(gitFiles).has(entry.path)}
+        on={actions.on}
+        {...rowState(actions, entry)}
+      />
       {open && (
         <TreeLevel
           sessionId={sessionId}
@@ -2110,11 +2136,8 @@ function TreeDir({
           refreshToken={refreshToken}
           selectedPath={selectedPath}
           expanded={expanded}
-          onToggleDir={onToggleDir}
           gitFiles={gitFiles}
-          onSelect={onSelect}
           uploadDir={uploadDir}
-          onSelectDir={onSelectDir}
           actions={actions}
         />
       )}
@@ -2122,21 +2145,85 @@ function TreeDir({
   );
 }
 
-function FileRow({
+// A folder's own row in the Files tree. Clicking it toggles it open and makes it the upload target.
+const DirRow = memo(function DirRow({
+  entry,
+  depth,
+  selected,
+  open,
+  changed,
+  on,
+  ...state
+}: {
+  entry: FileEntry;
+  depth: number;
+  selected: boolean;
+  open: boolean;
+  changed: boolean; // something inside it is changed; shown while it is closed
+  on: RowHandlers;
+} & RowState) {
+  return (
+    <Row
+      depth={depth}
+      selected={selected}
+      open={open}
+      entry={entry}
+      on={on}
+      {...state}
+      onClick={() => {
+        on.toggleDir(entry.path);
+        on.pickDir(entry.path);
+      }}
+      extraActions={
+        <button
+          className="rounded p-0.5 hover:bg-background hover:text-foreground"
+          title="New folder here"
+          onClick={(e) => {
+            e.stopPropagation();
+            on.newFolderIn(entry.path);
+          }}
+        >
+          <FolderPlus className="size-3.5" />
+        </button>
+      }
+      lead={
+        <>
+          {open ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          {open ? (
+            <FolderOpen className="size-3.5 shrink-0 text-amber-500" />
+          ) : (
+            <Folder className="size-3.5 shrink-0 text-amber-500" />
+          )}
+        </>
+      }
+    >
+      <span className="truncate">{entry.name}</span>
+      {changed && <span className="size-1.5 shrink-0 rounded-full bg-amber-500" />}
+    </Row>
+  );
+});
+
+// A file's row, in the Files tree or the changes tree.
+const FileRow = memo(function FileRow({
   entry,
   depth,
   selected,
   gitStatus,
-  onSelect,
-  actions,
+  on,
+  scrollOnMount = false,
+  ...state
 }: {
   entry: FileEntry;
   depth: number;
   selected: boolean;
   gitStatus?: string;
-  onSelect: (f: FileEntry, newTab?: boolean) => void;
-  actions: RowActions;
-}) {
+  on: RowHandlers;
+  scrollOnMount?: boolean; // the Files tree: bring a URL-restored selection into view
+} & RowState) {
   const kind = fileKind(entry.name);
   const Icon =
     kind === "image" ? ImageIcon : kind === "video" ? Video : kind === "model" ? Box : kind === "binary" ? FileIcon : FileText;
@@ -2144,7 +2231,7 @@ function FileRow({
   // selected — normal clicks select an already-mounted row, so they don't scroll).
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (selected) ref.current?.scrollIntoView({ block: "nearest" });
+    if (scrollOnMount && selected) ref.current?.scrollIntoView({ block: "nearest" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
@@ -2153,9 +2240,10 @@ function FileRow({
       depth={depth}
       selected={selected}
       entry={entry}
-      actions={actions}
-      onClick={() => onSelect(entry)}
-      onOpenNewTab={() => onSelect(entry, true)}
+      on={on}
+      {...state}
+      onClick={() => on.select(entry)}
+      onOpenNewTab={() => on.select(entry, true)}
       lead={
         <>
           <span className="size-3.5 shrink-0" />
@@ -2167,7 +2255,7 @@ function FileRow({
       <GitMarker status={gitStatus} />
     </Row>
   );
-}
+});
 
 const Row = forwardRef<
   HTMLDivElement,
@@ -2178,7 +2266,7 @@ const Row = forwardRef<
     onClick: () => void;
     onOpenNewTab?: () => void; // file-only: middle-/double-/modifier-click opens a pinned tab
     entry: FileEntry;
-    actions: RowActions;
+    on: RowHandlers;
     extraActions?: React.ReactNode; // dir-only: "new folder here"
     // The glyphs that run ahead of the name -- a fold chevron, a file or folder icon, the blank that
     // stands in for a chevron on a row that cannot fold. Their own prop rather than the head of
@@ -2190,14 +2278,33 @@ const Row = forwardRef<
     // row loses a line the moment you start typing, and every row below it moves up to fill the gap.
     sub?: React.ReactNode;
     children: React.ReactNode;
-  }
->(function Row({ depth, selected, open, onClick, onOpenNewTab, entry, actions, extraActions, lead, sub, children }, ref) {
-  const renaming = actions.renamingPath === entry.path;
-  const { mark } = actions;
-  const marked = mark.has(entry.path);
+  } & RowState
+>(function Row(
+  {
+    depth,
+    selected,
+    open,
+    onClick,
+    onOpenNewTab,
+    entry,
+    on,
+    extraActions,
+    lead,
+    sub,
+    children,
+    readOnly,
+    renaming,
+    marked,
+    selectMode,
+    discardable,
+    dragOn,
+    dropTarget,
+  },
+  ref
+) {
   // Nothing is markable while browsing another worktree: the delete the mark leads to is one of the
   // actions that root does not get.
-  const selecting = mark.selecting && !actions.readOnly;
+  const selecting = selectMode && !readOnly;
   // Written once and drawn by both states. Renaming is offered in select mode too, and a box that
   // left the tick out started the name one checkbox further left than the row it replaced.
   const checkbox = selecting && (
@@ -2206,13 +2313,17 @@ const Row = forwardRef<
     </span>
   );
   // A row being renamed stays put: its field is where the pointer is busy.
-  const draggable = !!actions.drag && !renaming;
-  const dropTarget = entry.isDir && actions.drag?.over === entry.path;
+  const draggable = dragOn && !renaming;
+  // The hover actions are only shown under the pointer, so they are only built there: drawn hidden on
+  // every row they were most of the tree's elements, and most of what each redraw had to do.
+  const [hot, setHot] = useState(false);
   return (
     <div
       ref={ref}
       draggable={draggable || undefined}
       data-drag={draggable ? "1" : undefined}
+      onPointerEnter={() => setHot(true)}
+      onPointerLeave={() => setHot(false)}
       className={cn(
         "group relative flex items-center rounded-sm text-xs hover:bg-accent",
         selected && "bg-accent font-medium",
@@ -2236,16 +2347,16 @@ const Row = forwardRef<
             <span className="flex min-w-0 flex-1 flex-col">
               <RenameField
                 value={entry.name}
-                onSubmit={(name) => actions.onRename(entry.path, name)}
-                onCancel={actions.onCancelRename}
+                onSubmit={(name) => on.rename(entry.path, name)}
+                onCancel={on.cancelRename}
               />
               {sub}
             </span>
           ) : (
             <RenameField
               value={entry.name}
-              onSubmit={(name) => actions.onRename(entry.path, name)}
-              onCancel={actions.onCancelRename}
+              onSubmit={(name) => on.rename(entry.path, name)}
+              onCancel={on.cancelRename}
             />
           )}
         </div>
@@ -2265,7 +2376,7 @@ const Row = forwardRef<
             // Otherwise: Cmd/Ctrl+click opens a pinned tab like middle-click (no middle button on
             // trackpads).
             onClick={(e) => {
-              if (selecting) mark.toggle(entry.path, entry.isDir, e.shiftKey);
+              if (selecting) on.mark(entry.path, entry.isDir, e.shiftKey);
               else if ((e.metaKey || e.ctrlKey) && onOpenNewTab) onOpenNewTab();
               else onClick();
             }}
@@ -2289,63 +2400,65 @@ const Row = forwardRef<
           </button>
           {/* Hover actions, overlaid at the right so they don't eat name width when idle. Mutating
               ones are hidden while browsing another worktree (endpoints only touch the session dir). */}
-          <div className="absolute right-1 hidden items-center gap-0.5 rounded bg-accent pl-1 text-muted-foreground group-hover:flex">
-            {!actions.readOnly && extraActions}
-            <CopyPathButton
-              path={entry.path}
-              className="rounded p-0.5 hover:bg-background hover:text-foreground"
-            />
-            {/* Start a selection with this row in it. Only before the mode is on: once it is, every
-                row carries its own box on the left and a second one here would be a second answer. */}
-            {!actions.readOnly && !mark.selecting && (
-              <button
+          {hot && (
+            <div className="absolute right-1 hidden items-center gap-0.5 rounded bg-accent pl-1 text-muted-foreground group-hover:flex">
+              {!readOnly && extraActions}
+              <CopyPathButton
+                path={entry.path}
                 className="rounded p-0.5 hover:bg-background hover:text-foreground"
-                title="Select"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  mark.toggle(entry.path, entry.isDir, e.shiftKey);
-                }}
-              >
-                <Square className="size-3.5" />
-              </button>
-            )}
-            {!actions.readOnly && (
-              <>
-                {actions.canDiscard(entry) && (
-                  <button
-                    className="rounded p-0.5 hover:bg-background hover:text-destructive"
-                    title="Discard changes — back to the last commit"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      actions.onDiscard(entry);
-                    }}
-                  >
-                    <Undo2 className="size-3.5" />
-                  </button>
-                )}
+              />
+              {/* Start a selection with this row in it. Only before the mode is on: once it is, every
+                  row carries its own box on the left and a second one here would be a second answer. */}
+              {!readOnly && !selectMode && (
                 <button
                   className="rounded p-0.5 hover:bg-background hover:text-foreground"
-                  title="Rename"
+                  title="Select"
                   onClick={(e) => {
                     e.stopPropagation();
-                    actions.onStartRename(entry.path);
+                    on.mark(entry.path, entry.isDir, e.shiftKey);
                   }}
                 >
-                  <Pencil className="size-3.5" />
+                  <Square className="size-3.5" />
                 </button>
-                <button
-                  className="rounded p-0.5 hover:bg-background hover:text-destructive"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    actions.onDelete(entry);
-                  }}
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </>
-            )}
-          </div>
+              )}
+              {!readOnly && (
+                <>
+                  {discardable && (
+                    <button
+                      className="rounded p-0.5 hover:bg-background hover:text-destructive"
+                      title="Discard changes — back to the last commit"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        on.discard(entry);
+                      }}
+                    >
+                      <Undo2 className="size-3.5" />
+                    </button>
+                  )}
+                  <button
+                    className="rounded p-0.5 hover:bg-background hover:text-foreground"
+                    title="Rename"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      on.startRename(entry.path);
+                    }}
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
+                  <button
+                    className="rounded p-0.5 hover:bg-background hover:text-destructive"
+                    title="Delete"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      on.remove(entry);
+                    }}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

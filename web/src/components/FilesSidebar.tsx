@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type UIEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { useApi, useNodeId } from "@/lib/node";
 import type { DirEntry, FsNode } from "@/types";
 import { fileKind } from "@/lib/fileKind";
 import { cn } from "@/lib/utils";
 import { FILE_SCOPE } from "@/lib/fullPageKey";
 import { useTreeKeyNav, navRowProps } from "@/lib/useTreeKeyNav";
-import { useMarkedPaths, withoutDescendants, type MarkedPaths } from "@/lib/useMarkedPaths";
+import { useMarkedPaths, withoutDescendants } from "@/lib/useMarkedPaths";
 import { movedPairs, useTreeDrag } from "@/lib/useTreeDrag";
 import { useConfirm } from "@/components/ui/confirm";
 import { RenameField } from "./RenameField";
@@ -774,6 +774,55 @@ export function FilesSidebar({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  // The tree as the flat list of rows on screen, in drawn order. Only the listings and what is open
+  // decide it, so nothing else -- a spinner, the selection, a hover, the app re-rendering above --
+  // walks the tree again.
+  const rows = useMemo(() => {
+    const out: TreeRowItem[] = [];
+    const walk = (nodes: readonly { path: string; name: string; isDir: boolean; hidden?: boolean }[], depth: number, isDrive: boolean) => {
+      for (const n of nodes) {
+        out.push({ kind: "node", path: n.path, name: n.name, isDir: n.isDir, isDrive, hidden: !!n.hidden, depth });
+        if (!n.isDir || !expanded.has(n.path)) continue;
+        const kids = children.get(n.path);
+        if (!kids) continue; // still listing: the row's spinner says so
+        if (kids.length === 0) out.push({ kind: "empty", path: n.path, depth: depth + 1 });
+        else walk(kids, depth + 1, false);
+      }
+    };
+    walk(drives.map((d) => ({ path: d.path, name: d.name, isDir: true })), 0, true);
+    return out;
+  }, [drives, expanded, children]);
+
+  // What a row does, as one object that never changes: each entry reads the current handler when it
+  // runs, so the rows -- memoized on their props -- are not all redrawn because a handler was remade
+  // (most of them are, on every listing).
+  const handlers = useRef<RowHandlers>(null!);
+  handlers.current = {
+    toggle,
+    openFile: onOpenFile,
+    newSession: onNewSession,
+    openShell: (path) => onOpenShell?.(path),
+    startRename: setRenaming,
+    rename: doRename,
+    cancelRename: () => setRenaming(null),
+    remove: doDelete,
+    mark: mark.toggle,
+  };
+  const rowHandlers = useMemo<RowHandlers>(
+    () => ({
+      toggle: (p) => handlers.current.toggle(p),
+      openFile: (p) => handlers.current.openFile(p),
+      newSession: (p) => handlers.current.newSession(p),
+      openShell: (p) => handlers.current.openShell(p),
+      startRename: (p) => handlers.current.startRename(p),
+      rename: (p, n) => handlers.current.rename(p, n),
+      cancelRename: () => handlers.current.cancelRename(),
+      remove: (p, d) => handlers.current.remove(p, d),
+      mark: (p, d, r) => handlers.current.mark(p, d, r),
+    }),
+    []
+  );
+
   const room = toolbarWidth === null ? Infinity : toolbarWidth - LABEL_MIN;
   const fitsAll = actions.length * TOOL_SLOT <= room;
   // When they don't all fit, one slot goes to the menu button itself.
@@ -918,257 +967,230 @@ export function FilesSidebar({
         {...treeDrag.areaProps}
         className="min-h-0 flex-1 overflow-auto py-1 outline-none"
       >
-        {drives.map((d) => (
-          <TreeNode
-            key={d.path}
-            path={d.path}
-            name={d.name}
-            isDir
-            isDrive
-            depth={0}
-            openPath={openPath}
-            selectedDir={selectedDir}
-            expanded={expanded}
-            loading={loading}
-            children_={children}
-            renaming={renaming}
-            onToggle={toggle}
-            onOpenFile={onOpenFile}
-            onNewSession={onNewSession}
-            onOpenShell={onOpenShell}
-            onStartRename={setRenaming}
-            onRename={doRename}
-            onCancelRename={() => setRenaming(null)}
-            onDelete={doDelete}
-            mark={mark}
-            dropOver={treeDrag.over}
-          />
-        ))}
+        {rows.map((r) =>
+          r.kind === "empty" ? (
+            <div
+              key={r.path + "\0empty"}
+              className="px-1 py-0.5 text-xs text-muted-foreground"
+              style={{ paddingLeft: r.depth * 12 + 20 }}
+            >
+              empty
+            </div>
+          ) : (
+            <TreeRow
+              key={r.path}
+              path={r.path}
+              name={r.name}
+              isDir={r.isDir}
+              isDrive={r.isDrive}
+              hidden={r.hidden}
+              depth={r.depth}
+              isOpen={r.isDir && expanded.has(r.path)}
+              isBusy={loading.has(r.path)}
+              active={!r.isDir && openPath === r.path}
+              selected={r.isDir && selectedDir === r.path}
+              marked={mark.has(r.path)}
+              selecting={mark.selecting}
+              renaming={renaming === r.path}
+              dropTarget={r.isDir && treeDrag.over === r.path}
+              canShell={!!onOpenShell}
+              on={rowHandlers}
+            />
+          )
+        )}
       </div>
     </div>
   );
 }
 
-// A single row plus (for an expanded directory) its recursively-rendered children.
-function TreeNode({
+// One row of the tree as the flat list draws it: a node, or the "empty" note under an open folder
+// that has nothing in it.
+type TreeRowItem =
+  | { kind: "node"; path: string; name: string; isDir: boolean; isDrive: boolean; hidden: boolean; depth: number }
+  | { kind: "empty"; path: string; depth: number };
+
+type RowHandlers = {
+  toggle: (path: string) => void;
+  openFile: (path: string) => void;
+  newSession: (path: string) => void;
+  openShell: (path: string) => void;
+  startRename: (path: string) => void;
+  rename: (path: string, name: string) => void;
+  cancelRename: () => void;
+  remove: (path: string, isDir: boolean) => void;
+  mark: (path: string, isDir: boolean, range?: boolean) => void;
+};
+
+const HOVER_ACTION =
+  "hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block";
+
+/**
+ * A single row. Memoized, and every prop is a plain value (or the one handlers object, which never
+ * changes), so a change anywhere in the tree redraws only the rows it is about -- not the thousands
+ * a few open folders add up to.
+ */
+const TreeRow = memo(function TreeRow({
   path,
   name,
   isDir,
-  isDrive = false,
-  hidden = false,
+  isDrive,
+  hidden,
   depth,
-  openPath,
-  selectedDir,
-  expanded,
-  loading,
-  children_,
+  isOpen,
+  isBusy,
+  active,
+  selected,
+  marked,
+  selecting,
   renaming,
-  onToggle,
-  onOpenFile,
-  onNewSession,
-  onOpenShell,
-  onStartRename,
-  onRename,
-  onCancelRename,
-  onDelete,
-  mark,
-  dropOver,
+  dropTarget,
+  canShell,
+  on,
 }: {
   path: string;
   name: string;
   isDir: boolean;
-  isDrive?: boolean;
+  isDrive: boolean;
   /** Hidden or system: drawn dimmer, as a file manager draws one. */
-  hidden?: boolean;
+  hidden: boolean;
   depth: number;
-  openPath: string | null;
-  selectedDir: string | null;
-  expanded: Set<string>;
-  loading: Set<string>;
-  children_: Map<string, FsNode[]>;
-  renaming: string | null;
-  onToggle: (path: string) => void;
-  onOpenFile: (path: string) => void;
-  onNewSession: (path: string) => void;
-  onOpenShell?: (path: string) => void;
-  onStartRename: (path: string) => void;
-  onRename: (path: string, name: string) => void;
-  onCancelRename: () => void;
-  onDelete: (path: string, isDir: boolean) => void;
-  mark: MarkedPaths;
-  dropOver: string | null; // the folder a drag would drop into (see useTreeDrag)
+  isOpen: boolean;
+  isBusy: boolean;
+  active: boolean; // the file open in the main area
+  selected: boolean; // the folder the toolbar acts on
+  marked: boolean;
+  selecting: boolean;
+  renaming: boolean;
+  dropTarget: boolean; // the folder a drag would drop into (see useTreeDrag)
+  canShell: boolean; // a folder's shell can be opened from here (not on a peer)
+  on: RowHandlers;
 }) {
-  const isOpen = expanded.has(path);
-  const isBusy = loading.has(path);
-  const kids = children_.get(path);
-  const active = !isDir && openPath === path;
-  const selected = isDir && selectedDir === path;
-  const marked = mark.has(path);
   // A drive is the one thing here that cannot be deleted, so it is not a thing that can be marked.
   const markable = !isDrive;
   // Nor moved -- though a drop onto one lands in its root.
-  const draggable = !isDrive && renaming !== path;
+  const draggable = !isDrive && !renaming;
+  // The hover actions are only shown under the pointer, so they are only built there: drawn hidden on
+  // every row they were most of the tree's elements, and most of what each redraw had to do.
+  const [hot, setHot] = useState(false);
+  const actions = hot && !renaming;
 
   return (
-    <div>
-      <div
-        data-fspath={path}
-        {...navRowProps({ path, isDir, open: isOpen, current: active || selected, depth })}
-        draggable={draggable || undefined}
-        data-drag={draggable ? "1" : undefined}
-        className={cn(
-          "group flex items-center gap-1 rounded px-1 py-0.5 text-sm",
-          "cursor-pointer hover:bg-accent",
-          active && "bg-accent font-medium",
-          selected && "bg-accent/50",
-          marked && "bg-primary/10",
-          isDir && dropOver === path && "bg-primary/15 ring-1 ring-inset ring-primary/50"
-        )}
-        style={{ paddingLeft: depth * 12 + 4 }}
-        // In select mode the row is a checkbox: everything it normally does -- opening a file,
-        // folding a folder -- would fight the gesture the mode is there for.
-        onClick={(e) => {
-          if (mark.selecting && markable) mark.toggle(path, isDir, e.shiftKey);
-          else if (isDir) onToggle(path);
-          else onOpenFile(path);
-        }}
-      >
-        {mark.selecting && markable && (
-          <span className={cn("shrink-0", marked ? "text-primary" : "text-muted-foreground")}>
-            {marked ? <SquareCheck className="size-4" /> : <Square className="size-4" />}
-          </span>
-        )}
-        {isDir ? (
-          isOpen ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <span className="w-4 shrink-0" />
-        )}
-        {isDrive ? (
-          <HardDrive className="size-4 shrink-0 text-muted-foreground" />
-        ) : isDir ? (
-          isOpen ? <FolderOpen className="size-4 shrink-0 text-sky-500" /> : <Folder className="size-4 shrink-0 text-sky-500" />
-        ) : (
-          <FileGlyph name={name} />
-        )}
+    <div
+      data-fspath={path}
+      {...navRowProps({ path, isDir, open: isOpen, current: active || selected, depth })}
+      draggable={draggable || undefined}
+      data-drag={draggable ? "1" : undefined}
+      className={cn(
+        "group flex items-center gap-1 rounded px-1 py-0.5 text-sm",
+        "cursor-pointer hover:bg-accent",
+        active && "bg-accent font-medium",
+        selected && "bg-accent/50",
+        marked && "bg-primary/10",
+        dropTarget && "bg-primary/15 ring-1 ring-inset ring-primary/50"
+      )}
+      style={{ paddingLeft: depth * 12 + 4 }}
+      onPointerEnter={() => setHot(true)}
+      onPointerLeave={() => setHot(false)}
+      // In select mode the row is a checkbox: everything it normally does -- opening a file,
+      // folding a folder -- would fight the gesture the mode is there for.
+      onClick={(e) => {
+        if (selecting && markable) on.mark(path, isDir, e.shiftKey);
+        else if (isDir) on.toggle(path);
+        else on.openFile(path);
+      }}
+    >
+      {selecting && markable && (
+        <span className={cn("shrink-0", marked ? "text-primary" : "text-muted-foreground")}>
+          {marked ? <SquareCheck className="size-4" /> : <Square className="size-4" />}
+        </span>
+      )}
+      {isDir ? (
+        isOpen ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      ) : (
+        <span className="w-4 shrink-0" />
+      )}
+      {isDrive ? (
+        <HardDrive className="size-4 shrink-0 text-muted-foreground" />
+      ) : isDir ? (
+        isOpen ? <FolderOpen className="size-4 shrink-0 text-sky-500" /> : <Folder className="size-4 shrink-0 text-sky-500" />
+      ) : (
+        <FileGlyph name={name} />
+      )}
 
-        {renaming === path ? (
-          <RenameField value={name} onSubmit={(n) => onRename(path, n)} onCancel={onCancelRename} />
-        ) : (
-          <span className={cn("min-w-0 flex-1 truncate", hidden && "text-muted-foreground")}>{name}</span>
-        )}
+      {renaming ? (
+        <RenameField value={name} onSubmit={(n) => on.rename(path, n)} onCancel={on.cancelRename} />
+      ) : (
+        <span className={cn("min-w-0 flex-1 truncate", hidden && "text-muted-foreground")}>{name}</span>
+      )}
 
-        {isBusy && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
-        {/* Copy the absolute path — available on drives, folders and files alike. */}
-        {renaming !== path && (
-          <CopyPathButton
-            path={path}
-            iconClassName="size-3"
-            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-          />
-        )}
-        {/* Start a Claude session in this folder — hover action on any directory row. */}
-        {isDir && renaming !== path && (
-          <button
-            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-            title="New session in this folder"
-            onClick={(e) => {
-              e.stopPropagation();
-              onNewSession(path);
-            }}
-          >
-            <Bot className="size-3.5" />
-          </button>
-        )}
-        {/* Open a shell in this folder — hover action on any directory row. */}
-        {isDir && renaming !== path && onOpenShell && (
-          <button
-            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-            title="Open a shell in this folder"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenShell?.(path);
-            }}
-          >
-            <TerminalSquare className="size-3.5" />
-          </button>
-        )}
-        {/* Start a selection with this row in it. Only before the mode is on: once it is, every row
-            carries its own box on the left and a second one here would be a second answer. */}
-        {markable && !mark.selecting && renaming !== path && (
-          <button
-            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-            title="Select"
-            onClick={(e) => {
-              e.stopPropagation();
-              mark.toggle(path, isDir, e.shiftKey);
-            }}
-          >
-            <Square className="size-3" />
-          </button>
-        )}
-        {/* Drives can't be renamed/deleted; everything else can, via hover actions. */}
-        {!isDrive && renaming !== path && (
-          <button
-            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground group-hover:block"
-            title="Rename"
-            onClick={(e) => {
-              e.stopPropagation();
-              onStartRename(path);
-            }}
-          >
-            <Pencil className="size-3" />
-          </button>
-        )}
-        {!isDrive && renaming !== path && (
-          <button
-            className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:bg-background hover:text-destructive group-hover:block"
-            title="Delete"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(path, isDir);
-            }}
-          >
-            <Trash2 className="size-3" />
-          </button>
-        )}
-      </div>
-
-      {isDir && isOpen && kids && (
-        <div>
-          {kids.length === 0 ? (
-            <div className="px-1 py-0.5 text-xs text-muted-foreground" style={{ paddingLeft: (depth + 1) * 12 + 20 }}>
-              empty
-            </div>
-          ) : (
-            kids.map((c) => (
-              <TreeNode
-                key={c.path}
-                path={c.path}
-                name={c.name}
-                isDir={c.isDir}
-                hidden={c.hidden}
-                depth={depth + 1}
-                openPath={openPath}
-                selectedDir={selectedDir}
-                expanded={expanded}
-                loading={loading}
-                children_={children_}
-                renaming={renaming}
-                onToggle={onToggle}
-                onOpenFile={onOpenFile}
-                onNewSession={onNewSession}
-                onOpenShell={onOpenShell}
-                onStartRename={onStartRename}
-                onRename={onRename}
-                onCancelRename={onCancelRename}
-                onDelete={onDelete}
-                mark={mark}
-                dropOver={dropOver}
-              />
-            ))
-          )}
-        </div>
+      {isBusy && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
+      {/* Copy the absolute path — available on drives, folders and files alike. */}
+      {actions && <CopyPathButton path={path} iconClassName="size-3" className={HOVER_ACTION} />}
+      {/* Start a Claude session in this folder — hover action on any directory row. */}
+      {actions && isDir && (
+        <button
+          className={HOVER_ACTION}
+          title="New session in this folder"
+          onClick={(e) => {
+            e.stopPropagation();
+            on.newSession(path);
+          }}
+        >
+          <Bot className="size-3.5" />
+        </button>
+      )}
+      {/* Open a shell in this folder — hover action on any directory row. */}
+      {actions && isDir && canShell && (
+        <button
+          className={HOVER_ACTION}
+          title="Open a shell in this folder"
+          onClick={(e) => {
+            e.stopPropagation();
+            on.openShell(path);
+          }}
+        >
+          <TerminalSquare className="size-3.5" />
+        </button>
+      )}
+      {/* Start a selection with this row in it. Only before the mode is on: once it is, every row
+          carries its own box on the left and a second one here would be a second answer. */}
+      {actions && markable && !selecting && (
+        <button
+          className={HOVER_ACTION}
+          title="Select"
+          onClick={(e) => {
+            e.stopPropagation();
+            on.mark(path, isDir, e.shiftKey);
+          }}
+        >
+          <Square className="size-3" />
+        </button>
+      )}
+      {/* Drives can't be renamed/deleted; everything else can, via hover actions. */}
+      {actions && !isDrive && (
+        <button
+          className={HOVER_ACTION}
+          title="Rename"
+          onClick={(e) => {
+            e.stopPropagation();
+            on.startRename(path);
+          }}
+        >
+          <Pencil className="size-3" />
+        </button>
+      )}
+      {actions && !isDrive && (
+        <button
+          className={cn(HOVER_ACTION, "hover:text-destructive")}
+          title="Delete"
+          onClick={(e) => {
+            e.stopPropagation();
+            on.remove(path, isDir);
+          }}
+        >
+          <Trash2 className="size-3" />
+        </button>
       )}
     </div>
   );
-}
+});
