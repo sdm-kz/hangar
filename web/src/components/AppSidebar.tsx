@@ -71,7 +71,7 @@ export function AppSidebar({
             variant="ghost"
             size="icon"
             className="size-7 text-muted-foreground"
-            title="New session"
+            title={`New session (${chord("alt", "N")})`}
             onClick={onNew}
           >
             <Plus className="size-4" />

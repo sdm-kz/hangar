@@ -835,7 +835,7 @@ export function App() {
   }, []);
 
   // Ctrl+Shift+F (⌘⇧F on Mac) opens the session search popup from anywhere, Ctrl+Shift+S (⌘⇧S)
-  // Settings, and ? Settings on its list of shortcuts (web/src/lib/shortcuts.ts — add a new one there). Capture phase with stopPropagation so they win even while the terminal has focus (the
+  // Settings, Alt+N a new session, and ? Settings on its list of shortcuts (web/src/lib/shortcuts.ts — add a new one there). Capture phase with stopPropagation so they win even while the terminal has focus (the
   // keystroke would otherwise go to the pty); shifted combos because plain Ctrl+letter chords belong to
   // the shell and the TUI — and a terminal can't encode Ctrl+Shift+F or S distinctly anyway, so
   // intercepting them costs nothing.
@@ -847,6 +847,17 @@ export function App() {
       if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target) && !document.querySelector('[role="dialog"]')) {
         e.preventDefault();
         setSettings({ tab: "shortcuts" });
+        setSidebarOpen(false);
+        return;
+      }
+      // Alt+N (⌥N) opens the New session dialog, like the sidebar's +. Not Ctrl+N or Ctrl+Shift+N, which a
+      // browser keeps for its own windows; by the key's position, so ⌥N on a Mac (a dead key there) and
+      // a non-Latin layout work too. Not over another dialog, which it would open on top of.
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === "KeyN") {
+        if (document.querySelector('[role="dialog"]')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openNew(); // only sets state, so the first render's copy does
         setSidebarOpen(false);
         return;
       }

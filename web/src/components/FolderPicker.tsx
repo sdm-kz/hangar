@@ -99,7 +99,8 @@ export function FolderPicker({
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActiveIndex((i) => Math.max(i - 1, -1));
-    } else if (e.key === "Enter") {
+    } else if (e.key === "Enter" && !(e.ctrlKey || e.metaKey)) {
+      // (Ctrl/⌘+Enter is left to the form around it: in the New session dialog it creates the session.)
       e.preventDefault();
       if (!open) {
         setOpen(true);

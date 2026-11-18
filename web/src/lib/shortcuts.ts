@@ -83,6 +83,14 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
         note: "From another tab, the first press brings Claude's tab back",
         keywords: ["toggle", "view", "mode"],
       },
+      {
+        id: "new-session",
+        keys: [["alt", "N"]],
+        does: "Start a new session",
+        note: "Opens the New session dialog",
+        keywords: ["create", "launch", "open"],
+      },
+      { id: "new-session-create", keys: [["mod", "Enter"]], does: "Create the session, in the New session dialog", note: "From any field, the start command too" },
       { id: "settings", keys: [["mod", "shift", "S"]], does: "Open Settings", keywords: ["preferences", "options"] },
       {
         id: "help",

@@ -7,6 +7,7 @@ import { folderName } from "@/lib/recentFolders";
 import { cn } from "@/lib/utils";
 import { ProjectGlyph } from "./ProjectGlyph";
 import { projectForDir, sortedByName } from "@/lib/projects";
+import { chord } from "@/lib/shortcuts";
 import { sameRecent, type RecentSession } from "@/lib/recentSessions";
 import { buildPrompt, templateFolderChoices, templateSections } from "@/lib/templates";
 import type { Project, SessionInfo, SessionTemplate } from "@/types";
@@ -311,6 +312,7 @@ export function NewSessionDialog({
   const picked = nodes.find((n) => n.id === node);
 
   async function create() {
+    if (busy) return; // Ctrl+Enter held down, or pressed again while the launch is on its way
     const fromTemplate = tab === "templates";
     if (picked?.unavailable) {
       setError(`${picked.name}: ${picked.unavailable}`);
@@ -428,6 +430,13 @@ export function NewSessionDialog({
             onSubmit={(e) => {
               e.preventDefault();
               create();
+            }}
+            // Ctrl/⌘+Enter creates from any field, the start command and the details box included, where
+            // a plain Enter is a new line.
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              if (!(tab === "templates" && !template)) create();
             }}
             className="flex min-h-0 flex-1 flex-col gap-4"
           >
@@ -623,7 +632,11 @@ export function NewSessionDialog({
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={busy || (tab === "templates" && !template)}>
+              <Button
+                type="submit"
+                disabled={busy || (tab === "templates" && !template)}
+                title={`Create (${chord("mod", "Enter")})`}
+              >
                 {busy && <Loader2 className="size-4 animate-spin" />}
                 Create
               </Button>
