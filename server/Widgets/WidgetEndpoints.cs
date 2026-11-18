@@ -356,6 +356,9 @@ public static class WidgetEndpoints
             rev = t.Rev,
             updatedAt = t.UpdatedAt,
             updatedBy = t.UpdatedBy,
+            // Where its files are on this machine, for the Source button: the browser opens them with
+            // the same file viewer it opens any server path with, behind the same login.
+            folder = t.Folder,
             shadowed,
             title = m?.Title ?? t.Name,
             description = m?.Description,

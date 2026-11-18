@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { KeyRound, Loader2, RotateCw, TriangleAlert } from "lucide-react";
+import { FileCode, KeyRound, Loader2, RotateCw, TriangleAlert } from "lucide-react";
 import type { WidgetInstance, WidgetTypeInfo } from "@/types";
 import type { WidgetFeedState } from "@/lib/sessionWidgets";
 import { widgetIcon } from "@/lib/widgetIcons";
@@ -24,10 +24,37 @@ export interface WidgetBodyProps {
   onToChat: (text: string) => void;
   /** Secrets were saved: the types are re-read (their missing list) and the feed run again. */
   onSecretsSaved: () => void;
+  /** Open the widget's files (its folder in the Files tab, widget.json in the viewer); absent where it can't be. */
+  onSource?: () => void;
+}
+
+/** The Source button: a widget's files, where any file of the machine is opened. */
+function SourceButton({ onSource, label }: { onSource: () => void; label?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onSource}
+      title="Open this widget's files: its folder in the Files tab, widget.json in the viewer"
+      className="flex shrink-0 items-center gap-1 rounded p-1 hover:bg-accent hover:text-foreground"
+    >
+      <FileCode className="size-3.5" />
+      {label && <span>Source</span>}
+    </button>
+  );
 }
 
 /** "Fetched 4m ago", "fetching…", or the error, for the line above the view. */
-function Status({ feed, type, onRefresh }: { feed: WidgetFeedState; type?: WidgetTypeInfo; onRefresh: () => void }) {
+function Status({
+  feed,
+  type,
+  onRefresh,
+  onSource,
+}: {
+  feed: WidgetFeedState;
+  type?: WidgetTypeInfo;
+  onRefresh: () => void;
+  onSource?: () => void;
+}) {
   const a = feed.answer;
   const error = a?.error ?? feed.failure;
   // Re-drawn every half minute, so "1m ago" moves on while nothing else does.
@@ -50,12 +77,14 @@ function Status({ feed, type, onRefresh }: { feed: WidgetFeedState; type?: Widge
           {type?.source === "claude" && !feed.loading && " · via Claude"}
         </span>
       )}
+      <span className="ml-auto" />
+      {onSource && <SourceButton onSource={onSource} />}
       <button
         type="button"
         onClick={onRefresh}
         disabled={feed.loading}
         title="Fetch again now"
-        className="ml-auto rounded p-1 hover:bg-accent hover:text-foreground disabled:opacity-50"
+        className="rounded p-1 hover:bg-accent hover:text-foreground disabled:opacity-50"
       >
         {feed.loading ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCw className="size-3.5" />}
       </button>
@@ -172,6 +201,7 @@ export function WidgetBody({
   onRefresh,
   onToChat,
   onSecretsSaved,
+  onSource,
   fit,
 }: WidgetBodyProps & { fit?: { max: number } }) {
   const [height, setHeight] = useState(120);
@@ -180,7 +210,18 @@ export function WidgetBody({
   const framed = !!type?.runnable && !(missing.length > 0 && type.source === "node");
   let inner: ReactNode;
   if (!type) inner = <Note>There is no widget “{instance.type}” for this session any more.</Note>;
-  else if (!type.runnable) inner = <Note>{type.problem ?? "This widget cannot run here."}</Note>;
+  else if (!type.runnable)
+    // A widget that cannot run is the one whose files most need looking at.
+    inner = (
+      <Note>
+        <p>{type.problem ?? "This widget cannot run here."}</p>
+        {onSource && (
+          <div className="mt-2 text-foreground">
+            <SourceButton onSource={onSource} label />
+          </div>
+        )}
+      </Note>
+    );
   else if (!framed)
     inner = (
       <SecretsForm sessionId={sessionId} type={type} missing={missing} inProject={inProject} onSaved={onSecretsSaved} />
@@ -202,7 +243,7 @@ export function WidgetBody({
 
   return (
     <div className={cn("flex min-h-0 min-w-0 flex-col", !fit && "flex-1")}>
-      {framed && <Status feed={feed} type={type} onRefresh={() => void onRefresh()} />}
+      {framed && <Status feed={feed} type={type} onRefresh={() => void onRefresh()} onSource={onSource} />}
       {/* In a popover the frame is as tall as its content asks, up to the cap; in a tab it fills. */}
       <div
         className={cn("relative min-h-0", !fit && "flex-1", fit && framed && "overflow-hidden")}

@@ -1982,6 +1982,7 @@ export function App() {
                   onTerminalRename={(id, name) => mesh.updateSession(activeNode, id, { name })}
                   onTerminalColor={(id, color) => mesh.updateSession(activeNode, id, { color })}
                   onOpenServerFile={openSessionServerFile}
+                  onRevealFolder={(dir) => revealFolderInFiles(dir, activeNode)}
                   project={projectForDir(active.workingDirectory, remote.projects)}
                   onProjectsChange={(projects) => mesh.setProjects(activeNode, projects)}
                 />
@@ -2030,6 +2031,7 @@ export function App() {
                 onTerminalRename={onTerminalRename}
                 onTerminalColor={onTerminalColor}
                 onOpenServerFile={openSessionServerFile}
+                onRevealFolder={(dir) => revealFolderInFiles(dir)}
                 project={projectForDir(active.workingDirectory, projects)}
                 onProjectsChange={setProjects}
               />

@@ -927,6 +927,8 @@ export interface WidgetTypeInfo {
   rev: number;
   updatedAt: string;
   updatedBy?: string | null;
+  /** Its folder on the session's machine — what the Source button opens. */
+  folder?: string | null;
   /** A personal type hidden by the project's of the same name. */
   shadowed: boolean;
   title: string;

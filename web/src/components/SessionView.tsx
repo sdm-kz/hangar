@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { FileEntry, GitStatus, Project, SessionInfo, SessionLink, SessionPull, ShellInfo } from "@/types";
+import type {
+  FileEntry,
+  GitStatus,
+  Project,
+  SessionInfo,
+  SessionLink,
+  SessionPull,
+  ShellInfo,
+  WidgetInstance,
+  WidgetTypeInfo,
+} from "@/types";
 import { useConfirm } from "@/components/ui/confirm";
 import { patchUrlState, readUrlState, type TabName } from "@/lib/urlState";
 import {
@@ -313,6 +323,7 @@ export function SessionView({
   onTerminalRename,
   onTerminalColor,
   onOpenServerFile,
+  onRevealFolder,
   project = null,
   onProjectsChange,
 }: {
@@ -365,6 +376,8 @@ export function SessionView({
   // Open any file on the server in the app's own file viewer -- where a path clicked in the terminal
   // goes when it is outside this session's folder, which its Files panel can't show.
   onOpenServerFile?: (absolutePath: string) => void;
+  // Show a folder of the session's machine in the sidebar's Files tab — a widget's, for its Source button.
+  onRevealFolder?: (absolutePath: string) => void;
   // The project this session's folder belongs to: its saved SSH connections are offered when a remote
   // files tab is opened, and a new one can be saved there.
   project?: Project | null;
@@ -662,13 +675,25 @@ ${text}` : text });
     },
     [uiKey, update]
   );
+  // A widget's files: its folder shown in the Files tab, and widget.json opened in the file viewer —
+  // the viewer any server path opens in, so a widget is read (and edited) like any other file there.
+  const openWidgetSource = (folder: string) => {
+    setWidgetPop(null);
+    const sep = folder.includes("\\") ? "\\" : "/";
+    onRevealFolder?.(folder);
+    onOpenServerFile?.(`${folder.replace(/[\\/]+$/, "")}${sep}widget.json`);
+  };
   const widgetBody = (id: string) => {
     const w = widgets.instances.find((x) => x.id === id);
     if (!w) return null;
+    const type = widgetTypes.byName.get(w.type.toLowerCase());
+    return widgetBodyOf(w, type);
+  };
+  const widgetBodyOf = (w: WidgetInstance, type: WidgetTypeInfo | undefined) => {
     return {
       sessionId: session.id,
       instance: w,
-      type: widgetTypes.byName.get(w.type.toLowerCase()),
+      type,
       feed: widgetFeeds.state(w.id),
       inProject: !!project,
       onRefresh: () => widgetFeeds.refresh(w.id),
@@ -677,6 +702,7 @@ ${text}` : text });
         widgetTypes.reload();
         void widgetFeeds.refresh(w.id);
       },
+      onSource: type?.folder ? () => openWidgetSource(type.folder!) : undefined,
     };
   };
 
@@ -1856,6 +1882,16 @@ ${text}` : text });
                         As a tab
                       </button>
                     )}
+                    {body.onSource && (
+                      <button
+                        type="button"
+                        className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                        title="Open this widget's files: its folder in the Files tab, widget.json in the viewer"
+                        onClick={body.onSource}
+                      >
+                        Source
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -1868,7 +1904,8 @@ ${text}` : text });
                       <X className="size-3.5" />
                     </button>
                   </div>
-                  <WidgetBody {...body} fit={{ max }} />
+                  {/* Source is in the header above; the status line under it would only repeat it. */}
+                  <WidgetBody {...body} onSource={undefined} fit={{ max }} />
                 </>
               )}
             </WidgetPopover>
