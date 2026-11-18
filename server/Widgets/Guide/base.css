@@ -1,0 +1,54 @@
+/* Hangar widget base style — put in front of every widget view (WidgetGuide.Compose), before the
+   view's own styles, which override it. Colours only through Hangar's theme tokens (guide.md). */
+:root { color-scheme: light dark; }
+html, body { margin: 0; }
+body {
+  font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--foreground, #171717);
+  background: transparent;
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+}
+*, *::before, *::after { box-sizing: border-box; }
+
+/* hangar.markdown(text) */
+.hangar-md { line-height: 1.6; }
+.hangar-md > :first-child { margin-top: 0; }
+.hangar-md > :last-child { margin-bottom: 0; }
+.hangar-md p, .hangar-md ul, .hangar-md ol, .hangar-md pre, .hangar-md blockquote, .hangar-md table { margin: 0 0 0.75em; }
+.hangar-md h1, .hangar-md h2, .hangar-md h3, .hangar-md h4, .hangar-md h5, .hangar-md h6 {
+  margin: 1.1em 0 0.4em;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.hangar-md h1 { font-size: 1.4em; }
+.hangar-md h2 { font-size: 1.2em; padding-bottom: 0.2em; border-bottom: 1px solid var(--border); }
+.hangar-md h3 { font-size: 1.05em; }
+.hangar-md h4, .hangar-md h5, .hangar-md h6 { font-size: 1em; color: var(--muted-foreground); }
+.hangar-md ul, .hangar-md ol { padding-left: 1.5em; }
+.hangar-md li > ul, .hangar-md li > ol { margin: 0.2em 0; }
+.hangar-md li { margin: 0.15em 0; }
+.hangar-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  background: var(--muted);
+}
+.hangar-md pre {
+  padding: 0.6em 0.8em;
+  border-radius: 6px;
+  background: var(--muted);
+  overflow-x: auto;
+}
+.hangar-md pre code { padding: 0; background: none; font-size: 0.88em; white-space: pre; }
+.hangar-md blockquote {
+  padding: 0 0 0 0.8em;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+}
+.hangar-md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+.hangar-md a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.hangar-md table { border-collapse: collapse; display: block; overflow-x: auto; }
+.hangar-md th, .hangar-md td { border: 1px solid var(--border); padding: 0.3em 0.6em; text-align: left; }
+.hangar-md th { background: var(--muted); font-weight: 600; }

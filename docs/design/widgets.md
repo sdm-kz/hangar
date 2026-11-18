@@ -285,6 +285,7 @@ It talks to Hangar only through `postMessage`, wrapped in a small `hangar` objec
 | `hangar.action(name, args)` | run a declared action (§8); resolves with its result |
 | `hangar.openWidget(type, params, placement?)` | open another widget in this session — a list opening a ticket |
 | `hangar.toChat(text)` | put text in the session's message box, without sending it |
+| `hangar.markdown(text)` | Markdown rendered into elements (with `textContent` only, so safe for others' text), styled in the theme; links open through `openUrl` |
 | `hangar.openUrl(url)` | open a link in a new browser tab, on the user's click |
 | `hangar.resize(height)` | ask for a popover height that fits the content |
 | `hangar.theme` | the current theme's tokens as CSS variables, re-sent on change |

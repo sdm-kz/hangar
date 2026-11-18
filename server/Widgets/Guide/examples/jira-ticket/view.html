@@ -10,7 +10,6 @@
   .actions { display: flex; gap: 6px; margin-bottom: 12px; }
   button { font: inherit; font-size: 12px; color: var(--foreground); background: var(--secondary); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
   button:hover { background: var(--accent); }
-  .desc { white-space: pre-wrap; line-height: 1.55; }
   .loading, .note { color: var(--muted-foreground); }
   .error { color: var(--destructive); white-space: pre-wrap; margin-bottom: 8px; }
 </style>
@@ -56,9 +55,8 @@
       ].filter(Boolean)
     );
     $("open").hidden = !data.url;
-    // The description is Markdown; shown as text with its line breaks, which reads fine for a ticket.
-    $("desc").textContent = data.description || "No description.";
-    $("desc").classList.toggle("note", !data.description);
+    // The description is Markdown: hangar.markdown renders it safely, with links opening in a browser tab.
+    $("desc").replaceChildren(data.description ? hangar.markdown(data.description) : h("p", { className: "note", textContent: "No description." }));
   });
 </script>
 </body>

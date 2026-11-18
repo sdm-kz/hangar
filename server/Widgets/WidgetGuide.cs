@@ -49,15 +49,12 @@ public static class WidgetGuide
         return byName.Select(kv => (kv.Key, kv.Value)).ToList();
     }
 
-    /// <summary>The content-security policy a view runs under: inline script and style, data: images, and no network at all.</summary>
+    /// <summary>The content-security policy a view runs under: inline script and style, data: images, and no network request.</summary>
     public const string ViewPolicy =
         "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'";
 
-    private const string BaseStyle =
-        ":root{color-scheme:light dark}html,body{margin:0}" +
-        "body{font:13px/1.5 ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;" +
-        "color:var(--foreground,#171717);background:transparent;overflow-wrap:break-word;-webkit-font-smoothing:antialiased}" +
-        "*,*::before,*::after{box-sizing:border-box}";
+    // The page's base look and hangar.markdown's styles (Guide/base.css), before the view's own.
+    private static readonly Lazy<string> BaseStyle = new(() => Resource("base.css"));
 
     private static readonly Regex LeadingDoctype = new(@"^\s*<!doctype[^>]*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
@@ -73,7 +70,7 @@ public static class WidgetGuide
         return "<!doctype html>" +
                $"<meta http-equiv=\"Content-Security-Policy\" content=\"{ViewPolicy}\">" +
                "<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
-               $"<style>{BaseStyle}</style>" +
+               $"<style>{BaseStyle.Value}</style>" +
                $"<script>{Bridge.Value}</script>" +
                body;
     }

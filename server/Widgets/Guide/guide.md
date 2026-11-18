@@ -155,6 +155,7 @@ Hangar puts this in front of the view, so it is always there:
 | `hangar.onData(fn)` | `fn(data, { fetchedAt, error, params, loading })` now if there is data, and on every change. `data` is the last good data (kept while a refresh fails, with `error` beside it); `loading` is true while a fetch is running. |
 | `hangar.refresh()` | Fetch again now. Returns a promise. |
 | `hangar.toChat(text)` | Put text in the session's message box, without sending it. |
+| `hangar.markdown(text)` | Markdown rendered as an element, ready for `node.replaceChildren(…)`: headings, lists, code, quotes, tables, links (they open in a browser tab). Safe for text someone else wrote — use it for any description, comment or body that is Markdown, rather than showing the raw text. |
 | `hangar.openUrl(url)` | Open an http(s) link in a new browser tab. |
 | `hangar.resize(height)` | Ask for a popover height (popovers follow the content on their own). |
 | `hangar.theme` | `{ dark, "--background": …, … }`, the current theme. |
