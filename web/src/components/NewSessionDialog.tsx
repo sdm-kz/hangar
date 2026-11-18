@@ -557,6 +557,28 @@ export function NewSessionDialog({
                     name={name}
                     onName={setName}
                     idPrefix="new"
+                    afterModel={
+                      <ToggleCard
+                        checked={continueSession}
+                        onCheckedChange={setContinueSession}
+                        icon={<RotateCcw className="size-3.5" />}
+                        title="Continue previous conversation"
+                      >
+                        {resumeId ? (
+                          <>
+                            Resumes <em>this</em> session&apos;s own conversation (
+                            <code className="font-mono">--resume</code>), not just the folder&apos;s most
+                            recent one.
+                          </>
+                        ) : (
+                          <>
+                            Starts with <code className="font-mono">--continue</code> so Claude picks up the
+                            folder&apos;s most recent conversation instead of a blank one.
+                          </>
+                        )}{" "}
+                        The start command is skipped when continuing.
+                      </ToggleCard>
+                    }
                   >
                     <div className="space-y-2">
                       <Label htmlFor="command">Start command (optional)</Label>
@@ -568,27 +590,6 @@ export function NewSessionDialog({
                         className="min-h-20"
                       />
                     </div>
-
-                    <ToggleCard
-                      checked={continueSession}
-                      onCheckedChange={setContinueSession}
-                      icon={<RotateCcw className="size-3.5" />}
-                      title="Continue previous conversation"
-                    >
-                      {resumeId ? (
-                        <>
-                          Resumes <em>this</em> session&apos;s own conversation (
-                          <code className="font-mono">--resume</code>), not just the folder&apos;s most
-                          recent one.
-                        </>
-                      ) : (
-                        <>
-                          Starts with <code className="font-mono">--continue</code> so Claude picks up the
-                          folder&apos;s most recent conversation instead of a blank one.
-                        </>
-                      )}{" "}
-                      The start command is skipped when continuing.
-                    </ToggleCard>
                   </LaunchFields>
                 </>
               ) : (

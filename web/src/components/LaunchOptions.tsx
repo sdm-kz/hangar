@@ -112,9 +112,10 @@ export function ToggleCard({
  * The launch settings as a block of fields.
  *
  * `name`/`onName` are optional: a session's name is set where a session is being started, and left
- * out where the block is editing a template's defaults (a template names itself). `children` is
- * slotted between the name/model row and the toggles, which is where the New Session dialog puts its
- * start command and its "continue" checkbox.
+ * out where the block is editing a template's defaults (a template names itself). The name gets the
+ * full width, since it is the one field here that is typed into at length (a ticket key and its title).
+ * `children` is slotted between the name and the model, which is where the New Session dialog puts its
+ * start command; `afterModel` goes between the model and the toggles (its "continue" checkbox).
  */
 export function LaunchFields({
   value,
@@ -124,6 +125,7 @@ export function LaunchFields({
   namePlaceholder,
   idPrefix = "launch",
   children,
+  afterModel,
 }: {
   value: LaunchOptions;
   onChange: (patch: Partial<LaunchOptions>) => void;
@@ -133,40 +135,42 @@ export function LaunchFields({
   /** Distinguishes the labels' `for` targets when two of these are mounted at once (tabs). */
   idPrefix?: string;
   children?: ReactNode;
+  afterModel?: ReactNode;
 }) {
   const named = onName !== undefined;
   return (
     <>
-      <div className={named ? "grid grid-cols-2 gap-3" : "space-y-2"}>
-        {named && (
-          <div className="space-y-2">
-            <Label htmlFor={`${idPrefix}-name`}>Name (optional)</Label>
-            <Input
-              id={`${idPrefix}-name`}
-              value={name ?? ""}
-              placeholder={namePlaceholder ?? "Folder name"}
-              onChange={(e) => onName?.(e.target.value)}
-            />
-          </div>
-        )}
+      {named && (
         <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-model`}>Model</Label>
-          <select
-            id={`${idPrefix}-model`}
-            value={value.model}
-            onChange={(e) => onChange({ model: e.target.value })}
-            className={selectClass}
-          >
-            {MODELS.map((m) => (
-              <option key={m.value} value={m.value} className="bg-popover text-popover-foreground">
-                {m.label}
-              </option>
-            ))}
-          </select>
+          <Label htmlFor={`${idPrefix}-name`}>Name (optional)</Label>
+          <Input
+            id={`${idPrefix}-name`}
+            value={name ?? ""}
+            placeholder={namePlaceholder ?? "Folder name"}
+            onChange={(e) => onName?.(e.target.value)}
+          />
         </div>
-      </div>
+      )}
 
       {children}
+
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-model`}>Model</Label>
+        <select
+          id={`${idPrefix}-model`}
+          value={value.model}
+          onChange={(e) => onChange({ model: e.target.value })}
+          className={selectClass}
+        >
+          {MODELS.map((m) => (
+            <option key={m.value} value={m.value} className="bg-popover text-popover-foreground">
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {afterModel}
 
       <ToggleCard
         checked={value.remoteControl}
