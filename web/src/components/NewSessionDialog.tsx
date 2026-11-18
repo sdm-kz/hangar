@@ -554,6 +554,7 @@ export function NewSessionDialog({
                   onName={setTName}
                   launch={tLaunch}
                   onLaunch={(p) => setTLaunch((v) => ({ ...v, ...p }))}
+                  linksTo={tChosen && !tOwner && tDir.trim() ? tChosen : null}
                   showOptions={showOptions}
                   onToggleOptions={() => setShowOptions((v) => !v)}
                 />
@@ -823,6 +824,7 @@ function TemplatesTab({
   onName,
   launch,
   onLaunch,
+  linksTo,
   showOptions,
   onToggleOptions,
 }: {
@@ -843,6 +845,8 @@ function TemplatesTab({
   onName: (v: string) => void;
   launch: LaunchOptions;
   onLaunch: (patch: Partial<LaunchOptions>) => void;
+  /** The project launching will link the folder into, when it has none yet. */
+  linksTo: Project | null;
   showOptions: boolean;
   onToggleOptions: () => void;
 }) {
@@ -946,6 +950,14 @@ function TemplatesTab({
                 {dir ? folderName(dir) : "no folder yet"} · {launch.model || "default model"}
               </span>
             </button>
+            {/* Folded, the settings would hide that launching links the folder into a project; the
+                project field says so itself once they are open. */}
+            {!showOptions && linksTo && (
+              <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{folderName(dir.trim())}</span> isn&apos;t in a
+                project yet — starting here links it to {linksTo.name}.
+              </p>
+            )}
             {showOptions && (
               <div className="space-y-4 border-t p-3">
                 {placement}
