@@ -904,3 +904,73 @@ export interface PeerStatus {
   error: string | null;
   certificate: CertificateSeen | null;
 }
+
+/** A param a widget type takes, as the + menu's dialog asks for it (see docs/design/widgets.md §5.1). */
+export interface WidgetParamInfo {
+  name: string;
+  type: "string" | "integer" | "number" | "boolean";
+  label?: string | null;
+  required: boolean;
+  /** Where the value is read from in the session when none is given: its name, branch, folder. */
+  from: ("session" | "branch" | "folder")[];
+  pattern?: string | null;
+  default?: unknown;
+  options?: unknown[] | null;
+}
+
+export type WidgetPlacement = "tab" | "tab-popover" | "header";
+
+/** A widget type a session can open, as GET /api/sessions/{id}/widgets lists it. */
+export interface WidgetTypeInfo {
+  scope: "personal" | "project";
+  name: string;
+  rev: number;
+  updatedAt: string;
+  updatedBy?: string | null;
+  /** A personal type hidden by the project's of the same name. */
+  shadowed: boolean;
+  title: string;
+  description?: string | null;
+  icon?: string | null;
+  placements: WidgetPlacement[];
+  badge?: string | null;
+  popover?: { width?: number | null; height?: number | null } | null;
+  source?: "node" | "claude" | null;
+  refreshSeconds?: number | null;
+  params: WidgetParamInfo[];
+  /** Each secret the type needs, and where it is set: "project", "personal", or null when it isn't. */
+  secrets: Record<string, "project" | "personal" | null>;
+  missingSecrets: string[];
+  /** False when it cannot run here: its files have problems, or Node is missing. */
+  runnable: boolean;
+  problem?: string | null;
+}
+
+export interface WidgetTypesAnswer {
+  rev: number;
+  node: { available: boolean; version?: string | null; error?: string | null };
+  types: WidgetTypeInfo[];
+}
+
+/** An open widget, as the session's UI bag keeps it (lib/sessionWidgets.ts). */
+export interface WidgetInstance {
+  id: string;
+  type: string;
+  /** Only what was given: a param left out and read from the session stays linked to it. */
+  params: Record<string, unknown>;
+  placement: WidgetPlacement;
+}
+
+/** One answer of POST /api/sessions/{id}/widgets/{name}/data. */
+export interface WidgetDataAnswer {
+  rev: number;
+  title?: string;
+  params?: Record<string, unknown>;
+  data?: unknown;
+  fetchedAt?: string | null;
+  error?: string | null;
+  badge?: string | null;
+  missingSecrets?: string[];
+  needsParams?: boolean;
+  durationMs?: number | null;
+}

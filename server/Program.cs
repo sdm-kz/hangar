@@ -346,6 +346,13 @@ internal static class Program
         builder.Services.AddSingleton<SessionUiStore>();
         // Projects: named groupings of folders, shown above the folder groups in the sessions sidebar.
         builder.Services.AddSingleton<ProjectStore>();
+        // Widgets: small live views a session opens on anything — their types (personal and per
+        // project), the secrets their scripts use, the runner and its cache, and what their views
+        // report. See docs/design/widgets.md and Widgets/WidgetEndpoints.cs.
+        builder.Services.AddSingleton<Widgets.WidgetStore>();
+        builder.Services.AddSingleton<Widgets.WidgetSecrets>();
+        builder.Services.AddSingleton<Widgets.WidgetRunner>();
+        builder.Services.AddSingleton<Widgets.WidgetLog>();
         // Session templates: named launch presets (project, folder, prompt template) for the errands
         // that come back — the New Session dialog's Templates tab starts sessions from them.
         builder.Services.AddSingleton<TemplateStore>();
@@ -1390,6 +1397,9 @@ internal static class Program
         // This node, its peers, and /n/{id}/… — see Nodes/NodeEndpoints.cs.
         Nodes.NodeEndpoints.Map(app);
         Nodes.CarryEndpoints.Map(app);
+
+        // Widgets, for the browser and for a session writing them — see Widgets/WidgetEndpoints.cs.
+        Widgets.WidgetEndpoints.Map(app);
 
         // ---- Session templates (named launch presets: project, folder, prompt template) ------------
         // Same shape as the projects above — every mutation answers with the whole list, so a client

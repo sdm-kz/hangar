@@ -106,6 +106,7 @@ export function App() {
   // Revision of the server's shell set, pushed on the events hub. The open session watches it to
   // notice a shell opened or closed somewhere else — another browser, or the phone.
   const [shellsRev, setShellsRev] = useState(0);
+  const [widgetsRev, setWidgetsRev] = useState(0);
   // Same for the projects. They change under this browser without it asking — the server files a
   // child session into its host's project as it launches — and the list itself is too rarely touched
   // to be worth pushing in full, so the revision is the signal to re-read it.
@@ -582,6 +583,7 @@ export function App() {
             update?: UpdateStatus;
             shellsRev?: number;
             projectsRev?: number;
+            widgetsRev?: number;
             shells?: Record<string, ShellActivity>;
             notices?: SessionNotice[];
             node?: SelfNode;
@@ -614,6 +616,7 @@ export function App() {
           // SessionView). A server that predates shells sends none, which reads as "never changed".
           setShellsRev(msg.shellsRev ?? 0);
           setProjectsRev(msg.projectsRev ?? 0);
+          setWidgetsRev(msg.widgetsRev ?? 0);
           // Kept as the same object while nothing in it changes: every snapshot is a fresh parse, and
           // the marks it feeds sit on every sidebar row.
           const shells = msg.shells ?? {};
@@ -1960,6 +1963,7 @@ export function App() {
                   onTerminalShown={onPeerTerminalShown}
                   parent={activeParent}
                   shellsRev={remote.shellsRev}
+                  widgetsRev={remote.widgetsRev}
                   shellActivity={remote.shellActivity}
                   shellsSeen={peerShellsSeen}
                   onShellSeen={markPeerShellSeen}
@@ -2008,6 +2012,7 @@ export function App() {
                 onTerminalShown={onTerminalShown}
                 parent={activeParent}
                 shellsRev={shellsRev}
+                widgetsRev={widgetsRev}
                 revealShell={revealShell?.sessionId === active.id ? revealShell.focus : null}
                 onShellRevealed={clearRevealShell}
                 shellActivity={shellActivity}

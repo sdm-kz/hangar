@@ -548,6 +548,46 @@ public sealed class ProjectStore
     }
 
     /// <summary>
+    /// Record a widget type written into a project (see Widgets.WidgetStore, which owns the files):
+    /// added, or its entry replaced. Null when the project is missing or already holds as many as it may.
+    /// </summary>
+    public IReadOnlyList<Project>? SaveWidget(string projectId, ProjectWidget widget)
+    {
+        lock (_lock)
+        {
+            var i = IndexOf(projectId);
+            if (i < 0) return null;
+            var p = _projects[i];
+            var list = p.Widgets.ToList();
+            var at = list.FindIndex(w => string.Equals(w.Name, widget.Name, StringComparison.OrdinalIgnoreCase));
+            if (at >= 0) list[at] = widget;
+            else if (list.Count >= Hangar.Server.Widgets.WidgetStore.MaxPerScope) return null;
+            else list.Add(widget);
+            _projects[i] = p with { Widgets = list };
+            Save();
+            return Snapshot();
+        }
+    }
+
+    /// <summary>Forget a project's widget type. Null when the project is missing.</summary>
+    public IReadOnlyList<Project>? DeleteWidget(string projectId, string name)
+    {
+        lock (_lock)
+        {
+            var i = IndexOf(projectId);
+            if (i < 0) return null;
+            var p = _projects[i];
+            var kept = p.Widgets.Where(w => !string.Equals(w.Name, name, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (kept.Count != p.Widgets.Count)
+            {
+                _projects[i] = p with { Widgets = kept };
+                Save();
+            }
+            return Snapshot();
+        }
+    }
+
+    /// <summary>
     /// A connection as it may be stored: trimmed and bounded, with an auth method the server knows.
     /// Null when there is no host to connect to.
     /// </summary>
@@ -695,6 +735,11 @@ public sealed class ProjectStore
                         .Select(c => c!)
                         .DistinctBy(c => c.Id)
                         .Take(MaxConnectionsPerProject)
+                        .ToList(),
+                    Widgets = (x.Widgets ?? Array.Empty<ProjectWidget>())
+                        .Where(w => w is not null && Hangar.Server.Widgets.WidgetStore.IsValidName(w.Name))
+                        .DistinctBy(w => w.Name, StringComparer.OrdinalIgnoreCase)
+                        .Take(Hangar.Server.Widgets.WidgetStore.MaxPerScope)
                         .ToList(),
                 })
                 .ToList();

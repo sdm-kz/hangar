@@ -641,6 +641,67 @@ public sealed class SessionManager : IDisposable
         return MergeUi(id, patch) is null ? null : key;
     }
 
+    /// <summary>How many widget instances a session may have open: the cap the browser keeps (MAX_WIDGETS in lib/sessionWidgets.ts).</summary>
+    private const int MaxWidgetInstances = 16;
+
+    /// <summary>
+    /// Open a widget instance in a session (docs/design/widgets.md §8), exactly as the + menu's
+    /// widget dialog does: an entry in the saved UI bag's <c>widgets</c> list (lib/sessionWidgets.ts),
+    /// which every device picks up on the next list push. Only the params that were <em>given</em> are
+    /// stored — one read from the session stays linked to it. The same type with the same params in
+    /// the same placement is one instance: opening it again goes back to it, and a tab is shown.
+    ///
+    /// <para>Returns the instance's id, or null when there is no such session.</para>
+    /// </summary>
+    public string? OpenWidget(string id, string type, IReadOnlyDictionary<string, JsonElement> given, string placement)
+    {
+        if (GetUi(id) is not { } ui) return null;
+
+        var list = ui.State.TryGetValue("widgets", out var w) && w.ValueKind == JsonValueKind.Array
+            ? w.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).ToList()
+            : new List<JsonElement>();
+
+        static string? Str(JsonElement e, string name) =>
+            e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        // Params compared by content, whatever order they were written in.
+        static string Canon(JsonElement? p) => p is { ValueKind: JsonValueKind.Object } o
+            ? string.Join("&", o.EnumerateObject().OrderBy(x => x.Name, StringComparer.Ordinal).Select(x => $"{x.Name}={x.Value.GetRawText()}"))
+            : "";
+        var paramsJson = JsonSerializer.SerializeToElement(given);
+        var wanted = Canon(paramsJson);
+        var at = list.FindIndex(e =>
+            string.Equals(Str(e, "type"), type, StringComparison.OrdinalIgnoreCase)
+            && Str(e, "placement") == placement
+            && Canon(e.TryGetProperty("params", out var p) ? p : null) == wanted);
+
+        var instance = at >= 0 ? Str(list[at], "id")! : "w" + Guid.NewGuid().ToString("n")[..12];
+        if (at < 0)
+        {
+            list.Add(JsonSerializer.SerializeToElement(new Dictionary<string, object>
+            {
+                ["id"] = instance, ["type"] = type, ["params"] = paramsJson, ["placement"] = placement,
+            }));
+            if (list.Count > MaxWidgetInstances) list = list.Skip(list.Count - MaxWidgetInstances).ToList();
+        }
+
+        var patch = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+        {
+            ["widgets"] = JsonSerializer.SerializeToElement(list),
+            // The one to show, for a tab: what the browser reads to bring it forward when it lands.
+            ["widget"] = JsonSerializer.SerializeToElement(instance),
+            // When it was asked for: opening one already open changes nothing else, and this is what
+            // tells the browser to bring it forward again (lib/sessionWidgets.ts, `shownAt`).
+            ["widgetAt"] = JsonSerializer.SerializeToElement(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+        };
+        return MergeUi(id, patch) is null ? null : instance;
+    }
+
+    /// <summary>Whether a session has the widget instance <paramref name="instance"/> open.</summary>
+    public bool HasWidget(string id, string instance) =>
+        GetUi(id) is { } ui && ui.State.TryGetValue("widgets", out var w) && w.ValueKind == JsonValueKind.Array
+        && w.EnumerateArray().Any(e => e.ValueKind == JsonValueKind.Object
+            && e.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.String && i.GetString() == instance);
+
     /// <summary>
     /// Pin or unpin a session, keyed by its conversation so the pin survives a reopen (which mints a
     /// new session id) and reaches every browser through the session list. Returns false when there

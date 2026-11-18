@@ -11,7 +11,7 @@
 
 /** A tab, by reference: "claude", "files", or `<kind>:<id>` for the kinds there can be many of. */
 export type PaneRef = string;
-export type PaneKind = "claude" | "files" | "file" | "shell" | "link" | "pull" | "remote";
+export type PaneKind = "claude" | "files" | "file" | "shell" | "link" | "pull" | "remote" | "widget";
 
 export interface PaneGroup {
   type: "group";
@@ -53,6 +53,7 @@ export const shellRef = (id: string): PaneRef => `shell:${id}`;
 export const linkRef = (id: string): PaneRef => `link:${id}`;
 export const pullRef = (key: string): PaneRef => `pull:${key}`;
 export const remoteRef = (id: string): PaneRef => `remote:${id}`;
+export const widgetRef = (id: string): PaneRef => `widget:${id}`;
 
 export function paneKind(ref: PaneRef): PaneKind {
   if (ref === CLAUDE || ref === FILES) return ref as PaneKind;

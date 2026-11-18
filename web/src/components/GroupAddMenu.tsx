@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useDismissable } from "@/lib/useDismissable";
-import { FolderTree, GitPullRequest, Globe, Loader2, Plus, Server, TerminalSquare } from "lucide-react";
+import { Blocks, FolderTree, GitPullRequest, Globe, Loader2, Plus, Server, TerminalSquare } from "lucide-react";
 import { chord } from "@/lib/shortcuts";
 import { shellIcon, useShellOptions } from "./ShellTabStrip";
 
@@ -19,6 +19,7 @@ export function GroupAddMenu({
   onAddLink,
   onOpenPull,
   onAddRemote,
+  onAddWidget,
 }: {
   /** A shell is being launched. */
   busy: boolean;
@@ -34,6 +35,8 @@ export function GroupAddMenu({
   onOpenPull?: () => void;
   /** Open a remote files tab over SSH; absent when the session already has as many as it may. */
   onAddRemote?: () => void;
+  /** Open a widget (docs/design/widgets.md) — the dialog that lists the ones this session can open. */
+  onAddWidget?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -128,6 +131,12 @@ export function GroupAddMenu({
             <button role="menuitem" className={item} onClick={() => (close(), onAddRemote())}>
               <Server className="size-4 shrink-0 text-muted-foreground" />
               <span className="flex-1">Remote files (SSH)…</span>
+            </button>
+          )}
+          {onAddWidget && (
+            <button role="menuitem" className={item} onClick={() => (close(), onAddWidget())}>
+              <Blocks className="size-4 shrink-0 text-muted-foreground" />
+              <span className="flex-1">Widget…</span>
             </button>
           )}
         </div>

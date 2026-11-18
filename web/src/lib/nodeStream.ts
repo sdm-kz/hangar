@@ -22,6 +22,8 @@ export interface NodeSnapshot {
   drafts: Set<string>;
   activity: Record<string, ActivityDetail>;
   shellsRev: number;
+  /** Moves when any of its widget types is written: its open widgets reload (see lib/sessionWidgets.ts). */
+  widgetsRev: number;
   shellActivity: Record<string, ShellActivity> | null;
   /** What its sessions asked to tell you, for the last few minutes — see SessionNotice. */
   notices: SessionNotice[];
@@ -87,6 +89,7 @@ interface HubMessage {
   activity?: Record<string, ActivityDetail>;
   shellsRev?: number;
   projectsRev?: number;
+  widgetsRev?: number;
   shells?: Record<string, ShellActivity>;
   notices?: SessionNotice[];
   update?: unknown;
@@ -102,6 +105,7 @@ export const EMPTY_SNAPSHOT: NodeSnapshot = {
   drafts: new Set(),
   activity: {},
   shellsRev: 0,
+  widgetsRev: 0,
   shellActivity: null,
   notices: [],
   projects: [],
@@ -161,6 +165,7 @@ function parse(nodeId: string, msg: HubMessage, prev: NodeSnapshot | null): Node
     drafts: new Set(msg.drafts ?? []),
     activity: msg.activity ?? {},
     shellsRev: msg.shellsRev ?? 0,
+    widgetsRev: msg.widgetsRev ?? 0,
     shellActivity:
       prev?.shellActivity && JSON.stringify(prev.shellActivity) === JSON.stringify(shells) ? prev.shellActivity : shells,
     notices: validNotices(msg.notices),

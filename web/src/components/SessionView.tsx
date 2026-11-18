@@ -16,6 +16,9 @@ import { EXPLORER_GUARD, fileEntryFromPath, useFileTabs, type FileTabs } from "@
 import { linkTabLabel, MAX_LINKS, useSessionLinks } from "@/lib/sessionLinks";
 import { parsePullKey, pullKey, useSessionPulls } from "@/lib/sessionPulls";
 import { connectionTarget, MAX_REMOTES, remoteTabLabel, useSessionRemotes } from "@/lib/sessionRemotes";
+import { MAX_WIDGETS, sameInstance, useSessionWidgets, useWidgetFeeds, useWidgetTypes } from "@/lib/sessionWidgets";
+import { widgetIcon } from "@/lib/widgetIcons";
+import { loadChatDraft, saveChatDraft } from "@/lib/chatDraft";
 import { clearFileClip, getFileClip } from "@/lib/fileClipboard";
 import { useShells } from "@/lib/useShells";
 import {
@@ -38,6 +41,7 @@ import {
   revealRef,
   shellRef,
   singleLayout,
+  widgetRef,
   splitGroup,
   splitLayout,
   type PaneGroup,
@@ -69,6 +73,8 @@ import { RenameField } from "./RenameField";
 import { PaneGroups, type DropZone, type PaneTab } from "./PaneGroups";
 import { GroupAddMenu } from "./GroupAddMenu";
 import { LayoutMenu } from "./LayoutMenu";
+import { WidgetDialog } from "./WidgetDialog";
+import { WidgetBody, WidgetLabel, WidgetPopover } from "./WidgetPane";
 import { Button } from "@/components/ui/button";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import {
@@ -108,6 +114,7 @@ import {
   SquareArrowOutUpRight,
   TerminalSquare,
   Video,
+  X,
 } from "lucide-react";
 import { MobileSessionsProgress, ShowSidebarButton } from "@/components/ShowSidebarButton";
 import { writeToClipboard } from "@/lib/clipboard";
@@ -288,6 +295,7 @@ export function SessionView({
   onTerminalShown,
   parent,
   shellsRev,
+  widgetsRev = 0,
   revealShell,
   onShellRevealed,
   shellActivity,
@@ -324,6 +332,9 @@ export function SessionView({
   // The server's shell-set revision, pushed on the events hub. When it moves, this session re-reads
   // its own shell tabs — that is how a shell opened (or closed) on another device shows up here.
   shellsRev?: number;
+  // The node's widget-type revision, pushed on the events hub: when it moves, the widget types are
+  // read again and every open widget of a type just rewritten reloads (lib/sessionWidgets.ts).
+  widgetsRev?: number;
   // One of this session's shells to bring forward once its tab exists (picked in the Shells tab).
   revealShell?: ShellFocus | null;
   onShellRevealed?: () => void;
@@ -439,6 +450,22 @@ export function SessionView({
   const [remoteDialog, setRemoteDialog] = useState(false);
   const remoteTarget = useRef<string | null>(null);
 
+  // Widgets (docs/design/widgets.md): the instances open here live in the UI bag like the links; the
+  // types they are instances of come from the server, read again whenever one is written anywhere.
+  // A tab or a tab-strip button is a tab in the layout; a header widget is a chip above it.
+  const widgets = useSessionWidgets(uiKey);
+  const widgetTypes = useWidgetTypes(api, session.id, widgetsRev);
+  const [widgetDialog, setWidgetDialog] = useState(false);
+  const widgetTarget = useRef<string | null>(null);
+  // The widget whose popover is open, and what it hangs from (its tab-strip button or header chip).
+  const [widgetPop, setWidgetPop] = useState<{ id: string; anchor: HTMLElement } | null>(null);
+  const closeWidgetPop = useCallback(() => setWidgetPop(null), []);
+  // Its anchor gone (the tab closed, the chip's widget moved), the popover goes too — and is not left
+  // marked open on whatever takes the anchor's place.
+  useEffect(() => {
+    if (widgetPop && !widgetPop.anchor.isConnected) setWidgetPop(null);
+  });
+
   // ---- The pane's layout ------------------------------------------------------------------------
   // Every tab the session has, in the order a single group lists them: the two that always exist,
   // then the reviews, the files, the shells and the pages.
@@ -451,8 +478,9 @@ export function SessionView({
       ...shells.shells.map((s) => shellRef(s.id)),
       ...links.links.map((l) => linkRef(l.id)),
       ...remotes.remotes.map((r) => remoteRef(r.id)),
+      ...widgets.instances.filter((w) => w.placement !== "header").map((w) => widgetRef(w.id)),
     ],
-    [pulls.pulls, fileTabs.tabs, shells.shells, links.links, remotes.remotes]
+    [pulls.pulls, fileTabs.tabs, shells.shells, links.links, remotes.remotes, widgets.instances]
   );
 
   const { layout, update, current, seedTick, seeded } = useSessionLayout(uiKey, () =>
@@ -502,9 +530,10 @@ export function SessionView({
   // is shown there — or, asked for `beside`, in a new group split off that group's right edge. Anything
   // that appears without one (another device opened it) goes to the focused group, behind whatever it
   // is showing.
-  const pending = useRef<{ kind: PaneKind; group: string; beside?: boolean; at: number } | null>(null);
-  const expect = useCallback((kind: PaneKind, group: string, beside?: boolean) => {
-    pending.current = { kind, group, beside, at: Date.now() };
+  // `show` false places it there without showing it: a widget's tab-strip button is a tab that is never on show.
+  const pending = useRef<{ kind: PaneKind; group: string; beside?: boolean; show?: boolean; at: number } | null>(null);
+  const expect = useCallback((kind: PaneKind, group: string, beside?: boolean, show = true) => {
+    pending.current = { kind, group, beside, show, at: Date.now() };
   }, []);
   // A file just opened from the tree or the terminal, to be shown once its tab exists.
   // Stamped, so one whose open was cancelled at a save prompt cannot fire on a later, unrelated open.
@@ -516,6 +545,22 @@ export function SessionView({
   // The same, for a review: one that arrives already active was opened to be looked at.
   const activePullRef = useRef(pulls.activeKey);
   activePullRef.current = pulls.activeKey;
+  // And for a widget: the one last opened (from the dialog, or by the session through the self API).
+  const shownWidgetRef = useRef(widgets.shown);
+  shownWidgetRef.current = widgets.shown;
+  const widgetsRef = useRef(widgets.instances);
+  widgetsRef.current = widgets.instances;
+  // Asked for again (the self API opening one already open): bring its tab forward. A widget that is
+  // new is placed and shown by the reconcile above instead, when its tab first appears; the first value
+  // seen is the one the session was opened with, which asks for nothing.
+  const seenShownAt = useRef(widgets.shownAt);
+  useEffect(() => {
+    if (widgets.shownAt === seenShownAt.current) return;
+    seenShownAt.current = widgets.shownAt;
+    const w = widgets.instances.find((x) => x.id === widgets.shown);
+    if (w?.placement === "tab" && groupOf(current(), widgetRef(w.id))) update((l) => revealRef(l, widgetRef(w.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [widgets.shownAt]);
 
   // Keep the layout in step with the tabs: place what appeared, drop what went away.
   const presentKey = present.join("\n");
@@ -535,7 +580,7 @@ export function SessionView({
             // One on its way to a group of its own passes through this one unshown: shown here first,
             // it would leave this group on its neighbour (often Files) when it moved on, not on what
             // was showing before.
-            return { group: p.group, activate: !p.beside };
+            return { group: p.group, activate: !p.beside && p.show !== false };
           }
           if (paneKind(ref) === "file") {
             const group = fileTarget(cur);
@@ -550,6 +595,12 @@ export function SessionView({
             const focused = gs.find((g) => g.id === cur.active);
             const group = (showsPull(focused) ? focused : gs.find(showsPull))?.id ?? fileTarget(cur);
             return { group, activate: true };
+          }
+          // A widget tab opened to be looked at (the self API names it as the one shown): in the
+          // focused group, in front. A tab-strip button is never shown, only placed.
+          if (paneKind(ref) === "widget" && paneArg(ref) === shownWidgetRef.current) {
+            const w = widgetsRef.current.find((x) => x.id === paneArg(ref));
+            return { group: cur.active, activate: w?.placement === "tab" };
           }
           return { group: cur.active, activate: false };
         }
@@ -589,6 +640,45 @@ export function SessionView({
     });
   }, [visible]);
   const kept = (r: PaneRef) => visible.has(r) || everShown.has(r);
+
+  // Every open widget's data. A tab polls only while it is on screen; a tab-strip button and a header
+  // chip always show their badge, so they poll while this session is open.
+  const widgetFeeds = useWidgetFeeds(api, session.id, widgets.instances, widgetTypes.byName, (w) =>
+    w.placement === "tab" ? visible.has(widgetRef(w.id)) : true
+  );
+  // A widget's text for the message box: added to what is there, and the chat brought up to show it.
+  const widgetToChat = useCallback(
+    (text: string) => {
+      const draft = loadChatDraft(uiKey);
+      saveChatDraft(uiKey, { ...draft, text: draft.text.trim() ? `${draft.text.trimEnd()}
+
+${text}` : text });
+      setChatModeRef.current(true);
+      setWidgetPop(null);
+      update((l) => revealRef(l, CLAUDE));
+      requestAnimationFrame(() =>
+        claudePaneRef.current?.querySelector<HTMLTextAreaElement>("[data-chat-composer]")?.focus()
+      );
+    },
+    [uiKey, update]
+  );
+  const widgetBody = (id: string) => {
+    const w = widgets.instances.find((x) => x.id === id);
+    if (!w) return null;
+    return {
+      sessionId: session.id,
+      instance: w,
+      type: widgetTypes.byName.get(w.type.toLowerCase()),
+      feed: widgetFeeds.state(w.id),
+      inProject: !!project,
+      onRefresh: () => widgetFeeds.refresh(w.id),
+      onToChat: widgetToChat,
+      onSecretsSaved: () => {
+        widgetTypes.reload();
+        void widgetFeeds.refresh(w.id);
+      },
+    };
+  };
 
   // The explorer drops its own preview while a file is showing in another group beside it: the
   // files it opens go there, the way an IDE's explorer sits beside its editors.
@@ -751,6 +841,7 @@ export function SessionView({
       else if (kind === "shell") void shells.close(arg);
       else if (kind === "link") links.remove(arg);
       else if (kind === "pull") pulls.close(arg);
+      else if (kind === "widget") widgets.remove(arg);
       else if (kind === "remote") {
         // Closing the tab ends the connection: the server forgets it, password and all — and
         // anything copied in it, which nothing could paste any more.
@@ -761,7 +852,7 @@ export function SessionView({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [fileTabs.close, shells.close, links.remove, pulls.close, remotes.remove]
+    [fileTabs.close, shells.close, links.remove, pulls.close, remotes.remove, widgets.remove]
   );
 
   /** A tab dropped on a group: its middle to move there, an edge to split it off beside it. */
@@ -1200,6 +1291,25 @@ export function SessionView({
           closable: true,
         };
       }
+      case "widget": {
+        const w = widgets.instances.find((x) => x.id === arg);
+        if (!w) return null;
+        const type = widgetTypes.byName.get(w.type.toLowerCase());
+        const feed = widgetFeeds.state(w.id);
+        const Icon = widgetIcon(type?.icon);
+        const name = feed.answer?.title || type?.title || w.type;
+        return {
+          icon: <Icon className="size-4 shrink-0" />,
+          label: <WidgetLabel type={type} feed={feed} bare />,
+          title: [name, type?.description, w.placement === "tab-popover" ? "Click to open" : null].filter(Boolean).join(" — "),
+          closable: true,
+          // A tab-strip button opens its popover; it is never the tab on show.
+          onClick:
+            w.placement === "tab-popover"
+              ? (el) => setWidgetPop((cur) => (cur?.id === w.id ? null : { id: w.id, anchor: el }))
+              : undefined,
+        };
+      }
       case "pull": {
         const p = pulls.pulls.find((x) => pullKey(x) === arg);
         if (!p) return null;
@@ -1375,6 +1485,18 @@ export function SessionView({
           </div>
         );
       }
+      case "widget": {
+        // Kept once shown, like a page: a view keeps what it drew, and its frame is not reloaded on
+        // every switch. A tab-strip button's view lives in its popover, unless it ends up the only
+        // tab of a group, where it is shown here instead of an empty pane.
+        const body = widgetBody(arg);
+        if (!body || !kept(ref)) return null;
+        return (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <WidgetBody {...body} />
+          </div>
+        );
+      }
       case "pull": {
         // A review stays mounted once it has been opened, so coming back to it finds it loaded and
         // folded the way it was left rather than asking GitHub again.
@@ -1500,6 +1622,37 @@ export function SessionView({
             </div>
           </div>
 
+          {/* Header widgets: a chip each, its badge on it, opening the view in a popover. At every
+              width, unlike the cluster beside it — on a phone a chip is its icon and badge. */}
+          {widgets.instances.some((w) => w.placement === "header") && (
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {widgets.instances
+                .filter((w) => w.placement === "header")
+                .map((w) => {
+                  const type = widgetTypes.byName.get(w.type.toLowerCase());
+                  const feed = widgetFeeds.state(w.id);
+                  const open = widgetPop?.id === w.id;
+                  return (
+                    <button
+                      key={w.id}
+                      type="button"
+                      aria-expanded={open}
+                      title={feed.answer?.title || type?.title || w.type}
+                      onClick={(e) => {
+                        const el = e.currentTarget;
+                        setWidgetPop((cur) => (cur?.id === w.id ? null : { id: w.id, anchor: el }));
+                      }}
+                      className={cn(
+                        "flex h-7 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+                        open && "bg-accent text-foreground"
+                      )}
+                    >
+                      <WidgetLabel type={type} feed={feed} compact={!wide} />
+                    </button>
+                  );
+                })}
+            </div>
+          )}
           {/* Right side of the title row: info popup · RC badge · actions — desktop only; the phone
               gets the same set through the "⋯" menu below. No uptime: the right-hand cluster does not
               shrink, so every pixel it holds is taken off the branch and the folder opposite, and
@@ -1625,6 +1778,10 @@ export function SessionView({
                   linkTarget.current = groupId;
                   setLinkDialog({});
                 }}
+                onAddWidget={() => {
+                  widgetTarget.current = groupId;
+                  setWidgetDialog(true);
+                }}
                 onAddRemote={
                   remotes.remotes.length < MAX_REMOTES
                     ? () => {
@@ -1651,6 +1808,72 @@ export function SessionView({
           onClose={() => setLinkDialog(null)}
         />
       )}
+
+      {/* Open a widget in this session. */}
+      {widgetDialog && (
+        <WidgetDialog
+          answer={widgetTypes.answer}
+          failed={widgetTypes.failed}
+          full={widgets.instances.length >= MAX_WIDGETS}
+          onOpen={(w) => {
+            const existing = widgets.instances.find((x) => sameInstance(x, w));
+            if (w.placement !== "header" && !existing)
+              expect("widget", widgetTarget.current ?? current().active, false, w.placement === "tab");
+            const opened = widgets.open(w);
+            if (existing && w.placement === "tab") update((l) => revealRef(l, widgetRef(opened.id)));
+          }}
+          onClose={() => setWidgetDialog(false)}
+        />
+      )}
+
+      {/* A tab-strip button's or a header chip's widget, in a popover under it. */}
+      {widgetPop &&
+        (() => {
+          const body = widgetBody(widgetPop.id);
+          if (!body || !widgetPop.anchor.isConnected) return null;
+          const w = body.instance;
+          const canTab = !!body.type?.placements.includes("tab");
+          return (
+            <WidgetPopover anchor={widgetPop.anchor} width={body.type?.popover?.width} onClose={closeWidgetPop}>
+              {(max) => (
+                <>
+                  <div className="flex h-8 shrink-0 items-center gap-1.5 border-b px-2 text-sm">
+                    <span className="min-w-0 flex-1 truncate font-medium">{body.feed.answer?.title || body.type?.title || w.type}</span>
+                    {canTab && (
+                      <button
+                        type="button"
+                        className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                        title="Show it as a tab instead"
+                        onClick={() => {
+                          setWidgetPop(null);
+                          // A tab-strip button is in the layout already: it only has to be shown. A
+                          // header chip is not, so its tab is expected where focus is.
+                          if (w.placement === "header") expect("widget", current().active);
+                          widgets.update(w.id, { placement: "tab" });
+                          if (w.placement !== "header") update((l) => revealRef(l, widgetRef(w.id)));
+                        }}
+                      >
+                        As a tab
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                      title="Close this widget"
+                      onClick={() => {
+                        setWidgetPop(null);
+                        widgets.remove(w.id);
+                      }}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                  <WidgetBody {...body} fit={{ max }} />
+                </>
+              )}
+            </WidgetPopover>
+          );
+        })()}
 
       {/* Open a remote files tab over SSH. */}
       {remoteDialog && (

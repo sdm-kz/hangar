@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+<style>
+  body { padding: 16px; max-width: 760px; }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .pill { font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--muted-foreground); }
+  .pill.status { color: var(--foreground); background: var(--secondary); }
+  .actions { display: flex; gap: 6px; margin-bottom: 12px; }
+  button { font: inherit; font-size: 12px; color: var(--foreground); background: var(--secondary); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+  button:hover { background: var(--accent); }
+  .desc { white-space: pre-wrap; line-height: 1.55; }
+  .loading, .note { color: var(--muted-foreground); }
+  .error { color: var(--destructive); white-space: pre-wrap; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <div id="error" class="error" hidden></div>
+  <div id="loading" class="loading">Asking Jira…</div>
+  <div id="ticket" hidden>
+    <h1 id="title"></h1>
+    <div class="meta" id="meta"></div>
+    <div class="actions">
+      <button id="chat" title="Put the summary and description in the message box">To chat</button>
+      <button id="open">Open in Jira</button>
+    </div>
+    <div class="desc" id="desc"></div>
+  </div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  // Build elements from data with textContent, never by pasting strings into HTML.
+  const h = (tag, props, ...children) => {
+    const el = Object.assign(document.createElement(tag), props);
+    el.append(...children.filter((c) => c != null));
+    return el;
+  };
+  let ticket = null;
+
+  $("open").onclick = () => ticket?.url && hangar.openUrl(ticket.url);
+  $("chat").onclick = () => ticket && hangar.toChat(`${ticket.key}: ${ticket.summary}\n\n${ticket.description ?? ""}`);
+
+  hangar.onData((data, meta) => {
+    $("error").hidden = !meta.error;
+    $("error").textContent = meta.error || "";
+    $("loading").hidden = !meta.loading || !!data;
+    if (!data) return;
+    ticket = data;
+    $("ticket").hidden = false;
+    $("title").textContent = `${data.key} · ${data.summary}`;
+    $("meta").replaceChildren(
+      ...[
+        h("span", { className: "pill status", textContent: data.status }),
+        data.assignee && h("span", { className: "pill", textContent: data.assignee }),
+        data.priority && h("span", { className: "pill", textContent: data.priority }),
+      ].filter(Boolean)
+    );
+    $("open").hidden = !data.url;
+    // The description is Markdown; shown as text with its line breaks, which reads fine for a ticket.
+    $("desc").textContent = data.description || "No description.";
+    $("desc").classList.toggle("note", !data.description);
+  });
+</script>
+</body>
+</html>

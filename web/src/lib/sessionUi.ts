@@ -54,6 +54,13 @@ export interface SessionUi {
   // lives in the bag, which is what carries them to the user's other devices.
   links?: SessionLink[];
   link?: string; // id of the link tab filling the pane in the "link" view
+  // Widgets open in the session (lib/sessionWidgets.ts), and the one last opened to be looked at —
+  // written by the + menu's dialog and by POST /api/self/widget alike. Unchecked here: the hook vets
+  // each entry on the way in.
+  widgets?: unknown[];
+  widget?: string;
+  // When the self API last asked for `widget` to be shown (ms): moves even for one open already.
+  widgetAt?: number;
   // Remote files tabs (SSH): which connection each one is. The live connection is the server's,
   // held in memory; nothing secret is ever in here.
   remotes?: SessionRemote[];

@@ -1,0 +1,37 @@
+{
+  "contract": 1,
+  "name": "jira-ticket",
+  "title": "{key}",
+  "description": "One Jira ticket's content, through the claude.ai Jira connector.",
+  "icon": "ticket",
+  "params": {
+    "key": {
+      "type": "string",
+      "label": "Ticket",
+      "pattern": "[A-Z][A-Z0-9]+-\\d+",
+      "from": ["session", "branch"]
+    }
+  },
+  "placements": ["tab", "tab-popover", "header"],
+  "badge": "status",
+  "source": {
+    "kind": "claude",
+    "prompt": "Fetch Jira issue {key} with the Jira tools (find the cloudId with getAccessibleAtlassianResources first). Return its summary, status, assignee, priority, its description as Markdown, and its browse URL.",
+    "tools": ["mcp__claude_ai_Jira__getAccessibleAtlassianResources", "mcp__claude_ai_Jira__getJiraIssue"],
+    "schema": {
+      "type": "object",
+      "properties": {
+        "key": { "type": "string" },
+        "summary": { "type": "string" },
+        "status": { "type": "string" },
+        "assignee": { "type": "string" },
+        "priority": { "type": "string" },
+        "description": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "required": ["key", "summary", "status"]
+    },
+    "refresh": "manual"
+  },
+  "prompt": "Create a widget with a tab showing a Jira task's content: key from the session name or branch, summary, status, assignee, description, and a button to put it in the chat."
+}

@@ -47,6 +47,8 @@ import type {
   UpdateStatus,
   ClaudeHooksStatus,
   ClaudeCommandsStatus,
+  WidgetDataAnswer,
+  WidgetTypesAnswer,
 } from "@/types";
 import type { Recents, RecentSession } from "@/lib/recentSessions";
 import type { ChatImageRef } from "@/lib/chat";
@@ -326,6 +328,47 @@ function createApi(base: string) {
      */
     probeLink(url: string): Promise<LinkProbe> {
       return request(`/api/web/link-probe?url=${encodeURIComponent(url)}`);
+    },
+
+    // ---- Widgets (docs/design/widgets.md) --------------------------------------------------
+    /** The widget types a session can open: its project's, then the personal ones. */
+    sessionWidgets(id: string): Promise<WidgetTypesAnswer> {
+      return request(`/api/sessions/${id}/widgets`);
+    },
+    /** A type's view, composed for its frame (the policy and the bridge in front of it). */
+    widgetView(id: string, name: string): Promise<{ html: string | null; rev: number; scope: string; error?: string | null }> {
+      return request(`/api/sessions/${id}/widgets/${encodeURIComponent(name)}/view`);
+    },
+    /**
+     * An instance's data: "cached" answers at once with what there is, "ifStale" runs the source if
+     * the cache is older than the type's refresh, "force" runs it now.
+     */
+    widgetData(
+      id: string,
+      name: string,
+      body: { params: Record<string, unknown>; mode: "cached" | "ifStale" | "force"; instance?: string },
+      signal?: AbortSignal
+    ): Promise<WidgetDataAnswer> {
+      return request(`/api/sessions/${id}/widgets/${encodeURIComponent(name)}/data`, {
+        method: "POST",
+        body: JSON.stringify(body),
+        signal,
+      });
+    },
+    /** Save secrets a widget asked for, for you or for the session's project. Nothing is read back. */
+    setWidgetSecrets(
+      id: string,
+      values: Record<string, string>,
+      scope: "personal" | "project"
+    ): Promise<{ where: Record<string, string | null> }> {
+      return request(`/api/sessions/${id}/widgets/secrets`, { method: "POST", body: JSON.stringify({ values, scope }) });
+    },
+    /** Relay what an instance's view reported, for the session that wrote it to read back. */
+    widgetLog(
+      id: string,
+      body: { instance: string; rev: number; entries: { level: string; message: string; line?: number; column?: number }[] }
+    ): Promise<void> {
+      return request(`/api/sessions/${id}/widgets/log`, { method: "POST", body: JSON.stringify(body) });
     },
     /**
      * Pin/unpin a session. The server keys the pin by the session's conversation (so it outlives a

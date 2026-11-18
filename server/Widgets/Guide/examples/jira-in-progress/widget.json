@@ -1,0 +1,13 @@
+{
+  "contract": 1,
+  "name": "jira-in-progress",
+  "title": "In progress",
+  "description": "My Jira tickets in progress, from the Jira REST API, every 30 seconds.",
+  "icon": "list-checks",
+  "placements": ["tab-popover", "tab"],
+  "badge": "count",
+  "popover": { "width": 420 },
+  "secrets": ["JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"],
+  "source": { "kind": "node", "run": "fetch.mjs", "refresh": "30s" },
+  "prompt": "Create a widget to get my Jira tickets in progress, show them as a tab that opens a popup, refreshing every 30s, using a Jira API key."
+}

@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<style>
+  body { padding: 8px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+  li:hover { background: var(--accent); }
+  .key { font-weight: 600; white-space: nowrap; }
+  .summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status { font-size: 11px; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+  .note { color: var(--muted-foreground); padding: 6px 8px; font-size: 12px; }
+  .error { color: var(--destructive); padding: 6px 8px; white-space: pre-wrap; font-size: 12px; }
+</style>
+</head>
+<body>
+  <div id="error" class="error" hidden></div>
+  <ul id="list"></ul>
+  <div id="note" class="note"></div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  // Build elements from data with textContent, never by pasting strings into HTML.
+  const h = (tag, props, ...children) => {
+    const el = Object.assign(document.createElement(tag), props);
+    el.append(...children.filter((c) => c != null));
+    return el;
+  };
+
+  hangar.onData((data, meta) => {
+    $("error").hidden = !meta.error;
+    $("error").textContent = meta.error || "";
+    if (!data) return;
+    $("list").replaceChildren(
+      ...data.issues.map((i) =>
+        h("li", { title: `Open ${i.key} in Jira`, onclick: () => hangar.openUrl(i.url) },
+          h("span", { className: "key", textContent: i.key }),
+          h("span", { className: "summary", textContent: i.summary }),
+          h("span", { className: "status", textContent: i.status })))
+    );
+    $("note").textContent = data.count ? `Updated ${new Date(meta.fetchedAt).toLocaleTimeString()}` : "Nothing in progress.";
+  });
+</script>
+</body>
+</html>

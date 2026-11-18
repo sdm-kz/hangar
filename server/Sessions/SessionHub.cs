@@ -86,6 +86,7 @@ public sealed class SessionHub : BackgroundService
     private readonly Shells.ShellManager _shells;
     private readonly SessionNoticeStore _notices;
     private readonly ProjectStore _projects;
+    private readonly Widgets.WidgetStore _widgets;
     private readonly NodeMesh _mesh;
     private readonly NodeIdentityStore _identity;
     private readonly ILogger<SessionHub> _log;
@@ -106,8 +107,9 @@ public sealed class SessionHub : BackgroundService
 
     public SessionHub(SessionManager mgr, HookEventStore hooks, UpdateService updates,
         Shells.ShellManager shells, SessionNoticeStore notices, ProjectStore projects, NodeMesh mesh,
-        NodeIdentityStore identity, ILogger<SessionHub> log)
+        NodeIdentityStore identity, Widgets.WidgetStore widgets, ILogger<SessionHub> log)
     {
+        _widgets = widgets;
         _mgr = mgr;
         _hooks = hooks;
         _updates = updates;
@@ -250,6 +252,9 @@ public sealed class SessionHub : BackgroundService
                 // session joining its host's project — so a browser can no longer assume the list it
                 // holds is the one it last asked for.
                 projectsRev = _projects.Revision,
+                // And for the widget types: a browser that sees it move re-reads the session's types,
+                // and every open instance of one rewritten reloads its view.
+                widgetsRev = _widgets.Revision,
             },
             JsonOpts);
 

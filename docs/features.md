@@ -308,6 +308,24 @@ screenshot is this session as a chat):
   Files panel, or the other way round, or between two SSH tabs, or within one host (where a copy is
   a native `cp -a`). The selection bar and Ctrl+C / Ctrl+X / Ctrl+V in either tree do the same. A
   paste never overwrites — a name already taken gets " (1)", as an upload does.
+- **Widgets** — small live views of something outside the repo — the Jira ticket a session works
+  on, your tickets in progress, the last commits — opened from **Widget…** under the **+**, or by
+  Claude (`/hgr-open-tab jira-ticket key=PROJ-12`). One shows as a **tab**, as a **button in the tab
+  strip** that opens a popup, or as a **chip in the session's header** that does; the button and the
+  chip carry a badge (a count, a status, a branch) so the number is visible without opening it.
+
+  You don't write widgets; you ask for them. `/hgr-widget a widget that lists my Jira tickets in
+  progress, as a popup, every 30 seconds` has the session read the guide Hangar serves, write the
+  widget through the [widget API](api.md#widgets-apiselfwidgets), test it, open it and read what its
+  view reported — and every open copy reloads the moment it is rewritten. A widget's data comes from a
+  **Node script** (a REST API with a key, a CLI, the repo; Node 20 or later on the machine) or a
+  **headless Claude call** limited to the MCP tools it names, so a Jira connector you already have
+  needs no token. Its view runs in a sandboxed frame that can make no network request, in Hangar's
+  theme colours. Widgets are **personal** (every session on the machine) or belong to a **project**; a
+  param can follow the session, so a ticket key is read from the session's name or branch. A token
+  a script needs is asked for once, in a form Hangar draws, and kept encrypted on the machine — never
+  in the widget, never shown to its view. The design, and what is still to come (actions such as
+  logging time, repo-shared widgets), is in [docs/design/widgets.md](design/widgets.md).
 - **Nodes (other machines running Hangar)** — **Settings → Nodes**: this machine's name, colour and the address other nodes reach it at, the nodes it is
   paired with, and the nodes allowed to reach it. **Pair** takes the other node's address and
   password, once; the password is not kept — each side keeps a token the other minted instead (in

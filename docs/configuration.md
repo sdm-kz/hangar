@@ -51,6 +51,7 @@ The tray's first run takes the server's port from `Server:Urls` in the `appsetti
 | `Update:CheckHours`         | Hours between looks at the releases (at least 1) | `6` |
 | `Update:Prereleases`        | Offer prereleases (`v1.2.0-rc.1`) too | `false` |
 | `Update:ReleaseKey`         | Public key (PEM) a release's `SHA256SUMS.sig` must verify with; a fork's own, with `Update:Repo` | (built in) |
+| `Widgets:Node`              | The `node` that runs widgets' scripts (20 or later); empty = found on `PATH` ([Widgets](features.md)) | `""` |
 | `FileSystem:DefaultFolder`  | Folder the picker opens at when creating a session; empty = your user profile | `""` |
 | `Push:Subject`              | VAPID subject for Web Push (`mailto:` or `https:`); unset = `Server:PublicUrl` | (unset) |
 | `Ui:LightTheme`             | Colour theme a browser that hasn't picked one shows in light mode (a theme id, below) | `light` |

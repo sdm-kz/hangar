@@ -69,6 +69,11 @@
     <!-- The /hgr-* slash commands, which every start installs into ~/.claude/commands
          (Sessions/ClaudeCommandStore.cs). -->
     <EmbeddedResource Include="..\claude-commands\*.md" LogicalName="Hangar.Server.claude-commands.%(Filename)%(Extension)" />
+    <!-- The widget guide, its schema, the view bridge and the worked examples, served by GET /api/self/widgets/guide.
+         Folders kept in the name (Widgets/WidgetGuide.cs folds the separators), so example names may hold dashes. -->
+    <Content Remove="Widgets\Guide\**\*" />
+    <None Remove="Widgets\Guide\**\*" />
+    <EmbeddedResource Include="Widgets\Guide\**\*" LogicalName="Hangar.Server.widgets/%(RecursiveDir)%(Filename)%(Extension)" />
     <!-- The public half of the key the release workflow signs SHA256SUMS with: what a release install
          checks a newer release against before staging it (Update/GitHubReleaseSource.cs). A build without
          it doesn't look for releases. -->

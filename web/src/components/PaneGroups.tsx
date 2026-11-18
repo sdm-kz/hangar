@@ -29,6 +29,11 @@ export interface PaneTab {
   /** The Claude terminal and the Files explorer are always somewhere; everything else can go. */
   closable: boolean;
   onDoubleClick?: () => void;
+  /**
+   * A click that does something other than show the tab — a widget's tab-strip button opens its
+   * popover from it. The tab is never activated then; it is given the element to anchor to.
+   */
+  onClick?: (tab: HTMLElement) => void;
 }
 
 /** Where a dragged tab is dropped on a group: one of its edges (a new split) or its middle (a move). */
@@ -534,7 +539,7 @@ function GroupView({
                   const b = e.currentTarget.getBoundingClientRect();
                   setDropAt(e.clientX < b.left + b.width / 2 ? i : i + 1);
                 }}
-                onClick={() => onActivate(ref)}
+                onClick={(e) => (info.onClick ? info.onClick(e.currentTarget) : onActivate(ref))}
                 onDoubleClick={info.onDoubleClick}
                 onContextMenu={(e) => {
                   e.preventDefault();

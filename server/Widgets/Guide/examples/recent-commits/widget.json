@@ -1,0 +1,14 @@
+{
+  "contract": 1,
+  "name": "recent-commits",
+  "title": "Commits",
+  "description": "The last commits on the session's branch, refreshed every minute.",
+  "icon": "git-commit-horizontal",
+  "params": {
+    "count": { "type": "integer", "label": "How many", "minimum": 1, "maximum": 50, "default": 10 }
+  },
+  "placements": ["tab", "header"],
+  "badge": "branch",
+  "source": { "kind": "node", "run": "fetch.mjs", "refresh": "1m" },
+  "prompt": "Show the last commits on the session's branch: short hash, subject, author and age. The branch name in the header."
+}

@@ -54,7 +54,24 @@ public sealed record Project(
     /// projects.json written before this existed goes on loading.
     /// </summary>
     public IReadOnlyList<RemoteConnection> Connections { get; init; } = Array.Empty<RemoteConnection>();
+
+    /// <summary>
+    /// The widget types this project carries (docs/design/widgets.md): which exist and who last wrote
+    /// them. Their files are not in here — they live in the app-data folder under the project's id,
+    /// where the session writing them and a person diffing them can both get at them. Init-only like
+    /// Repos, so a projects.json written before this existed goes on loading.
+    /// </summary>
+    public IReadOnlyList<ProjectWidget> Widgets { get; init; } = Array.Empty<ProjectWidget>();
 }
+
+/// <summary>A widget type's entry in a project, or in the personal list: its name and bookkeeping.</summary>
+public sealed record ProjectWidget(
+    string Name,
+    /// <summary>Bumped on every write; a write naming an older one is refused (409).</summary>
+    int Rev,
+    DateTimeOffset UpdatedAt,
+    /// <summary>The name of the session that last wrote it, or null for one written by hand.</summary>
+    string? UpdatedBy);
 
 /// <summary>
 /// The parameters of an SSH connection — everything needed to reach a host except the secret.

@@ -302,3 +302,33 @@ included), the way removing a closed row does. Rules:
 Every close is logged (`SelfApi`) with the session that asked for it. Responses are `200` with what
 happened to each session, `400` when no id was given, and `404` when the caller is no longer a
 session.
+
+### Widgets: `/api/self/widgets`
+
+A session writes [widgets](features.md) — small live views shown as a tab, a tab-strip popup or a
+header chip — and opens them, with the same headers as the rest of this section. The format is not
+documented here on purpose: **`GET /api/self/widgets/guide`** serves it — the rules, the JSON Schema
+`widget.json` is checked against, the bridge a view talks through, complete working examples, and what
+this session can do (`environment`: Node's version, the scopes it may write, the default one) — so a
+caller always reads the contract of the Hangar that is running. `/hgr-widget` starts there. The
+design is [docs/design/widgets.md](design/widgets.md).
+
+| Call | Does |
+| --- | --- |
+| `GET /api/self/widgets/guide` | The guide, `manifestSchema`, `bridge`, `examples`, `environment` |
+| `GET /api/self/widgets` | Types this session can open: scope, params, placements, `rev`, missing secrets, problems |
+| `GET /api/self/widgets/{scope}/{name}` | One type's files and its `rev` |
+| `PUT /api/self/widgets/{scope}/{name}` | `{ "files": { … }, "rev": n }` — create (no `rev`) or replace every file |
+| `PATCH /api/self/widgets/{scope}/{name}` | The same body; only the files given change, a `null` deletes one |
+| `DELETE /api/self/widgets/{scope}/{name}` | Remove the type |
+| `POST /api/self/widgets/{scope}/{name}/test` | `{ "params": { … } }` — run the source as an instance would: data, or error and stderr |
+| `POST /api/self/widget` | `{ "type", "params", "placement" }` — open an instance in this session; answers its `id` |
+| `GET /api/self/widgets/instances/{id}/log` | What that instance's view threw or logged in a browser, and when it was last handed data |
+
+`scope` is `personal` (every session on this machine) or `project` (the project this session's folder
+is in; `409` when it is in none). A write is checked whole before anything is stored: `422` lists every
+problem at once, by file and JSON Pointer or line; `409` means the `rev` sent is not the current one.
+A successful write reloads every open copy of the type, on every device. Secrets a widget's script
+needs are entered by the user in Hangar's own form; no call here reads one back, and the test call
+masks any value a script prints (best effort: a script set on printing one can encode it).
+A forced refresh within 60 s of the last (5 s for a Node source) gets that one's data.

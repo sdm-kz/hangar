@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Hangar widget manifest (widget.json), contract 1",
+  "type": "object",
+  "required": ["contract", "name", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "contract": { "const": 1, "description": "The version of this format the widget is written against. Always 1." },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$",
+      "description": "The widget type's name: lowercase, digits and dashes. Must equal the name in the URL it is written to."
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "The tab's or button's label. {param} placeholders are filled from the instance's params, e.g. \"{key}\". Defaults to the name."
+    },
+    "description": { "type": "string", "maxLength": 500, "description": "One line saying what the widget shows, for the + menu." },
+    "icon": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "An icon name from the guide's list (ticket, clock, list-checks, git-pull-request, activity, …). Unknown names fall back to a generic icon."
+    },
+    "params": {
+      "type": "object",
+      "description": "The values an instance is opened with, by name. Each is substituted into the title, the Claude prompt, and handed to the Node script.",
+      "additionalProperties": { "$ref": "#/$defs/param" }
+    },
+    "placements": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "enum": ["tab", "tab-popover", "header"] },
+      "description": "Where an instance may be drawn; the first is the default. tab: a tab in the session's tab strip, the view filling the pane. tab-popover: a compact button in the tab strip that opens the view in a popover. header: a chip in the session's main header that opens the view in a popover."
+    },
+    "badge": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "A dot path into the data (\"count\", \"today.total\") whose value is shown as short text after the icon of a tab-popover or header instance."
+    },
+    "popover": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The popover's size, for the two popover placements. The view can also ask with hangar.resize(height).",
+      "properties": {
+        "width": { "type": "integer", "minimum": 200, "maximum": 800 },
+        "height": { "type": "integer", "minimum": 80, "maximum": 800 }
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+      "description": "Names of secrets a node source needs (JIRA_API_TOKEN). The user enters each one in Hangar once; the script gets them on stdin. Never put a secret's value in any file."
+    },
+    "source": { "$ref": "#/$defs/source" },
+    "prompt": {
+      "type": "string",
+      "maxLength": 8000,
+      "description": "The description the widget was written from, kept so it can be regenerated or amended. Update it when the widget changes."
+    }
+  },
+  "$defs": {
+    "param": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["string", "integer", "number", "boolean"] },
+        "label": { "type": "string", "maxLength": 60 },
+        "description": { "type": "string", "maxLength": 300 },
+        "pattern": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "A regex. A value given, or read from the session, is cut down to its first match: \"PROJ-123 login timeout\" with [A-Z][A-Z0-9]+-\\d+ becomes \"PROJ-123\"."
+        },
+        "enum": { "type": "array", "minItems": 1, "maxItems": 50 },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "default": { "description": "Used when no value is given and none is found in the session." },
+        "required": { "type": "boolean", "description": "Defaults to true unless the param has a default." },
+        "from": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["session", "branch", "folder"] },
+          "description": "Where to look in the session when no value is given, in order: its name, its git branch, its folder. A param filled this way stays linked: it is read again on every fetch."
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["node", "claude"],
+          "description": "node: run a Node script (fetch.mjs by default) that prints the data as JSON. claude: run a headless Claude prompt with an MCP tool allowlist and a JSON schema for the answer."
+        },
+        "run": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*\\.m?js$",
+          "description": "node: the script, relative to the widget's folder. Defaults to fetch.mjs."
+        },
+        "prompt": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "claude: the prompt. {param}, {session}, {branch}, {folder} and {today} are filled in."
+        },
+        "tools": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "pattern": "^mcp__[A-Za-z0-9_-]+$" },
+          "description": "claude: the MCP tools the run may call, by full name (mcp__claude_ai_Jira__getJiraIssue). No built-in tool is available."
+        },
+        "model": { "type": "string", "maxLength": 80, "pattern": "^[a-z0-9][a-z0-9.\\[\\]-]*$", "description": "claude: the model id or alias (claude-haiku-4-5-20251001, sonnet). Defaults to claude-haiku-4-5-20251001." },
+        "schema": {
+          "type": "object",
+          "description": "claude: the JSON Schema the answer must match; it arrives as the data. Keep it flat and small."
+        },
+        "refresh": {
+          "type": "string",
+          "pattern": "^(manual|[1-9][0-9]*(s|m|h))$",
+          "description": "\"manual\", or an interval such as \"30s\", \"5m\", \"1h\". At least 30s for node, 15m for claude. Refreshes run only while the instance is on screen."
+        },
+        "timeoutSeconds": { "type": "integer", "minimum": 5, "maximum": 180 }
+      }
+    }
+  }
+}

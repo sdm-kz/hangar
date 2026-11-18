@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+<style>
+  body { padding: 12px; }
+  .bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--muted-foreground); font-size: 12px; }
+  .bar .branch { color: var(--foreground); font-weight: 600; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; padding: 6px 4px; border-top: 1px solid var(--border); cursor: pointer; border-radius: 4px; }
+  li:first-child { border-top: 0; }
+  li:hover { background: var(--accent); }
+  .hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted-foreground); }
+  .subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { grid-column: 2; color: var(--muted-foreground); font-size: 12px; }
+  .error { color: var(--destructive); white-space: pre-wrap; }
+  .empty { color: var(--muted-foreground); }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span>On <span class="branch" id="branch">…</span></span>
+  </div>
+  <div id="error" class="error" hidden></div>
+  <ul id="list"></ul>
+<script>
+  const $ = (id) => document.getElementById(id);
+  // Build elements from data with textContent, never by pasting strings into HTML.
+  const h = (tag, props, ...children) => {
+    const el = Object.assign(document.createElement(tag), props);
+    el.append(...children.filter((c) => c != null));
+    return el;
+  };
+
+  hangar.onData((data, meta) => {
+    $("error").hidden = !meta.error;
+    $("error").textContent = meta.error || "";
+    if (!data) return;
+    $("branch").textContent = data.branch;
+    $("list").replaceChildren(
+      ...(data.commits.length
+        ? data.commits.map((c) =>
+            h("li", { title: "Click to put it in the message box", onclick: () => hangar.toChat(`${c.hash} ${c.subject}`) },
+              h("span", { className: "hash", textContent: c.hash }),
+              h("span", { className: "subject", textContent: c.subject }),
+              h("span", { className: "meta", textContent: `${c.author} · ${c.when}` })))
+        : [h("li", { className: "empty", textContent: "No commits yet." })])
+    );
+  });
+</script>
+</body>
+</html>
