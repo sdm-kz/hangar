@@ -313,6 +313,8 @@ screenshot is this session as a chat):
   Claude (`/hgr-open-tab jira-ticket key=PROJ-12`). One shows as a **tab**, as a **button in the tab
   strip** that opens a popup, or as a **chip in the session's header** that does; the button and the
   chip carry a badge (a count, a status, a branch) so the number is visible without opening it.
+  As a tab it has a file preview's box in the corner: zoom, kept for each widget, and the reading
+  width the text previews share.
 
   You don't write widgets; you ask for them. `/hgr-widget a widget that lists my Jira tickets in
   progress, as a popup, every 30 seconds` has the session read the guide Hangar serves, write the

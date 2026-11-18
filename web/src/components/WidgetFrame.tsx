@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useApi } from "@/lib/node";
 import type { WidgetFeedState } from "@/lib/sessionWidgets";
 import { cn } from "@/lib/utils";
+import { frameZoomStyle } from "./ZoomControls";
 
 // Hangar's colour tokens, handed to a view so it matches the theme around it (guide.md, "Colours").
 const THEME_TOKENS = [
@@ -53,6 +54,7 @@ export function WidgetFrame({
   onRefresh,
   onToChat,
   onHeight,
+  zoom = 1,
   className,
 }: {
   sessionId: string;
@@ -66,6 +68,8 @@ export function WidgetFrame({
   onToChat: (text: string) => void;
   /** The content's height, for a popover sized to fit it. */
   onHeight?: (px: number) => void;
+  /** The page zoom, as an HTML preview has it (see frameZoomStyle); the parent has to clip. */
+  zoom?: number;
   className?: string;
 }) {
   const api = useApi();
@@ -279,7 +283,7 @@ export function WidgetFrame({
       className={cn("block w-full border-0 bg-transparent", className)}
       // Transparent over the pane's background — as long as the frame and the document inside it agree
       // on light or dark, which the bridge sets from the same theme.
-      style={{ colorScheme: dark ? "dark" : "light" }}
+      style={{ colorScheme: dark ? "dark" : "light", ...frameZoomStyle(zoom) }}
     />
   );
 }

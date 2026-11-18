@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { WidgetFrame } from "./WidgetFrame";
+import { ZoomControls, usePersistentReadingWidth, usePersistentZoom } from "./ZoomControls";
 
 /** What a widget needs to be drawn anywhere: the instance, its type, its feed, and what it can do. */
 export interface WidgetBodyProps {
@@ -205,6 +206,10 @@ export function WidgetBody({
   fit,
 }: WidgetBodyProps & { fit?: { max: number } }) {
   const [height, setHeight] = useState(120);
+  // A tab gets the zoom and reading width a file preview has. Kept per widget type, since a ticket and
+  // a list of runs have different natural sizes; the reading width is the one every text preview shares.
+  const [zoom, setZoom] = usePersistentZoom(`widget:${instance.type}`);
+  const [readingWidth, setReadingWidth] = usePersistentReadingWidth("text");
   const missing = feed.answer?.missingSecrets?.length ? feed.answer.missingSecrets : type?.missingSecrets ?? [];
 
   const framed = !!type?.runnable && !(missing.length > 0 && type.source === "node");
@@ -237,6 +242,7 @@ export function WidgetBody({
         onRefresh={onRefresh}
         onToChat={onToChat}
         onHeight={fit ? setHeight : undefined}
+        zoom={fit ? 1 : zoom}
         className="h-full"
       />
     );
@@ -246,10 +252,26 @@ export function WidgetBody({
       {framed && <Status feed={feed} type={type} onRefresh={() => void onRefresh()} onSource={onSource} />}
       {/* In a popover the frame is as tall as its content asks, up to the cap; in a tab it fills. */}
       <div
-        className={cn("relative min-h-0", !fit && "flex-1", fit && framed && "overflow-hidden")}
+        className={cn("relative min-h-0", !fit && "flex-1", framed && "overflow-hidden")}
         style={fit && framed ? { height: Math.min(Math.max(height, 60), fit.max) } : undefined}
       >
-        {inner}
+        {framed && !fit ? (
+          <>
+            <ZoomControls
+              zoom={zoom}
+              onChange={setZoom}
+              width={readingWidth}
+              onWidthChange={setReadingWidth}
+              className="bottom-3 right-3"
+            />
+            {/* The cap is scaled with the zoom, so a line keeps its length at any level (READING_WIDTHS). */}
+            <div className="mx-auto h-full overflow-hidden" style={{ maxWidth: readingWidth ? readingWidth * zoom : undefined }}>
+              {inner}
+            </div>
+          </>
+        ) : (
+          inner
+        )}
       </div>
     </div>
   );
