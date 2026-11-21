@@ -84,6 +84,8 @@ const STICK_PX = 80;
 const REPLY_GAP_PX = 12;
 // How far down into the view a message of yours can still reach and count as gone up out of it.
 const PIN_PX = 4;
+// The least height of the line a message of yours is pinned in (its min-h below).
+const PIN_BAR_MIN_PX = 47;
 
 // What you asked: a message, or a command given something to do (a skill and its arguments). A bare
 // command (a /model, a /compact) or a shell line isn't a question the replies after it answer.
@@ -346,6 +348,21 @@ export function ChatView({
     else if (el && replyKey.current && Math.abs(el.scrollTop - followedTo.current) <= 1) follow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinned, follow]);
+  // What the browser scrolls to the top itself (a heading clicked in a reply, a #link to one) stops below the
+  // bar as well. With no bar yet, the room of its least height: scrolling there usually brings one in.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const bar = pinBarRef.current;
+    if (!el) return;
+    const pad = () => {
+      el.style.scrollPaddingTop = `${Math.max(bar?.offsetHeight ?? 0, PIN_BAR_MIN_PX)}px`;
+    };
+    pad();
+    if (!bar || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(pad);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [pinned]);
 
   const onScroll = () => {
     const el = scrollRef.current;
