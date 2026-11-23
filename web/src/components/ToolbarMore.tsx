@@ -43,15 +43,17 @@ export function ToolbarMore({
   const ref = useDismissable(open, useCallback(() => setOpen(false), []));
   const menuRef = useRef<HTMLDivElement>(null);
   // The menu hangs from the button's right edge; on a narrow sidebar that can put its left side off
-  // the window. Measured as it opens, before paint, and nudged right by however much it would be.
+  // the window. Measured as it opens, before paint, and nudged right by however much it would be --
+  // in the menu's own pixels, which the phone's drawer zooms (see App).
   const [shift, setShift] = useState(0);
   useLayoutEffect(() => {
     if (!open) {
       setShift(0);
       return;
     }
-    const left = menuRef.current?.getBoundingClientRect().left ?? 0;
-    if (left < 8) setShift(8 - left);
+    const menu = menuRef.current;
+    const left = menu?.getBoundingClientRect().left ?? 0;
+    if (left < 8) setShift((8 - left) / (menu?.currentCSSZoom || 1));
   }, [open]);
 
   // Focus goes into the menu as it opens, so the arrow keys work from the first press.

@@ -1849,64 +1849,71 @@ export function App() {
           <div className="fixed inset-0 z-40 md:hidden">
             <div className="absolute inset-0 bg-black/60" onClick={() => setSidebarOpen(false)} />
             {/* Fixed to the viewport, so outside #root's safe-area padding: pad it itself, or the
-                Home Screen app puts the sidebar's header under the status bar. */}
-            <aside className="absolute left-0 top-0 h-full w-72 border-r border-popover-border bg-card pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] shadow-xl">
-              <AppSidebar
-                tab={sidebarTab}
-                onTabChange={setSidebarTab}
-                onNew={() => {
-                  openNew();
-                  setSidebarOpen(false);
-                }}
-                onLogout={onLogout}
-                update={<UpdateButton status={update} onApplying={setInstalling} />}
-                sessionsProgress={<SessionsProgressMenu triggerClassName="px-1 py-0.5" />}
-                sessions={
-                  <SessionSidebar
-                    sessions={sessions}
-                    activityIds={activityIds}
-                    draftIds={draftIds}
-                    shellMarks={shellMarks}
-                    onMarkSeen={markSeen}
-                    activeId={homeActiveId}
-                    onSelect={(id) => {
-                      selectSession(id);
-                      setSidebarOpen(false);
-                    }}
-                    self={selfNode}
-                    peers={peerSidebars(() => setSidebarOpen(false))}
-                    onNewHere={() => {
-                      openNew();
-                      setSidebarOpen(false);
-                    }}
-                    reveal={revealSession}
-                    onNewInFolder={newSessionInFolder}
-                    onRevealFolder={revealFolderInFiles}
-                    onNewInProject={newSessionInProject}
-                    onStop={(id, withChildren) => void onStop(id, null, withChildren)}
-                    onRemove={(id, withChildren) => void onRemove(id, null, withChildren)}
-                    onClone={cloneSession}
-                    onFork={forkSession}
-                    onRestore={onRestore}
-                    onRename={onRename}
-                    onRemoveSessions={onRemoveSessions}
-                    recents={recents}
-                    onReuse={reuseRecent}
-                    onRemoveRecent={removeRecent}
-                    onReorderRecent={reorderRecents}
-                    onSearch={() => setSearching(true)}
-                    onSchedules={(target) => setScheduling({ target: target ?? null, node: null })}
-                    onCarry={onCarry}
-                    tab={listTab}
-                    onTabChange={setListTab}
-                    projects={projects}
-                    onProjectsChange={setProjects}
-                  />
-                }
-                files={filesPanel}
-                shells={shellsPanel}
-                shellsCount={allShells?.length}
-              />
+                Home Screen app puts the sidebar's header under the status bar.
+                Everything in it is drawn 15% larger than on the desktop column -- rows, headings, tabs,
+                buttons, the menus that open inside it -- since a finger is a blunter pointer than a
+                mouse, and one factor over the lot keeps it in proportion where resizing each control
+                would not. It is widened by the same factor, so the list keeps the room the desktop
+                column's 18rem gives it, but never past a strip of the page left to tap it away by. */}
+            <aside className="absolute left-0 top-0 h-full w-[min(calc(18rem*1.15),calc(100vw-2.75rem))] border-r border-popover-border bg-card pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] shadow-xl">
+              <div className="h-full [zoom:1.15]">
+                <AppSidebar
+                  tab={sidebarTab}
+                  onTabChange={setSidebarTab}
+                  onNew={() => {
+                    openNew();
+                    setSidebarOpen(false);
+                  }}
+                  onLogout={onLogout}
+                  update={<UpdateButton status={update} onApplying={setInstalling} />}
+                  sessionsProgress={<SessionsProgressMenu triggerClassName="px-1 py-0.5" />}
+                  sessions={
+                    <SessionSidebar
+                      sessions={sessions}
+                      activityIds={activityIds}
+                      draftIds={draftIds}
+                      shellMarks={shellMarks}
+                      onMarkSeen={markSeen}
+                      activeId={homeActiveId}
+                      onSelect={(id) => {
+                        selectSession(id);
+                        setSidebarOpen(false);
+                      }}
+                      self={selfNode}
+                      peers={peerSidebars(() => setSidebarOpen(false))}
+                      onNewHere={() => {
+                        openNew();
+                        setSidebarOpen(false);
+                      }}
+                      reveal={revealSession}
+                      onNewInFolder={newSessionInFolder}
+                      onRevealFolder={revealFolderInFiles}
+                      onNewInProject={newSessionInProject}
+                      onStop={(id, withChildren) => void onStop(id, null, withChildren)}
+                      onRemove={(id, withChildren) => void onRemove(id, null, withChildren)}
+                      onClone={cloneSession}
+                      onFork={forkSession}
+                      onRestore={onRestore}
+                      onRename={onRename}
+                      onRemoveSessions={onRemoveSessions}
+                      recents={recents}
+                      onReuse={reuseRecent}
+                      onRemoveRecent={removeRecent}
+                      onReorderRecent={reorderRecents}
+                      onSearch={() => setSearching(true)}
+                      onSchedules={(target) => setScheduling({ target: target ?? null, node: null })}
+                      onCarry={onCarry}
+                      tab={listTab}
+                      onTabChange={setListTab}
+                      projects={projects}
+                      onProjectsChange={setProjects}
+                    />
+                  }
+                  files={filesPanel}
+                  shells={shellsPanel}
+                  shellsCount={allShells?.length}
+                />
+              </div>
             </aside>
           </div>
         )}

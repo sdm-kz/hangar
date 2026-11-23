@@ -78,13 +78,16 @@ export function SessionsProgressMenu({ triggerClassName }: { triggerClassName?: 
   // already a way in: slid back by however much would run off the right edge, never past the left.
   const popupRef = useRef<HTMLDivElement>(null);
   const [shift, setShift] = useState(0);
-  // Measured once per opening, before paint, while the shift is still the 0 that closing left it at.
+  // Measured once per opening, before paint, while the shift is still the 0 that closing left it at;
+  // measured in the window's pixels and applied in the list's own, which the phone's drawer zooms.
   useLayoutEffect(() => {
     if (!open) return setShift(0);
-    const r = popupRef.current?.getBoundingClientRect();
-    if (!r) return;
+    const popup = popupRef.current;
+    const r = popup?.getBoundingClientRect();
+    if (!popup || !r) return;
     const margin = 8;
-    setShift(Math.max(margin - r.left, Math.min(0, window.innerWidth - margin - r.right)));
+    const px = Math.max(margin - r.left, Math.min(0, window.innerWidth - margin - r.right));
+    setShift(px / (popup.currentCSSZoom || 1));
   }, [open]);
 
   const rows =

@@ -490,6 +490,9 @@ function SubmenuHeader({
  *
  * Flipping upwards only happens when there is genuinely more room up there: a menu too tall for
  * either direction is better left pointing down and scrolling than flipped into even less space.
+ *
+ * The room is measured in the window's pixels but spent in the menu's own, which are larger in the
+ * phone's drawer (see its zoom in App), so it is divided back down by the zoom the row is drawn at.
  */
 function useMenuPlacement(minHeight = 160) {
   const [dropUp, setDropUp] = useState(false);
@@ -501,7 +504,7 @@ function useMenuPlacement(minHeight = 160) {
     const below = bounds.bottom - box.bottom;
     const up = below < wanted && above > below;
     setDropUp(up);
-    setMaxHeight(Math.max(minHeight, (up ? above : below) - 8));
+    setMaxHeight(Math.max(minHeight, ((up ? above : below) - 8) / (el.currentCSSZoom || 1)));
   };
   return { dropUp, maxHeight, place };
 }
