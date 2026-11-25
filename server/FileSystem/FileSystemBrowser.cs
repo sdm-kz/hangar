@@ -8,7 +8,9 @@ public sealed record BrowseResult(
     string? Current,
     string? Parent,
     IReadOnlyList<DirEntry> Directories,
-    IReadOnlyList<DirEntry> Drives);
+    IReadOnlyList<DirEntry> Drives,
+    bool Exists = true,
+    string? Existing = null);
 
 /// <summary>
 /// Read-only directory listing used by the folder-picker autocomplete in the UI.
@@ -33,7 +35,9 @@ public static class FileSystemBrowser
 
         var full = Path.GetFullPath(path.Trim());
         if (!Directory.Exists(full))
-            return new BrowseResult(full, null, Array.Empty<DirEntry>(), drives);
+            // Exists = false with the deepest folder that is there, so the picker can show which part of
+            // the typed path is new and offer to create it. Null when not even the drive is.
+            return new BrowseResult(full, null, Array.Empty<DirEntry>(), drives, Exists: false, Existing: DeepestExisting(full));
 
         var dirs = new List<DirEntry>();
         try
@@ -60,6 +64,17 @@ public static class FileSystemBrowser
 
         var parent = Directory.GetParent(full)?.FullName;
         return new BrowseResult(full, parent, dirs, drives);
+    }
+
+    private static string? DeepestExisting(string full)
+    {
+        try
+        {
+            for (var d = new DirectoryInfo(full).Parent; d is not null; d = d.Parent)
+                if (d.Exists) return d.FullName;
+        }
+        catch { /* unreadable or malformed: nothing to anchor on */ }
+        return null;
     }
 
     private static IReadOnlyList<DirEntry> GetDrives()

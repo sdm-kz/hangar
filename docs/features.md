@@ -215,7 +215,9 @@ screenshot is this session as a chat):
   permission prompt just sits there, and nothing answers it for you. Web Push already fires on "newly
   waiting on a prompt", so a 03:00 run that blocks wakes your phone.
 - **Folder picker** — autocomplete over the *server machine's* filesystem, with keyboard
-  navigation (↑/↓/Enter) and recently-used folders.
+  navigation (↑/↓/Enter) and recently-used folders. In **New session**, a typed path that isn't there
+  yet turns the field amber and shows which of its folders are new, with a button to create them;
+  pressing Create anyway asks first, then makes the folders and starts the session in them.
 - **Files tree** — the sidebar's **Files** tab: the whole disk of the machine picked above it, from
   its drives down. **Hidden files** (dotfiles, `AppData`, `.git`) are listed, dimmed, and the eye
   button in its toolbar leaves them out; Windows' protected system files stay out either way. The

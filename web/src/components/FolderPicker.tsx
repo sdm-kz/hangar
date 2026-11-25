@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BrowseResult } from "@/types";
+import { ApiError } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { sameFolder } from "@/lib/projects";
 import { folderName } from "@/lib/recentFolders";
-import { ArrowUp, Folder, HardDrive, Loader2 } from "lucide-react";
+import { ArrowUp, Folder, FolderPlus, HardDrive, Loader2 } from "lucide-react";
 import { useApi } from "@/lib/node";
 
 /**
@@ -15,13 +16,18 @@ import { useApi } from "@/lib/node";
  *
  * Keyboard (while focused): ↓/↑ move the highlight, Enter opens the highlighted folder
  * (or navigates to the typed path when nothing is highlighted), Esc closes.
+ *
+ * Given `check` (see {@link useMissingFolder}), a typed path that isn't there is marked: the field
+ * turns amber and a note under it shows which of its folders are new, with a button to create them.
  */
 export function FolderPicker({
   value,
   onChange,
+  check,
 }: {
   value: string;
   onChange: (path: string) => void;
+  check?: FolderCheck;
 }) {
   const api = useApi();
   const [open, setOpen] = useState(false);
@@ -126,7 +132,11 @@ export function FolderPicker({
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
           spellCheck={false}
-          className="font-mono text-xs"
+          aria-invalid={check?.missing ? true : undefined}
+          className={cn(
+            "font-mono text-xs",
+            check?.missing && "border-amber-500/70 focus-visible:ring-amber-500/50 dark:border-amber-400/60"
+          )}
         />
         <Button type="button" variant="outline" size="icon" onClick={() => setOpen((o) => !o)}>
           <Folder className="size-4" />
@@ -201,6 +211,168 @@ export function FolderPicker({
             </>
           )}
         </div>
+      )}
+
+      {/* After the dropdown, so the dropdown (absolute, placed where it would flow) opens over it. */}
+      {check?.missing && <MissingFolderNote check={check} />}
+    </div>
+  );
+}
+
+/** A typed folder that isn't there yet: the part of it that is, and the folders creating it would add. */
+export interface MissingFolder {
+  path: string;
+  /** The deepest folder of `path` that exists; null when not even its drive does, so it can't be made. */
+  existing: string | null;
+  /** The folders that don't, outermost first. */
+  parts: string[];
+}
+
+export interface FolderCheck {
+  /** The folder as typed, when it is missing; null when it's there, or not known yet. */
+  missing: MissingFolder | null;
+  /** Known to be there: the last answer was about exactly this path, and it was yes. */
+  exists: boolean;
+  creating: boolean;
+  /** Make the folder and every missing parent. Resolves to an error message, or null when it worked. */
+  create: () => Promise<string | null>;
+  /** Ask afresh rather than trusting the last (debounced) answer — before launching into the folder. */
+  verify: () => Promise<MissingFolder | null>;
+}
+
+// Only an absolute path is worth asking about: a relative one would be resolved against the service's
+// own working folder, which is nobody's idea of where "src" is.
+const ROOTED = /^([a-zA-Z]:[\\/]|[\\/])/;
+
+/** `path`'s folders below `existing`, or null when `path` is not under it (or is it). */
+function missingUnder(existing: string, path: string): MissingFolder | null {
+  const base = existing.replace(/[\\/]+$/, "");
+  if (path.slice(0, base.length).toLowerCase() !== base.toLowerCase()) return null;
+  const rest = path.slice(base.length);
+  if (!/^[\\/]/.test(rest)) return null; // "C:\Gitx" is not under "C:\Git"
+  const parts = rest.split(/[\\/]+/).filter(Boolean);
+  return parts.length ? { path, existing, parts } : null;
+}
+
+function missingFrom(r: BrowseResult): MissingFolder | null {
+  if (r.exists !== false || !r.current) return null; // there, or an older peer that doesn't say
+  if (!r.existing) return { path: r.current, existing: null, parts: r.current.split(/[\\/]+/).filter(Boolean) };
+  return missingUnder(r.existing, r.current);
+}
+
+/**
+ * Whether the folder typed into a {@link FolderPicker} is there, on the machine the picker browses. Asked
+ * a moment after typing stops; in between, the last answer is carried over to what has been typed since,
+ * so typing a new folder's name grows the note instead of blinking it out on every key.
+ */
+export function useMissingFolder(value: string): FolderCheck {
+  const api = useApi();
+  const path = value.trim();
+  const [found, setFound] = useState<{ for: string; missing: MissingFolder | null } | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const verify = useCallback(
+    async () => (ROOTED.test(path) ? missingFrom(await api.browse(path)) : null),
+    [api, path]
+  );
+
+  useEffect(() => {
+    if (!ROOTED.test(path)) {
+      setFound(null);
+      return;
+    }
+    let gone = false;
+    const t = setTimeout(() => {
+      verify()
+        .then((missing) => !gone && setFound({ for: path, missing }))
+        .catch(() => !gone && setFound(null));
+    }, 300);
+    return () => {
+      gone = true;
+      clearTimeout(t);
+    };
+  }, [path, verify]);
+
+  const missing = useMemo(() => {
+    const m = found?.missing;
+    if (!m || !ROOTED.test(path)) return null;
+    if (found.for === path) return m;
+    return m.existing ? missingUnder(m.existing, path) : null;
+  }, [found, path]);
+
+  const create = useCallback(async () => {
+    setCreating(true);
+    try {
+      await api.fsMkdir(path);
+      setFound({ for: path, missing: null });
+      return null;
+    } catch (err) {
+      return err instanceof ApiError ? err.message : "Couldn't create the folder";
+    } finally {
+      setCreating(false);
+    }
+  }, [api, path]);
+
+  const exists = found?.for === path && !found.missing;
+  return { missing, exists, creating, create, verify };
+}
+
+/** The path with its existing part dimmed and each new folder marked, as one wrapping line. */
+export function MissingPath({ folder }: { folder: MissingFolder }) {
+  const sep = (folder.existing ?? folder.path).includes("\\") ? "\\" : "/";
+  const base = folder.existing?.replace(/[\\/]+$/, "");
+  return (
+    <span className="font-mono break-all">
+      {base !== undefined && (
+        <span className="text-muted-foreground">
+          {base}
+          {sep}
+        </span>
+      )}
+      {folder.parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 && <span className="text-amber-600/70 dark:text-amber-400/70">{sep}</span>}
+          {/* Whole on a line where it fits — a new folder's name split "n|ew-project" reads as two. */}
+          <mark className="rounded-sm bg-amber-500/15 px-0.5 [overflow-wrap:anywhere] [word-break:normal] text-amber-800 underline decoration-amber-500/60 decoration-dashed underline-offset-2 dark:text-amber-300">
+            {p}
+          </mark>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function MissingFolderNote({ check }: { check: FolderCheck }) {
+  const folder = check.missing!;
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setError(null), [folder.path]);
+  const n = folder.parts.length;
+  return (
+    <div className="mt-1.5 flex items-start gap-2 rounded-md border border-dashed border-amber-500/50 bg-amber-500/[0.06] px-2.5 py-2 text-xs">
+      <FolderPlus className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <MissingPath folder={folder} />
+        <div className="text-muted-foreground">
+          {!folder.existing
+            ? "Not even its drive is there, so it can't be created."
+            : n === 1
+              ? "This folder doesn't exist yet."
+              : `These ${n} folders don't exist yet.`}
+        </div>
+        {error && <div className="text-destructive">{error}</div>}
+      </div>
+      {folder.existing && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 shrink-0 gap-1 px-2"
+          disabled={check.creating}
+          onClick={async () => setError(await check.create())}
+        >
+          {check.creating ? <Loader2 className="size-3.5 animate-spin" /> : <FolderPlus className="size-3.5" />}
+          {n === 1 ? "Create" : `Create ${n}`}
+        </Button>
       )}
     </div>
   );

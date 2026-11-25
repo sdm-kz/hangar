@@ -23,7 +23,14 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { FolderPicker, FolderChips } from "./FolderPicker";
+import {
+  FolderPicker,
+  FolderChips,
+  MissingPath,
+  useMissingFolder,
+  type FolderCheck,
+  type MissingFolder,
+} from "./FolderPicker";
 import {
   DEFAULT_LAUNCH,
   LaunchFields,
@@ -35,6 +42,7 @@ import { TemplateDialog } from "./TemplateDialog";
 import {
   ChevronDown,
   ChevronRight,
+  FolderPlus,
   History,
   Loader2,
   MessageSquare,
@@ -129,6 +137,17 @@ export function NewSessionDialog({
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Whether each tab's folder is there. A missing one is marked under its field; launching into it
+  // first asks (`mkdirFor`, the folder the question is about) and then creates it.
+  const dirCheck = useMissingFolder(dir);
+  const tDirCheck = useMissingFolder(tDir);
+  const [mkdirFor, setMkdirFor] = useState<{ folder: string; missing: MissingFolder } | null>(null);
+  const folderNow = (tab === "templates" ? tDir : dir).trim();
+  const checkNow = tab === "templates" ? tDirCheck : dirCheck;
+  // Asking about the folder in the field: typing another, switching tabs, or creating it with the
+  // note's own button drops the question.
+  const asking = (folder: string, check: FolderCheck) => mkdirFor?.folder === folder && !check.exists;
+  const askMkdir = asking(folderNow, checkNow) ? mkdirFor!.missing : null;
   const [recents, setRecents] = useState<string[]>([]);
   const removeRecent = async (p: string) => {
     const r = await api.removeRecentFolder(p).catch(() => null);
@@ -230,6 +249,7 @@ export function NewSessionDialog({
     }
     const project = projectNow.current;
     setError(null);
+    setMkdirFor(null);
     setStored(null); // until the refresh above lands
     // Reusing a preset is a "New" tab errand by definition — it *is* a filled-in form.
     setTab("new");
@@ -321,10 +341,28 @@ export function NewSessionDialog({
     const opts = fromTemplate ? tLaunch : launch;
     const label = (fromTemplate ? tName : name).trim();
     const prompt = fromTemplate ? buildPrompt(template!.prompt, input) : command.trim();
+    const check = fromTemplate ? tDirCheck : dirCheck;
 
     setBusy(true);
     setError(null);
     try {
+      if (!asking(folder, check)) {
+        // Asked afresh: the note under the field may be a keystroke behind. A folder that isn't there is
+        // a question, not a launch — the second Create (the button now says what it does) answers it.
+        const missing = await check.verify().catch(() => null);
+        if (missing) {
+          setMkdirFor({ folder, missing });
+          if (fromTemplate) setShowOptions(true); // the field and its note live in the folded options
+          return;
+        }
+      } else {
+        const failed = await check.create();
+        if (failed) {
+          setError(failed);
+          return;
+        }
+      }
+      setMkdirFor(null);
       const s = await api.createSession({
         workingDirectory: folder,
         name: label || null,
@@ -423,6 +461,12 @@ export function NewSessionDialog({
             // Ctrl/⌘+Enter creates from any field, the start command and the details box included, where
             // a plain Enter is a new line.
             onKeyDown={(e) => {
+              // A held key repeats, and the repeat would answer the "create this folder?" that the first
+              // press just asked. Only where Enter submits: in a textarea a repeat is more new lines.
+              if (e.key === "Enter" && e.repeat && (e.ctrlKey || e.metaKey || e.target instanceof HTMLInputElement)) {
+                e.preventDefault();
+                return;
+              }
               if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
               e.preventDefault();
               if (!(tab === "templates" && !template)) create();
@@ -447,7 +491,7 @@ export function NewSessionDialog({
 
                   <div className="space-y-2">
                     <Label>Working folder</Label>
-                    <FolderPicker value={dir} onChange={setDir} />
+                    <FolderPicker value={dir} onChange={setDir} check={dirCheck} />
 
                     {chosen && (
                       <FolderChips
@@ -532,7 +576,7 @@ export function NewSessionDialog({
                       />
                       <div className="space-y-2">
                         <Label>Working folder</Label>
-                        <FolderPicker value={tDir} onChange={setTDir} />
+                        <FolderPicker value={tDir} onChange={setTDir} check={tDirCheck} />
                         {tChosen && (
                           <FolderChips
                             folders={templateFolderChoices({ workingDirectory: tDir }, tChosen)}
@@ -563,6 +607,34 @@ export function NewSessionDialog({
               {error && <p className="text-sm text-destructive">{error}</p>}
             </div>
 
+            {/* Outside the scroller, beside the button that answers it: at the scroller's end it would sit
+                below the fold, and the button would change its label for no visible reason. */}
+            {askMkdir && (
+              <div className="flex shrink-0 items-start gap-2.5 rounded-md border border-amber-500/50 bg-amber-500/[0.08] p-3 text-sm">
+                <FolderPlus className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="font-medium">
+                    {askMkdir.parts.length > 1
+                      ? `Create these ${askMkdir.parts.length} folders and start the session there?`
+                      : "Create this folder and start the session there?"}
+                  </p>
+                  <p className="text-xs">
+                    <MissingPath folder={askMkdir} />
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0 px-2"
+                  onClick={() => setMkdirFor(null)}
+                  disabled={busy}
+                >
+                  Not now
+                </Button>
+              </div>
+            )}
+
             <DialogFooter className="shrink-0">
               <ViewSwitch chat={chat} onChange={setChat} disabled={busy} />
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
@@ -573,8 +645,8 @@ export function NewSessionDialog({
                 disabled={busy || (tab === "templates" && !template)}
                 title={`Create (${chord("mod", "Enter")})`}
               >
-                {busy && <Loader2 className="size-4 animate-spin" />}
-                Create
+                {busy ? <Loader2 className="size-4 animate-spin" /> : askMkdir && <FolderPlus className="size-4" />}
+                {askMkdir ? "Create & start" : "Create"}
               </Button>
             </DialogFooter>
           </form>

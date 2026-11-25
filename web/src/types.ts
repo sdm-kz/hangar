@@ -296,6 +296,10 @@ export interface BrowseResult {
   parent: string | null;
   directories: DirEntry[];
   drives: DirEntry[];
+  /** False when the path asked about isn't a folder there. Absent from an older peer's answer. */
+  exists?: boolean;
+  /** With `exists: false`, the deepest folder of that path that is there; null when not even the drive is. */
+  existing?: string | null;
 }
 
 /**
